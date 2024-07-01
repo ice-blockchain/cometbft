@@ -10,6 +10,7 @@ import (
 	"github.com/cometbft/cometbft/crypto/ed25519"
 	cmtnet "github.com/cometbft/cometbft/internal/net"
 	cmtrand "github.com/cometbft/cometbft/internal/rand"
+	cmtbytes "github.com/cometbft/cometbft/libs/bytes"
 	"github.com/cometbft/cometbft/libs/log"
 	"github.com/cometbft/cometbft/p2p/conn"
 )
@@ -23,6 +24,7 @@ type mockNodeInfo struct {
 }
 
 func (ni mockNodeInfo) ID() ID                           { return ni.addr.ID }
+func (ni mockNodeInfo) GetChannels() cmtbytes.HexBytes   { return cmtbytes.HexBytes{} }
 func (ni mockNodeInfo) NetAddress() (*NetAddress, error) { return ni.addr, nil }
 func (mockNodeInfo) Validate() error                     { return nil }
 func (mockNodeInfo) CompatibleWith(NodeInfo) error       { return nil }

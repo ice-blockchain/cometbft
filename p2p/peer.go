@@ -143,7 +143,7 @@ func newPeer(
 	p := &peer{
 		peerConn: pc,
 		nodeInfo: nodeInfo,
-		channels: nodeInfo.(DefaultNodeInfo).Channels,
+		channels: nodeInfo.GetChannels(),
 		Data:     cmap.NewCMap(),
 		metrics:  NopMetrics(),
 		mlc:      mlc,

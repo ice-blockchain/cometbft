@@ -2,12 +2,14 @@ package config
 
 import (
 	"bytes"
+	"encoding/hex"
 	"path/filepath"
 	"strings"
 	"text/template"
 
 	_ "embed"
 
+	"github.com/cometbft/cometbft/crypto/tmhash"
 	cmtos "github.com/cometbft/cometbft/internal/os"
 )
 
@@ -46,6 +48,35 @@ func EnsureRoot(rootDir string) {
 	// Write default config file if missing.
 	if !cmtos.FileExists(configFilePath) {
 		writeDefaultConfigFile(configFilePath)
+	}
+}
+
+// EnsureRootMultiplex creates the scoped data directories if they don't exist,
+// and panics if it fails.
+// FIXME: should use ScopeRegistry implementation and moved to multiplex/
+func EnsureRootMultiplex(rootDir string, config *BaseConfig) {
+	// Storage is located in scopes subfolders per each user
+	// Uses one subfolder by user and one subfolder by scope
+	for _, userAddress := range config.GetAddresses() {
+		for _, scope := range config.UserScopes[userAddress] {
+			// Create scopeID, then SHA256 and create 8-bytes fingerprint
+			scopeId := strings.Join([]string{userAddress, scope}, ":")
+			fingerprint := tmhash.Sum([]byte(scopeId))[:8]
+
+			// The folder name is the hex representation of the fingerprint
+			folderName := strings.ToUpper(hex.EncodeToString(fingerprint))
+
+			confPath := filepath.Join(rootDir, DefaultConfigDir, userAddress, folderName)
+			dataPath := filepath.Join(rootDir, DefaultDataDir, userAddress, folderName)
+
+			if err := cmtos.EnsureDir(confPath, DefaultDirPerm); err != nil {
+				panic(err.Error())
+			}
+
+			if err := cmtos.EnsureDir(dataPath, DefaultDirPerm); err != nil {
+				panic(err.Error())
+			}
+		}
 	}
 }
 
