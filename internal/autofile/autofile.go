@@ -46,6 +46,7 @@ type AutoFile struct {
 	ID   string
 	Path string
 
+	closePeriod      time.Duration
 	closeTicker      *time.Ticker
 	closeTickerStopc chan struct{} // closed when closeTicker is stopped
 	hupc             chan os.Signal
@@ -57,18 +58,26 @@ type AutoFile struct {
 // OpenAutoFile creates an AutoFile in the path (with random ID). If there is
 // an error, it will be of type *PathError or *ErrPermissionsChanged (if file's
 // permissions got changed (should be 0600)).
-func OpenAutoFile(path string) (*AutoFile, error) {
+func OpenAutoFile(path string, autofileOptions ...func(*AutoFile)) (*AutoFile, error) {
 	var err error
 	path, err = filepath.Abs(path)
 	if err != nil {
 		return nil, err
 	}
 	af := &AutoFile{
-		ID:               cmtrand.Str(12) + ":" + path,
-		Path:             path,
-		closeTicker:      time.NewTicker(autoFileClosePeriod),
-		closeTickerStopc: make(chan struct{}),
+		ID:   cmtrand.Str(12) + ":" + path,
+		Path: path,
 	}
+
+	// permits overwriting closePeriod
+	for _, option := range autofileOptions {
+		option(af)
+	}
+
+	// open ticker after options set
+	af.closeTicker = time.NewTicker(af.GetClosePeriod())
+	af.closeTickerStopc = make(chan struct{})
+
 	if err := af.openFile(); err != nil {
 		af.Close()
 		return nil, err
@@ -88,6 +97,22 @@ func OpenAutoFile(path string) (*AutoFile, error) {
 	return af, nil
 }
 
+// AutoFileClosePeriod allows you to overwrite default autoFileClosePeriod.
+func AutoFileClosePeriod(duration time.Duration) func(*AutoFile) {
+	return func(af *AutoFile) {
+		af.closePeriod = duration
+	}
+}
+
+// GetClosePeriod returns the close period duration (defaults to autoFileClosePeriod)
+func (af *AutoFile) GetClosePeriod() time.Duration {
+	if af.closePeriod == 0 {
+		return autoFileClosePeriod
+	}
+
+	return af.closePeriod
+}
+
 // Close shuts down the closing goroutine, SIGHUP handler and closes the
 // AutoFile.
 func (af *AutoFile) Close() error {
@@ -105,6 +130,10 @@ func (af *AutoFile) closeFileRoutine() {
 		case <-af.closeTicker.C:
 			_ = af.closeFile()
 		case <-af.closeTickerStopc:
+			return
+		// select never selects a blocking case, so in case
+		// any of the two channels are nil, it selects default
+		default:
 			return
 		}
 	}
