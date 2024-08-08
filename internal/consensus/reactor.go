@@ -411,6 +411,12 @@ func (conR *Reactor) WaitSync() bool {
 	return conR.waitSync.Load()
 }
 
+// SetPrivValidator overwrites the consensus state priv validator instance.
+// CAUTION: This method is used in unit tests to reset the PrivValidatorState.
+func (conR *Reactor) SetPrivValidator(pv types.PrivValidator) {
+	conR.conS.SetPrivValidator(pv)
+}
+
 // --------------------------------------
 
 // subscribeToBroadcastEvents subscribes for new round steps and votes

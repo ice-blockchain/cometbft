@@ -1,0 +1,42 @@
+syntax = "proto3";
+package cometbft.multiplex.v1;
+
+option go_package = "github.com/cometbft/cometbft/api/cometbft/multiplex/v1";
+
+import "gogoproto/gogo.proto";
+import "cometbft/p2p/v1/types.proto";
+
+// ScopedProtocolVersion contains a scope hash and protocol versions for the software.
+message ScopedProtocolVersion {
+  string scope_hash = 1;
+  cometbft.p2p.v1.ProtocolVersion protocol_version = 2;
+}
+
+// ScopedChainInfo contains a scope hash and a ChainID
+message ScopedChainInfo {
+  string scope_hash = 1;
+  string chain_id = 2 [(gogoproto.customname) = "ChainID"];
+}
+
+// ScopedListenAddr contains a scope hash and a listen address
+message ScopedListenAddr {
+  string scope_hash = 1;
+  string listen_addr = 2;
+}
+
+// MultiNetworkNodeInfo is the node information exchanged between two
+// peers of a multi-network infra during the CometBFT P2P handshake.
+message MultiNetworkNodeInfo {
+  repeated string scopes = 1;
+  repeated ScopedProtocolVersion protocol_versions = 2;
+  repeated ScopedChainInfo networks = 3;
+  repeated ScopedListenAddr listen_addrs = 4;
+  repeated ScopedListenAddr rpc_addrs = 5[(gogoproto.customname) = "RPCAddresses"];
+
+  string                   default_node_id   = 6 [(gogoproto.customname) = "DefaultNodeID"];
+  string                   listen_addr       = 7;
+  string                   version           = 8;
+  bytes                    channels          = 9;
+  string                   moniker           = 10;
+  cometbft.p2p.v1.DefaultNodeInfoOther other = 11 [(gogoproto.nullable) = false];
+}

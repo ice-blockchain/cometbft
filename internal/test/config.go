@@ -24,8 +24,6 @@ func ResetTestRootWithChainID(testName string, chainID string) *config.Config {
 
 	baseConfig := config.DefaultBaseConfig()
 	genesisFilePath := filepath.Join(rootDir, baseConfig.Genesis)
-	privKeyFilePath := filepath.Join(rootDir, baseConfig.PrivValidatorKey)
-	privStateFilePath := filepath.Join(rootDir, baseConfig.PrivValidatorState)
 
 	if !cmtos.FileExists(genesisFilePath) {
 		if chainID == "" {
@@ -34,12 +32,25 @@ func ResetTestRootWithChainID(testName string, chainID string) *config.Config {
 		testGenesis := fmt.Sprintf(testGenesisFmt, chainID)
 		cmtos.MustWriteFile(genesisFilePath, []byte(testGenesis), 0o644)
 	}
-	// we always overwrite the priv val
-	cmtos.MustWriteFile(privKeyFilePath, []byte(testPrivValidatorKey), 0o644)
-	cmtos.MustWriteFile(privStateFilePath, []byte(testPrivValidatorState), 0o644)
+
+	// We always overwrite the priv val
+	ResetTestPrivValidator(rootDir, baseConfig)
 
 	config := config.TestConfig().SetRoot(rootDir)
 	return config
+}
+
+func ResetTestPrivValidator(rootDir string, conf config.BaseConfig) {
+	privKeyFilePath := filepath.Join(rootDir, conf.PrivValidatorKey)
+	privStateFilePath := filepath.Join(rootDir, conf.PrivValidatorState)
+
+	cmtos.MustWriteFile(privKeyFilePath, []byte(testPrivValidatorKey), 0o644)
+	cmtos.MustWriteFile(privStateFilePath, []byte(testPrivValidatorState), 0o644)
+}
+
+func ResetTestPrivValidatorFiles(privKeyFilePath string, privStateFilePath string) {
+	cmtos.MustWriteFile(privKeyFilePath, []byte(testPrivValidatorKey), 0o644)
+	cmtos.MustWriteFile(privStateFilePath, []byte(testPrivValidatorState), 0o644)
 }
 
 var testGenesisFmt = `{

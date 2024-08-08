@@ -53,6 +53,11 @@ func NewReactor(config *cfg.MempoolConfig, mempool *CListMempool, waitSync bool)
 	return memR
 }
 
+// GetMempoolPtr returns a pointer to the CListMempool object
+func (memR *Reactor) GetMempoolPtr() *CListMempool {
+	return memR.mempool
+}
+
 // SetLogger sets the Logger on the reactor and the underlying mempool.
 func (memR *Reactor) SetLogger(l log.Logger) {
 	memR.Logger = l
