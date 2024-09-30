@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/cosmos/gogoproto/proto"
@@ -12,6 +13,7 @@ import (
 	tmp2p "github.com/cometbft/cometbft/api/cometbft/p2p/v1"
 	"github.com/cometbft/cometbft/crypto"
 	"github.com/cometbft/cometbft/libs/protoio"
+	"github.com/cometbft/cometbft/libs/service"
 	"github.com/cometbft/cometbft/p2p/conn"
 )
 
@@ -52,6 +54,17 @@ type peerConfig struct {
 	reactorsByCh  map[byte]Reactor
 	msgTypeByChID map[byte]proto.Message
 	metrics       *Metrics
+}
+
+// PublicPeerConfig describes a wrapper around peer configuration structs.
+// TODO(midas): does peerConfig need to be private? Maybe split into public/private parts.
+type PublicPeerConfig struct {
+	peerConfig
+}
+
+// GetConfig returns the internal peerConfig configuration struct.
+func (c PublicPeerConfig) GetConfig() peerConfig {
+	return c.peerConfig
 }
 
 // Transport emits and connects to Peers. The implementation of Peer is left to
@@ -132,15 +145,22 @@ func MultiplexTransportMaxIncomingConnections(n int) MultiplexTransportOption {
 	return func(mt *MultiplexTransport) { mt.maxIncomingConnections = n }
 }
 
+type TransportHandshakeFn func(net.Conn, time.Duration, NodeInfo) (NodeInfo, error)
+
 // MultiplexTransport accepts and dials tcp connections and upgrades them to
 // multiplexed peers.
+//
+// [service.BaseService] is embedded for instance reuse in plural replication mode.
 type MultiplexTransport struct {
+	service.BaseService
+
 	netAddr                NetAddress
 	listener               net.Listener
 	maxIncomingConnections int // see MaxIncomingConnections
 
 	acceptc chan accept
 	closec  chan struct{}
+	once    sync.Once
 
 	// Lookup table for duplicate ip and id checks.
 	conns       ConnSet
@@ -157,6 +177,9 @@ type MultiplexTransport struct {
 	// peer currently. All relevant configuration should be refactored into options
 	// with sane defaults.
 	mConfig conn.MConnConfig
+
+	// Permits to overwrite the handshake handler
+	handshakeFn TransportHandshakeFn
 }
 
 // Test multiplexTransport for interface completeness.
@@ -182,6 +205,30 @@ func NewMultiplexTransport(
 		nodeKey:          nodeKey,
 		conns:            NewConnSet(),
 		resolver:         net.DefaultResolver,
+		handshakeFn:      nil,
+	}
+}
+
+// NewMultiplexTransportWithCustomHandshake returns a tcp connected multiplexed peer
+// with a custom handshake function overwrite.
+func NewMultiplexTransportWithCustomHandshake(
+	nodeInfo NodeInfo,
+	nodeKey NodeKey,
+	mConfig conn.MConnConfig,
+	handshakeFn TransportHandshakeFn,
+) *MultiplexTransport {
+	return &MultiplexTransport{
+		acceptc:          make(chan accept),
+		closec:           make(chan struct{}),
+		dialTimeout:      defaultDialTimeout,
+		filterTimeout:    defaultFilterTimeout,
+		handshakeTimeout: defaultHandshakeTimeout,
+		mConfig:          mConfig,
+		nodeInfo:         nodeInfo,
+		nodeKey:          nodeKey,
+		conns:            NewConnSet(),
+		resolver:         net.DefaultResolver,
+		handshakeFn:      handshakeFn,
 	}
 }
 
@@ -242,7 +289,11 @@ func (mt *MultiplexTransport) Dial(
 
 // Close implements transportLifecycle.
 func (mt *MultiplexTransport) Close() error {
-	close(mt.closec)
+	// Using sync.Once to prevent concurrent closing of the channel
+	// TBI: Whether introducing a Mutex performs better or not.
+	mt.once.Do(func() {
+		close(mt.closec)
+	})
 
 	if mt.listener != nil {
 		return mt.listener.Close()
@@ -268,6 +319,11 @@ func (mt *MultiplexTransport) Listen(addr NetAddress) error {
 	go mt.acceptPeers()
 
 	return nil
+}
+
+// GetListener returns the listener instance
+func (mt *MultiplexTransport) GetListener() net.Listener {
+	return mt.listener
 }
 
 // AddChannel registers a channel to nodeInfo.
@@ -443,7 +499,14 @@ func (mt *MultiplexTransport) upgrade(
 		}
 	}
 
-	nodeInfo, err = handshake(secretConn, mt.handshakeTimeout, mt.nodeInfo)
+	if mt.handshakeFn != nil {
+		// if handshakeFn is set, proxy call to it
+		nodeInfo, err = mt.handshakeFn(secretConn, mt.handshakeTimeout, mt.nodeInfo)
+	} else {
+		// otherwise use default handshake implementation
+		nodeInfo, err = handshake(secretConn, mt.handshakeTimeout, mt.nodeInfo)
+	}
+
 	if err != nil {
 		return nil, nil, ErrRejected{
 			conn:          c,
@@ -540,6 +603,7 @@ func handshake(
 	timeout time.Duration,
 	nodeInfo NodeInfo,
 ) (NodeInfo, error) {
+
 	if err := c.SetDeadline(time.Now().Add(timeout)); err != nil {
 		return nil, err
 	}

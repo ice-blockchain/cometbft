@@ -42,6 +42,19 @@ import (
 
 const readHeaderTimeout = 10 * time.Second
 
+// GenesisDocProvider returns a GenesisDoc together with its SHA256 checksum.
+// It allows the GenesisDoc to be pulled from sources other than the
+// filesystem, for instance from a distributed key-value store cluster.
+type GenesisDocProvider func() (IChecksummedGenesisDoc, error)
+
+// IChecksummedGenesisDoc provides at least with a default genesis doc and its
+// SHA256 checksum
+type IChecksummedGenesisDoc interface {
+	DefaultGenesisDoc() (*types.GenesisDoc, error)
+	GenesisDocByScope(string) (*types.GenesisDoc, error)
+	GetChecksum() []byte
+}
+
 // ChecksummedGenesisDoc combines a GenesisDoc together with its
 // SHA256 checksum.
 type ChecksummedGenesisDoc struct {
@@ -62,28 +75,43 @@ type CliParams struct {
 	GenesisHash []byte
 }
 
-// GenesisDocProvider returns a GenesisDoc together with its SHA256 checksum.
-// It allows the GenesisDoc to be pulled from sources other than the
-// filesystem, for instance from a distributed key-value store cluster.
-type GenesisDocProvider func() (ChecksummedGenesisDoc, error)
+// DefaultGenesisDoc() implements IChecksummedGenesisDoc
+func (c *ChecksummedGenesisDoc) DefaultGenesisDoc() (*types.GenesisDoc, error) {
+	return c.GenesisDoc, nil
+}
+
+// GenesisDocByScope() implements IChecksummedGenesisDoc
+func (c *ChecksummedGenesisDoc) GenesisDocByScope(_ string) (*types.GenesisDoc, error) {
+	return c.GenesisDoc, nil
+}
+
+// GetChecksum() implements IChecksummedGenesisDoc
+func (c *ChecksummedGenesisDoc) GetChecksum() []byte {
+	return c.Sha256Checksum
+}
 
 // DefaultGenesisDocProviderFunc returns a GenesisDocProvider that loads
 // the GenesisDoc from the config.GenesisFile() on the filesystem.
+// Default behaviour expects *singular mode* such that config.GenesisFile()
+// contains the JSON of just *one* genesis instance.
 func DefaultGenesisDocProviderFunc(config *cfg.Config) GenesisDocProvider {
-	return func() (ChecksummedGenesisDoc, error) {
+	return func() (IChecksummedGenesisDoc, error) {
 		// FIXME: find a way to stream the file incrementally,
 		// for the JSON	parser and the checksum computation.
 		// https://github.com/cometbft/cometbft/issues/1302
 		jsonBlob, err := os.ReadFile(config.GenesisFile())
 		if err != nil {
-			return ChecksummedGenesisDoc{}, fmt.Errorf("couldn't read GenesisDoc file: %w", err)
+			return &ChecksummedGenesisDoc{}, fmt.Errorf("couldn't read GenesisDoc file: %w", err)
 		}
+
 		incomingChecksum := tmhash.Sum(jsonBlob)
+
 		genDoc, err := types.GenesisDocFromJSON(jsonBlob)
 		if err != nil {
-			return ChecksummedGenesisDoc{}, err
+			return &ChecksummedGenesisDoc{}, err
 		}
-		return ChecksummedGenesisDoc{GenesisDoc: genDoc, Sha256Checksum: incomingChecksum}, nil
+
+		return &ChecksummedGenesisDoc{GenesisDoc: genDoc, Sha256Checksum: incomingChecksum}, nil
 	}
 }
 
@@ -618,13 +646,15 @@ func LoadStateFromDBOrGenesisDocProviderWithConfig(
 	if err != nil {
 		return sm.State{}, nil, fmt.Errorf("error retrieving genesis doc hash: %w", err)
 	}
-	csGenDoc, err := genesisDocProvider()
+	icsGenDoc, err := genesisDocProvider()
 	if err != nil {
 		return sm.State{}, nil, err
 	}
 
-	if err = csGenDoc.GenesisDoc.ValidateAndComplete(); err != nil {
-		return sm.State{}, nil, fmt.Errorf("error in genesis doc: %w", err)
+	// Validate and complete genesis doc
+	csGenDoc, err := icsGenDoc.DefaultGenesisDoc()
+	if err != nil {
+		return sm.State{}, nil, err
 	}
 
 	// Validate that existing or recently saved genesis file hash matches optional --genesis_hash passed by operator
@@ -633,18 +663,18 @@ func LoadStateFromDBOrGenesisDocProviderWithConfig(
 		if err != nil {
 			return sm.State{}, nil, errors.New("genesis hash provided by operator cannot be decoded")
 		}
-		if !bytes.Equal(csGenDoc.Sha256Checksum, decodedOperatorGenesisHash) {
+		if !bytes.Equal(icsGenDoc.GetChecksum(), decodedOperatorGenesisHash) {
 			return sm.State{}, nil, errors.New("genesis doc hash in db does not match passed --genesis_hash value")
 		}
 	}
 
 	if len(genDocHash) == 0 {
 		// Save the genDoc hash in the store if it doesn't already exist for future verification
-		if err = stateDB.SetSync(genesisDocHashKey, csGenDoc.Sha256Checksum); err != nil {
+		if err = stateDB.SetSync(genesisDocHashKey, icsGenDoc.GetChecksum()); err != nil {
 			return sm.State{}, nil, fmt.Errorf("failed to save genesis doc hash to db: %w", err)
 		}
 	} else {
-		if !bytes.Equal(genDocHash, csGenDoc.Sha256Checksum) {
+		if !bytes.Equal(genDocHash, icsGenDoc.GetChecksum()) {
 			return sm.State{}, nil, errors.New("genesis doc hash in db does not match loaded genesis doc")
 		}
 	}
@@ -658,11 +688,11 @@ func LoadStateFromDBOrGenesisDocProviderWithConfig(
 		DBKeyLayout:          dbKeyLayoutVersion,
 	})
 
-	state, err := stateStore.LoadFromDBOrGenesisDoc(csGenDoc.GenesisDoc)
+	state, err := stateStore.LoadFromDBOrGenesisDoc(csGenDoc)
 	if err != nil {
 		return sm.State{}, nil, err
 	}
-	return state, csGenDoc.GenesisDoc, nil
+	return state, csGenDoc, nil
 }
 
 // LoadStateFromDBOrGenesisDocProvider attempts to load the state from the

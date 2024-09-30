@@ -108,6 +108,19 @@ func NewWAL(walFile string, groupOptions ...func(*auto.Group)) (*BaseWAL, error)
 	return wal, nil
 }
 
+// NewWALWithParams creates a BaseWAL pointer with provided parameters
+func NewWALWithParams(
+	group *auto.Group,
+	enc *WALEncoder,
+	flushInterval time.Duration,
+) *BaseWAL {
+	return &BaseWAL{
+		group:         group,
+		enc:           enc,
+		flushInterval: flushInterval,
+	}
+}
+
 // SetFlushInterval allows us to override the periodic flush interval for the WAL.
 func (wal *BaseWAL) SetFlushInterval(i time.Duration) {
 	wal.flushInterval = i
@@ -311,7 +324,7 @@ func (enc *WALEncoder) Encode(v *TimedWALMessage) error {
 
 	data, err := proto.Marshal(&pv)
 	if err != nil {
-		panic(fmt.Errorf("encode timed wall message failure: %w", err))
+		panic(fmt.Errorf("encode timed wal message failure: %w", err))
 	}
 
 	crc := crc32.Checksum(data, crc32c)

@@ -43,6 +43,11 @@ func NewReactor(evpool *Pool) *Reactor {
 	return evR
 }
 
+// GetPoolPtr returns a pointer to the Pool object
+func (evR *Reactor) GetPoolPtr() *Pool {
+	return evR.evpool
+}
+
 // SetLogger sets the Logger on the reactor and the underlying Evidence.
 func (evR *Reactor) SetLogger(l log.Logger) {
 	evR.Logger = l

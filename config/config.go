@@ -126,6 +126,27 @@ func TestConfig() *Config {
 	}
 }
 
+// MultiplexTestConfig returns a configuration that can be used for testing
+// the multiplex node implementation (plural replication mode).
+func MultiplexTestConfig(
+	repl DataReplicationConfig,
+	userScopes map[string][]string,
+) *Config {
+	return &Config{
+		BaseConfig:      MultiplexTestBaseConfig(repl, userScopes),
+		RPC:             TestRPCConfig(),
+		GRPC:            TestGRPCConfig(),
+		P2P:             TestP2PConfig(),
+		Mempool:         TestMempoolConfig(),
+		StateSync:       TestStateSyncConfig(),
+		BlockSync:       TestBlockSyncConfig(),
+		Consensus:       TestConsensusConfig(),
+		Storage:         TestStorageConfig(),
+		TxIndex:         TestTxIndexConfig(),
+		Instrumentation: TestInstrumentationConfig(),
+	}
+}
+
 // SetRoot sets the RootDir for all Config structs.
 func (cfg *Config) SetRoot(root string) *Config {
 	cfg.BaseConfig.RootDir = root
@@ -134,6 +155,28 @@ func (cfg *Config) SetRoot(root string) *Config {
 	cfg.Mempool.RootDir = root
 	cfg.Consensus.RootDir = root
 	return cfg
+}
+
+func (cfg *Config) SetListenAddresses(
+	p2pListenAddr string,
+	rpcListenAddr string,
+	grpcListenAddr string,
+	grpcPrivListenAddr string,
+) *Config {
+	cfg.P2P.ListenAddress = p2pListenAddr
+	cfg.RPC.ListenAddress = rpcListenAddr
+	cfg.GRPC.ListenAddress = grpcListenAddr
+	cfg.GRPC.Privileged.ListenAddress = grpcPrivListenAddr
+	return cfg
+}
+
+func (cfg *Config) GetListenAddresses() map[string]string {
+	return map[string]string{
+		"P2P":      cfg.P2P.ListenAddress,
+		"RPC":      cfg.RPC.ListenAddress,
+		"GRPC":     cfg.GRPC.ListenAddress,
+		"GRPCPriv": cfg.GRPC.Privileged.ListenAddress,
+	}
 }
 
 // ValidateBasic performs basic validation (checking param bounds, etc.) and
@@ -192,6 +235,44 @@ func (cfg *Config) PossibleMisconfigurations() []string {
 		res = append(res, "[statesync] section: "+elem)
 	}
 	return res
+}
+
+// NewConfigCopy deep-copies a config pointer to create a new config object.
+func NewConfigCopy(cfg *Config) *Config {
+	// Re-allocate new config
+	next := &Config{
+		BaseConfig: BaseConfig{},
+		RPC:        &RPCConfig{},
+		// XXX *GRPCPruningServiceConfig
+		GRPC:            &GRPCConfig{},
+		P2P:             &P2PConfig{}, // XXX *FuzzConnConfig
+		Mempool:         &MempoolConfig{},
+		StateSync:       &StateSyncConfig{},
+		BlockSync:       &BlockSyncConfig{},
+		Consensus:       &ConsensusConfig{},
+		Storage:         &StorageConfig{}, // XXX *PruningConfig
+		TxIndex:         &TxIndexConfig{},
+		Instrumentation: &InstrumentationConfig{},
+	}
+
+	// Copy values from base
+	next.BaseConfig = cfg.BaseConfig
+	*next.RPC = *cfg.RPC
+	*next.GRPC = *cfg.GRPC
+	*next.P2P = *cfg.P2P
+	*next.Mempool = *cfg.Mempool
+	*next.StateSync = *cfg.StateSync
+	*next.BlockSync = *cfg.BlockSync
+	*next.Consensus = *cfg.Consensus
+	*next.Storage = *cfg.Storage
+	*next.TxIndex = *cfg.TxIndex
+	*next.Instrumentation = *cfg.Instrumentation
+
+	// .. and sub-pointers
+	next.GRPC.Privileged = &GRPCPrivilegedConfig{}
+	*next.GRPC.Privileged = *cfg.GRPC.Privileged
+
+	return next
 }
 
 // -----------------------------------------------------------------------------
@@ -274,6 +355,9 @@ type BaseConfig struct {
 	// If true, query the ABCI app on connecting to a new peer
 	// so the app can decide if we should keep the connection or not
 	FilterPeers bool `mapstructure:"filter_peers"` // false
+
+	// User-level options use an anonymous struct
+	UserConfig `mapstructure:",squash"`
 }
 
 // DefaultBaseConfig returns a default base configuration for a CometBFT node.
@@ -292,7 +376,37 @@ func DefaultBaseConfig() BaseConfig {
 		FilterPeers:        false,
 		DBBackend:          "goleveldb",
 		DBPath:             DefaultDataDir,
+		UserConfig:         DefaultUserConfig(),
 	}
+}
+
+// MultiplexBaseConfig returns a multiplex base configuration for a CometBFT node.
+// Note: multiplex is disabled by default using singular mode!
+func MultiplexBaseConfig(
+	repl DataReplicationConfig,
+	userScopes map[string][]string,
+) BaseConfig {
+	if repl == SingularReplicationMode() || len(userScopes) == 0 {
+		return DefaultBaseConfig()
+	}
+
+	config := DefaultBaseConfig()
+	config.UserConfig = UserConfig{
+		Replication: PluralReplicationMode(),
+		UserScopes:  userScopes,
+	}
+	return config
+}
+
+// MultiplexTestBaseConfig returns a base configuration for testing a CometBFT node.
+func MultiplexTestBaseConfig(
+	repl DataReplicationConfig,
+	userScopes map[string][]string,
+) BaseConfig {
+	cfg := MultiplexBaseConfig(repl, userScopes)
+	cfg.ProxyApp = "kvstore"
+	cfg.DBBackend = "memdb"
+	return cfg
 }
 
 // TestBaseConfig returns a base configuration for testing a CometBFT node.
@@ -300,7 +414,16 @@ func TestBaseConfig() BaseConfig {
 	cfg := DefaultBaseConfig()
 	cfg.ProxyApp = "kvstore"
 	cfg.DBBackend = "memdb"
+	cfg.UserConfig = DefaultUserConfig()
 	return cfg
+}
+
+// DefaultUserConfig returns a default user genesis configuration for a CometBFT node.
+func DefaultUserConfig() UserConfig {
+	return UserConfig{
+		Replication: SingularReplicationMode(),
+		UserScopes:  map[string][]string{}, // empty scopes
+	}
 }
 
 // GenesisFile returns the full path to the genesis.json file.
@@ -1576,4 +1699,86 @@ func (cfg *DataCompanionPruningConfig) ValidateBasic() error {
 		return errors.New("initial_block_results_retain_height cannot be negative")
 	}
 	return nil
+}
+
+// -----------------------------------------------------------------------------
+// DataReplicationConfig
+
+// DataReplicationConfig exports a string interface
+type DataReplicationConfig interface {
+	fmt.Stringer
+}
+
+// replMode is unexported to prevent invalid values
+type replMode struct {
+	string
+}
+
+func (m replMode) String() string {
+	return m.string
+}
+
+// SingularReplicationMode() returns the Singular genesis mode (genesis doc)
+func SingularReplicationMode() DataReplicationConfig {
+	return replMode{"Singular"}
+}
+
+// PluralReplicationMode() returns the Plural genesis mode (genesis doc set)
+func PluralReplicationMode() DataReplicationConfig {
+	return replMode{"Plural"}
+}
+
+// -----------------------------------------------------------------------------
+// UserConfig
+
+// UserConfig defines the per-user-scope state replication configuration for a
+// CometBFT node.
+type UserConfig struct {
+	// Replication determines which network mode is used (singular or plural).
+	// In singular mode, replicates a single state instance on the network.
+	// In plural mode, replicates multiple per-user state instances on the network.
+	Replication DataReplicationConfig `mapstructure:"replication"`
+
+	// UserScopes contains arbitrary string arrays, e.g. {"default"} mapped to
+	// user addresses such that state is replicated amongst multiple scopes, and one
+	// user may or may not populate databases (tables) for each of these scopes.
+	UserScopes map[string][]string `mapstructure:"scopes"`
+
+	// ListenPort contains a network port number which defaults to 30001
+	// and which is used as the first node's listen address port in the multiplex.
+	// Other nodes in the multiplex increment this value by their respective index.
+	ListenPort int `mapstructure:"start_listen_port"`
+}
+
+// GetAddresses() returns a list of user address from the UserScopes in config.
+func (c *UserConfig) GetAddresses() []string {
+	r := make([]string, 0, len(c.UserScopes))
+	for k := range c.UserScopes {
+		r = append(r, k)
+	}
+	return r
+}
+
+// GetScopes() returns a list of scopes prefixed by user addresses
+// from the UserScopes in config.
+func (c *UserConfig) GetScopes() []string {
+	r := make([]string, 0, len(c.UserScopes))
+	for address, scopes := range c.UserScopes {
+		for _, scope := range scopes {
+			prefixedScope := address + ":" + scope
+			r = append(r, prefixedScope)
+		}
+	}
+	return r
+}
+
+// GetListenPort() returns the port number used as the first node's
+// P2P listen address port overwrite. This port number will be incremented
+// by one for every other node in the multiplex.
+func (c *UserConfig) GetListenPort() int {
+	if c.ListenPort <= 0 || c.ListenPort > 65535 {
+		return 30001
+	}
+
+	return c.ListenPort
 }

@@ -76,6 +76,11 @@ func NewReactor(consensusState *State, waitSync bool, options ...ReactorOption) 
 	return conR
 }
 
+// GetState returns a pointer to the consensus state instance.
+func (conR *Reactor) GetState() *State {
+	return conR.conS
+}
+
 // OnStart implements BaseService by subscribing to events, which later will be
 // broadcasted to other peers and starting state if we're not in block sync.
 func (conR *Reactor) OnStart() error {
@@ -409,6 +414,12 @@ func (conR *Reactor) SetEventBus(b *types.EventBus) {
 // WaitSync returns whether the consensus reactor is waiting for state/block sync.
 func (conR *Reactor) WaitSync() bool {
 	return conR.waitSync.Load()
+}
+
+// SetPrivValidator overwrites the consensus state priv validator instance.
+// CAUTION: This method is used in unit tests to reset the PrivValidatorState.
+func (conR *Reactor) SetPrivValidator(pv types.PrivValidator) {
+	conR.conS.SetPrivValidator(pv)
 }
 
 // --------------------------------------

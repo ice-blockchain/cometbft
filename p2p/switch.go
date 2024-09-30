@@ -440,6 +440,9 @@ func (sw *Switch) SetAddrBook(addrBook AddrBook) {
 	sw.addrBook = addrBook
 }
 
+// GetAddrBook returns the [p2p.AddrBook] instance associated with the Switch.
+func (sw *Switch) GetAddrBook() AddrBook { return sw.addrBook }
+
 // MarkPeerAsGood marks the given peer as good when it did something useful
 // like contributed to consensus.
 func (sw *Switch) MarkPeerAsGood(peer Peer) {

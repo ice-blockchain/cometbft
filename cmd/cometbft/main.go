@@ -8,6 +8,7 @@ import (
 	"github.com/cometbft/cometbft/cmd/cometbft/commands/debug"
 	cfg "github.com/cometbft/cometbft/config"
 	"github.com/cometbft/cometbft/libs/cli"
+	mx "github.com/cometbft/cometbft/multiplex"
 	nm "github.com/cometbft/cometbft/node"
 )
 
@@ -41,9 +42,11 @@ func main() {
 	// can copy this file and use something other than the
 	// DefaultNewNode function
 	nodeFunc := nm.DefaultNewNode
+	mxNodeFunc := mx.DefaultMultiplexNode
 
 	// Create & start node
 	rootCmd.AddCommand(cmd.NewRunNodeCmd(nodeFunc))
+	rootCmd.AddCommand(cmd.NewRunMultiplexCmd(mxNodeFunc))
 
 	cmd := cli.PrepareBaseCmd(rootCmd, "CMT", os.ExpandEnv(filepath.Join("$HOME", cfg.DefaultCometDir)))
 	if err := cmd.Execute(); err != nil {

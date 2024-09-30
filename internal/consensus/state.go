@@ -138,6 +138,9 @@ type State struct {
 	// offline state sync height indicating to which height the node synced offline
 	offlineStateSyncHeight int64
 
+	// replicated chain scope hash indicating which user chain is being synced.
+	replicatedChainScopeHash string
+
 	// a buffer to store the concatenated proposal block parts (serialization format)
 	// should only be accessed under the cs.mtx lock
 	serializedBlockBuffer []byte
@@ -224,6 +227,11 @@ func StateMetrics(metrics *Metrics) StateOption {
 // statesync offline - before booting sets the metrics.
 func OfflineStateSyncHeight(height int64) StateOption {
 	return func(cs *State) { cs.offlineStateSyncHeight = height }
+}
+
+// UseScopeHash indicates the replicated chain's scope hash.
+func UseScopeHash(scopeHash string) StateOption {
+	return func(cs *State) { cs.replicatedChainScopeHash = scopeHash }
 }
 
 // String returns a string.
@@ -1861,6 +1869,7 @@ func (cs *State) finalizeCommit(height int64) {
 		"hash", log.NewLazyBlockHash(block),
 		"root", block.AppHash,
 		"num_txs", len(block.Txs),
+		"scope", cs.replicatedChainScopeHash,
 	)
 	logger.Debug("Committed block", "block", log.NewLazySprintf("%v", block))
 

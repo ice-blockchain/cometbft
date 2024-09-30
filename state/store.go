@@ -156,6 +156,17 @@ type Store interface {
 	Close() error
 }
 
+// DBStore exports the database store implementation
+type DBStore struct {
+	dbStore
+}
+
+func NewDBStore(db dbm.DB, options StoreOptions) Store {
+	return &DBStore{
+		dbStore: NewStore(db, options).(dbStore),
+	}
+}
+
 // dbStore wraps a db (github.com/cometbft/cometbft-db).
 type dbStore struct {
 	db dbm.DB
@@ -186,6 +197,11 @@ type StoreOptions struct {
 }
 
 var _ Store = (*dbStore)(nil)
+var _ Store = (*DBStore)(nil)
+
+func (dbs *dbStore) GetDatabase() dbm.DB {
+	return dbs.db
+}
 
 func IsEmpty(store dbStore) (bool, error) {
 	state, err := store.Load()

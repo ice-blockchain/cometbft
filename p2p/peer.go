@@ -142,11 +142,11 @@ func newPeer(
 	options ...PeerOption,
 ) *peer {
 	p := &peer{
-		peerConn:       pc,
-		nodeInfo:       nodeInfo,
-		channels:       nodeInfo.(DefaultNodeInfo).Channels,
-		Data:           cmap.NewCMap(),
-		metrics:        NopMetrics(),
+		peerConn: pc,
+		nodeInfo: nodeInfo,
+		channels: nodeInfo.GetChannels(),
+		Data:     cmap.NewCMap(),
+		metrics:  NopMetrics(),
 		pendingMetrics: newPeerPendingMetricsCache(),
 	}
 
