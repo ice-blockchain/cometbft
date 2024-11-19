@@ -36,13 +36,16 @@ type chainInstance[ImplT any] struct {
 	instance ImplT
 }
 
-// chainInstance must satisfy the [ChainInstance] interface
+// chainInstance must satisfy the [ChainInstance] interface.
 var _ ChainInstance = (*chainInstance[string])(nil)
 
 // NewChainInstance creates a new generic instance attached to a ChainID.
-func NewChainInstance[ImplT any](chainId string, instance ImplT) *chainInstance[ImplT] {
+func NewChainInstance[ImplT any](
+	chainID string,
+	instance ImplT,
+) *chainInstance[ImplT] {
 	return &chainInstance[ImplT]{
-		ChainID:  chainId,
+		ChainID:  chainID,
 		instance: instance,
 	}
 }

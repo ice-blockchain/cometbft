@@ -5,6 +5,7 @@ import (
 
 	abci "github.com/ice-blockchain/cometbft/abci/types"
 	"github.com/ice-blockchain/cometbft/libs/bytes"
+	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/proxy"
 	ctypes "github.com/ice-blockchain/cometbft/rpc/core/types"
 	rpctypes "github.com/ice-blockchain/cometbft/rpc/jsonrpc/types"
@@ -21,7 +22,7 @@ func (env *Environment) ABCIQuery(
 ) (*ctypes.ResultABCIQuery, error) {
 	// Inject the ChainID for access in ABCI
 	ctx := context.TODO()
-	ctx = context.WithValue(ctx, "ChainID", env.GenDoc.ChainID)
+	ctx = context.WithValue(ctx, client.KeyChainID, env.GenDoc.ChainID)
 
 	resQuery, err := env.ProxyAppQuery.Query(ctx, &abci.QueryRequest{
 		Path:   path,
@@ -41,7 +42,7 @@ func (env *Environment) ABCIQuery(
 func (env *Environment) ABCIInfo(_ *rpctypes.Context) (*ctypes.ResultABCIInfo, error) {
 	// Inject the ChainID for access in ABCI
 	ctx := context.TODO()
-	ctx = context.WithValue(ctx, "ChainID", env.GenDoc.ChainID)
+	ctx = context.WithValue(ctx, client.KeyChainID, env.GenDoc.ChainID)
 
 	resInfo, err := env.ProxyAppQuery.Info(ctx, proxy.InfoRequest)
 	if err != nil {

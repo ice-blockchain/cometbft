@@ -53,7 +53,9 @@ func ParseConfig(cmd *cobra.Command) (*cfg.Config, error) {
 	conf.RootDir = home
 
 	conf.SetRoot(conf.RootDir)
-	cfg.EnsureFilesystem(conf.RootDir)
+	if err := cfg.EnsureFilesystem(conf.RootDir); err != nil {
+		return nil, fmt.Errorf("error in filesystem: %w", err)
+	}
 	if err := conf.ValidateBasic(); err != nil {
 		return nil, fmt.Errorf("error in config file: %v", err)
 	}

@@ -70,37 +70,41 @@ func TestMultiplexConfigNewConfigOverwrite(t *testing.T) {
 	chainRegistry := makeChainRegistryFromConfig(t, conf.MultiplexConfig)
 
 	// first ChainID has start ports
-	chainId1 := chainRegistry.GetChains()[0]
-	address1, err := chainRegistry.GetAddress(chainId1)
-	expectWal1 := makeWalPath(rootDir, address1, chainId1)
+	chainID1 := chainRegistry.GetChains()[0]
+	address1, err := chainRegistry.GetAddress(chainID1)
+	expectWal1 := makeWalPath(rootDir, address1, chainID1)
 	require.NoError(t, err)
-	cfgOverwrite1 := mx.NewConfigOverwrite(conf, chainRegistry, chainId1)
+	cfgOverwrite1 := mx.NewConfigOverwrite(conf, chainRegistry, chainID1)
 	assert.NotEqual(t, conf.P2P.ListenAddress, cfgOverwrite1.P2P.ListenAddress)
 	assert.Contains(t, cfgOverwrite1.P2P.ListenAddress, strconv.Itoa(int(conf.P2PStartPort)))
 	assert.Contains(t, cfgOverwrite1.RPC.ListenAddress, strconv.Itoa(int(conf.RPCStartPort)))
 	assert.Equal(t, expectWal1, cfgOverwrite1.Consensus.WalFile())
 
 	// second ChainID has starts ports + 1
-	chainId2 := chainRegistry.GetChains()[1]
-	address2, err := chainRegistry.GetAddress(chainId2)
-	expectWal2 := makeWalPath(rootDir, address2, chainId2)
-	cfgOverwrite2 := mx.NewConfigOverwrite(conf, chainRegistry, chainId2)
+	chainID2 := chainRegistry.GetChains()[1]
+	address2, err := chainRegistry.GetAddress(chainID2)
+	assert.NoError(t, err)
+
+	expectWal2 := makeWalPath(rootDir, address2, chainID2)
+	cfgOverwrite2 := mx.NewConfigOverwrite(conf, chainRegistry, chainID2)
 	assert.NotEqual(t, conf.P2P.ListenAddress, cfgOverwrite2.P2P.ListenAddress)
 	assert.Contains(t, cfgOverwrite2.P2P.ListenAddress, strconv.Itoa(int(conf.P2PStartPort+1)))
 	assert.Contains(t, cfgOverwrite2.RPC.ListenAddress, strconv.Itoa(int(conf.RPCStartPort+1)))
 	assert.Equal(t, expectWal2, cfgOverwrite2.Consensus.WalFile())
 
 	// third ChainID has starts ports + 2
-	chainId3 := chainRegistry.GetChains()[2]
-	address3, err := chainRegistry.GetAddress(chainId3)
-	expectWal3 := makeWalPath(rootDir, address3, chainId3)
-	cfgOverwrite3 := mx.NewConfigOverwrite(conf, chainRegistry, chainId3)
+	chainID3 := chainRegistry.GetChains()[2]
+	address3, err := chainRegistry.GetAddress(chainID3)
+	assert.NoError(t, err)
+
+	expectWal3 := makeWalPath(rootDir, address3, chainID3)
+	cfgOverwrite3 := mx.NewConfigOverwrite(conf, chainRegistry, chainID3)
 	assert.NotEqual(t, conf.P2P.ListenAddress, cfgOverwrite3.P2P.ListenAddress)
 	assert.Contains(t, cfgOverwrite3.P2P.ListenAddress, strconv.Itoa(int(conf.P2PStartPort+2)))
 	assert.Contains(t, cfgOverwrite3.RPC.ListenAddress, strconv.Itoa(int(conf.RPCStartPort+2)))
 	assert.Equal(t, expectWal3, cfgOverwrite3.Consensus.WalFile())
 }
 
-func makeWalPath(rootDir, address, chainId string) string {
-	return filepath.Join(rootDir, config.DefaultDataDir, address, chainId, "wal")
+func makeWalPath(rootDir, address, chainID string) string {
+	return filepath.Join(rootDir, config.DefaultDataDir, address, chainID, "wal")
 }

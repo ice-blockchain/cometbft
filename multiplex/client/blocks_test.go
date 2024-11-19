@@ -4,26 +4,26 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/ice-blockchain/cometbft/crypto/tmhash"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/ice-blockchain/cometbft/crypto/tmhash"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 )
 
 func TestMultiplexClientDelegateCheckTx(t *testing.T) {
 	// address and fingerprint added to ChainID
-	testChainId := makeRandomTestChainID()
+	testChainID := makeRandomTestChainID()
 
 	// Prepare a base transaction
 	baseTransaction := []byte(`this is not a real transaction.`)
 
 	// Execute the extension / injection, we intentionally force the type
 	// here to prevent compilation for extensions that wouldn't work correctly.
-	var errDelegateCheckTx error
+	var errDelegateCheckTx error //nolint:gosimple
 	errDelegateCheckTx = client.DelegateCheckTx(
-		testChainId,
+		testChainID,
 		baseTransaction,
-		mockCheckTxExtension_SizeAsError, // default_test.go
+		mockCheckTxExtensionSizeAsError, // default_test.go
 	)
 
 	// The extension should have formatted the transaction size as an Error
@@ -33,7 +33,7 @@ func TestMultiplexClientDelegateCheckTx(t *testing.T) {
 
 func TestMultiplexClientInjectPrepareProposal(t *testing.T) {
 	// address and fingerprint added to ChainID
-	testChainId := makeRandomTestChainID()
+	testChainID := makeRandomTestChainID()
 	baseTransactionsSlice := [][]byte{
 		[]byte(`this is just an example.`),
 		[]byte(`with multiplex "transactions".`),
@@ -42,11 +42,11 @@ func TestMultiplexClientInjectPrepareProposal(t *testing.T) {
 
 	// Execute the extension / injection, we intentionally force the type
 	// here to prevent compilation for extensions that wouldn't work correctly.
-	var injectPrepareProposal [][]byte
+	var injectPrepareProposal [][]byte //nolint:gosimple
 	injectPrepareProposal = client.InjectPrepareProposal(
-		testChainId,
+		testChainID,
 		baseTransactionsSlice,
-		mockPrepareProposalExtension_AppendOneTx, // default_test.go
+		mockPrepareProposalExtensionAppendOneTx, // default_test.go
 	)
 
 	// Extension may not return nil
@@ -65,7 +65,7 @@ func TestMultiplexClientInjectPrepareProposal(t *testing.T) {
 
 func TestMultiplexClientInjectProcessProposal(t *testing.T) {
 	// address and fingerprint added to ChainID
-	testChainId := makeRandomTestChainID()
+	testChainID := makeRandomTestChainID()
 	baseTransactionsSlice := [][]byte{
 		[]byte(`this is just an example.`),
 		[]byte(`with multiplex "transactions".`),
@@ -74,11 +74,11 @@ func TestMultiplexClientInjectProcessProposal(t *testing.T) {
 
 	// Execute the extension / injection, we intentionally force the type
 	// here to prevent compilation for extensions that wouldn't work correctly.
-	var injectProcessProposal [][]byte
+	var injectProcessProposal [][]byte //nolint:gosimple
 	injectProcessProposal = client.InjectProcessProposal(
-		testChainId,
+		testChainID,
 		baseTransactionsSlice,
-		mockProcessProposalExtension_AppendOneTx, // default_test.go
+		mockProcessProposalExtensionAppendOneTx, // default_test.go
 	)
 
 	// Extension may not return nil
@@ -97,7 +97,7 @@ func TestMultiplexClientInjectProcessProposal(t *testing.T) {
 
 func TestMultiplexClientInjectFinalizeBlock(t *testing.T) {
 	// address and fingerprint added to ChainID
-	testChainId := makeRandomTestChainID()
+	testChainID := makeRandomTestChainID()
 	baseTransactionsSlice := [][]byte{
 		[]byte(`this is just an example.`),
 		[]byte(`with multiplex "transactions".`),
@@ -106,11 +106,11 @@ func TestMultiplexClientInjectFinalizeBlock(t *testing.T) {
 
 	// Execute the extension / injection, we intentionally force the type
 	// here to prevent compilation for extensions that wouldn't work correctly.
-	var injectFinalizeBlock [][]byte
+	var injectFinalizeBlock [][]byte //nolint:gosimple
 	injectFinalizeBlock = client.InjectFinalizeBlock(
-		testChainId,
+		testChainID,
 		baseTransactionsSlice,
-		mockFinalizeBlockExtension_AppendHash, // default_test.go
+		mockFinalizeBlockExtensionAppendHash, // default_test.go
 	)
 
 	// The extension should have appended a transactions hash
@@ -133,18 +133,18 @@ func TestMultiplexClientInjectFinalizeBlock(t *testing.T) {
 
 func TestMultiplexClientReportCommit(t *testing.T) {
 	// address and fingerprint added to ChainID
-	testChainId := makeRandomTestChainID()
+	testChainID := makeRandomTestChainID()
 
 	// Prepare a base block height
 	baseBlockHeight := uint64(123)
 
 	// Execute the extension / injection, we intentionally force the type
 	// here to prevent compilation for extensions that wouldn't work correctly.
-	var errReportCommit error
+	var errReportCommit error //nolint:gosimple
 	errReportCommit = client.ReportCommit(
-		testChainId,
+		testChainID,
 		baseBlockHeight,
-		mockCommitExtension_HeightAsError, // default_test.go
+		mockCommitExtensionHeightAsError, // default_test.go
 	)
 
 	// The extension should have formatted the block height as an Error

@@ -12,20 +12,19 @@ import (
 	"github.com/ice-blockchain/cometbft/config"
 	cmtos "github.com/ice-blockchain/cometbft/internal/os"
 	cmtrand "github.com/ice-blockchain/cometbft/internal/rand"
-
 	mx "github.com/ice-blockchain/cometbft/multiplex"
 )
 
 func TestMultiplexDBChainID(t *testing.T) {
-	rootDir, multiplexDb := ResetMultiplexDBTestRoot(t, "test-mx-db-chain-id", 1000)
+	rootDir, multiplexDB := ResetMultiplexDBTestRoot(t, "test-mx-db-chain-id", 1000)
 	defer os.RemoveAll(rootDir)
 
 	assert.Equal(t, true, cmtos.FileExists(rootDir))
 
-	for chainId, chainDb := range multiplexDb {
-		assert.NotEmpty(t, chainId)
-		assert.Equal(t, chainId, chainDb.ChainID)
-		assert.NotNil(t, chainDb.DB)
+	for chainID, chainDB := range multiplexDB {
+		assert.NotEmpty(t, chainID)
+		assert.Equal(t, chainID, chainDB.ChainID)
+		assert.NotNil(t, chainDB.DB)
 	}
 }
 
@@ -52,7 +51,7 @@ func TestMultiplexDBSimpleSetGet(t *testing.T) {
 
 func TestMultiplexDBParallelSetGet(t *testing.T) {
 	numDatabases := 1000
-	rootDir, multiplexDb := ResetMultiplexDBTestRoot(t, "test-mx-db-parallel-set-get", numDatabases)
+	rootDir, multiplexDB := ResetMultiplexDBTestRoot(t, "test-mx-db-parallel-set-get", numDatabases)
 	defer os.RemoveAll(rootDir)
 
 	// Creates a thread-safe rand instance
@@ -65,7 +64,7 @@ func TestMultiplexDBParallelSetGet(t *testing.T) {
 	// Use an array, not user-indexed here
 	dbs := make([]*mx.ChainDB, numDatabases)
 	i := 0
-	for _, db := range multiplexDb {
+	for _, db := range multiplexDB {
 		dbs[i] = db
 		i++
 	}
@@ -105,9 +104,9 @@ func TestMultiplexDBNewMultiplexDB(t *testing.T) {
 		"mx-chain-CC8E6555A3F401FF61DA098F94D325E7041BC43A-1A63C0E60122F9BBCC",
 	}
 
-	for _, failCaseChainId := range failCases {
+	for _, failCaseChainID := range failCases {
 		conf.BaseConfig = config.MultiplexTestBaseConfig(map[string]*config.StateSyncConfig{}, map[string]string{}, map[string][]string{
-			"CC8E6555A3F401FF61DA098F94D325E7041BC43A": {failCaseChainId},
+			"CC8E6555A3F401FF61DA098F94D325E7041BC43A": {failCaseChainID},
 		})
 		conf.SetRoot(rootDir)
 
@@ -152,10 +151,12 @@ func TestMultiplexDBNewMultiplexDB(t *testing.T) {
 // Exported helpers
 
 func ResetMultiDBTestRoot(
-	t testing.TB,
+	tb testing.TB,
 	testName string,
 	numDatabases int,
 ) (string, []dbm.DB) {
+	tb.Helper()
+
 	// create a unique, concurrency-safe test directory under os.TempDir()
 	rootDir, err := os.MkdirTemp("", testName)
 	if err != nil {
@@ -163,17 +164,19 @@ func ResetMultiDBTestRoot(
 	}
 
 	// Open numDatabases database adapters
-	dbPtrs, err := createTempMemDB(t, rootDir, numDatabases)
-	require.NoError(t, err, "should create MemDB instances in temp directory")
+	dbPtrs, err := createTempMemDB(tb, rootDir, numDatabases)
+	require.NoError(tb, err, "should create MemDB instances in temp directory")
 
 	return rootDir, dbPtrs
 }
 
 func ResetMultiplexDBTestRoot(
-	t testing.TB,
+	tb testing.TB,
 	testName string,
 	numDatabases int,
 ) (string, mx.MultiplexDB) {
+	tb.Helper()
+
 	// create a unique, concurrency-safe test directory under os.TempDir()
 	rootDir, err := os.MkdirTemp("", testName)
 	if err != nil {
@@ -181,15 +184,15 @@ func ResetMultiplexDBTestRoot(
 	}
 
 	// Open numDatabases database adapters
-	dbPtrs, err := createTempMemDB(t, rootDir, numDatabases)
-	require.NoError(t, err, "should create MemDB instances in temp directory")
+	dbPtrs, err := createTempMemDB(tb, rootDir, numDatabases)
+	require.NoError(tb, err, "should create MemDB instances in temp directory")
 
 	// Create a database multiplex
 	multiplex := mx.MultiplexDB{}
 	for i, db := range dbPtrs {
-		chainId := "test-chain-" + strconv.Itoa(i)
-		multiplex[chainId] = &mx.ChainDB{
-			ChainID: chainId,
+		chainID := "test-chain-" + strconv.Itoa(i)
+		multiplex[chainID] = &mx.ChainDB{
+			ChainID: chainID,
 			DB:      db,
 		}
 	}
@@ -200,11 +203,11 @@ func ResetMultiplexDBTestRoot(
 // ----------------------------------------------------------------------------
 
 func createTempMemDB(
-	t testing.TB,
+	tb testing.TB,
 	rootDir string,
 	numDatabases int,
 ) ([]dbm.DB, error) {
-	t.Helper()
+	tb.Helper()
 
 	dbPtrs := make([]dbm.DB, numDatabases)
 	dbType := dbm.BackendType("memdb")
@@ -215,9 +218,9 @@ func createTempMemDB(
 			return dbPtrs, err
 		}
 
-		dbId := "db-" + strconv.Itoa(i)
-		db, err := dbm.NewDB(dbId, dbType, dbDir)
-		require.NoError(t, err, "should create new DB instance")
+		dbID := "db-" + strconv.Itoa(i)
+		db, err := dbm.NewDB(dbID, dbType, dbDir)
+		require.NoError(tb, err, "should create new DB instance")
 
 		dbPtrs[i] = db
 		db.Close() // noop for memdb

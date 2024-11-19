@@ -247,6 +247,7 @@ func TestMultiplexGenesisDocSetValidateGenesisDocChecksum(t *testing.T) {
 		require.NoError(t, err)
 
 		genesisDocJSON, err := cmtjson.Marshal(genesisDoc)
+		require.NoError(t, err)
 		expectedSha256 := tmhash.Sum(genesisDocJSON)
 
 		err = mx.ValidateGenesisDocChecksum(

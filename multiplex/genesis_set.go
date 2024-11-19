@@ -31,10 +31,10 @@ type ChecksummedGenesisDocSet struct {
 
 var _ node.IChecksummedGenesisDoc = (*ChecksummedGenesisDocSet)(nil)
 
-// DefaultGenesisDoc() implements IChecksummedGenesisDoc
+// DefaultGenesisDoc() implements IChecksummedGenesisDoc.
 func (c *ChecksummedGenesisDocSet) DefaultGenesisDoc() (*types.GenesisDoc, error) {
 	if len(c.GenesisDocs) > 1 {
-		return nil, fmt.Errorf("no default genesis doc available in network replication mode")
+		return nil, errors.New("no default genesis doc available in network replication mode")
 	}
 
 	return &c.GenesisDocs[0], nil
@@ -44,16 +44,16 @@ func (c *ChecksummedGenesisDocSet) DefaultGenesisDoc() (*types.GenesisDoc, error
 // This method returns an error when the genesis doc cannot be
 // found for the given chainId.
 func (c *ChecksummedGenesisDocSet) GenesisDocByChainID(
-	chainId string,
+	chainID string,
 ) (*types.GenesisDoc, error) {
-	if doc, ok, _ := c.GenesisDocs.SearchGenesisDocByChainID(chainId); ok {
+	if doc, ok, _ := c.GenesisDocs.SearchGenesisDocByChainID(chainID); ok {
 		return &doc, nil
 	}
 
-	return nil, fmt.Errorf("could not find genesis doc for ChainID %s", chainId)
+	return nil, fmt.Errorf("could not find genesis doc for ChainID %s", chainID)
 }
 
-// GetChecksum() implements IChecksummedGenesisDoc
+// GetChecksum() implements IChecksummedGenesisDoc.
 func (c *ChecksummedGenesisDocSet) GetChecksum() []byte {
 	return c.Sha256Checksum
 }
@@ -65,22 +65,22 @@ func (c *ChecksummedGenesisDocSet) GetChecksum() []byte {
 // in particular their validator set and ChainID.
 type GenesisDocSet []types.GenesisDoc
 
-// SaveAs is a utility method for saving GenesisDocSet as a JSON file
+// SaveAs is a utility method for saving GenesisDocSet as a JSON file.
 func (genDocSet GenesisDocSet) SaveAs(file string) error {
 	genDocSetBytes, err := cmtjson.Marshal(genDocSet)
 	if err != nil {
 		return err
 	}
-	//fmt.Printf("docSetBytes: %s", genDocSetBytes)
-	return cmtos.WriteFile(file, genDocSetBytes, 0644)
+
+	return cmtos.WriteFile(file, genDocSetBytes, 0o644)
 }
 
 // ValidatorHash returns the Merkle root hash built using genesis doc's
 // validator hashes (as leaves).
 func (genDocSet GenesisDocSet) ValidatorHash() []byte {
 	bzs := make([][]byte, len(genDocSet))
-	for _, genDoc := range genDocSet {
-		bzs = append(bzs, genDoc.ValidatorHash())
+	for i, genDoc := range genDocSet {
+		bzs[i] = genDoc.ValidatorHash()
 	}
 	return merkle.HashFromByteSlices(bzs)
 }
@@ -88,25 +88,24 @@ func (genDocSet GenesisDocSet) ValidatorHash() []byte {
 // ValidateAndComplete checks that all necessary fields are present.
 func (genDocSet GenesisDocSet) ValidateAndComplete() error {
 	if len(genDocSet) < 1 {
-		return fmt.Errorf("encountered empty GenesisDocSet")
+		return errors.New("encountered empty GenesisDocSet")
 	}
 
 	chains := map[string]bool{}
 	for i, userGenDoc := range genDocSet {
-		chainId := userGenDoc.ChainID
+		chainID := userGenDoc.ChainID
 
-		if _, ok := chains[chainId]; ok {
-			return fmt.Errorf("duplicate ChainID in the genesis file %s", chainId)
+		if _, ok := chains[chainID]; ok {
+			return fmt.Errorf("duplicate ChainID in the genesis file %s", chainID)
 		}
 
 		err := userGenDoc.ValidateAndComplete()
-
 		if err != nil {
 			return err
 		}
 
 		// Flag for uniqueness
-		chains[chainId] = true
+		chains[chainID] = true
 		genDocSet[i] = userGenDoc
 	}
 
@@ -115,10 +114,10 @@ func (genDocSet GenesisDocSet) ValidateAndComplete() error {
 
 // SearchGenesisDocByChainID starts a search for a GenesisDoc by its ChainID.
 func (genDocSet GenesisDocSet) SearchGenesisDocByChainID(
-	chainId string,
+	chainID string,
 ) (doc types.GenesisDoc, found bool, err error) {
 	if idx := slices.IndexFunc(genDocSet, func(d types.GenesisDoc) bool {
-		return d.ChainID == chainId
+		return d.ChainID == chainID
 	}); idx > -1 {
 		return genDocSet[idx], true, nil
 	}
@@ -158,7 +157,7 @@ func GenesisDocSetFromFile(genDocSetFile string) (GenesisDocSet, error) {
 	return genDocSet, nil
 }
 
-// ChecksumGenesisDoc creates a SHA256 checksum of a [types.GenesisDoc]
+// ChecksumGenesisDoc creates a SHA256 checksum of a [types.GenesisDoc].
 func ChecksumGenesisDoc(genesisDoc *types.GenesisDoc) ([]byte, error) {
 	jsonBlob, err := cmtjson.Marshal(genesisDoc)
 	if err != nil {
@@ -173,6 +172,10 @@ func ChecksumGenesisDoc(genesisDoc *types.GenesisDoc) ([]byte, error) {
 func ValidateGenesisDocChecksum(database *ChainDB, genesisDoc *types.GenesisDoc) error {
 	// Used for verification after first run
 	genDocChecksum, err := ChecksumGenesisDoc(genesisDoc)
+	if err != nil {
+		return fmt.Errorf(
+			"error creating genesis doc set hash: %w", err)
+	}
 
 	// Get genesis doc set hash from chain's database
 	genDocSetHashFromDB, err := database.Get(genesisDocHashKey)

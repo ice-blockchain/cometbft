@@ -9,9 +9,9 @@ const (
 )
 
 // extractAddressFromChainID returns the user address extracted from a ChainID.
-func extractAddressFromChainID(chainId string) string {
+func extractAddressFromChainID(chainID string) string {
 	extractor := regexp.MustCompile(RegExpChainID)
-	matches := extractor.FindStringSubmatch(chainId)
+	matches := extractor.FindStringSubmatch(chainID)
 
 	// Returns empty given non-compatible ChainID
 	if len(matches) == 0 || len(matches) < 3 {

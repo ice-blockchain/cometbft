@@ -4,30 +4,27 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"sync"
 	"testing"
 
-	"github.com/ice-blockchain/cometbft/crypto/ed25519"
-	"github.com/ice-blockchain/cometbft/crypto/tmhash"
-	types "github.com/ice-blockchain/cometbft/types"
-	cmttime "github.com/ice-blockchain/cometbft/types/time"
-
-	sm "github.com/ice-blockchain/cometbft/state"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ice-blockchain/cometbft/crypto/ed25519"
+	"github.com/ice-blockchain/cometbft/crypto/tmhash"
 	mx "github.com/ice-blockchain/cometbft/multiplex"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/snapshots"
 	snapshottypes "github.com/ice-blockchain/cometbft/multiplex/snapshots/types"
+	sm "github.com/ice-blockchain/cometbft/state"
+	types "github.com/ice-blockchain/cometbft/types"
+	cmttime "github.com/ice-blockchain/cometbft/types/time"
 )
 
 var (
 	stateKey          = []byte("stateKey")
-	genesisDocKey     = []byte("mxGenesisDoc")
 	genesisDocHashKey = []byte("mxGenesisDocHash")
 
 	testPanicMessage = "A panic which occurs in a snapshot extension"
@@ -38,27 +35,29 @@ var (
 
 // Type-assertions ensure the compatibility of these mocks with the
 // multiplex client contract defined in the client package.
-var _ client.SnapshotMutationExtensionFn = mockSnapshotMutationExtension_WithError
-var _ client.SnapshotMutationExtensionFn = mockSnapshotMutationExtension_HashedState
-var _ client.SnapshotRestoreExtensionFn = mockSnapshotRestoreExtension_WithError
-var _ client.SnapshotRestoreExtensionFn = mockSnapshotRestoreExtension_DeepCopy
+var (
+	_ client.SnapshotMutationExtensionFn = mockSnapshotMutationExtensionWithError
+	_ client.SnapshotMutationExtensionFn = mockSnapshotMutationExtensionHashedState
+	_ client.SnapshotRestoreExtensionFn  = mockSnapshotRestoreExtensionWithError
+	_ client.SnapshotRestoreExtensionFn  = mockSnapshotRestoreExtensionDeepCopy
+)
 
-// mockSnapshotMutationExtension_WithError is an implementation that mutates the
+// mockSnapshotMutationExtensionWithError is an implementation that mutates the
 // baseState by hashing it and which panics afterwards.
 // CAUTION: this mock is intended to test panic recovery for extensions.
-func mockSnapshotMutationExtension_WithError(
+func mockSnapshotMutationExtensionWithError(
 	ctx context.Context,
 	baseState []byte,
 ) []byte {
-	nextState := tmhash.Sum(baseState[:])
+	nextState := tmhash.Sum(baseState[:]) //nolint:staticcheck,wastedassign
 	panic(errors.New(testPanicMessage))
-	return nextState
+	return nextState //nolint:govet
 }
 
-// mockSnapshotMutationExtension_HashedState is an implementation that mutates the
+// mockSnapshotMutationExtensionHashedState is an implementation that mutates the
 // baseState by hashing it and returning *only its hash*.
 // CAUTION: this mock discards the state data for a deterministic hash of it.
-func mockSnapshotMutationExtension_HashedState(
+func mockSnapshotMutationExtensionHashedState(
 	ctx context.Context,
 	baseState []byte,
 ) []byte {
@@ -66,21 +65,21 @@ func mockSnapshotMutationExtension_HashedState(
 	return nextState
 }
 
-// mockSnapshotRestoreExtension_WithError is an implementation that mutates the
+// mockSnapshotRestoreExtensionWithError is an implementation that mutates the
 // baseState by hashing it and which panics afterwards.
 // CAUTION: this mock is intended to test panic recovery for extensions.
-func mockSnapshotRestoreExtension_WithError(
+func mockSnapshotRestoreExtensionWithError(
 	ctx context.Context,
 	baseState []byte,
 ) []byte {
-	nextState := tmhash.Sum(baseState[:])
+	nextState := tmhash.Sum(baseState[:]) //nolint:staticcheck,wastedassign
 	panic(errors.New(testPanicMessage))
-	return nextState
+	return nextState //nolint:govet
 }
 
-// mockSnapshotRestoreExtension_DeepCopy is an implementation that deep-copies
+// mockSnapshotRestoreExtensionDeepCopy is an implementation that deep-copies
 // the baseState and returns it afterwards.
-func mockSnapshotRestoreExtension_DeepCopy(
+func mockSnapshotRestoreExtensionDeepCopy(
 	ctx context.Context,
 	baseState []byte,
 ) []byte {
@@ -92,18 +91,19 @@ func mockSnapshotRestoreExtension_DeepCopy(
 // Unit tests
 
 func TestMultiplexChainHistoryStoreCommit(t *testing.T) {
-	rootDir, multiplexDb := ResetMultiplexDBTestRoot(t, "test-mx-chain-state-store-app-hash", 1)
+	rootDir, multiplexDB := ResetMultiplexDBTestRoot(t, "test-mx-chain-state-store-app-hash", 1)
 	defer os.RemoveAll(rootDir)
 
-	multiplexStore := makeMultiplexChainHistoryStore(t, multiplexDb)
+	multiplexStore := makeMultiplexChainHistoryStore(t, multiplexDB)
 	genState := makeHistoricalState(t, "test-chain-0")
 	otherState := makeHistoricalState(t, "test-chain-0") // valPubKey is random
 	chainStore, ok := multiplexStore["test-chain-0"].GetInstance().(*mx.ChainHistoryStore)
 	require.Equal(t, true, ok)
-	chainStore.GetDatabase().Set(stateKey, genState.Bytes())
+	err := chainStore.GetDatabase().Set(stateKey, genState.Bytes())
+	require.NoError(t, err)
 
 	// Should modify state and save updated state to database
-	err := chainStore.Commit(*otherState)
+	err = chainStore.Commit(*otherState)
 	assert.NoError(t, err)
 
 	// Asserting results
@@ -113,14 +113,15 @@ func TestMultiplexChainHistoryStoreCommit(t *testing.T) {
 }
 
 func TestMultiplexChainHistoryStoreLoad(t *testing.T) {
-	rootDir, multiplexDb := ResetMultiplexDBTestRoot(t, "test-mx-chain-state-store-app-hash", 1)
+	rootDir, multiplexDB := ResetMultiplexDBTestRoot(t, "test-mx-chain-state-store-app-hash", 1)
 	defer os.RemoveAll(rootDir)
 
-	multiplexStore := makeMultiplexChainHistoryStore(t, multiplexDb)
+	multiplexStore := makeMultiplexChainHistoryStore(t, multiplexDB)
 	genState := makeHistoricalState(t, "test-chain-0")
 	chainStore, ok := multiplexStore["test-chain-0"].GetInstance().(*mx.ChainHistoryStore)
 	require.Equal(t, true, ok)
-	chainStore.GetDatabase().Set(stateKey, genState.Bytes())
+	err := chainStore.GetDatabase().Set(stateKey, genState.Bytes())
+	require.NoError(t, err)
 
 	// Should load the state machine from database
 	loadedState, err := chainStore.Load()
@@ -131,15 +132,16 @@ func TestMultiplexChainHistoryStoreLoad(t *testing.T) {
 }
 
 func TestMultiplexChainHistoryStoreAppHash(t *testing.T) {
-	rootDir, multiplexDb := ResetMultiplexDBTestRoot(t, "test-mx-chain-state-store-app-hash", 1)
+	rootDir, multiplexDB := ResetMultiplexDBTestRoot(t, "test-mx-chain-state-store-app-hash", 1)
 	defer os.RemoveAll(rootDir)
 
-	multiplexStore := makeMultiplexChainHistoryStore(t, multiplexDb)
+	multiplexStore := makeMultiplexChainHistoryStore(t, multiplexDB)
 	genState := makeHistoricalState(t, "test-chain-0")
 	chainStore, ok := multiplexStore["test-chain-0"].GetInstance().(*mx.ChainHistoryStore)
 	require.Equal(t, true, ok)
 
-	chainStore.GetDatabase().Set(stateKey, genState.Bytes())
+	err := chainStore.GetDatabase().Set(stateKey, genState.Bytes())
+	require.NoError(t, err)
 	loadedState, err := chainStore.Load()
 	require.NoError(t, err)
 
@@ -148,7 +150,8 @@ func TestMultiplexChainHistoryStoreAppHash(t *testing.T) {
 	assert.Equal(t, true, bytes.Equal(loadedState.AppHash, appHash))
 
 	genState.AppHash = []byte{3, 2, 1}
-	chainStore.GetDatabase().Set(stateKey, genState.Bytes())
+	err = chainStore.GetDatabase().Set(stateKey, genState.Bytes())
+	require.NoError(t, err)
 
 	// A change in AppHash should reflect as well
 	modAppHash := chainStore.AppHash()
@@ -156,15 +159,16 @@ func TestMultiplexChainHistoryStoreAppHash(t *testing.T) {
 }
 
 func TestMultiplexChainHistoryStoreSnapshot(t *testing.T) {
-	rootDir, multiplexDb := ResetMultiplexDBTestRoot(t, "test-mx-chain-state-store-snapshot", 1)
+	rootDir, multiplexDB := ResetMultiplexDBTestRoot(t, "test-mx-chain-state-store-snapshot", 1)
 	defer os.RemoveAll(rootDir)
 
-	multiplexStore := makeMultiplexChainHistoryStore(t, multiplexDb)
+	multiplexStore := makeMultiplexChainHistoryStore(t, multiplexDB)
 	historicalState := makeHistoricalState(t, "test-chain-0")
 	chainStore, ok := multiplexStore["test-chain-0"].GetInstance().(*mx.ChainHistoryStore)
 	require.Equal(t, true, ok)
 
-	chainStore.GetDatabase().Set(stateKey, historicalState.Bytes())
+	err := chainStore.GetDatabase().Set(stateKey, historicalState.Bytes())
+	require.NoError(t, err)
 
 	// Uses a WaitGroup to perform assertions sequentially
 	// Note, this wait group is necessary to make sure we wait for all
@@ -177,10 +181,10 @@ func TestMultiplexChainHistoryStoreSnapshot(t *testing.T) {
 	// - Must error and stop the snapshotting process given a 0-height
 	// - Must error and stop the snapshotting process given future height
 
-	chunks_1 := make(chan io.ReadCloser)
+	chunks1 := make(chan io.ReadCloser)
 	wg.Add(1)
 	go func() {
-		streamWriter := snapshots.NewStreamWriter(chunks_1)
+		streamWriter := snapshots.NewStreamWriter(chunks1)
 		defer streamWriter.Close()
 		require.NotNil(t, streamWriter)
 
@@ -193,19 +197,20 @@ func TestMultiplexChainHistoryStoreSnapshot(t *testing.T) {
 	}()
 	wg.Wait()
 
-	chunks_2 := make(chan io.ReadCloser)
+	chunks2 := make(chan io.ReadCloser)
 	wg.Add(1)
 	go func() {
-		streamWriter := snapshots.NewStreamWriter(chunks_2)
+		streamWriter := snapshots.NewStreamWriter(chunks2)
 		defer streamWriter.Close()
 
 		require.NotNil(t, streamWriter)
 
 		historicalState.LastBlockHeight = 1000
-		chainStore.GetDatabase().Set(stateKey, historicalState.Bytes())
+		err := chainStore.GetDatabase().Set(stateKey, historicalState.Bytes())
+		require.NoError(t, err)
 
 		// Should error with invalid future height
-		err := chainStore.Snapshot(1001, streamWriter)
+		err = chainStore.Snapshot(1001, streamWriter)
 		assert.Error(t, err)
 
 		// Defer order is LIFO
@@ -216,17 +221,18 @@ func TestMultiplexChainHistoryStoreSnapshot(t *testing.T) {
 	// ----------------
 	// OK
 
-	chunks_3 := make(chan io.ReadCloser)
+	chunks3 := make(chan io.ReadCloser)
 	wg.Add(1)
 	go func() {
-		streamWriter := snapshots.NewStreamWriter(chunks_3)
+		streamWriter := snapshots.NewStreamWriter(chunks3)
 		defer streamWriter.Close()
 		require.NotNil(t, streamWriter)
 
 		newState := makeSnapshottableState(t, "test-chain-0", 1010)
-		chainStore.GetDatabase().Set(stateKey, newState.Bytes())
+		err := chainStore.GetDatabase().Set(stateKey, newState.Bytes())
+		require.NoError(t, err)
 
-		err := chainStore.Snapshot(uint64(1010), streamWriter)
+		err = chainStore.Snapshot(uint64(1010), streamWriter)
 		require.NoError(t, err)
 
 		// Defer order is LIFO
@@ -235,7 +241,7 @@ func TestMultiplexChainHistoryStoreSnapshot(t *testing.T) {
 	wg.Wait()
 
 	// Retrieving chunks should not error
-	for reader := range chunks_3 {
+	for reader := range chunks3 {
 		_, err := io.Copy(io.Discard, reader)
 		require.NoError(t, err)
 		err = reader.Close()
@@ -244,15 +250,16 @@ func TestMultiplexChainHistoryStoreSnapshot(t *testing.T) {
 }
 
 func TestMultiplexChainHistoryStoreSnapshot_DataConsistency(t *testing.T) {
-	rootDir, multiplexDb := ResetMultiplexDBTestRoot(t, "test-mx-chain-state-store-snapshot-dataconsistency", 1)
+	rootDir, multiplexDB := ResetMultiplexDBTestRoot(t, "test-mx-chain-state-store-snapshot-dataconsistency", 1)
 	defer os.RemoveAll(rootDir)
 
-	multiplexStore := makeMultiplexChainHistoryStore(t, multiplexDb)
+	multiplexStore := makeMultiplexChainHistoryStore(t, multiplexDB)
 	historicalState := makeHistoricalState(t, "test-chain-0")
 	chainStore, ok := multiplexStore["test-chain-0"].GetInstance().(*mx.ChainHistoryStore)
 	require.Equal(t, true, ok)
 
-	chainStore.GetDatabase().Set(stateKey, historicalState.Bytes())
+	err := chainStore.GetDatabase().Set(stateKey, historicalState.Bytes())
+	require.NoError(t, err)
 
 	// Uses a WaitGroup to perform assertions sequentially
 	// Note, this wait group is necessary to make sure we wait for all
@@ -265,27 +272,27 @@ func TestMultiplexChainHistoryStoreSnapshot_DataConsistency(t *testing.T) {
 	// - Must error and stop the snapshotting process given faulty chunks writer.
 	// - Must error and stop the snapshotting process given failing extension.
 
-	expectedError := fmt.Sprintf(
-		"CLIENT PANIC: failing snapshot mutation extension: %s", testPanicMessage)
+	expectedError := "CLIENT PANIC: failing snapshot mutation extension: " + testPanicMessage
 
-	chunks_1 := make(chan io.ReadCloser)
+	chunks1 := make(chan io.ReadCloser)
 	wg.Add(1)
 	go func() {
-		streamWriter := snapshots.NewStreamWriter(chunks_1)
-		defer streamWriter.Close() // also closes chunks_1
+		streamWriter := snapshots.NewStreamWriter(chunks1)
+		defer streamWriter.Close() // also closes chunks1
 		require.NotNil(t, streamWriter)
 
 		newState := makeSnapshottableState(t, "test-chain-0", 1010)
-		chainStore.GetDatabase().Set(stateKey, newState.Bytes())
+		err := chainStore.GetDatabase().Set(stateKey, newState.Bytes())
+		require.NoError(t, err)
 
 		// Forces a FAILING snapshot mutation extension
 		errExtensionInjecter := mx.WithSnapshotMutationExtension(
-			mockSnapshotMutationExtension_WithError,
+			mockSnapshotMutationExtensionWithError,
 		)
 		errExtensionInjecter(chainStore)
 
 		// conditions are fine, except the failing extension
-		err := chainStore.Snapshot(uint64(1010), streamWriter)
+		err = chainStore.Snapshot(uint64(1010), streamWriter)
 
 		// Returning an error means that the snapshotting process is STOPPED!
 		assert.Error(t, err, "should stop snapshotting process given failing extension")
@@ -299,24 +306,25 @@ func TestMultiplexChainHistoryStoreSnapshot_DataConsistency(t *testing.T) {
 	// ----------------
 	// OK
 
-	chunks_2 := make(chan io.ReadCloser)
+	chunks2 := make(chan io.ReadCloser)
 	wg.Add(1)
 	go func() {
-		streamWriter := snapshots.NewStreamWriter(chunks_2)
-		defer streamWriter.Close() // also closes chunks_2
+		streamWriter := snapshots.NewStreamWriter(chunks2)
+		defer streamWriter.Close() // also closes chunks2
 		require.NotNil(t, streamWriter)
 
 		newState := makeSnapshottableState(t, "test-chain-0", 1010)
-		chainStore.GetDatabase().Set(stateKey, newState.Bytes())
+		err := chainStore.GetDatabase().Set(stateKey, newState.Bytes())
+		require.NoError(t, err)
 
 		// Forces a WORKING snapshot mutation extension
 		okExtensionInjecter := mx.WithSnapshotMutationExtension(
-			mockSnapshotMutationExtension_HashedState,
+			mockSnapshotMutationExtensionHashedState,
 		)
 		okExtensionInjecter(chainStore)
 
 		// Snapshotting state should not produce an error this time around.
-		err := chainStore.Snapshot(uint64(1010), streamWriter)
+		err = chainStore.Snapshot(uint64(1010), streamWriter)
 
 		// Should not error given a working extension
 		assert.NoError(t, err)
@@ -327,7 +335,7 @@ func TestMultiplexChainHistoryStoreSnapshot_DataConsistency(t *testing.T) {
 	wg.Wait()
 
 	// Retrieving chunks should not produce errors given a working extension.
-	for reader := range chunks_2 {
+	for reader := range chunks2 {
 		_, err := io.Copy(io.Discard, reader)
 		require.NoError(t, err)
 		err = reader.Close()
@@ -336,10 +344,10 @@ func TestMultiplexChainHistoryStoreSnapshot_DataConsistency(t *testing.T) {
 }
 
 func TestMultiplexChainHistoryStoreRestore(t *testing.T) {
-	rootDir, multiplexDb := ResetMultiplexDBTestRoot(t, "test-mx-chain-state-store-restore", 2)
+	rootDir, multiplexDB := ResetMultiplexDBTestRoot(t, "test-mx-chain-state-store-restore", 2)
 	defer os.RemoveAll(rootDir)
 
-	multiplexStore := makeMultiplexChainHistoryStore(t, multiplexDb)
+	multiplexStore := makeMultiplexChainHistoryStore(t, multiplexDB)
 	newState := makeSnapshottableState(t, "test-chain-0", 1010)
 	chainStore, ok := multiplexStore["test-chain-0"].GetInstance().(*mx.ChainHistoryStore)
 	require.Equal(t, true, ok)
@@ -350,8 +358,10 @@ func TestMultiplexChainHistoryStoreRestore(t *testing.T) {
 	otherStore, ok := multiplexStore["test-chain-1"].GetInstance().(*mx.ChainHistoryStore)
 	require.Equal(t, true, ok)
 
-	chainStore.GetDatabase().Set(stateKey, newState.Bytes())
-	otherStore.GetDatabase().Set(stateKey, otherState.Bytes())
+	err := chainStore.GetDatabase().Set(stateKey, newState.Bytes())
+	require.NoError(t, err)
+	err = otherStore.GetDatabase().Set(stateKey, otherState.Bytes())
+	require.NoError(t, err)
 
 	chunks := make(chan io.ReadCloser)
 	go func() {
@@ -381,22 +391,24 @@ func TestMultiplexChainHistoryStoreRestore(t *testing.T) {
 }
 
 func TestMultiplexChainHistoryStoreRestore_DataConsistency(t *testing.T) {
-	rootDir, multiplexDb := ResetMultiplexDBTestRoot(t, "test-mx-chain-state-store-restore-dataconsistency", 2)
+	rootDir, multiplexDB := ResetMultiplexDBTestRoot(t, "test-mx-chain-state-store-restore-dataconsistency", 2)
 	defer os.RemoveAll(rootDir)
 
-	multiplexStore := makeMultiplexChainHistoryStore(t, multiplexDb)
-	newState := makeSnapshottableState(t, "test-chain-0", 1010)
+	multiplexStore := makeMultiplexChainHistoryStore(t, multiplexDB)
+	newState := makeSnapshottableState(t, "test-chain-1", 1010)
 	chainStore, ok := multiplexStore["test-chain-0"].GetInstance().(*mx.ChainHistoryStore)
 	require.Equal(t, true, ok)
 
 	// using 2 different state instances (but same ChainID)
-	otherState := makeSnapshottableState(t, "test-chain-0", 500)
+	otherState := makeSnapshottableState(t, "test-chain-1", 500)
 	otherState.AppHash = []byte{3, 2, 1} // different before restoration
 	otherStore, ok := multiplexStore["test-chain-1"].GetInstance().(*mx.ChainHistoryStore)
 	require.Equal(t, true, ok)
 
-	chainStore.GetDatabase().Set(stateKey, newState.Bytes())
-	otherStore.GetDatabase().Set(stateKey, otherState.Bytes())
+	err := chainStore.GetDatabase().Set(stateKey, newState.Bytes())
+	require.NoError(t, err)
+	err = otherStore.GetDatabase().Set(stateKey, otherState.Bytes())
+	require.NoError(t, err)
 
 	// Uses a WaitGroup to perform assertions sequentially
 	// Note, this wait group is necessary to make sure we wait for all
@@ -409,8 +421,7 @@ func TestMultiplexChainHistoryStoreRestore_DataConsistency(t *testing.T) {
 	// - Must error and stop the restoration process given faulty snapshot.
 	// - Must error and stop the restoration process given failing extension.
 
-	expectedError := fmt.Sprintf(
-		"CLIENT PANIC: failing snapshot restoration extension: %s", testPanicMessage)
+	expectedError := "CLIENT PANIC: failing snapshot restoration extension: " + testPanicMessage
 
 	wg.Add(1)
 	go func() {
@@ -430,7 +441,7 @@ func TestMultiplexChainHistoryStoreRestore_DataConsistency(t *testing.T) {
 
 		// Forces a FAILING snapshot restoration extension
 		errExtensionInjecter := mx.WithSnapshotRestoreExtension(
-			mockSnapshotRestoreExtension_WithError,
+			mockSnapshotRestoreExtensionWithError,
 		)
 		errExtensionInjecter(otherStore)
 
@@ -467,7 +478,7 @@ func TestMultiplexChainHistoryStoreRestore_DataConsistency(t *testing.T) {
 
 		// Forces a WORKING snapshot restoration extension
 		okExtensionInjecter := mx.WithSnapshotRestoreExtension(
-			mockSnapshotRestoreExtension_DeepCopy,
+			mockSnapshotRestoreExtensionDeepCopy,
 		)
 		okExtensionInjecter(otherStore)
 
@@ -493,14 +504,14 @@ func TestMultiplexChainHistoryStoreRestore_DataConsistency(t *testing.T) {
 
 func makeMultiplexChainHistoryStore(
 	t *testing.T,
-	multiplexDb mx.MultiplexDB,
+	multiplexDB mx.MultiplexDB,
 ) mx.MultiplexMap[*mx.ChainHistoryStore] {
 	t.Helper()
 
-	multiplexChainStore := make(mx.MultiplexMap[*mx.ChainHistoryStore], len(multiplexDb))
-	for chainId, db := range multiplexDb {
-		multiplexChainStore[chainId] = mx.NewChainInstance(chainId, &mx.ChainHistoryStore{
-			ChainID: chainId,
+	multiplexChainStore := make(mx.MultiplexMap[*mx.ChainHistoryStore], len(multiplexDB))
+	for chainID, db := range multiplexDB {
+		multiplexChainStore[chainID] = mx.NewChainInstance(chainID, &mx.ChainHistoryStore{
+			ChainID: chainID,
 			DBStore: sm.NewDBStore(db, sm.StoreOptions{
 				DiscardABCIResponses: false,
 				DBKeyLayout:          "v2",
@@ -511,24 +522,24 @@ func makeMultiplexChainHistoryStore(
 	return multiplexChainStore
 }
 
-func makeHistoricalState(t *testing.T, chainId string) *mx.HistoricalState {
+func makeHistoricalState(t *testing.T, chainID string) *mx.HistoricalState {
 	t.Helper()
 
 	// Augments a sm.State to form a mx.HistoricalState
-	state := makeGenesisState(t, chainId)
+	state := makeGenesisState(t, chainID)
 	return &mx.HistoricalState{
 		State: &state,
 		Data:  []byte(`{"account_owner":"Charlie"}`),
 	}
 }
 
-func makeGenesisState(t *testing.T, chainId string) sm.State {
+func makeGenesisState(t *testing.T, chainID string) sm.State {
 	t.Helper()
 
 	valPubKey := ed25519.GenPrivKey().PubKey()
 	state, err := sm.MakeGenesisState(&types.GenesisDoc{
 		GenesisTime:   cmttime.Now(),
-		ChainID:       chainId,
+		ChainID:       chainID,
 		InitialHeight: 1000,
 		Validators: []types.GenesisValidator{{
 			Address: valPubKey.Address(),
@@ -547,12 +558,12 @@ func makeGenesisState(t *testing.T, chainId string) sm.State {
 
 func makeSnapshottableState(
 	t *testing.T,
-	chainId string,
+	chainID string,
 	setHeight int64,
 ) *mx.HistoricalState {
 	t.Helper()
 
-	state := makeHistoricalState(t, chainId)
+	state := makeHistoricalState(t, chainID)
 
 	state.LastBlockHeight = setHeight
 	state.LastBlockID = types.BlockID{}

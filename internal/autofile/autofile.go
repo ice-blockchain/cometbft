@@ -104,7 +104,7 @@ func AutoFileClosePeriod(duration time.Duration) func(*AutoFile) {
 	}
 }
 
-// GetClosePeriod returns the close period duration (defaults to autoFileClosePeriod)
+// GetClosePeriod returns the close period duration (defaults to autoFileClosePeriod).
 func (af *AutoFile) GetClosePeriod() time.Duration {
 	if af.closePeriod == 0 {
 		return autoFileClosePeriod

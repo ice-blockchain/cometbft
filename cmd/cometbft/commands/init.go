@@ -2,6 +2,7 @@ package commands
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,12 +15,11 @@ import (
 	kt "github.com/ice-blockchain/cometbft/internal/keytypes"
 	cmtos "github.com/ice-blockchain/cometbft/internal/os"
 	cmtrand "github.com/ice-blockchain/cometbft/internal/rand"
+	mx "github.com/ice-blockchain/cometbft/multiplex"
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/privval"
 	"github.com/ice-blockchain/cometbft/types"
 	cmttime "github.com/ice-blockchain/cometbft/types/time"
-
-	mx "github.com/ice-blockchain/cometbft/multiplex"
 )
 
 // InitFilesCmd initializes a fresh CometBFT instance.
@@ -31,7 +31,7 @@ var InitFilesCmd = &cobra.Command{
 
 func init() {
 	InitFilesCmd.Flags().StringVarP(&keyType, "key-type", "k", ed25519.KeyType, fmt.Sprintf("private key type (one of %s)", kt.SupportedKeyTypesStr()))
-	InitFilesCmd.Flags().BoolVarP(&enableMultiplex, "multiplex", "m", false, fmt.Sprintf("whether to enable the multiplex mode to run concurrent nodes"))
+	InitFilesCmd.Flags().BoolVarP(&enableMultiplex, "multiplex", "m", false, "whether to enable the multiplex mode to run concurrent nodes")
 	InitFilesCmd.Flags().StringVarP(&seedsFile, "seeds-file", "", "", "path to a JSON file containing chain seeds mapped by ChainID.")
 	InitFilesCmd.Flags().StringVarP(&usersFile, "users-file", "", "", "path to a JSON file containing ChainID slices by user address.")
 }
@@ -128,13 +128,13 @@ func initMultiplexFilesWithConfig(config *cfg.Config) error {
 	genesisFile := config.GenesisFile()
 	hasUsersFile := len(usersFile) > 0 && cmtos.FileExists(usersFile)
 	if !cmtos.FileExists(genesisFile) && !hasUsersFile {
-		return fmt.Errorf("missing required configuration: genesis.json or users.json")
+		return errors.New("missing required configuration: genesis.json or users.json")
 	}
 
 	// Generate or re-create the list of user chains
 	// - If genesis.json is present, use it to re-create a map
 	// - Otherwise, users.json must be present to create a map
-	userChains := map[string][]string{}
+	var userChains map[string][]string
 	if cmtos.FileExists(genesisFile) {
 		// Read the genesis.json file to re-create the map of slices with
 		// ChainIDs by user addresses.
@@ -192,6 +192,9 @@ func initMultiplexFilesWithConfig(config *cfg.Config) error {
 	// Note that this executes configuration extensions (SyncConfig, SeedConfig)
 	// See also: client.InjectSyncConfig(), client.InjectSeedConfig()
 	chainRegistry, err := mx.NewChainRegistry(&config.MultiplexConfig)
+	if err != nil {
+		return err
+	}
 
 	// Generate or load the node key file
 	nodeKeyFile := config.NodeKeyFile()
@@ -215,10 +218,10 @@ func initMultiplexFilesWithConfig(config *cfg.Config) error {
 		userConfDir := filepath.Join(config.RootDir, cfg.DefaultConfigDir, userAddress)
 		userDataDir := filepath.Join(config.RootDir, cfg.DefaultDataDir, userAddress)
 
-		for _, chainId := range chainIds {
+		for _, chainID := range chainIds {
 			// Key file is in config/, State file is in data/
-			privValKeyDir := filepath.Join(userConfDir, chainId)
-			privValStateDir := filepath.Join(userDataDir, chainId)
+			privValKeyDir := filepath.Join(userConfDir, chainID)
+			privValStateDir := filepath.Join(userDataDir, chainID)
 			privValKeyFile := filepath.Join(privValKeyDir, filepath.Base(config.PrivValidatorKeyFile()))
 			privValStateFile := filepath.Join(privValStateDir, filepath.Base(config.PrivValidatorStateFile()))
 
@@ -233,7 +236,7 @@ func initMultiplexFilesWithConfig(config *cfg.Config) error {
 			}
 
 			// May be necessary for generation of a genesis file
-			privValidators[chainId] = filePV
+			privValidators[chainID] = filePV
 
 			// Create multiplex configuration overwrite, the returned config
 			// object contains the updated listen addresses, WAL file, seed
@@ -241,11 +244,11 @@ func initMultiplexFilesWithConfig(config *cfg.Config) error {
 			configOverwrite := mx.NewConfigOverwrite(
 				config,
 				chainRegistry,
-				chainId,
+				chainID,
 			)
 
 			// Store node config in config/%address%/%ChainID%/config.toml
-			configDir := filepath.Join(userConfDir, chainId)
+			configDir := filepath.Join(userConfDir, chainID)
 			cfg.EnsureConfigFile(configDir, configOverwrite)
 		}
 	}
@@ -256,7 +259,10 @@ func initMultiplexFilesWithConfig(config *cfg.Config) error {
 	if cmtos.FileExists(genFile) {
 		logger.Info("Found genesis file", "path", genFile)
 	} else {
-		createInitialGenesisDocSet(config, privValidators)
+		err := createInitialGenesisDocSet(config, privValidators)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -273,10 +279,10 @@ func createInitialGenesisDocSet(
 		// e.g. /tmp/mx-chain/config/%address%/
 		userConfDir := filepath.Join(config.RootDir, cfg.DefaultConfigDir, userAddress)
 
-		for _, chainId := range chainIds {
-			privVal, ok := privValidators[chainId]
+		for _, chainID := range chainIds {
+			privVal, ok := privValidators[chainID]
 			if !ok {
-				return fmt.Errorf("could not find a priv validator for ChainID %s", chainId)
+				return fmt.Errorf("could not find a priv validator for ChainID %s", chainID)
 			}
 
 			valPubKey, err := privVal.GetPubKey()
@@ -288,7 +294,7 @@ func createInitialGenesisDocSet(
 			// set to the priv validators loaded/generated with initMultiplexFilesWithConfig
 			// TODO(midas): validators voting power = 10, probably needs change?
 			genesisDoc := types.GenesisDoc{
-				ChainID:         chainId,
+				ChainID:         chainID,
 				GenesisTime:     cmttime.Now(),
 				ConsensusParams: types.DefaultConsensusParams(),
 				Validators: []types.GenesisValidator{{
@@ -300,14 +306,14 @@ func createInitialGenesisDocSet(
 
 			// Store individual genesis docs (per replicated chain)
 			// i.e.: %root%/config/%address%/%ChainID%/genesis.json
-			genesisDocFile := filepath.Join(userConfDir, chainId, "genesis.json")
+			genesisDocFile := filepath.Join(userConfDir, chainID, "genesis.json")
 			if err := genesisDoc.SaveAs(genesisDocFile); err != nil {
 				return err
 			}
 
 			// Store in memory in genesis doc set
 			genesisDocSet = append(genesisDocSet, genesisDoc)
-			logger.Info("Generated genesis doc", "ChainID", chainId)
+			logger.Info("Generated genesis doc", "ChainID", chainID)
 		}
 	}
 
@@ -352,23 +358,23 @@ func loadChainsFromUsersFile() (map[string][]string, error) {
 		// or parse a complete ChainID, e.g.: mx-chain-...-...
 		userChains[userAddress] = make([]string, len(fingerprints))
 		for i, fp := range fingerprints {
-			var chainId mx.ExtendedChainID
+			var chainID mx.ExtendedChainID
 
 			if strings.HasPrefix(fp, mx.GetMultiplexPrefix()) {
 				// Parses a ChainID, must contain address and fingerprint
-				chainId, err = mx.NewExtendedChainIDFromLegacy(fp)
+				chainID, err = mx.NewExtendedChainIDFromLegacy(fp)
 				if err != nil {
 					return nil, err
 				}
 			} else {
 				// Parses fingerprint, must be 8-bytes in hexadecimal
-				chainId, err = mx.NewExtendedChainID(userAddress, fp)
+				chainID, err = mx.NewExtendedChainID(userAddress, fp)
 				if err != nil {
 					return nil, err
 				}
 			}
 
-			userChains[userAddress][i] = chainId.String()
+			userChains[userAddress][i] = chainID.String()
 		}
 	}
 

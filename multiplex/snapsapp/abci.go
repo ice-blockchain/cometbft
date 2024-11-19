@@ -8,7 +8,6 @@ import (
 	"strconv"
 
 	abcitypes "github.com/ice-blockchain/cometbft/abci/types"
-
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 	snapshottypes "github.com/ice-blockchain/cometbft/multiplex/snapshots/types"
 )
@@ -23,41 +22,43 @@ import (
 // to overwrite an application's validator set and consensus params, as well
 // as to set an initial state to be replicated.
 //
-// InitChain implements [abcitypes.Application]
+// InitChain implements [abcitypes.Application].
 func (app *SnapsApp) InitChain(
 	ctx context.Context,
 	req *abcitypes.InitChainRequest,
 ) (*abcitypes.InitChainResponse, error) {
 	// Retrieve ChainID from request for InitChain
-	chainId := req.ChainId
+	chainID := req.ChainId
 
 	// Make sure we handle only relevant snapshotting routines
-	if !app.reactor.HasNetwork(chainId) {
-		return nil, fmt.Errorf("invalid chain-id on InitChain: %s is not replicated", chainId)
+	if !app.reactor.HasNetwork(chainID) {
+		return nil, fmt.Errorf("invalid chain-id on InitChain: %s is not replicated", chainID)
 	}
 
 	// Without snapshotter for this chain, we stop here
-	if _, ok := app.snapshotManagers[chainId]; !ok {
+	if _, ok := app.snapshotManagers[chainID]; !ok {
 		return &abcitypes.InitChainResponse{}, nil
 	}
 
 	// On a new chain, we consider the init chain block height as 0, even though
 	// req.InitialHeight is 1 by default.
 	app.ihMutex.Lock()
-	app.initialHeights[chainId] = req.InitialHeight
-	if app.initialHeights[chainId] == 0 { // If initial height is 0, set it to 1
-		app.initialHeights[chainId] = 1
+	app.initialHeights[chainID] = req.InitialHeight
+	if app.initialHeights[chainID] == 0 { // If initial height is 0, set it to 1
+		app.initialHeights[chainID] = 1
 	}
 	app.ihMutex.Unlock()
 
-	app.setFinalizeBlockHeight(chainId, 0)
+	if err := app.setFinalizeBlockHeight(chainID, 0); err != nil {
+		return nil, fmt.Errorf("could not update block height for %s from InitChain: %w", chainID, err)
+	}
 
 	// if req.InitialHeight is > 1, then we set the initial version on the app
 	app.chMutex.Lock()
 	if req.InitialHeight > 1 {
-		app.currentHeights[chainId] = req.InitialHeight
+		app.currentHeights[chainID] = req.InitialHeight
 	} else {
-		app.currentHeights[chainId] = 0
+		app.currentHeights[chainID] = 0
 	}
 	app.chMutex.Unlock()
 	app.logger.Info("InitChain", "initialHeight", req.InitialHeight, "chainID", req.ChainId)
@@ -79,36 +80,36 @@ func (app *SnapsApp) InitChain(
 // This method is called upon crash-recovery and after executing state-sync
 // to verify the loaded AppHash.
 //
-// Info implements [abcitypes.Application]
+// Info implements [abcitypes.Application].
 func (app *SnapsApp) Info(
 	ctx context.Context,
 	req *abcitypes.InfoRequest,
 ) (*abcitypes.InfoResponse, error) {
 	// Retrieve ChainID from context
-	chainId := ctx.Value("ChainID").(string)
+	chainID := ctx.Value(client.KeyChainID).(string)
 
 	// Make sure we handle only relevant info requests
-	if !app.reactor.HasNetwork(chainId) {
-		app.logger.Error("received irrelevant snapshot chain identifier (Info)", "chain_id", chainId)
+	if !app.reactor.HasNetwork(chainID) {
+		app.logger.Error("received irrelevant snapshot chain identifier (Info)", "chain_id", chainID)
 		return &abcitypes.InfoResponse{}, nil
 	}
 
 	// Without snapshotter for this chain, we stop here
-	if _, ok := app.snapshotManagers[chainId]; !ok {
-		app.logger.Error("snapshot manager not configured (Info)", "chain_id", chainId)
+	if _, ok := app.snapshotManagers[chainID]; !ok {
+		app.logger.Error("snapshot manager not configured (Info)", "chain_id", chainID)
 		return &abcitypes.InfoResponse{}, nil
 	}
 
-	snapshotter := app.snapshotManagers[chainId].GetSnapshotter()
+	snapshotter := app.snapshotManagers[chainID].GetSnapshotter()
 	stateMachine, err := snapshotter.GetStateMachine()
 	if err != nil {
-		app.logger.Error("could not load state machine (Info)", "chain_id", chainId)
-		return &abcitypes.InfoResponse{}, nil
+		app.logger.Error("could not load state machine (Info)", "chain_id", chainID)
+		return &abcitypes.InfoResponse{}, err
 	}
 
 	// The ChainID is included in the response data
 	return &abcitypes.InfoResponse{
-		Data:             chainId,
+		Data:             chainID,
 		Version:          snapsappVersion,
 		AppVersion:       AppVersion,
 		LastBlockHeight:  stateMachine.LastBlockHeight,
@@ -117,7 +118,7 @@ func (app *SnapsApp) Info(
 }
 
 // TODO(midas): Query not yet supported as of v1
-// Query implements [abcitypes.Application]
+// Query implements [abcitypes.Application].
 func (app *SnapsApp) Query(context.Context, *abcitypes.QueryRequest) (*abcitypes.QueryResponse, error) {
 	return &abcitypes.QueryResponse{Code: abcitypes.CodeTypeOK}, nil
 }
@@ -131,31 +132,31 @@ func (app *SnapsApp) Query(context.Context, *abcitypes.QueryRequest) (*abcitypes
 // This method is called when a peer requests for snapshots. Note that the
 // response includes only snapshot metadata, not the snapshot chunks.
 //
-// ListSnapshots implements [abcitypes.Application]
+// ListSnapshots implements [abcitypes.Application].
 func (app *SnapsApp) ListSnapshots(
 	ctx context.Context,
 	req *abcitypes.ListSnapshotsRequest,
 ) (*abcitypes.ListSnapshotsResponse, error) {
 	// Retrieve ChainID from context
-	chainId := ctx.Value("ChainID").(string)
+	chainID := ctx.Value(client.KeyChainID).(string)
 
 	resp := &abcitypes.ListSnapshotsResponse{Snapshots: []*abcitypes.Snapshot{}}
 
 	// Make sure we handle only relevant snapshotting routines
-	if !app.reactor.HasNetwork(chainId) {
-		return nil, fmt.Errorf("invalid chain-id on ListSnapshots: %s is not replicated", chainId)
+	if !app.reactor.HasNetwork(chainID) {
+		return nil, fmt.Errorf("invalid chain-id on ListSnapshots: %s is not replicated", chainID)
 	}
 
 	// Without snapshotter for this chain, we stop here
-	if _, ok := app.snapshotManagers[chainId]; !ok {
-		app.logger.Error("snapshot manager not configured (ListSnapshots)", "chain_id", chainId)
+	if _, ok := app.snapshotManagers[chainID]; !ok {
+		app.logger.Error("snapshot manager not configured (ListSnapshots)", "chain_id", chainID)
 		return resp, nil
 	}
 
 	// Read recent snapshots from filesystem
-	snapshots, err := app.snapshotManagers[chainId].List()
+	snapshots, err := app.snapshotManagers[chainID].List()
 	if err != nil {
-		app.logger.Error("failed to list snapshots", "chain_id", chainId, "err", err)
+		app.logger.Error("failed to list snapshots", "chain_id", chainID, "err", err)
 		return nil, err
 	}
 
@@ -163,7 +164,7 @@ func (app *SnapsApp) ListSnapshots(
 	for _, snapshot := range snapshots {
 		abciSnapshot, err := snapshot.ToABCI()
 		if err != nil {
-			app.logger.Error("failed to convert ABCI snapshots", "chain_id", chainId, "err", err)
+			app.logger.Error("failed to convert ABCI snapshots", "chain_id", chainID, "err", err)
 			return nil, err
 		}
 
@@ -180,41 +181,41 @@ func (app *SnapsApp) ListSnapshots(
 // one to sync. It will initiate the download of snapshot chunks and restore
 // the snapshot data. Note that this method does not *apply* the snapshot.
 //
-// ListSnapshots implements [abcitypes.Application]
+// ListSnapshots implements [abcitypes.Application].
 func (app *SnapsApp) OfferSnapshot(
 	ctx context.Context,
 	req *abcitypes.OfferSnapshotRequest,
 ) (*abcitypes.OfferSnapshotResponse, error) {
 	// Retrieve ChainID from context
-	chainId := ctx.Value("ChainID").(string)
+	chainID := ctx.Value(client.KeyChainID).(string)
 
 	// Make sure we handle only relevant snapshotting routines
-	if !app.reactor.HasNetwork(chainId) {
-		app.logger.Error("received irrelevant snapshot chain identifier (OfferSnapshot)", "chain_id", chainId)
+	if !app.reactor.HasNetwork(chainID) {
+		app.logger.Error("received irrelevant snapshot chain identifier (OfferSnapshot)", "chain_id", chainID)
 		return &abcitypes.OfferSnapshotResponse{Result: abcitypes.OFFER_SNAPSHOT_RESULT_ABORT}, nil
 	}
 
 	// Without snapshotter for this chain, we stop here
-	if _, ok := app.snapshotManagers[chainId]; !ok {
-		app.logger.Error("snapshot manager not configured (OfferSnapshot)", "chain_id", chainId)
+	if _, ok := app.snapshotManagers[chainID]; !ok {
+		app.logger.Error("snapshot manager not configured (OfferSnapshot)", "chain_id", chainID)
 		return &abcitypes.OfferSnapshotResponse{Result: abcitypes.OFFER_SNAPSHOT_RESULT_ABORT}, nil
 	}
 
 	// Obviously we do not permit nil-snapshots
 	if req.Snapshot == nil {
-		app.logger.Error("received nil snapshot", "chain_id", chainId)
+		app.logger.Error("received nil snapshot", "chain_id", chainID)
 		return &abcitypes.OfferSnapshotResponse{Result: abcitypes.OFFER_SNAPSHOT_RESULT_REJECT}, nil
 	}
 
 	// Unmarshal snapshots from ABCI transport
 	snapshot, err := snapshottypes.SnapshotFromABCI(req.Snapshot)
 	if err != nil {
-		app.logger.Error("failed to decode snapshot metadata", "chain_id", chainId, "err", err)
+		app.logger.Error("failed to decode snapshot metadata", "chain_id", chainID, "err", err)
 		return &abcitypes.OfferSnapshotResponse{Result: abcitypes.OFFER_SNAPSHOT_RESULT_REJECT}, nil
 	}
 
 	// Verifies snapshot format and start downloading chunks
-	err = app.snapshotManagers[chainId].Restore(snapshot)
+	err = app.snapshotManagers[chainID].Restore(snapshot)
 	switch {
 	case err == nil:
 		return &abcitypes.OfferSnapshotResponse{Result: abcitypes.OFFER_SNAPSHOT_RESULT_ACCEPT}, nil
@@ -225,7 +226,7 @@ func (app *SnapsApp) OfferSnapshot(
 	case errors.Is(err, snapshottypes.ErrInvalidMetadata):
 		app.logger.Error(
 			"rejecting invalid snapshot",
-			"chain_id", chainId,
+			"chain_id", chainID,
 			"height", req.Snapshot.Height,
 			"format", req.Snapshot.Format,
 			"err", err,
@@ -239,7 +240,7 @@ func (app *SnapsApp) OfferSnapshot(
 		// can lead to more complicated situations.
 		app.logger.Error(
 			"failed to restore snapshot",
-			"chain_id", chainId,
+			"chain_id", chainID,
 			"height", req.Snapshot.Height,
 			"format", req.Snapshot.Format,
 			"err", err,
@@ -257,29 +258,29 @@ func (app *SnapsApp) OfferSnapshot(
 // This method is called to retrieve snapshot chunks which may be transported
 // to other peers, i.e. asynchronously called when a peer downloads chunks.
 //
-// LoadSnapshotChunk implements [abcitypes.Application]
+// LoadSnapshotChunk implements [abcitypes.Application].
 func (app *SnapsApp) LoadSnapshotChunk(
 	ctx context.Context,
 	req *abcitypes.LoadSnapshotChunkRequest,
 ) (*abcitypes.LoadSnapshotChunkResponse, error) {
 	// Retrieve ChainID from context
-	chainId := ctx.Value("ChainID").(string)
+	chainID := ctx.Value(client.KeyChainID).(string)
 
 	// Make sure we handle only relevant snapshotting routines
-	if !app.reactor.HasNetwork(chainId) {
-		return nil, fmt.Errorf("invalid chain-id on ListSnapshots: %s is not replicated", chainId)
+	if !app.reactor.HasNetwork(chainID) {
+		return nil, fmt.Errorf("invalid chain-id on ListSnapshots: %s is not replicated", chainID)
 	}
 
 	// Without snapshotter for this chain, we stop here
-	if _, ok := app.snapshotManagers[chainId]; !ok {
+	if _, ok := app.snapshotManagers[chainID]; !ok {
 		return &abcitypes.LoadSnapshotChunkResponse{}, nil
 	}
 
-	chunk, err := app.snapshotManagers[chainId].LoadChunk(req.Height, req.Format, req.Chunk)
+	chunk, err := app.snapshotManagers[chainID].LoadChunk(req.Height, req.Format, req.Chunk)
 	if err != nil {
 		app.logger.Error(
 			"failed to load snapshot chunk",
-			"chain_id", chainId,
+			"chain_id", chainID,
 			"height", req.Height,
 			"format", req.Format,
 			"chunk", req.Chunk,
@@ -298,28 +299,28 @@ func (app *SnapsApp) LoadSnapshotChunk(
 // updating the filesystem. When all snapshot chunks have finished downloading,
 // the snapshot will be considered fully applied.
 //
-// ApplySnapshotChunk implements [abcitypes.Application]
+// ApplySnapshotChunk implements [abcitypes.Application].
 func (app *SnapsApp) ApplySnapshotChunk(
 	ctx context.Context,
 	req *abcitypes.ApplySnapshotChunkRequest,
 ) (*abcitypes.ApplySnapshotChunkResponse, error) {
 	// Retrieve ChainID from context
-	chainId := ctx.Value("ChainID").(string)
+	chainID := ctx.Value(client.KeyChainID).(string)
 
 	// Make sure we handle only relevant snapshotting routines
-	if !app.reactor.HasNetwork(chainId) {
-		app.logger.Error("received irrelevant snapshot chain identifier (ApplySnapshotChunk)", "chain_id", chainId)
+	if !app.reactor.HasNetwork(chainID) {
+		app.logger.Error("received irrelevant snapshot chain identifier (ApplySnapshotChunk)", "chain_id", chainID)
 		return &abcitypes.ApplySnapshotChunkResponse{Result: abcitypes.APPLY_SNAPSHOT_CHUNK_RESULT_ABORT}, nil
 	}
 
 	// Without snapshotter for this chain, we stop here
-	if _, ok := app.snapshotManagers[chainId]; !ok {
-		app.logger.Error("snapshot manager not configured (ApplySnapshotChunk)", "chain_id", chainId)
+	if _, ok := app.snapshotManagers[chainID]; !ok {
+		app.logger.Error("snapshot manager not configured (ApplySnapshotChunk)", "chain_id", chainID)
 		return &abcitypes.ApplySnapshotChunkResponse{Result: abcitypes.APPLY_SNAPSHOT_CHUNK_RESULT_ABORT}, nil
 	}
 
 	// Applies snapshot chunk in order (updates filesystem)
-	_, err := app.snapshotManagers[chainId].RestoreChunk(req.Chunk)
+	_, err := app.snapshotManagers[chainID].RestoreChunk(req.Chunk)
 	switch {
 	case err == nil:
 		return &abcitypes.ApplySnapshotChunkResponse{Result: abcitypes.APPLY_SNAPSHOT_CHUNK_RESULT_ACCEPT}, nil
@@ -327,7 +328,7 @@ func (app *SnapsApp) ApplySnapshotChunk(
 	case errors.Is(err, snapshottypes.ErrChunkHashMismatch):
 		app.logger.Error(
 			"chunk checksum mismatch; rejecting sender and requesting refetch",
-			"chain_id", chainId,
+			"chain_id", chainID,
 			"chunk", req.Index,
 			"sender", req.Sender,
 			"err", err,
@@ -339,7 +340,7 @@ func (app *SnapsApp) ApplySnapshotChunk(
 		}, nil
 
 	default:
-		app.logger.Error("failed to restore snapshot", "chain_id", chainId, "err", err)
+		app.logger.Error("failed to restore snapshot", "chain_id", chainID, "err", err)
 		return &abcitypes.ApplySnapshotChunkResponse{Result: abcitypes.APPLY_SNAPSHOT_CHUNK_RESULT_ABORT}, nil
 	}
 }
@@ -368,13 +369,13 @@ func (app *SnapsApp) ApplySnapshotChunk(
 // Note, the default (example) implementation for the PrepareProposal extension
 // returns a deep-copy of the original request's transaction bytes.
 //
-// PrepareProposal implements [abcitypes.Application]
+// PrepareProposal implements [abcitypes.Application].
 func (app *SnapsApp) PrepareProposal(
 	ctx context.Context,
 	req *abcitypes.PrepareProposalRequest,
 ) (*abcitypes.PrepareProposalResponse, error) {
 	// Retrieve ChainID from context
-	chainId := ctx.Value("ChainID").(string)
+	chainID := ctx.Value(client.KeyChainID).(string)
 
 	// CometBFT must never call PrepareProposal with a height of 0.
 	//
@@ -405,7 +406,7 @@ func (app *SnapsApp) PrepareProposal(
 	// When a prepare proposal extension fails, the block proposal cannot be
 	// created because the extension determines the filtering of transactions
 	// in prepared blocks proposals.
-	preparedTxes, err := app.runPrepareProposalExtension(chainId, txs)
+	preparedTxes, err := app.runPrepareProposalExtension(chainID, txs)
 	if err != nil {
 		return nil, fmt.Errorf(
 			"CLIENT PANIC: failing prepare proposal extension: %w", err)
@@ -437,17 +438,17 @@ func (app *SnapsApp) PrepareProposal(
 // Note, the default (example) implementation for the ProcessProposal extension
 // returns a deep-copy of the original request's transaction bytes.
 //
-// ProcessProposal implements [abcitypes.Application]
+// ProcessProposal implements [abcitypes.Application].
 func (app *SnapsApp) ProcessProposal(
 	ctx context.Context,
 	req *abcitypes.ProcessProposalRequest,
 ) (*abcitypes.ProcessProposalResponse, error) {
 	// Retrieve ChainID from context
-	chainId := ctx.Value("ChainID").(string)
+	chainID := ctx.Value(client.KeyChainID).(string)
 
 	// Make sure we handle only relevant proposals
-	if !app.reactor.HasNetwork(chainId) {
-		return nil, fmt.Errorf("received irrelevant chain identifier (ProcessProposal): %s", chainId)
+	if !app.reactor.HasNetwork(chainID) {
+		return nil, fmt.Errorf("received irrelevant chain identifier (ProcessProposal): %s", chainID)
 	}
 
 	// CometBFT must never call ProcessProposal with a height of 0.
@@ -459,7 +460,7 @@ func (app *SnapsApp) ProcessProposal(
 
 	// Update the current working block height
 	app.chMutex.Lock()
-	app.currentHeights[chainId] = req.Height
+	app.currentHeights[chainID] = req.Height
 	app.chMutex.Unlock()
 
 	// Executes process proposal extension and catches potential panics to
@@ -467,7 +468,7 @@ func (app *SnapsApp) ProcessProposal(
 	//
 	// The reason for this is that the data written in a *processed* blocks
 	// proposal cannot be modified from here, and must be done in PrepareProposal.
-	_, err := app.runProcessProposalExtension(chainId, req.Txs)
+	_, err := app.runProcessProposalExtension(chainID, req.Txs)
 	if err != nil {
 		app.logger.Error("CLIENT PANIC: failing process proposal extension:", "err", err.Error())
 		// Proceed with processing stage!
@@ -496,19 +497,19 @@ func (app *SnapsApp) ProcessProposal(
 // Note, the default (example) implementation for the FinalizeBlock extension
 // returns a deep-copy of the original request's transaction bytes.
 //
-// FinalizeBlock implements [abcitypes.Application]
+// FinalizeBlock implements [abcitypes.Application].
 func (app *SnapsApp) FinalizeBlock(
 	ctx context.Context,
 	req *abcitypes.FinalizeBlockRequest,
 ) (*abcitypes.FinalizeBlockResponse, error) {
 	// Retrieve ChainID from context
-	chainId := ctx.Value("ChainID").(string)
+	chainID := ctx.Value(client.KeyChainID).(string)
 
 	resp := &abcitypes.FinalizeBlockResponse{TxResults: []*abcitypes.ExecTxResult{}}
 
 	// Make sure we handle only relevant snapshotting routines
-	if !app.reactor.HasNetwork(chainId) {
-		return resp, fmt.Errorf("invalid chain-id on FinalizeBlock: %s is not replicated", chainId)
+	if !app.reactor.HasNetwork(chainID) {
+		return resp, fmt.Errorf("invalid chain-id on FinalizeBlock: %s is not replicated", chainID)
 	}
 
 	// Prepare the contract for FinalizeBlock extensions
@@ -520,7 +521,7 @@ func (app *SnapsApp) FinalizeBlock(
 	// Catch recovered errors from finalize block extension and stop.
 	// When a finalize block extension fails, the block cannot be finalized
 	// because the extension determines the filtering of transactions in blocks.
-	processedTxs, err := app.runFinalizeBlockExtension(chainId, req.Txs)
+	processedTxs, err := app.runFinalizeBlockExtension(chainID, req.Txs)
 	if err != nil {
 		return resp, fmt.Errorf(
 			"CLIENT PANIC: failing finalize block extension: %w", err)
@@ -537,7 +538,7 @@ func (app *SnapsApp) FinalizeBlock(
 			{
 				Type: "app",
 				Attributes: []abcitypes.EventAttribute{
-					{Key: "chain_id", Value: chainId, Index: true},
+					{Key: "chain_id", Value: chainID, Index: true},
 					{Key: "height", Value: strconv.FormatInt(req.Height, 10), Index: true},
 					{Key: "tx", Value: hex.EncodeToString(processedTxs[i]), Index: true},
 				},
@@ -546,7 +547,9 @@ func (app *SnapsApp) FinalizeBlock(
 	}
 
 	// We can now safely store the finalized block height
-	app.setFinalizeBlockHeight(chainId, req.Height)
+	if err := app.setFinalizeBlockHeight(chainID, req.Height); err != nil {
+		return nil, fmt.Errorf("could not update block height for %s from FinalizeBlock: %w", chainID, err)
+	}
 
 	return &abcitypes.FinalizeBlockResponse{
 		TxResults: txResults,
@@ -567,16 +570,13 @@ func (app *SnapsApp) FinalizeBlock(
 // Note, the default (example) implementation for the CheckTx extension
 // always returns nil, such that **all transactions are valid**.
 //
-// CheckTx implements [abcitypes.Application]
+// CheckTx implements [abcitypes.Application].
 func (app *SnapsApp) CheckTx(
 	ctx context.Context,
 	req *abcitypes.CheckTxRequest,
 ) (*abcitypes.CheckTxResponse, error) {
 	// Retrieve ChainID from context
-	chainId := ctx.Value("ChainID").(string)
-
-	// Prepare the contract for CheckTx extensions
-	var err error
+	chainID := ctx.Value(client.KeyChainID).(string)
 
 	// Executes commit extension and catches potential panics to ensure
 	// data consistency. If the extension returns an error or fails,
@@ -584,11 +584,10 @@ func (app *SnapsApp) CheckTx(
 	//
 	// When a commit extension fails, the response [abcitype.CheckTxResponse]
 	// will contain an error code and the transaction **will not be accepted**.
-	err = app.runCheckTxExtension(chainId, req.Tx)
-
+	err := app.runCheckTxExtension(chainID, req.Tx)
 	// If the extension returns an error, we do not accept this transaction.
 	if err != nil {
-		return &abcitypes.CheckTxResponse{Code: CodeTypeErr_CheckTx_Failure}, err
+		return &abcitypes.CheckTxResponse{Code: CodeTypeErrCheckTxFailure}, err
 	}
 
 	// If the extensions returns nil, we accept the transaction.
@@ -610,49 +609,46 @@ func (app *SnapsApp) CheckTx(
 // Note, the default (example) implementation for the Commit extension
 // always returns nil, such that **all committed blocks are accepted**.
 //
-// Commit implements [abcitypes.Application]
+// Commit implements [abcitypes.Application].
 func (app *SnapsApp) Commit(
 	ctx context.Context,
 	req *abcitypes.CommitRequest,
 ) (*abcitypes.CommitResponse, error) {
 	// Retrieve ChainID from context
-	chainId := ctx.Value("ChainID").(string)
+	chainID := ctx.Value(client.KeyChainID).(string)
 
 	resp := &abcitypes.CommitResponse{
 		RetainHeight: 0, // pruning is disabled, so block retention 0.
 	}
 
 	// Make sure we handle only relevant commits
-	if !app.reactor.HasNetwork(chainId) {
-		app.logger.Error("received irrelevant snapshot chain identifier (Commit)", "chain_id", chainId)
+	if !app.reactor.HasNetwork(chainID) {
+		app.logger.Error("received irrelevant snapshot chain identifier (Commit)", "chain_id", chainID)
 		return resp, nil
 	}
 
 	// Without snapshotter for this chain, we stop here
-	if _, ok := app.snapshotManagers[chainId]; !ok {
-		app.logger.Error("snapshot manager not configured (Commit)", "chain_id", chainId)
+	if _, ok := app.snapshotManagers[chainID]; !ok {
+		app.logger.Error("snapshot manager not configured (Commit)", "chain_id", chainID)
 		return resp, nil
 	}
 
 	app.fbMutex.RLock()
-	workingHeight := app.finalizeBlockHeights[chainId]
+	workingHeight := app.finalizeBlockHeights[chainID]
 	app.fbMutex.RUnlock()
-
-	// Prepare the contract for Commit extensions
-	var errCommitHook error
 
 	// Executes commit extension and catches potential panics to ensure that
 	// any errors *do not* influence the commitment stage.
 	//
 	// The reason for this is that the data written in a *committed* blocks
 	// cannot be modified from here and the response is always RetainHeight=0.
-	errCommitHook = app.runCommitExtension(chainId, uint64(workingHeight))
+	errCommitHook := app.runCommitExtension(chainID, uint64(workingHeight))
 	if errCommitHook != nil {
 		app.logger.Error("CLIENT PANIC: failing commit extension:", "err", errCommitHook.Error())
 		// Proceed with commitment stage!
 	}
 
-	app.snapshotManagers[chainId].SnapshotIfApplicable(workingHeight)
+	app.snapshotManagers[chainID].SnapshotIfApplicable(workingHeight)
 	return resp, nil
 }
 
@@ -666,7 +662,7 @@ func (app *SnapsApp) Commit(
 // height and are committed in the subsequent height, i.e. H+2. An error is
 // returned if vote extensions are not enabled or if extendVote fails or panics.
 //
-// ExtendVote implements [abcitypes.Application]
+// ExtendVote implements [abcitypes.Application].
 func (app *SnapsApp) ExtendVote(context.Context, *abcitypes.ExtendVoteRequest) (*abcitypes.ExtendVoteResponse, error) {
 	return &abcitypes.ExtendVoteResponse{}, nil
 }
@@ -680,7 +676,7 @@ func (app *SnapsApp) ExtendVote(context.Context, *abcitypes.ExtendVoteRequest) (
 // We highly recommend a size validation due to performance degradation,
 // see more here https://docs.cometbft.com/v1.0/references/qa/cometbft-qa-38#vote-extensions-testbed
 //
-// VerifyVoteExtension implements [abcitypes.Application]
+// VerifyVoteExtension implements [abcitypes.Application].
 func (app *SnapsApp) VerifyVoteExtension(context.Context, *abcitypes.VerifyVoteExtensionRequest) (*abcitypes.VerifyVoteExtensionResponse, error) {
 	return &abcitypes.VerifyVoteExtensionResponse{
 		Status: abcitypes.VERIFY_VOTE_EXTENSION_STATUS_ACCEPT,
@@ -700,7 +696,7 @@ func (app *SnapsApp) VerifyVoteExtension(context.Context, *abcitypes.VerifyVoteE
 //
 // See also: [GetCheckTxExtension], [WithCheckTxExtension].
 func (app *SnapsApp) runCheckTxExtension(
-	chainId string,
+	chainID string,
 	transaction []byte,
 ) error {
 	// Prepare the contract for CheckTx extensions
@@ -732,7 +728,7 @@ func (app *SnapsApp) runCheckTxExtension(
 		// see `snapsapp/client.go` to use a custom transactions auditing extension.
 		// See also [WithCheckTxExtension].
 		err = client.DelegateCheckTx(
-			chainId,
+			chainID,
 			transaction,
 			checkTxHook,
 		)
@@ -754,7 +750,7 @@ func (app *SnapsApp) runCheckTxExtension(
 //
 // See also: [GetPrepareProposalExtension], [WithPrepareProposalExtension].
 func (app *SnapsApp) runPrepareProposalExtension(
-	chainId string,
+	chainID string,
 	transactions [][]byte,
 ) ([][]byte, error) {
 	// Prepare the contract for finalize block extensions
@@ -788,14 +784,13 @@ func (app *SnapsApp) runPrepareProposalExtension(
 		// See `multiplex/client.go` to use a custom prepare proposal extension.
 		// See also [WithPrepareProposalExtension].
 		mutatedTransactions = client.InjectPrepareProposal(
-			chainId,
+			chainID,
 			transactions,
 			prepareProposalHook,
 		)
 
 		return err
 	}()
-
 	// Catch recovered errors from prepare proposal extension and stop.
 	// When a prepare proposal extension fails, the block proposal cannot be
 	// created because the extension determines the filtering of transactions.
@@ -817,7 +812,7 @@ func (app *SnapsApp) runPrepareProposalExtension(
 //
 // See also: [GetProcessProposalExtension], [WithProcessProposalExtension].
 func (app *SnapsApp) runProcessProposalExtension(
-	chainId string,
+	chainID string,
 	transactions [][]byte,
 ) ([][]byte, error) {
 	// Prepare the contract for finalize block extensions
@@ -846,14 +841,13 @@ func (app *SnapsApp) runProcessProposalExtension(
 		// See `multiplex/client.go` to use a custom process proposal extension.
 		// See also [WithProcessProposalExtension].
 		mutatedTransactions = client.InjectProcessProposal(
-			chainId,
+			chainID,
 			transactions,
 			processProposalHook,
 		)
 
 		return err
 	}()
-
 	// Catch recovered errors from process proposal extension.
 	if err != nil {
 		return [][]byte{}, err
@@ -874,7 +868,7 @@ func (app *SnapsApp) runProcessProposalExtension(
 //
 // See also: [GetFinalizeBlockExtension], [WithFinalizeBlockExtension].
 func (app *SnapsApp) runFinalizeBlockExtension(
-	chainId string,
+	chainID string,
 	transactions [][]byte,
 ) ([][]byte, error) {
 	// Prepare the contract for finalize block extensions
@@ -908,14 +902,13 @@ func (app *SnapsApp) runFinalizeBlockExtension(
 		// See `multiplex/client.go` to use a custom finalize block extension.
 		// See also [WithFinalizeBlockExtension].
 		mutatedTransactions = client.InjectFinalizeBlock(
-			chainId,
+			chainID,
 			transactions,
 			finalizeBlockHook,
 		)
 
 		return err
 	}()
-
 	// Catch recovered errors from finalize block extension and stop.
 	// When a finalize block extension fails, the block cannot be finalized
 	// because the extension determines the filtering of transactions in blocks.
@@ -935,7 +928,10 @@ func (app *SnapsApp) runFinalizeBlockExtension(
 // any errors *do not* influence the commitment stage.
 //
 // See also: [GetCommitExtension], [WithCommitExtension].
-func (app *SnapsApp) runCommitExtension(chainId string, committedHeight uint64) error {
+func (app *SnapsApp) runCommitExtension(
+	chainID string,
+	committedHeight uint64,
+) error {
 	// Prepare the contract for commit extensions
 	var commitHook client.CommitExtensionFn
 
@@ -962,7 +958,7 @@ func (app *SnapsApp) runCommitExtension(chainId string, committedHeight uint64) 
 		// See `multiplex/client.go` to use a custom commit extension.
 		// See also [WithCommitExtension].
 		err = client.ReportCommit(
-			chainId,
+			chainID,
 			committedHeight,
 			commitHook,
 		)

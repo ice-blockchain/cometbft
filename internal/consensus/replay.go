@@ -13,6 +13,7 @@ import (
 	abci "github.com/ice-blockchain/cometbft/abci/types"
 	"github.com/ice-blockchain/cometbft/crypto/merkle"
 	"github.com/ice-blockchain/cometbft/libs/log"
+	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/proxy"
 	sm "github.com/ice-blockchain/cometbft/state"
 	"github.com/ice-blockchain/cometbft/types"
@@ -241,7 +242,7 @@ func (h *Handshaker) NBlocks() int {
 // TODO: retry the handshake/replay if it fails ?
 func (h *Handshaker) Handshake(ctx context.Context, proxyApp proxy.AppConns) error {
 	// Inject the ChainID for access in ABCI
-	ctx = context.WithValue(ctx, "ChainID", h.genDoc.ChainID)
+	ctx = context.WithValue(ctx, client.KeyChainID, h.genDoc.ChainID)
 
 	// Handshake is done via ABCI Info on the query conn.
 	res, err := proxyApp.Query().Info(ctx, proxy.InfoRequest)
@@ -319,7 +320,7 @@ func (h *Handshaker) ReplayBlocks(
 
 		// Inject the ChainID for access in ABCI
 		ctx := context.TODO()
-		ctx = context.WithValue(ctx, "ChainID", state.ChainID)
+		ctx = context.WithValue(ctx, client.KeyChainID, state.ChainID)
 
 		req := &abci.InitChainRequest{
 			Time:            h.genDoc.GenesisTime,

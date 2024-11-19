@@ -12,7 +12,6 @@ import (
 
 	"github.com/ice-blockchain/cometbft/config"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
-
 	"github.com/ice-blockchain/cometbft/multiplex/snapshots/types"
 )
 
@@ -80,14 +79,14 @@ var ErrOptsZeroSnapshotInterval = errors.New("snapshot-interval must not be 0")
 
 // NewManager creates a new manager.
 func NewManager(
-	chainId string,
+	chainID string,
 	store *Store,
 	opts config.SnapshotOptions,
 	stateSnapshotter StateSnapshotter,
 	logger cmtlog.Logger,
 ) *Manager {
 	return &Manager{
-		ChainID:          chainId,
+		ChainID:          chainID,
 		store:            store,
 		opts:             opts,
 		stateSnapshotter: stateSnapshotter,
@@ -164,7 +163,7 @@ func (m *Manager) GetSnapshotBlockRetentionHeights() int64 {
 // Create creates a snapshot and returns its metadata.
 func (m *Manager) Create(height uint64) (*types.Snapshot, error) {
 	if m == nil {
-		return nil, errors.New("Snapshot Manager is nil")
+		return nil, errors.New("snapshot manager is nil")
 	}
 
 	err := m.begin(opSnapshot)

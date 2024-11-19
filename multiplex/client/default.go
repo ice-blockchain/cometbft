@@ -16,17 +16,19 @@ import (
 
 // Type-assertions ensure the compatibility of this implementation with the
 // multiplex client contract defined in this package.
-var _ SyncConfigExtensionFn = DefaultSyncConfigExtension
-var _ SeedConfigExtensionFn = DefaultSeedConfigExtension
-var _ ValidatorUpdateExtensionFn = DefaultValidatorUpdateExtension
-var _ ConsensusUpdateExtensionFn = DefaultConsensusUpdateExtension
-var _ SnapshotMutationExtensionFn = DefaultSnapshotMutationExtension
-var _ SnapshotRestoreExtensionFn = DefaultSnapshotRestoreExtension
-var _ CheckTxExtensionFn = DefaultCheckTxExtension
-var _ PrepareProposalExtensionFn = DefaultPrepareProposalExtension
-var _ ProcessProposalExtensionFn = DefaultProcessProposalExtension
-var _ FinalizeBlockExtensionFn = DefaultFinalizeBlockExtension
-var _ CommitExtensionFn = DefaultCommitExtension
+var (
+	_ SyncConfigExtensionFn       = DefaultSyncConfigExtension
+	_ SeedConfigExtensionFn       = DefaultSeedConfigExtension
+	_ ValidatorUpdateExtensionFn  = DefaultValidatorUpdateExtension
+	_ ConsensusUpdateExtensionFn  = DefaultConsensusUpdateExtension
+	_ SnapshotMutationExtensionFn = DefaultSnapshotMutationExtension
+	_ SnapshotRestoreExtensionFn  = DefaultSnapshotRestoreExtension
+	_ CheckTxExtensionFn          = DefaultCheckTxExtension
+	_ PrepareProposalExtensionFn  = DefaultPrepareProposalExtension
+	_ ProcessProposalExtensionFn  = DefaultProcessProposalExtension
+	_ FinalizeBlockExtensionFn    = DefaultFinalizeBlockExtension
+	_ CommitExtensionFn           = DefaultCommitExtension
+)
 
 // ----------------------------------------------------------------------------
 // Configuration
@@ -85,7 +87,7 @@ func DefaultSeedConfigExtension(
 	// userAddress := ctx.Value("Address").(string)
 	// chainId := ctx.Value("ChainID").(string)
 
-	nextSeeds := baseSeeds[:]
+	nextSeeds := baseSeeds
 	return nextSeeds
 }
 
@@ -103,7 +105,7 @@ func DefaultSeedConfigExtension(
 // the proposed extension callback, this example does not make use of these.
 func DefaultValidatorUpdateExtension(
 	_ context.Context, // ctx
-	validatorUpdates []abci.ValidatorUpdate, //nolint:unparam
+	validatorUpdates []abci.ValidatorUpdate,
 ) error {
 	// e.g. You may interpret/use the UserAddress and ChainID in extensions.
 	//
@@ -126,7 +128,7 @@ func DefaultValidatorUpdateExtension(
 // the proposed extension callback, this example does not make use of these.
 func DefaultConsensusUpdateExtension(
 	_ context.Context, // ctx
-	consensusParams *v1.ConsensusParams, //nolint:unparam
+	consensusParams *v1.ConsensusParams,
 ) error {
 	// e.g. You may interpret/use the UserAddress and ChainID in extensions.
 	//
@@ -159,7 +161,7 @@ func DefaultSnapshotMutationExtension(
 	// userAddress := ctx.Value("Address").(string)
 	// chainId := ctx.Value("ChainID").(string)
 
-	nextState := baseState[:]
+	nextState := baseState
 	return nextState
 }
 
@@ -174,7 +176,7 @@ func DefaultSnapshotMutationExtension(
 // the proposed extension callback, this example does not make use of these.
 func DefaultCheckMutationResultExtension(
 	_ context.Context, // ctx
-	mutatedState []byte, //nolint:unparam
+	mutatedState []byte,
 ) error {
 	// e.g. You may interpret/use the UserAddress and ChainID in extensions.
 	//
@@ -202,7 +204,7 @@ func DefaultSnapshotRestoreExtension(
 	// userAddress := ctx.Value("Address").(string)
 	// chainId := ctx.Value("ChainID").(string)
 
-	nextState := baseState[:]
+	nextState := baseState
 	return nextState
 }
 
@@ -223,7 +225,7 @@ func DefaultSnapshotRestoreExtension(
 // the proposed extension callback, this example does not make use of these.
 func DefaultCheckTxExtension(
 	_ context.Context, // ctx
-	transactionBytes []byte, //nolint:unparam
+	transactionBytes []byte,
 ) error {
 	// e.g. You may interpret/use the UserAddress and ChainID in extensions.
 	//
@@ -255,7 +257,7 @@ func DefaultPrepareProposalExtension(
 	// userAddress := ctx.Value("Address").(string)
 	// chainId := ctx.Value("ChainID").(string)
 
-	nextTransactions := baseTransactions[:]
+	nextTransactions := baseTransactions
 	return nextTransactions
 }
 
@@ -278,7 +280,7 @@ func DefaultProcessProposalExtension(
 	// userAddress := ctx.Value("Address").(string)
 	// chainId := ctx.Value("ChainID").(string)
 
-	nextTransactions := baseTransactions[:]
+	nextTransactions := baseTransactions
 	return nextTransactions
 }
 
@@ -301,22 +303,22 @@ func DefaultFinalizeBlockExtension(
 	// userAddress := ctx.Value("Address").(string)
 	// chainId := ctx.Value("ChainID").(string)
 
-	nextTransactions := baseTransactions[:]
+	nextTransactions := baseTransactions
 	return nextTransactions
 }
 
-// DefaultCommitExtension is an example implementation for the commited blocks
+// DefaultCommitExtension is an example implementation for the committed blocks
 // auditing extension [CommitExtensionFn]. A custom auditing and/or reporting
-// unit may be used to evaluate the commited block height.
+// unit may be used to evaluate the committed block height.
 //
 // i.e. An extension may be implemented to report confirmed block heights to
-// a remove server, or to audit the commited block.
+// a remove server, or to audit the committed block.
 //
 // Note that we inject `Address` and `ChainID` in the Context before calling
 // the proposed extension callback, this example does not make use of these.
 func DefaultCommitExtension(
 	_ context.Context, // ctx
-	blockHeight uint64, //nolint:unparam
+	blockHeight uint64,
 ) error {
 	// e.g. You may interpret/use the UserAddress and ChainID in extensions.
 	//

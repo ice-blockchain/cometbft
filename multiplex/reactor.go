@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	dbm "github.com/cometbft/cometbft-db"
-
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/crypto"
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
@@ -19,8 +18,6 @@ import (
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/privval"
 	"github.com/ice-blockchain/cometbft/proxy"
-	"github.com/ice-blockchain/cometbft/types"
-
 	sm "github.com/ice-blockchain/cometbft/state"
 	"github.com/ice-blockchain/cometbft/state/indexer"
 	blockidxkv "github.com/ice-blockchain/cometbft/state/indexer/block/kv"
@@ -29,32 +26,33 @@ import (
 	txidxkv "github.com/ice-blockchain/cometbft/state/txindex/kv"
 	txidxnull "github.com/ice-blockchain/cometbft/state/txindex/null"
 	bs "github.com/ice-blockchain/cometbft/store"
+	"github.com/ice-blockchain/cometbft/types"
 )
 
 const (
-	// Instance types
-	KEY_CONFIG         = "config"
-	KEY_STORAGE        = "storage"
-	KEY_STATE          = "state"
-	KEY_STORE_STATE    = "stateStore"
-	KEY_STORE_BLOCK    = "blockStore"
-	KEY_PRIVVAL        = "privValidator"
-	KEY_DB_BS          = "database/blockStore" // BS=Block Store
-	KEY_DB_SM          = "database/state"      // SM=State Machine
-	KEY_DB_TX          = "database/txIndex"    // TX=Transaction Index
-	KEY_DB_BF          = "database/evidence"   // BF=Byzantine Fault
-	KEY_P2P_SWITCH     = "p2p/switch"
-	KEY_P2P_TRANSPORT  = "p2p/transport"
-	KEY_FLAG_BLOCKSYNC = "flag/blockSync"
+	// Instance types.
+	InstanceKeyConfig           = "config"
+	InstanceKeyStorage          = "storage"
+	InstanceKeyState            = "state"
+	InstanceKeyStateStore       = "stateStore"
+	InstanceKeyBlockStore       = "blockStore"
+	InstanceKeyPrivValidator    = "privValidator"
+	InstanceKeyDatabaseBlock    = "database/blockStore"
+	InstanceKeyDatabaseState    = "database/state"
+	InstanceKeyDatabaseIndex    = "database/txIndex"
+	InstanceKeyDatabaseEvidence = "database/evidence"
+	InstanceKeyP2PSwitch        = "p2p/switch"
+	InstanceKeyP2PTransport     = "p2p/transport"
+	InstanceKeyFlagBlockSync    = "flag/blockSync"
 
-	// Services types
-	KEY_EVENTBUS          = "eventBus"
-	KEY_INDEXERS          = "indexers"
-	KEY_PRUNER            = "pruner"
-	KEY_REACTOR_MEMPOOL   = "reactor/mempool"
-	KEY_REACTOR_BLOCKSYNC = "reactor/blockSync"
-	KEY_REACTOR_CONSENSUS = "reactor/consensus"
-	KEY_REACTOR_EVIDENCE  = "reactor/evidence"
+	// Services types.
+	ServiceKeyEventBus         = "eventBus"
+	ServiceKeyIndexers         = "indexers"
+	ServiceKeyPruner           = "pruner"
+	ServiceKeyMempoolReactor   = "reactor/mempool"
+	ServiceKeyBlockSyncReactor = "reactor/blockSync"
+	ServiceKeyConsensusReactor = "reactor/consensus"
+	ServiceKeyEvidenceReactor  = "reactor/evidence"
 )
 
 // serviceProviderFn provides a [cmtlibs.Service] instance by name and ChainID.
@@ -81,7 +79,7 @@ type genesisDocProviderFn func(string) *types.GenesisDoc
 // being replicated. After this happened, the node is able to start syncing state
 // and/or blocks, as well as starting indexers, mempool, and other services.
 //
-// The [Reactor] structure implements [snapsapp.Reactor]
+// The [Reactor] structure implements [snapsapp.Reactor].
 type Reactor struct {
 	p2p.BaseReactor // BaseService + p2p.Switch
 
@@ -134,7 +132,7 @@ func NewReactor(
 	chainRegistry ChainRegistry,
 	genesisDocsProvider node.GenesisDocProvider,
 ) *Reactor {
-	r := &Reactor{
+	reactor := &Reactor{
 		// Provides the ChainRegistry interface
 		chainRegistry: chainRegistry,
 
@@ -154,7 +152,7 @@ func NewReactor(
 		logger:       logger,
 		chainReadyCh: make(chan string),
 	}
-	r.BaseReactor = *p2p.NewBaseReactor("Multiplex", r)
+	reactor.BaseReactor = *p2p.NewBaseReactor("Multiplex", reactor)
 
 	// Note that this expects the `genesis.json` to contain a GenesisDocSet.
 	// This call to the underlying provider Validates the GenesisDocSet.
@@ -164,77 +162,77 @@ func NewReactor(
 	}
 
 	// Initialize all providers
-	r.initMultiplexProviders(icsGenesisDocSet)
+	reactor.initMultiplexProviders(icsGenesisDocSet)
 
-	return r
+	return reactor
 }
 
 // ----------------------------------------------------------------------------
 // Reactor public implementation
 
 // GetNodeConfig returns a [config.Config] instance.
-func (r *Reactor) GetNodeConfig() *config.Config {
-	return r.nodeConfig
+func (reactor *Reactor) GetNodeConfig() *config.Config {
+	return reactor.nodeConfig
 }
 
 // GetMultiplexConfig returns a [config.MultiplexConfig] instance.
-func (r *Reactor) GetMultiplexConfig() *config.MultiplexConfig {
-	return r.userConfig
+func (reactor *Reactor) GetMultiplexConfig() *config.MultiplexConfig {
+	return reactor.userConfig
 }
 
 // GetStoragePaths returns a [MultiplexFS] instance.
 //
 // GetStoragePaths implements [snapsapp.Reactor].
-func (r *Reactor) GetStoragePaths() map[string]string {
-	return r.storagePaths
+func (reactor *Reactor) GetStoragePaths() map[string]string {
+	return reactor.storagePaths
 }
 
 // GetNodeKey returns the [p2p.NodeKey] instance.
-func (r *Reactor) GetNodeKey() *p2p.NodeKey {
-	return r.nodeKey
+func (reactor *Reactor) GetNodeKey() *p2p.NodeKey {
+	return reactor.nodeKey
 }
 
 // GetNetworks returns an ordered slice of ChainID values.
 //
 // GetNetworks implements [snapsapp.Reactor].
-func (r *Reactor) GetNetworks() []string {
-	return r.networks
+func (reactor *Reactor) GetNetworks() []string {
+	return reactor.networks
 }
 
 // HasNetwork returns true if the ChainID can be found
 //
 // HasNetwork implements [snapsapp.Reactor].
-func (r *Reactor) HasNetwork(chainId string) bool {
-	return slices.Contains(r.networks, chainId)
+func (reactor *Reactor) HasNetwork(chainID string) bool {
+	return slices.Contains(reactor.networks, chainID)
 }
 
 // GetChainRegistry returns a [ChainRegistry] instance.
-func (r *Reactor) GetChainRegistry() ChainRegistry {
-	return r.chainRegistry
+func (reactor *Reactor) GetChainRegistry() ChainRegistry {
+	return reactor.chainRegistry
 }
 
 // GetGenesisProvider returns a genesisDocProviderFn instance.
-func (r *Reactor) GetGenesisProvider() genesisDocProviderFn {
-	return r.genesisDocProvider
+func (reactor *Reactor) GetGenesisProvider() genesisDocProviderFn {
+	return reactor.genesisDocProvider
 }
 
-// GetServicesProvider returns a [ServiceProvider] provider.
-func (r *Reactor) GetServicesProvider() serviceProviderFn {
-	return r.servicesProvider
+// GetServicesProvider returns a [ServiceProvider] providereactor.
+func (reactor *Reactor) GetServicesProvider() serviceProviderFn {
+	return reactor.servicesProvider
 }
 
-// GetMultiplexProvider returns a [MultiplexProvider] provider.
-func (r *Reactor) GetMultiplexProvider() multiplexProviderFn {
-	return r.multiplexProvider
+// GetMultiplexProvider returns a [MultiplexProvider] providereactor.
+func (reactor *Reactor) GetMultiplexProvider() multiplexProviderFn {
+	return reactor.multiplexProvider
 }
 
-// GetInstanceProvider returns a [InstanceProvider] provider.
-func (r *Reactor) GetInstanceProvider(multiplexName string) instanceProviderFn {
+// GetInstanceProvider returns a [InstanceProvider] providereactor.
+func (reactor *Reactor) GetInstanceProvider(multiplexName string) instanceProviderFn {
 	// Uses one of the multiplexRegistry entries
-	multiplex := r.multiplexProvider(multiplexName)
+	multiplex := reactor.multiplexProvider(multiplexName)
 	return func(chainId string) any {
-		r.multiplexMutex.RLock()
-		defer r.multiplexMutex.RUnlock()
+		reactor.multiplexMutex.RLock()
+		defer reactor.multiplexMutex.RUnlock()
 
 		// Returns the underlying instance (castable)
 		return multiplex[chainId].GetInstance()
@@ -244,35 +242,35 @@ func (r *Reactor) GetInstanceProvider(multiplexName string) instanceProviderFn {
 // GetStateStore returns a [snapshots.StateSnapshotter].
 //
 // GetStateStore implements [snapsapp.Reactor].
-func (r *Reactor) GetStateStore(chainId string) snapshots.StateSnapshotter {
+func (reactor *Reactor) GetStateStore(chainID string) snapshots.StateSnapshotter {
 	// Retrieves the "stateStore" instance map
-	stateStoreProvider := r.GetInstanceProvider(KEY_STORE_STATE)
+	stateStoreProvider := reactor.GetInstanceProvider(InstanceKeyStateStore)
 
 	// Returns the instance mapped by ChainID
-	return stateStoreProvider(chainId).(snapshots.StateSnapshotter)
+	return stateStoreProvider(chainID).(snapshots.StateSnapshotter)
 }
 
-// SetServicesProvider sets a custom services provider.
+// SetServicesProvider sets a custom services providereactor.
 // Note that this method is only used in tests for now.
-func (r *Reactor) SetServicesProvider(provider serviceProviderFn) {
-	r.servicesProvider = provider
+func (reactor *Reactor) SetServicesProvider(provider serviceProviderFn) {
+	reactor.servicesProvider = provider
 }
 
 // SetABCIClient sets a custom [proxy.ChainConns] ABCI client.
 // Note that this method is only used in tests for now.
-func (r *Reactor) SetABCIClient(abciClient proxy.ChainConns) {
-	r.abciClient = abciClient
+func (reactor *Reactor) SetABCIClient(abciClient proxy.ChainConns) {
+	reactor.abciClient = abciClient
 }
 
 // SetNodeInfo sets a custom [MultiNetworkNodeInfo] instance.
 // Note that this method is only used in tests for now.
-func (r *Reactor) SetNodeInfo(nodeInfo MultiNetworkNodeInfo) {
-	r.nodeInfo = nodeInfo
+func (reactor *Reactor) SetNodeInfo(nodeInfo MultiNetworkNodeInfo) {
+	reactor.nodeInfo = nodeInfo
 }
 
 // SetStoragePaths sets a custom [MultiplexFS] map of storage paths.
-func (r *Reactor) SetStoragePaths(fs MultiplexFS) {
-	r.storagePaths = fs
+func (reactor *Reactor) SetStoragePaths(fs MultiplexFS) {
+	reactor.storagePaths = fs
 }
 
 // RegisterService inserts a [cmtlibs.Service] instance in the registry
@@ -280,23 +278,23 @@ func (r *Reactor) SetStoragePaths(fs MultiplexFS) {
 //
 // The servicesMutex is RW-locked during the time this function takes to run.
 //
-// TODO(midas): add validation/encoding for services names
-func (r *Reactor) RegisterService(
+// TODO(midas): add validation/encoding for services names.
+func (reactor *Reactor) RegisterService(
 	serviceName string,
-	chainId string,
+	chainID string,
 	service cmtlibs.Service,
 ) {
-	r.servicesMutex.Lock()
-	defer r.servicesMutex.Unlock()
+	reactor.servicesMutex.Lock()
+	defer reactor.servicesMutex.Unlock()
 
 	// Allocate namespace if necessary
-	if _, ok := r.servicesRegistry[serviceName]; !ok {
-		r.servicesRegistry[serviceName] = MultiplexMap[cmtlibs.Service]{}
+	if _, ok := reactor.servicesRegistry[serviceName]; !ok {
+		reactor.servicesRegistry[serviceName] = MultiplexMap[cmtlibs.Service]{}
 	}
 
 	// Store a service by name and ChainID
-	r.servicesRegistry[serviceName][chainId] = NewChainInstance[cmtlibs.Service](
-		chainId,
+	reactor.servicesRegistry[serviceName][chainID] = NewChainInstance[cmtlibs.Service](
+		chainID,
 		service,
 	)
 }
@@ -306,23 +304,23 @@ func (r *Reactor) RegisterService(
 //
 // The multiplexMutex is RW-locked during the time this function takes to run.
 //
-// TODO(midas): add validation/encoding for multiplex names
-func (r *Reactor) RegisterInstance(
+// TODO(midas): add validation/encoding for multiplex names.
+func (reactor *Reactor) RegisterInstance(
 	multiplexName string,
-	chainId string,
+	chainID string,
 	instance any,
 ) {
-	r.multiplexMutex.Lock()
-	defer r.multiplexMutex.Unlock()
+	reactor.multiplexMutex.Lock()
+	defer reactor.multiplexMutex.Unlock()
 
 	// Allocate namespace if necessary
-	if _, ok := r.multiplexRegistry[multiplexName]; !ok {
-		r.multiplexRegistry[multiplexName] = MultiplexMap[any]{}
+	if _, ok := reactor.multiplexRegistry[multiplexName]; !ok {
+		reactor.multiplexRegistry[multiplexName] = MultiplexMap[any]{}
 	}
 
 	// Store a generic instance by name and ChainID in a multiplex
-	r.multiplexRegistry[multiplexName][chainId] = NewChainInstance[any](
-		chainId,
+	reactor.multiplexRegistry[multiplexName][chainID] = NewChainInstance[any](
+		chainID,
 		instance,
 	)
 }
@@ -354,45 +352,45 @@ func (r *Reactor) RegisterInstance(
 // - `indexers`: the transaction- and block indexers service (startNodeListeners).
 //
 // CAUTION: This method spawns one new goroutine for every replicated chain.
-func (r *Reactor) OnStart() error {
+func (reactor *Reactor) OnStart() error {
 	// Initialize filesystem directory structure
-	multiplexFS, err := NewMultiplexFS(r.nodeConfig)
+	multiplexFS, err := NewMultiplexFS(reactor.nodeConfig)
 	if err != nil {
 		return err
 	}
 
 	// Update the internal storagePaths
-	r.SetStoragePaths(multiplexFS)
+	reactor.SetStoragePaths(multiplexFS)
 
 	// Open databases for: state, blockstore, tx_index, evidence
 	// Then load state machines from database or genesis doc
 	// And initialize block stores per replicated chain.
-	if err := r.loadMultiplexState(); err != nil {
+	if err := reactor.loadMultiplexState(); err != nil {
 		return err
 	}
 
 	// For each ChainID, we run a node with a distinct listen address
-	for _, chainId := range r.GetNetworks() {
+	for _, chainID := range reactor.GetNetworks() {
 		configOverwrite := NewConfigOverwrite(
-			r.GetNodeConfig(),
-			r.GetChainRegistry(),
-			chainId,
+			reactor.GetNodeConfig(),
+			reactor.GetChainRegistry(),
+			chainID,
 		)
 
-		r.RegisterInstance(KEY_CONFIG, chainId, configOverwrite)
-		r.RegisterInstance(KEY_STORAGE, chainId, multiplexFS[chainId])
+		reactor.RegisterInstance(InstanceKeyConfig, chainID, configOverwrite)
+		reactor.RegisterInstance(InstanceKeyStorage, chainID, multiplexFS[chainID])
 
 		// Non-blocking execution using different goroutine
 		// i.e. one goroutine spawned per each replicated chain
 		go func(network string) {
 			// Start node listeners
-			if err := r.startNodeListeners(network); err != nil {
+			if err := reactor.startNodeListeners(network); err != nil {
 				panic(err)
 			}
 
 			// Done starting node listeners
-			r.chainReadyCh <- network
-		}(chainId)
+			reactor.chainReadyCh <- network
+		}(chainID)
 	}
 
 	return nil
@@ -403,19 +401,17 @@ func (r *Reactor) OnStart() error {
 // of the configured replicated chains. A [sync.WaitGroup] is used.
 //
 // TODO(midas): add timeout functionality in case some networks are stuck?
-func (r *Reactor) WaitForNetworks() error {
+func (reactor *Reactor) WaitForNetworks() error {
 	var wg sync.WaitGroup
-	knownNetworks := r.GetNetworks()
+	knownNetworks := reactor.GetNetworks()
 	wg.Add(len(knownNetworks))
 
 	// Waits for all nodes to be configured
 	for i := 0; i < len(knownNetworks); i++ {
 		// The multiplex reactor communicates the ChainID on a channel
 		// to tell about the readiness of an individual network config
-		select {
-		case <-r.chainReadyCh:
-			wg.Done() // one network is configured
-		}
+		<-reactor.chainReadyCh
+		wg.Done() // one network is configured
 	}
 
 	return nil
@@ -425,15 +421,15 @@ func (r *Reactor) WaitForNetworks() error {
 // Reactor private implementation
 
 // initMultiplexProviders initializes the genesisDocProvider around icsGenesisDocSet,
-// and further initializes the services provider and multiplex provider.
+// and further initializes the services provider and multiplex providereactor.
 //
 // Note that providers always use *read-only locks* for the respective mutexes.
 // Note also, that registries must be allocated separately.
-func (r *Reactor) initMultiplexProviders(
+func (reactor *Reactor) initMultiplexProviders(
 	icsGenesisDocSet node.IChecksummedGenesisDoc,
 ) {
 	// Use the initial GenesisDocSet to load individual genesis docs
-	r.genesisDocProvider = func(chainId string) *types.GenesisDoc {
+	reactor.genesisDocProvider = func(chainId string) *types.GenesisDoc {
 		genDoc, err := icsGenesisDocSet.GenesisDocByChainID(chainId)
 		if err != nil {
 			panic(fmt.Errorf("could not load genesis doc for ChainID %s", chainId))
@@ -443,31 +439,31 @@ func (r *Reactor) initMultiplexProviders(
 	}
 
 	// Use the services registry to load node services
-	r.servicesProvider = func(serviceName string, chainId string) cmtlibs.Service {
-		r.servicesMutex.RLock()
-		defer r.servicesMutex.RUnlock()
+	reactor.servicesProvider = func(serviceName string, chainId string) cmtlibs.Service {
+		reactor.servicesMutex.RLock()
+		defer reactor.servicesMutex.RUnlock()
 
-		if _, ok := r.servicesRegistry[serviceName]; !ok {
+		if _, ok := reactor.servicesRegistry[serviceName]; !ok {
 			panic(fmt.Errorf("could not load services by name %s", serviceName))
 		}
 
-		if _, ok := r.servicesRegistry[serviceName][chainId]; !ok {
+		if _, ok := reactor.servicesRegistry[serviceName][chainId]; !ok {
 			panic(fmt.Errorf("could not find a service %s for ChainID %s", serviceName, chainId))
 		}
 
-		return r.servicesRegistry[serviceName][chainId].GetInstance().(cmtlibs.Service)
+		return reactor.servicesRegistry[serviceName][chainId].GetInstance().(cmtlibs.Service)
 	}
 
 	// Use the multiplex registry to load node services
-	r.multiplexProvider = func(multiplexName string) MultiplexMap[any] {
-		r.multiplexMutex.RLock()
-		defer r.multiplexMutex.RUnlock()
+	reactor.multiplexProvider = func(multiplexName string) MultiplexMap[any] {
+		reactor.multiplexMutex.RLock()
+		defer reactor.multiplexMutex.RUnlock()
 
-		if _, ok := r.multiplexRegistry[multiplexName]; !ok {
+		if _, ok := reactor.multiplexRegistry[multiplexName]; !ok {
 			panic(fmt.Errorf("could not load multiplex by name %s", multiplexName))
 		}
 
-		return r.multiplexRegistry[multiplexName]
+		return reactor.multiplexRegistry[multiplexName]
 	}
 }
 
@@ -479,10 +475,10 @@ func (r *Reactor) initMultiplexProviders(
 // - `database/state`: the state machine databases.
 // - `database/tx_index`: the tx_index databases.
 // - `database/evidence`: the evidence databases.
-func (r *Reactor) initMultiplexDatabases() error {
+func (reactor *Reactor) initMultiplexDatabases() error {
 	// Create blockstore databases
 	bsMultiplexDB, err := NewMultiplexDB(&ChainDBContext{
-		DBContext: config.DBContext{ID: "blockstore", Config: r.GetNodeConfig()},
+		DBContext: config.DBContext{ID: "blockstore", Config: reactor.GetNodeConfig()},
 	})
 	if err != nil {
 		return err
@@ -490,7 +486,7 @@ func (r *Reactor) initMultiplexDatabases() error {
 
 	// Create state databases
 	stateMultiplexDB, err := NewMultiplexDB(&ChainDBContext{
-		DBContext: config.DBContext{ID: "state", Config: r.GetNodeConfig()},
+		DBContext: config.DBContext{ID: "state", Config: reactor.GetNodeConfig()},
 	})
 	if err != nil {
 		return err
@@ -498,7 +494,7 @@ func (r *Reactor) initMultiplexDatabases() error {
 
 	// Create indexer databases
 	indexerMultiplexDB, err := NewMultiplexDB(&ChainDBContext{
-		DBContext: config.DBContext{ID: "tx_index", Config: r.GetNodeConfig()},
+		DBContext: config.DBContext{ID: "tx_index", Config: reactor.GetNodeConfig()},
 	})
 	if err != nil {
 		return err
@@ -506,18 +502,18 @@ func (r *Reactor) initMultiplexDatabases() error {
 
 	// Create evidence databases
 	evidenceMultiplexDB, err := NewMultiplexDB(&ChainDBContext{
-		DBContext: config.DBContext{ID: "evidence", Config: r.GetNodeConfig()},
+		DBContext: config.DBContext{ID: "evidence", Config: reactor.GetNodeConfig()},
 	})
 	if err != nil {
 		return err
 	}
 
 	// Register the database instances with the Reactor
-	for _, chainId := range r.GetNetworks() {
-		r.RegisterInstance(KEY_DB_BS, chainId, bsMultiplexDB[chainId])
-		r.RegisterInstance(KEY_DB_SM, chainId, stateMultiplexDB[chainId])
-		r.RegisterInstance(KEY_DB_TX, chainId, indexerMultiplexDB[chainId])
-		r.RegisterInstance(KEY_DB_BF, chainId, evidenceMultiplexDB[chainId])
+	for _, chainID := range reactor.GetNetworks() {
+		reactor.RegisterInstance(InstanceKeyDatabaseBlock, chainID, bsMultiplexDB[chainID])
+		reactor.RegisterInstance(InstanceKeyDatabaseState, chainID, stateMultiplexDB[chainID])
+		reactor.RegisterInstance(InstanceKeyDatabaseIndex, chainID, indexerMultiplexDB[chainID])
+		reactor.RegisterInstance(InstanceKeyDatabaseEvidence, chainID, evidenceMultiplexDB[chainID])
 	}
 
 	return nil
@@ -525,31 +521,31 @@ func (r *Reactor) initMultiplexDatabases() error {
 
 // loadMultiplexState opens the multiplex databases for multiple
 // contexts: state, blockstore, indexer and evidence. Then loads state
-// machines from database, config or genesis doc and initiliaze stores.
+// machines from database, config or genesis doc and initialize stores.
 //
 // This method registers instances in the multiplexRegistry:
 // - `state`: the [sm.State] state machine instances.
 // - `stateStore`: the [sm.Store] instance attached to the database.
 // - `blockstore`: the created/opened block stores.
 //
-// TODO(midas): add multiplex metric "MultiplexStateLoadDurationSeconds"
-func (r *Reactor) loadMultiplexState() error {
+// TODO(midas): add multiplex metric "MultiplexStateLoadDurationSeconds".
+func (reactor *Reactor) loadMultiplexState() error {
 	// Initialize database tables and instances
-	err := r.initMultiplexDatabases()
+	err := reactor.initMultiplexDatabases()
 	if err != nil {
 		return err
 	}
 
 	// Load initial state multiplex from database or from genesis docs
 	// Uses "database/state" instances
-	err = r.InitMultiplexStates()
+	err = reactor.InitMultiplexStates()
 	if err != nil {
 		return err
 	}
 
 	// Create a blockstore multiplex around "database/blockstore" instances
 	// Uses "database/blockStore" instances
-	err = r.InitMultiplexBlockStores()
+	err = reactor.InitMultiplexBlockStores()
 	if err != nil {
 		return err
 	}
@@ -570,37 +566,37 @@ func (r *Reactor) loadMultiplexState() error {
 // This method registers services in the servicesRegistry:
 // - `eventBus`: the event bus for block events.
 // - `indexers`: the transaction- and block indexers service.
-func (r *Reactor) startNodeListeners(chainId string) error {
+func (reactor *Reactor) startNodeListeners(chainID string) error {
 	// Retrieve the node's config overwrite object
-	configProvider := r.GetInstanceProvider(KEY_CONFIG)
-	stateStoreProvider := r.GetInstanceProvider(KEY_STORE_STATE)
-	blockStoreProvider := r.GetInstanceProvider(KEY_STORE_BLOCK)
+	configProvider := reactor.GetInstanceProvider(InstanceKeyConfig)
+	stateStoreProvider := reactor.GetInstanceProvider(InstanceKeyStateStore)
+	blockStoreProvider := reactor.GetInstanceProvider(InstanceKeyBlockStore)
 
 	// Casting to ChainInstance before is required because the *instanceProviderFn*
 	// implementation provides a `any` typed variable which is not an interface.
-	nodeConfig := configProvider(chainId).(*config.Config)
-	stateStore := stateStoreProvider(chainId).(*ChainHistoryStore)
-	blockStore := blockStoreProvider(chainId).(*bs.BlockStore)
+	nodeConfig := configProvider(chainID).(*config.Config)
+	stateStore := stateStoreProvider(chainID).(*ChainHistoryStore)
+	blockStore := blockStoreProvider(chainID).(*bs.BlockStore)
 
 	// We can safely ignore the error as we know an address is available.
-	userAddress, _ := r.chainRegistry.GetAddress(chainId)
+	userAddress, _ := reactor.chainRegistry.GetAddress(chainID)
 	userConfDir := filepath.Join(nodeConfig.RootDir, config.DefaultConfigDir, userAddress)
 	userDataDir := filepath.Join(nodeConfig.RootDir, config.DefaultDataDir, userAddress)
 
 	// Prometheus does not allow hyphens in metrics names, it must match
 	// following regexp: [a-zA-Z_:][a-zA-Z0-9_:]*
 	// see also: https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels
-	metricsNames := nodeConfig.Instrumentation.Namespace + ":" + strings.Replace(chainId, "-", "_", -1)
-	stateMetricsProvider := sm.PrometheusMetrics(metricsNames, "chain_id", chainId)
+	metricsNames := nodeConfig.Instrumentation.Namespace + ":" + strings.ReplaceAll(chainID, "-", "_")
+	stateMetricsProvider := sm.PrometheusMetrics(metricsNames, "chain_id", chainID)
 
 	// 1) Event Bus Service
 	eventBus := types.NewEventBus()
-	eventBus.SetLogger(r.logger.With("module", "events"))
+	eventBus.SetLogger(reactor.logger.With("module", "events"))
 	if err := eventBus.Start(); err != nil {
 		return fmt.Errorf("error starting event bus: %w", err)
 	}
 
-	r.filesystemMutex.Lock()
+	reactor.filesystemMutex.Lock()
 	// 2) Priv Validator Service
 	//
 	// Uses a separate priv validator for each supported network to prevent
@@ -609,8 +605,8 @@ func (r *Reactor) startNodeListeners(chainId string) error {
 	// TODO(midas):
 	// Currently it's not possible to use external socket client as
 	// PrivValidator and we ignore Config.PrivValidatorListenAddr
-	privValKeyDir := filepath.Join(userConfDir, chainId)   // config/
-	privValStateDir := filepath.Join(userDataDir, chainId) // data/
+	privValKeyDir := filepath.Join(userConfDir, chainID)   // config/
+	privValStateDir := filepath.Join(userDataDir, chainID) // data/
 	privValidator, err := privval.LoadOrGenFilePV(
 		filepath.Join(privValKeyDir, filepath.Base(nodeConfig.PrivValidatorKeyFile())),
 		filepath.Join(privValStateDir, filepath.Base(nodeConfig.PrivValidatorStateFile())),
@@ -618,11 +614,11 @@ func (r *Reactor) startNodeListeners(chainId string) error {
 			return ed25519.GenPrivKey(), nil
 		},
 	)
-	r.filesystemMutex.Unlock()
+	reactor.filesystemMutex.Unlock()
 	if err != nil {
 		return err
 	}
-	// TODO(midas): currently it's not possible to use external socket client as PrivValidator.
+	// TODO(midas): currently it's not possible to use external socket client as PrivValidatoreactor.
 
 	// 3) Blocks and Transactions Indexers
 	//
@@ -635,11 +631,11 @@ func (r *Reactor) startNodeListeners(chainId string) error {
 		blockIndexer indexer.BlockIndexer
 	)
 	if nodeConfig.TxIndex.Indexer == "kv" {
-		databaseProvider := r.GetInstanceProvider(KEY_DB_TX)
+		databaseProvider := reactor.GetInstanceProvider(InstanceKeyDatabaseIndex)
 
 		// Casting to ChainInstance before is required because the *instanceProviderFn*
 		// implementation provides a `any` typed variable which is not an interface.
-		indexerDatabase := databaseProvider(chainId).(*ChainDB)
+		indexerDatabase := databaseProvider(chainID).(*ChainDB)
 
 		txIndexer = txidxkv.NewTxIndex(indexerDatabase)
 		blockIndexer = blockidxkv.New(
@@ -652,7 +648,7 @@ func (r *Reactor) startNodeListeners(chainId string) error {
 	}
 
 	indexerService := txindex.NewIndexerService(txIndexer, blockIndexer, eventBus, false) // stopOnError
-	indexerService.SetLogger(r.logger.With("module", "txindex"))
+	indexerService.SetLogger(reactor.logger.With("module", "txindex"))
 	if err := indexerService.Start(); err != nil {
 		return fmt.Errorf("error starting indexers: %w", err)
 	}
@@ -677,14 +673,14 @@ func (r *Reactor) startNodeListeners(chainId string) error {
 		blockStore,
 		blockIndexer,
 		txIndexer,
-		r.logger.With("module", "state"),
+		reactor.logger.With("module", "state"),
 		prunerOpts...,
 	)
 
 	// Register the services and instances with the Reactor
-	r.RegisterInstance(KEY_PRIVVAL, chainId, privValidator)
-	r.RegisterService(KEY_EVENTBUS, chainId, eventBus)
-	r.RegisterService(KEY_INDEXERS, chainId, indexerService)
-	r.RegisterService(KEY_PRUNER, chainId, pruner)
+	reactor.RegisterInstance(InstanceKeyPrivValidator, chainID, privValidator)
+	reactor.RegisterService(ServiceKeyEventBus, chainID, eventBus)
+	reactor.RegisterService(ServiceKeyIndexers, chainID, indexerService)
+	reactor.RegisterService(ServiceKeyPruner, chainID, pruner)
 	return nil
 }

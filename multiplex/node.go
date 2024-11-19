@@ -13,6 +13,7 @@ import (
 	"github.com/ice-blockchain/cometbft/internal/evidence"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	mempl "github.com/ice-blockchain/cometbft/mempool"
+	"github.com/ice-blockchain/cometbft/multiplex/snapsapp"
 	"github.com/ice-blockchain/cometbft/node"
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/p2p/pex"
@@ -22,14 +23,12 @@ import (
 	"github.com/ice-blockchain/cometbft/statesync"
 	"github.com/ice-blockchain/cometbft/types"
 	"github.com/ice-blockchain/cometbft/version"
-
-	"github.com/ice-blockchain/cometbft/multiplex/snapsapp"
 )
 
 // NodesMultiplexProvider takes a config and a logger and returns a
 // ready-to-go nodes multiplex, i.e. [mx.MultiplexMap[*node.Node]].
 //
-// Note that providers *must not* start node instance
+// Note that providers *must not* start node instance.
 type NodesMultiplexProvider func(
 	*config.Config,
 	cmtlog.Logger,
@@ -42,7 +41,7 @@ type NodesMultiplexProvider func(
 // This method is used in `cmd/cometbft/main.go` to create a nodes multiplex.
 //
 // See also: [NewNodesMultiplex]
-// This method implements [NodesMultiplexProvider]
+// This method implements [NodesMultiplexProvider].
 func DefaultNewNodesMultiplex(
 	globalCfg *config.Config,
 	logger cmtlog.Logger,
@@ -178,59 +177,57 @@ func NewNodesMultiplex(
 	for i := 0; i < len(knownNetworks); i++ {
 		// The multiplex reactor communicates the ChainID on a channel
 		// to tell this bootstrapper about the readiness of a node config
-		select {
-		case chainId := <-reactor.chainReadyCh:
-			// Inform about the readiness of this chain
-			logger.Info("Network configuration done", "chain_id", chainId)
+		chainID := <-reactor.chainReadyCh
 
-			// Used to retrieve configuration and state per chain.
-			statesProvider := reactor.GetInstanceProvider(KEY_STATE)
-			privvalProvider := reactor.GetInstanceProvider(KEY_PRIVVAL)
+		// Inform about the readiness of this chain
+		logger.Info("Network configuration done", "chain_id", chainID)
 
-			// The node config contains the configuration overwrite.
-			stateMachine := statesProvider(chainId).(*HistoricalState)
-			privValidator := privvalProvider(chainId).(types.PrivValidator)
+		// Used to retrieve configuration and state per chain.
+		statesProvider := reactor.GetInstanceProvider(InstanceKeyState)
+		privvalProvider := reactor.GetInstanceProvider(InstanceKeyPrivValidator)
 
-			// Make sure we can access the priv validator
-			privValPubKey, err := privValidator.GetPubKey()
-			if err != nil {
-				return nil, nil, fmt.Errorf("could not read public key from priv validator: %w", err)
-			}
+		// The node config contains the configuration overwrite.
+		stateMachine := statesProvider(chainID).(*HistoricalState)
+		privValidator := privvalProvider(chainID).(types.PrivValidator)
 
-			// Since we do not run state-sync, we must execute a ABCI handshake
-			// And following a successful handshake, we may load the state machine.
-			//
-			// e.g. This also happens on restart of a node.
-			if err := reactor.PrepareConsensusInstanceWithReactor(ctx, chainId); err != nil {
-				return nil, nil, fmt.Errorf("error preparing consensus instance: %w", err)
-			}
-
-			// Inform about the state machine block height
-			logger.Info(
-				"State machine loaded",
-				"chain_id", stateMachine.ChainID,
-				"height", stateMachine.LastBlockHeight,
-			)
-
-			// Determine whether we should do block sync. This must happen after
-			// the handshake, since the app may modify the validator set,
-			// e.g. specifying ourself as the only validator.
-			blockSync := !onlyValidatorIsUs(stateMachine.State.Copy(), privValPubKey)
-
-			logNodeStartupInfo(stateMachine.State.Copy(), privValPubKey, logger)
-
-			// Start the actual consensus instance.
-			//
-			// Creates a mempool, evidence pool, block executor, blocksync
-			// and finally a consensus reactor.
-			if err := reactor.CreateConsensusInstanceReactors(ctx, chainId, blockSync); err != nil {
-				return nil, nil, fmt.Errorf("error starting consensus reactors: %w", err)
-			}
-
-			// Inform about the consensus readiness
-			logger.Info("Network is consensus ready", "chain_id", chainId)
+		// Make sure we can access the priv validator
+		privValPubKey, err := privValidator.GetPubKey()
+		if err != nil {
+			return nil, nil, fmt.Errorf("could not read public key from priv validator: %w", err)
 		}
-		// End of select
+
+		// Since we do not run state-sync, we must execute a ABCI handshake
+		// And following a successful handshake, we may load the state machine.
+		//
+		// e.g. This also happens on restart of a node.
+		if err := reactor.PrepareConsensusInstanceWithReactor(ctx, chainID); err != nil {
+			return nil, nil, fmt.Errorf("error preparing consensus instance: %w", err)
+		}
+
+		// Inform about the state machine block height
+		logger.Info(
+			"State machine loaded",
+			"chain_id", stateMachine.ChainID,
+			"height", stateMachine.LastBlockHeight,
+		)
+
+		// Determine whether we should do block sync. This must happen after
+		// the handshake, since the app may modify the validator set,
+		// e.g. specifying ourself as the only validator.
+		blockSync := !onlyValidatorIsUs(stateMachine.State.Copy(), privValPubKey)
+
+		logNodeStartupInfo(stateMachine.State.Copy(), privValPubKey, logger)
+
+		// Start the actual consensus instance.
+		//
+		// Creates a mempool, evidence pool, block executor, blocksync
+		// and finally a consensus reactor.
+		if err := reactor.CreateConsensusInstanceReactors(ctx, chainID, blockSync); err != nil {
+			return nil, nil, fmt.Errorf("error starting consensus reactors: %w", err)
+		}
+
+		// Inform about the consensus readiness
+		logger.Info("Network is consensus ready", "chain_id", chainID)
 	}
 	// End of for loop, code following this is run *globally*
 	// Note that reaching this section means that *all replicated chains* are
@@ -259,8 +256,8 @@ func NewNodesMultiplex(
 
 	// Inform about all replicated chains being configured
 	logger.Info("All nodes are now configured", "nodeId", string(nodeKey.ID()))
-	nodesMultiplex, err := reactor.createMultiplexNodesWithServices(ctx, options...)
-	return nodesMultiplex, reactor, err
+	nodesMultiplex := reactor.createMultiplexNodesWithServices(ctx, options...)
+	return nodesMultiplex, reactor, nil
 }
 
 // ----------------------------------------------------------------------------
@@ -394,27 +391,25 @@ func makeNodeInfo(
 	knownNetworks := reactor.GetChainRegistry().GetChains()
 	countNetworks := len(knownNetworks)
 
-	configProvider := reactor.GetInstanceProvider(KEY_CONFIG)
-	statesProvider := reactor.GetInstanceProvider(KEY_STATE)
+	configProvider := reactor.GetInstanceProvider(InstanceKeyConfig)
+	statesProvider := reactor.GetInstanceProvider(InstanceKeyState)
 
 	// Fill ProtocolVersions and Networks fields
 	protocolVersions := make([]ChainProtocolVersion, countNetworks)
 	p2pListenAddrs := make([]ChainListenAddr, countNetworks)
 	rpcListenAddrs := make([]ChainListenAddr, countNetworks)
-	for i, chainId := range knownNetworks {
-		cfgOverwrite := configProvider(chainId).(*config.Config)
-		stateMachine := statesProvider(chainId).(*HistoricalState)
+	for i, chainID := range knownNetworks {
+		cfgOverwrite := configProvider(chainID).(*config.Config)
+		stateMachine := statesProvider(chainID).(*HistoricalState)
 
-		protocolVersions[i] = NewChainProtocolVersion(chainId, p2p.NewProtocolVersion(
+		protocolVersions[i] = NewChainProtocolVersion(chainID, p2p.NewProtocolVersion(
 			version.P2PProtocol,
 			stateMachine.Version.Consensus.Block,
 			stateMachine.Version.Consensus.App,
 		))
 
-		p2pListenAddrs[i] = NewChainListenAddr(chainId, cfgOverwrite.P2P.ListenAddress)
-		rpcListenAddrs[i] = NewChainListenAddr(chainId, cfgOverwrite.RPC.ListenAddress)
-
-		i++
+		p2pListenAddrs[i] = NewChainListenAddr(chainID, cfgOverwrite.P2P.ListenAddress)
+		rpcListenAddrs[i] = NewChainListenAddr(chainID, cfgOverwrite.RPC.ListenAddress)
 	}
 
 	txIndexerStatus := "on"

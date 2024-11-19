@@ -29,15 +29,15 @@ func InjectSyncConfig(
 
 	// Note that we do not provide any ordering here, add if necessary
 	for userAddress, chainIds := range conf.UserChains {
-		for _, chainId := range chainIds {
+		for _, chainID := range chainIds {
 			// Injects UserAddress and ChainID to the context in case it is
 			// necessary inside the [SyncConfigExtensionFn] extension.
-			chainContext := context.WithValue(context.TODO(), "Address", userAddress)
-			chainContext = context.WithValue(chainContext, "ChainID", chainId)
+			chainContext := context.WithValue(context.TODO(), KeyAddress, userAddress)
+			chainContext = context.WithValue(chainContext, KeyChainID, chainID)
 
 			// We still use the [config.MultiplexConfig] if available.
 			baseSyncConf := config.DefaultStateSyncConfig()
-			if confChainSync, ok := conf.SyncConfig[chainId]; ok {
+			if confChainSync, ok := conf.SyncConfig[chainID]; ok {
 				baseSyncConf = confChainSync
 			}
 
@@ -47,7 +47,7 @@ func InjectSyncConfig(
 			// by implementing a custom SyncConfigExtensionFn, an example is
 			// available with [DefaultSyncConfigExtension].
 			chainSyncConf := extensionFn(chainContext, baseSyncConf)
-			nextSyncConfig[chainId] = chainSyncConf
+			nextSyncConfig[chainID] = chainSyncConf
 		}
 	}
 
@@ -78,15 +78,15 @@ func InjectChainSeeds(
 
 	// Note that we do not provide any ordering here, add if necessary
 	for userAddress, chainIds := range conf.UserChains {
-		for _, chainId := range chainIds {
+		for _, chainID := range chainIds {
 			// Injects UserAddress and ChainID to the context in case it is
 			// necessary inside the [SeedConfigExtensionFn] extension.
-			chainContext := context.WithValue(context.TODO(), "Address", userAddress)
-			chainContext = context.WithValue(chainContext, "ChainID", chainId)
+			chainContext := context.WithValue(context.TODO(), KeyAddress, userAddress)
+			chainContext = context.WithValue(chainContext, KeyChainID, chainID)
 
 			// We still use the [config.MultiplexConfig] if available.
 			baseSeeds := ""
-			if confChainSeeds, ok := conf.ChainSeeds[chainId]; ok {
+			if confChainSeeds, ok := conf.ChainSeeds[chainID]; ok {
 				baseSeeds = confChainSeeds
 			}
 
@@ -96,7 +96,7 @@ func InjectChainSeeds(
 			// by implementing a custom SeedConfigExtensionFn, an example is
 			// available with [DefaultSeedConfigExtension].
 			chainSeedsConf := extensionFn(chainContext, baseSeeds)
-			nextChainSeeds[chainId] = chainSeedsConf
+			nextChainSeeds[chainID] = chainSeedsConf
 		}
 	}
 

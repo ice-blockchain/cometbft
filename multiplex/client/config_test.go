@@ -10,7 +10,6 @@ import (
 
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/crypto/tmhash"
-
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 )
 
@@ -35,14 +34,14 @@ func TestMultiplexClientInjectSyncConfig(t *testing.T) {
 	multiplexConf := config.MultiplexTestBaseConfig(
 		map[string]*config.StateSyncConfig{expectedChainID: baseSyncConf},
 		map[string]string{},
-		map[string][]string{expectedAddress: []string{expectedChainID}})
+		map[string][]string{expectedAddress: {expectedChainID}})
 
 	// Execute the extension / injection, we intentionally force the type
 	// here to prevent compilation for extensions that wouldn't work correctly.
-	var injectSyncConf map[string]*config.StateSyncConfig
+	var injectSyncConf map[string]*config.StateSyncConfig //nolint:gosimple
 	injectSyncConf = client.InjectSyncConfig(
 		&multiplexConf.MultiplexConfig,
-		mockSyncConfigExtension_MutatesHeight, // default_test.go
+		mockSyncConfigExtensionMutatesHeight, // default_test.go
 	)
 
 	// Extension may not return nil
@@ -71,14 +70,14 @@ func TestMultiplexClientInjectChainSeeds(t *testing.T) {
 	multiplexConf := config.MultiplexTestBaseConfig(
 		map[string]*config.StateSyncConfig{},
 		map[string]string{expectedChainID: baseSeeds},
-		map[string][]string{expectedAddress: []string{expectedChainID}})
+		map[string][]string{expectedAddress: {expectedChainID}})
 
 	// Execute the extension / injection, we intentionally force the type
 	// here to prevent compilation for extensions that wouldn't work correctly.
-	var injectSeedsConf map[string]string
+	var injectSeedsConf map[string]string //nolint:gosimple
 	injectSeedsConf = client.InjectChainSeeds(
 		&multiplexConf.MultiplexConfig,
-		mockSeedConfigExtension_PrefixOneSeed, // default_test.go
+		mockSeedConfigExtensionPrefixOneSeed, // default_test.go
 	)
 
 	// Extension may not return nil

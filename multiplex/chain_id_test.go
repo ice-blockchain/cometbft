@@ -10,7 +10,6 @@ import (
 	"github.com/ice-blockchain/cometbft/crypto"
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	"github.com/ice-blockchain/cometbft/crypto/tmhash"
-
 	mx "github.com/ice-blockchain/cometbft/multiplex"
 )
 
@@ -22,7 +21,7 @@ const (
 // formalizeChainID replaces the "test-chain" prefixes for "mx-chain" prefixes
 // such that it matches the format of a [ExtendedChainID].
 func formalizeChainID(opts ...string) string {
-	chainId := opts[0]
+	chainID := opts[0]
 	prefix := "test-chain"
 
 	if len(opts) > 1 && len(opts[1]) > 0 {
@@ -31,7 +30,7 @@ func formalizeChainID(opts ...string) string {
 
 	// ExtendedChainID uses a *statically* compiled prefix for chain
 	// identifiers which cannot be changed.
-	return strings.Replace(chainId, prefix, "mx-chain", 1)
+	return strings.Replace(chainID, prefix, "mx-chain", 1)
 }
 
 func makeChainID(input string) string {
@@ -151,8 +150,8 @@ func TestMultiplexExtendedChainIDNewExtendedChainIDFromLegacy(t *testing.T) {
 		"mx-chain-CC8E6555A3F401FF61DA098F94D325E7041BC43A-1A63C0E60122F9BBCC",
 	}
 
-	for _, failCaseChainId := range failCases {
-		_, err := mx.NewExtendedChainIDFromLegacy(failCaseChainId)
+	for _, failCaseChainID := range failCases {
+		_, err := mx.NewExtendedChainIDFromLegacy(failCaseChainID)
 		assert.Error(t, err)
 	}
 
@@ -166,10 +165,10 @@ func TestMultiplexExtendedChainIDNewExtendedChainIDFromLegacy(t *testing.T) {
 		makeChainID("Media"),
 	}
 
-	for _, testCaseChainId := range testCases {
-		ext, err := mx.NewExtendedChainIDFromLegacy(testCaseChainId)
+	for _, testCaseChainID := range testCases {
+		ext, err := mx.NewExtendedChainIDFromLegacy(testCaseChainID)
 		assert.NoError(t, err)
-		assert.Equal(t, testCaseChainId, ext.String())
-		assert.Equal(t, testCaseChainId, ext.Format())
+		assert.Equal(t, testCaseChainID, ext.String())
+		assert.Equal(t, testCaseChainID, ext.Format())
 	}
 }

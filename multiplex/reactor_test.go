@@ -14,11 +14,10 @@ import (
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
+	mx "github.com/ice-blockchain/cometbft/multiplex"
 	"github.com/ice-blockchain/cometbft/node"
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/types"
-
-	mx "github.com/ice-blockchain/cometbft/multiplex"
 )
 
 func makeRandomNodeKey() *p2p.NodeKey {
@@ -87,9 +86,9 @@ func TestMultiplexReactorNewReactor(t *testing.T) {
 	// Networks must be ordered
 	// ChainRegistry.GetChains() is tested to produce an ordered slice.
 	assert.NotEmpty(t, reactor.GetNetworks())
-	for i, testChainId := range chainRegistry.GetChains() {
-		actualChainId := reactor.GetNetworks()[i]
-		assert.Equal(t, testChainId, actualChainId)
+	for i, testChainID := range chainRegistry.GetChains() {
+		actualChainID := reactor.GetNetworks()[i]
+		assert.Equal(t, testChainID, actualChainID)
 	}
 
 	// NewReactor must initialize providers
@@ -112,19 +111,19 @@ func TestMultiplexReactorRegisterService(t *testing.T) {
 
 	// Create services per chain
 	for _, chainIds := range nodeCfg.MultiplexConfig.UserChains {
-		for _, chainId := range chainIds {
+		for _, chainID := range chainIds {
 			// Test registering a valid service
 			eventBus := types.NewEventBus()
-			reactor.RegisterService(mx.KEY_EVENTBUS, chainId, eventBus)
+			reactor.RegisterService(mx.ServiceKeyEventBus, chainID, eventBus)
 		}
 	}
 
 	// And retrieve to assert
 	servicesProvider := reactor.GetServicesProvider()
 	for _, chainIds := range nodeCfg.MultiplexConfig.UserChains {
-		for _, chainId := range chainIds {
+		for _, chainID := range chainIds {
 			// Type-assertion to cast back to actual service structure
-			eventBus := servicesProvider(mx.KEY_EVENTBUS, chainId).(*types.EventBus)
+			eventBus := servicesProvider(mx.ServiceKeyEventBus, chainID).(*types.EventBus)
 
 			assert.NotNil(t, eventBus, "service provider should return service instance")
 			assert.IsType(t, &types.EventBus{}, eventBus)
@@ -139,15 +138,15 @@ func TestMultiplexReactorRegisterService(t *testing.T) {
 	// provider is thread-safe and retrieval of services is always possible.
 	var wg sync.WaitGroup
 	for _, chainIds := range nodeCfg.MultiplexConfig.UserChains {
-		for _, chainId := range chainIds {
+		for _, chainID := range chainIds {
 			wg.Add(1)
-			go func(concurrentChainId string) {
+			go func(concurrentChainID string) {
 				// Test registering a valid service in parallel goroutine
 				eventBus := types.NewEventBus()
-				otherReactor.RegisterService(mx.KEY_EVENTBUS, concurrentChainId, eventBus)
+				otherReactor.RegisterService(mx.ServiceKeyEventBus, concurrentChainID, eventBus)
 
 				wg.Done()
-			}(chainId)
+			}(chainID)
 		}
 	}
 
@@ -156,9 +155,9 @@ func TestMultiplexReactorRegisterService(t *testing.T) {
 	// And retrieve to assert
 	otherServicesProvider := otherReactor.GetServicesProvider()
 	for _, chainIds := range nodeCfg.MultiplexConfig.UserChains {
-		for _, chainId := range chainIds {
+		for _, chainID := range chainIds {
 			// Type-assertion to cast back to actual service structure
-			eventBus := otherServicesProvider(mx.KEY_EVENTBUS, chainId).(*types.EventBus)
+			eventBus := otherServicesProvider(mx.ServiceKeyEventBus, chainID).(*types.EventBus)
 
 			assert.NotNil(t, eventBus, "service provider should return service instance")
 			assert.IsType(t, &types.EventBus{}, eventBus)
@@ -178,44 +177,45 @@ func TestMultiplexReactorRegisterInstance(t *testing.T) {
 	// Create a test reactor
 	reactor := makeTestReactor(t, nodeCfg)
 
-	testDbKey := []byte(`testChainId`)
+	testDBKey := []byte(`testChainId`)
 
 	// Create instances per chain
 	// Using ORDERED networks because of ports overwrite content test
-	for index, chainId := range reactor.GetNetworks() {
+	for index, chainID := range reactor.GetNetworks() {
 		// 1. We create a mutated config per chain
 		perChainCfg := mx.NewConfigOverwrite(
 			nodeCfg,
 			reactor.GetChainRegistry(),
-			chainId,
+			chainID,
 		)
 
 		// 2. We create a database instance per chain
 		dbName := "chaindb-" + strconv.Itoa(index)
-		perChainDb, err := dbm.NewDB(dbName, dbm.BackendType("memdb"), rootDir)
+		perChainDB, err := dbm.NewDB(dbName, dbm.BackendType("memdb"), rootDir)
 		require.NoError(t, err)
 		// .. and add some data to it
-		err = perChainDb.SetSync(testDbKey, []byte(chainId))
+		err = perChainDB.SetSync(testDBKey, []byte(chainID))
+		require.NoError(t, err)
 
 		// Test registering a valid instance
-		reactor.RegisterInstance(mx.KEY_CONFIG, chainId, perChainCfg) // "config"
-		reactor.RegisterInstance(mx.KEY_DB_SM, chainId, &mx.ChainDB{
-			ChainID: chainId,
-			DB:      perChainDb,
+		reactor.RegisterInstance(mx.InstanceKeyConfig, chainID, perChainCfg) // "config"
+		reactor.RegisterInstance(mx.InstanceKeyDatabaseState, chainID, &mx.ChainDB{
+			ChainID: chainID,
+			DB:      perChainDB,
 		}) // "database/state"
 	}
 
 	// And retrieve to assert
-	configProvider := reactor.GetInstanceProvider(mx.KEY_CONFIG)
+	configProvider := reactor.GetInstanceProvider(mx.InstanceKeyConfig)
 	assert.NotNil(t, configProvider, "should return multiplex map of config instances")
 
-	databaseProvider := reactor.GetInstanceProvider(mx.KEY_DB_SM)
+	databaseProvider := reactor.GetInstanceProvider(mx.InstanceKeyDatabaseState)
 	assert.NotNil(t, databaseProvider, "should return multiplex map of database instances")
 
 	// Using ORDERED networks because of ports overwrite content test
-	for index, chainId := range reactor.GetNetworks() {
+	for index, chainID := range reactor.GetNetworks() {
 		// 1. Type-assertion to cast back to actual instance
-		perChainCfg := configProvider(chainId).(*config.Config)
+		perChainCfg := configProvider(chainID).(*config.Config)
 
 		assert.NotNil(t, perChainCfg, "instance provider should return instance")
 		assert.IsType(t, &config.Config{}, perChainCfg)
@@ -227,14 +227,14 @@ func TestMultiplexReactorRegisterInstance(t *testing.T) {
 		assert.Contains(t, perChainCfg.RPC.ListenAddress, strconv.Itoa(expectedRPCPort))
 
 		// 2. Also do some asserts about the DB instance stored
-		perChainDb := databaseProvider(chainId).(*mx.ChainDB)
+		perChainDB := databaseProvider(chainID).(*mx.ChainDB)
 
-		assert.NotNil(t, perChainDb, "instance provide should return instance")
-		assert.IsType(t, &mx.ChainDB{}, perChainDb)
+		assert.NotNil(t, perChainDB, "instance provide should return instance")
+		assert.IsType(t, &mx.ChainDB{}, perChainDB)
 
-		actualChainId, err := perChainDb.DB.Get(testDbKey)
+		actualChainID, err := perChainDB.DB.Get(testDBKey)
 		assert.NoError(t, err, "should retrieve key from database")
-		assert.Equal(t, []byte(chainId), actualChainId)
+		assert.Equal(t, []byte(chainID), actualChainID)
 	}
 
 	// ------------------------------------------------
@@ -244,45 +244,46 @@ func TestMultiplexReactorRegisterInstance(t *testing.T) {
 	// Following tests the mutex for services and makes sure that the service
 	// provider is thread-safe and retrieval of services is always possible.
 	var wg sync.WaitGroup
-	for index, chainId := range otherReactor.GetNetworks() {
+	for index, chainID := range otherReactor.GetNetworks() {
 		wg.Add(1)
-		go func(idx int, concurrentChainId string) {
+		go func(idx int, concurrentChainID string) {
 			// 1. We create a mutated config per chain
 			perChainCfg := mx.NewConfigOverwrite(
 				nodeCfg,
 				otherReactor.GetChainRegistry(),
-				chainId,
+				concurrentChainID,
 			)
 
 			// 2. We create a database instance per chain
 			dbName := "chaindb-" + strconv.Itoa(idx)
-			perChainDb, err := dbm.NewDB(dbName, dbm.BackendType("memdb"), rootDir)
+			perChainDB, err := dbm.NewDB(dbName, dbm.BackendType("memdb"), rootDir)
 			require.NoError(t, err)
 			// .. and add some data to it
-			err = perChainDb.SetSync(testDbKey, []byte(concurrentChainId))
+			err = perChainDB.SetSync(testDBKey, []byte(concurrentChainID))
+			require.NoError(t, err)
 
 			// Test registering a valid instance in parallel goroutines
-			otherReactor.RegisterInstance(mx.KEY_CONFIG, concurrentChainId, perChainCfg) // "config"
-			otherReactor.RegisterInstance(mx.KEY_DB_SM, concurrentChainId, &mx.ChainDB{
-				ChainID: concurrentChainId,
-				DB:      perChainDb,
+			otherReactor.RegisterInstance(mx.InstanceKeyConfig, concurrentChainID, perChainCfg) // "config"
+			otherReactor.RegisterInstance(mx.InstanceKeyDatabaseState, concurrentChainID, &mx.ChainDB{
+				ChainID: concurrentChainID,
+				DB:      perChainDB,
 			}) // "database/state"
 
 			wg.Done()
-		}(index, chainId)
+		}(index, chainID)
 	}
 
 	wg.Wait()
 
 	// And retrieve to assert
-	otherConfigProvider := reactor.GetInstanceProvider(mx.KEY_CONFIG)
+	otherConfigProvider := reactor.GetInstanceProvider(mx.InstanceKeyConfig)
 	assert.NotNil(t, otherConfigProvider, "should return multiplex map of config instances")
 
-	otherDatabaseProvider := reactor.GetInstanceProvider(mx.KEY_DB_SM)
+	otherDatabaseProvider := reactor.GetInstanceProvider(mx.InstanceKeyDatabaseState)
 	assert.NotNil(t, otherDatabaseProvider, "should return multiplex map of database instances")
-	for index, chainId := range otherReactor.GetNetworks() {
+	for index, chainID := range otherReactor.GetNetworks() {
 		// 1. Type-assertion to cast back to actual instance
-		perChainCfg := otherConfigProvider(chainId).(*config.Config)
+		perChainCfg := otherConfigProvider(chainID).(*config.Config)
 
 		assert.NotNil(t, perChainCfg, "instance provider should return instance")
 		assert.IsType(t, &config.Config{}, perChainCfg)
@@ -294,34 +295,35 @@ func TestMultiplexReactorRegisterInstance(t *testing.T) {
 		assert.Contains(t, perChainCfg.RPC.ListenAddress, strconv.Itoa(expectedRPCPort))
 
 		// 2. Also do some asserts about the DB instance stored
-		perChainDb := otherDatabaseProvider(chainId).(*mx.ChainDB)
+		perChainDB := otherDatabaseProvider(chainID).(*mx.ChainDB)
 
-		assert.NotNil(t, perChainDb, "instance provide should return instance")
-		assert.IsType(t, &mx.ChainDB{}, perChainDb)
+		assert.NotNil(t, perChainDB, "instance provide should return instance")
+		assert.IsType(t, &mx.ChainDB{}, perChainDB)
 
-		actualChainId, err := perChainDb.DB.Get(testDbKey)
+		actualChainID, err := perChainDB.DB.Get(testDBKey)
 		assert.NoError(t, err, "should retrieve key from database")
-		assert.Equal(t, []byte(chainId), actualChainId)
+		assert.Equal(t, []byte(chainID), actualChainID)
 	}
 }
 
-// Do not use this in TestMultiplexReactorNewReactor
-func makeTestReactor(t testing.TB, nodeCfg *config.Config) *mx.Reactor {
-	t.Helper()
+// Do not use this in TestMultiplexReactorNewReactor.
+func makeTestReactor(tb testing.TB, nodeCfg *config.Config) *mx.Reactor {
+	tb.Helper()
 
-	return makeTestReactorWithGenesisDocProvider(t, nodeCfg, mockGenesisDocSetProviderFunc())
+	return makeTestReactorWithGenesisDocProvider(tb, nodeCfg, mockGenesisDocSetProviderFunc())
 }
 
 func makeTestReactorWithGenesisDocProvider(
-	t testing.TB,
+	tb testing.TB,
 	nodeCfg *config.Config,
 	genDocProvider node.GenesisDocProvider,
 ) *mx.Reactor {
+	tb.Helper()
 
 	nodeKey := makeRandomNodeKey()
 
 	chainRegistry, err := mx.NewChainRegistry(&nodeCfg.MultiplexConfig)
-	require.NoError(t, err, "should create chain registry instance")
+	require.NoError(tb, err, "should create chain registry instance")
 
 	return mx.NewReactor(
 		nodeKey,

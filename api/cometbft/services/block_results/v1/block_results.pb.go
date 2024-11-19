@@ -5,9 +5,9 @@ package v1
 
 import (
 	fmt "fmt"
+	proto "github.com/cosmos/gogoproto/proto"
 	v1 "github.com/ice-blockchain/cometbft/api/cometbft/abci/v1"
 	v11 "github.com/ice-blockchain/cometbft/api/cometbft/types/v1"
-	proto "github.com/cosmos/gogoproto/proto"
 	io "io"
 	math "math"
 	math_bits "math/bits"

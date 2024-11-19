@@ -21,7 +21,6 @@ import (
 	cmtjson "github.com/ice-blockchain/cometbft/libs/json"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	mx "github.com/ice-blockchain/cometbft/multiplex"
-	"github.com/ice-blockchain/cometbft/node"
 	cmtnode "github.com/ice-blockchain/cometbft/node"
 	"github.com/ice-blockchain/cometbft/privval"
 	"github.com/ice-blockchain/cometbft/proxy"
@@ -31,7 +30,7 @@ import (
 // CAUTION: do not remove this test because it makes sure that that multiplex
 // implementation *does not interfere* with the legacy node implementation.
 func TestMultiplexNodeLegacyNodeImplementation(t *testing.T) {
-	testChainId := "test-legacy-chain-id"
+	testChainID := "test-legacy-chain-id"
 	rootDir, err := os.MkdirTemp("", t.Name())
 	require.NoError(t, err)
 	defer os.RemoveAll(rootDir)
@@ -43,7 +42,7 @@ func TestMultiplexNodeLegacyNodeImplementation(t *testing.T) {
 	baseConfig := config.DefaultBaseConfig()
 	genesisFilePath := filepath.Join(rootDir, baseConfig.Genesis)
 	if !cmtos.FileExists(genesisFilePath) {
-		testGenesis := fmt.Sprintf(testLegacyGenesisDocFmt, testChainId) // LEGACY!
+		testGenesis := fmt.Sprintf(testLegacyGenesisDocFmt, testChainID) // LEGACY!
 		cmtos.MustWriteFile(genesisFilePath, []byte(testGenesis), 0o644)
 	}
 
@@ -74,12 +73,16 @@ func TestMultiplexNodeLegacyNodeImplementation(t *testing.T) {
 
 	// Start and stop to test full run-up of node
 	err = n.Start()
-	defer n.Stop()
 	assert.NoError(t, err)
+
+	defer func() {
+		err := n.Stop()
+		assert.NoError(t, err)
+	}()
 }
 
 func TestMultiplexNodeNewLegacyNodeMultiplex(t *testing.T) {
-	testChainId := "test-legacy-chain-id"
+	testChainID := "test-legacy-chain-id"
 	rootDir, err := os.MkdirTemp("", t.Name())
 	require.NoError(t, err)
 	defer os.RemoveAll(rootDir)
@@ -91,7 +94,7 @@ func TestMultiplexNodeNewLegacyNodeMultiplex(t *testing.T) {
 	baseConfig := config.DefaultBaseConfig()
 	genesisFilePath := filepath.Join(rootDir, baseConfig.Genesis)
 	if !cmtos.FileExists(genesisFilePath) {
-		testGenesis := fmt.Sprintf(testLegacyGenesisDocFmt, testChainId) // LEGACY!
+		testGenesis := fmt.Sprintf(testLegacyGenesisDocFmt, testChainID) // LEGACY!
 		cmtos.MustWriteFile(genesisFilePath, []byte(testGenesis), 0o644)
 	}
 
@@ -110,25 +113,29 @@ func TestMultiplexNodeNewLegacyNodeMultiplex(t *testing.T) {
 	assert.NoError(t, err, "should create node instance")
 	assert.NotNil(t, testMultiplex, "should return a multiplex map with a node")
 	assert.Len(t, testMultiplex, 1, "should return a multiplex map with exactly one node")
-	assert.Contains(t, testMultiplex, testChainId)
-	assert.NotNil(t, testMultiplex[testChainId])
+	assert.Contains(t, testMultiplex, testChainID)
+	assert.NotNil(t, testMultiplex[testChainID])
 
 	// Type-assertion to verify that we have a correct instance
-	legacyNode := testMultiplex[testChainId].GetInstance().(*node.Node)
+	legacyNode := testMultiplex[testChainID].GetInstance().(*cmtnode.Node)
 	genesisDoc := legacyNode.GenesisDoc()
 
 	// Verify that we are on the correct ChainID
-	assert.Equal(t, testChainId, genesisDoc.ChainID)
+	assert.Equal(t, testChainID, genesisDoc.ChainID)
 
 	// Start and stop to close the db for later re-tests
 	err = legacyNode.Start()
-	defer legacyNode.Stop()
 	require.NoError(t, err, "legacy node should start correctly")
+
+	defer func() {
+		err := legacyNode.Stop()
+		require.NoError(t, err)
+	}()
 }
 
 func TestMultiplexNodeNewNodesMultiplexFallback(t *testing.T) {
 	// We define the necessary infrastructure for a legacy node
-	testChainId := "test-legacy-chain-id"
+	testChainID := "test-legacy-chain-id"
 	rootDir, err := os.MkdirTemp("", t.Name())
 	require.NoError(t, err)
 	defer os.RemoveAll(rootDir)
@@ -140,7 +147,7 @@ func TestMultiplexNodeNewNodesMultiplexFallback(t *testing.T) {
 	baseConfig := config.DefaultBaseConfig()
 	genesisFilePath := filepath.Join(rootDir, baseConfig.Genesis)
 	if !cmtos.FileExists(genesisFilePath) {
-		testGenesis := fmt.Sprintf(testLegacyGenesisDocFmt, testChainId) // LEGACY!
+		testGenesis := fmt.Sprintf(testLegacyGenesisDocFmt, testChainID) // LEGACY!
 		cmtos.MustWriteFile(genesisFilePath, []byte(testGenesis), 0o644)
 	}
 
@@ -162,20 +169,24 @@ func TestMultiplexNodeNewNodesMultiplexFallback(t *testing.T) {
 	assert.NoError(t, err, "should create node instance")
 	assert.NotNil(t, testMultiplex, "should return a multiplex map with a node")
 	assert.Len(t, testMultiplex, 1, "should return a multiplex map with exactly one node")
-	assert.Contains(t, testMultiplex, testChainId)
-	assert.NotNil(t, testMultiplex[testChainId])
+	assert.Contains(t, testMultiplex, testChainID)
+	assert.NotNil(t, testMultiplex[testChainID])
 
 	// Type-assertion to verify that we have a correct instance
-	legacyNode := testMultiplex[testChainId].GetInstance().(*node.Node)
+	legacyNode := testMultiplex[testChainID].GetInstance().(*cmtnode.Node)
 	genesisDoc := legacyNode.GenesisDoc()
 
 	// Verify that we are on the correct ChainID
-	assert.Equal(t, testChainId, genesisDoc.ChainID)
+	assert.Equal(t, testChainID, genesisDoc.ChainID)
 
 	// Start and stop to close the db for later re-testing
 	err = legacyNode.Start()
-	defer legacyNode.Stop()
 	require.NoError(t, err, "legacy node should start correctly")
+
+	defer func() {
+		err := legacyNode.Stop()
+		require.NoError(t, err)
+	}()
 }
 
 func TestMultiplexNodeNewNodesMultiplex(t *testing.T) {
@@ -200,7 +211,7 @@ func TestMultiplexNodeNewNodesMultiplex(t *testing.T) {
 	assert.Len(t, testMultiplex, numChains, fmt.Sprintf(
 		"should contain exactly %d networks", numChains))
 
-	configProvider := testReactor.GetInstanceProvider(mx.KEY_CONFIG)
+	configProvider := testReactor.GetInstanceProvider(mx.InstanceKeyConfig)
 	assert.NotNil(t, configProvider)
 
 	// Reset wait group for every iteration
@@ -208,27 +219,27 @@ func TestMultiplexNodeNewNodesMultiplex(t *testing.T) {
 	wg.Add(len(testReactor.GetNetworks()))
 
 	// Test that we have all the required networks
-	for _, testChainId := range testReactor.GetNetworks() {
-		assert.Contains(t, testMultiplex, testChainId)
-		assert.NotNil(t, testMultiplex[testChainId])
+	for _, testChainID := range testReactor.GetNetworks() {
+		assert.Contains(t, testMultiplex, testChainID)
+		assert.NotNil(t, testMultiplex[testChainID])
 
 		// Type-assertion to verify that we have a correct instance
-		nodeInstance := testMultiplex[testChainId].GetInstance().(*node.Node)
+		nodeInstance := testMultiplex[testChainID].GetInstance().(*cmtnode.Node)
 		genesisDoc := nodeInstance.GenesisDoc()
-		cfgOverwrite := configProvider(testChainId).(*config.Config)
+		cfgOverwrite := configProvider(testChainID).(*config.Config)
 
-		stateSyncConf, err := testReactor.GetChainRegistry().GetStateSyncConfig(testChainId)
+		stateSyncConf, err := testReactor.GetChainRegistry().GetStateSyncConfig(testChainID)
 		assert.NoError(t, err, "should get state-sync configuration per network")
 		assert.Equal(t, false, stateSyncConf.Enable, "state-sync should be disabled")
 
 		// Verify that we are on the correct ChainID
-		assert.Equal(t, testChainId, genesisDoc.ChainID)
+		assert.Equal(t, testChainID, genesisDoc.ChainID)
 
 		// Verify state-sync configuration
 		assert.Equal(t, false, cfgOverwrite.StateSync.Enable, "state-sync should be disabled")
 
 		// Verify that we can start the node correctly
-		go func(cn *node.Node) {
+		go func(cn *cmtnode.Node) {
 			defer wg.Done()
 			// t.Logf("Starting new node: %s", cn.GenesisDoc().ChainID)
 			// t.Logf("Using listen addr: p2p:%s - rpc:%s", cn.Config().P2P.ListenAddress, cn.Config().RPC.ListenAddress)
@@ -238,187 +249,86 @@ func TestMultiplexNodeNewNodesMultiplex(t *testing.T) {
 	}
 
 	// Wait for both nodes to have produced a block
-	//t.Logf("Waiting for %d nodes to be up and running.", len(testReactor.GetNetworks()))
+	// t.Logf("Waiting for %d nodes to be up and running.", len(testReactor.GetNetworks()))
 	wg.Wait()
 
 	// Shutdown routine
-	defer func(nodesMultiplex mx.MultiplexMap[*node.Node]) {
+	defer func(nodesMultiplex mx.MultiplexMap[*cmtnode.Node]) {
 		for _, nodeInstance := range nodesMultiplex {
-			ni := nodeInstance.GetInstance().(*node.Node)
+			ni := nodeInstance.GetInstance().(*cmtnode.Node)
 			_ = ni.Stop()
 		}
 	}(testMultiplex)
 }
 
 func TestMultiplexNodeNewNodesMultiplexSingleNetworkProduceBlocks(t *testing.T) {
+	numNetworks := 1
+
 	// Initialize and START the nodes multiplex
 	// For debug, change the logger to cmtlog.TestingLogger()
 	globalCfg,
 		testMultiplex,
-		testReactor := assertStartNodesMultiplex(t, 1, cmtlog.NewNopLogger()) // 1 NETWORK!
+		testReactor := assertStartNodesMultiplex(t, numNetworks, cmtlog.NewNopLogger()) // 1 NETWORK!
 
 	// Shutdown routine
-	defer func(nodesMultiplex mx.MultiplexMap[*node.Node]) {
+	defer func(nodesMultiplex mx.MultiplexMap[*cmtnode.Node]) {
 		defer os.RemoveAll(globalCfg.RootDir)
 		for _, nodeInstance := range nodesMultiplex {
-			ni := nodeInstance.GetInstance().(*node.Node)
+			ni := nodeInstance.GetInstance().(*cmtnode.Node)
 			_ = ni.Stop()
 		}
 	}(testMultiplex)
 
-	wg := sync.WaitGroup{}
-	wg.Add(len(testReactor.GetNetworks()))
-
 	expectedBlocks := 3
-	actualNumBlocks := make(map[string]int, len(testReactor.GetNetworks()))
-
-	for _, testChainId := range testReactor.GetNetworks() {
-		// Test that we have the correct node instance
-		assert.Contains(t, testMultiplex, testChainId)
-		assert.NotNil(t, testMultiplex[testChainId])
-
-		// Type-assertion to verify that we have a correct instance
-		nodeInstance := testMultiplex[testChainId].GetInstance().(*node.Node)
-
-		// Parallel goroutines with internal blocks loops
-		go func(the_chain string, the_node *node.Node, maxBlocks int) {
-			// Wait for the node to produce blocks
-			blocksSub, err := the_node.EventBus().Subscribe(
-				context.Background(),
-				"node_test",
-				types.EventQueryNewBlock,
-			)
-			assert.NoError(t, err)
-
-			numBlocks := 0
-
-		NODE_BLOCKS_LOOP:
-			for {
-				select {
-				case <-blocksSub.Out():
-					numBlocks++
-					if numBlocks == maxBlocks {
-						actualNumBlocks[the_chain] = numBlocks
-						wg.Done()
-						break NODE_BLOCKS_LOOP
-					}
-				case <-blocksSub.Canceled():
-					wg.Done()
-					break NODE_BLOCKS_LOOP
-				case <-time.After(15 * time.Second):
-					wg.Done()
-					break NODE_BLOCKS_LOOP
-				}
-			}
-		}(testChainId, nodeInstance, expectedBlocks)
-	}
-
-	// Wait for all nodes to produce 3 blocks in parallel
-	wg.Wait()
-
-	// We assert that all networks produced at least 3 blocks, if an error
-	// occurred on one of the networks, the map entry won't exist.
-	for _, chainId := range testReactor.GetNetworks() {
-		assert.Contains(t, actualNumBlocks, chainId)
-		assert.Equal(t, expectedBlocks, actualNumBlocks[chainId])
-	}
+	assertWaitForNodesMultiplexToProduceBlocks(t, testReactor, testMultiplex, expectedBlocks)
 }
 
 func TestMultiplexNodeNewNodesMultiplexProduceBlocks(t *testing.T) {
+	numNetworks := 5
+
 	// Initialize and START the nodes multiplex
 	// For debug, change the logger to cmtlog.TestingLogger()
 	globalCfg,
 		testMultiplex,
-		testReactor := assertStartNodesMultiplex(t, 5, cmtlog.NewNopLogger()) // 5 networks
+		testReactor := assertStartNodesMultiplex(t, numNetworks, cmtlog.NewNopLogger()) // 5 networks
 
 	// Shutdown routine
-	defer func(nodesMultiplex mx.MultiplexMap[*node.Node]) {
+	defer func(nodesMultiplex mx.MultiplexMap[*cmtnode.Node]) {
 		defer os.RemoveAll(globalCfg.RootDir)
 		for _, nodeInstance := range nodesMultiplex {
-			ni := nodeInstance.GetInstance().(*node.Node)
+			ni := nodeInstance.GetInstance().(*cmtnode.Node)
 			_ = ni.Stop()
 		}
 	}(testMultiplex)
 
-	wg := sync.WaitGroup{}
-	wg.Add(len(testReactor.GetNetworks()))
-
-	expectedBlocks := 3
-	actualNumBlocks := make(map[string]int, len(testReactor.GetNetworks()))
-
-	for _, testChainId := range testReactor.GetNetworks() {
-		// Test that we have the correct node instance
-		assert.Contains(t, testMultiplex, testChainId)
-		assert.NotNil(t, testMultiplex[testChainId])
-
-		// Type-assertion to verify that we have a correct instance
-		nodeInstance := testMultiplex[testChainId].GetInstance().(*node.Node)
-
-		// Parallel goroutines with internal blocks loops
-		go func(the_chain string, the_node *node.Node, maxBlocks int) {
-			// Wait for the node to produce blocks
-			blocksSub, err := the_node.EventBus().Subscribe(
-				context.Background(),
-				"node_test",
-				types.EventQueryNewBlock,
-			)
-			assert.NoError(t, err)
-
-			numBlocks := 0
-
-		NODE_BLOCKS_LOOP:
-			for {
-				select {
-				case <-blocksSub.Out():
-					numBlocks++
-					if numBlocks == maxBlocks {
-						actualNumBlocks[the_chain] = numBlocks
-						wg.Done()
-						break NODE_BLOCKS_LOOP
-					}
-				case <-blocksSub.Canceled():
-					wg.Done()
-					break NODE_BLOCKS_LOOP
-				case <-time.After(15 * time.Second):
-					wg.Done()
-					break NODE_BLOCKS_LOOP
-				}
-			}
-		}(testChainId, nodeInstance, expectedBlocks)
-	}
-
-	// Wait for all nodes to produce 3 blocks in parallel
-	wg.Wait()
-
-	// We assert that all networks produced at least 3 blocks, if an error
-	// occurred on one of the networks, the map entry won't exist.
-	for _, chainId := range testReactor.GetNetworks() {
-		assert.Contains(t, actualNumBlocks, chainId)
-		assert.Equal(t, expectedBlocks, actualNumBlocks[chainId])
-	}
+	expectedBlocks := 2
+	assertWaitForNodesMultiplexToProduceBlocks(t, testReactor, testMultiplex, expectedBlocks)
 }
+
+// ----------------------------------------------------------------------------
+// Helpers
 
 // CAUTION: this test method sets up a random multiplex with a valid GenesisDocSet.
 // CAUTION: this method forcefully *disables state-sync* to permit starting new networks.
-func ResetTestMultiplexNode(t testing.TB, numChains int) (string, *config.Config) {
-	t.Helper()
+func ResetTestMultiplexNode(tb testing.TB, numChains int) (string, *config.Config) {
+	tb.Helper()
 
-	rootDir, err := os.MkdirTemp("", t.Name())
-	require.NoError(t, err)
+	rootDir, err := os.MkdirTemp("", tb.Name())
+	require.NoError(tb, err)
 
 	globalCfg := config.TestConfig()
 	globalCfg.SetRoot(rootDir)
-	globalCfg.MultiplexConfig = makeRandomMultiplexConfig(t, numChains)
+	globalCfg.MultiplexConfig = makeRandomMultiplexConfig(tb, numChains)
 
 	// We always *disable* state-sync for network nodes
-	for chainId, _ := range globalCfg.SyncConfig {
+	for chainID := range globalCfg.SyncConfig {
 		// Forcefully disable state-sync
-		globalCfg.SyncConfig[chainId].Enable = false
+		globalCfg.SyncConfig[chainID].Enable = false
 	}
 
 	// Make sure we have /data and /config
 	_, err = mx.NewMultiplexFS(globalCfg)
-	require.NoError(t, err, "should create filesystem structure for multiplex")
+	require.NoError(tb, err, "should create filesystem structure for multiplex")
 
 	// Make sure we have a *multi-doc* genesis file (GenesisDocSet)
 	genesisFilePath := filepath.Join(rootDir, globalCfg.Genesis)
@@ -430,14 +340,14 @@ func ResetTestMultiplexNode(t testing.TB, numChains int) (string, *config.Config
 	if !cmtos.FileExists(genesisFilePath) {
 		testGenesis := `[`
 		for userAddress, chainIds := range globalCfg.UserChains {
-			for _, chainId := range chainIds {
+			for _, chainID := range chainIds {
 				// Creates one genesis doc per pair of user address and chainId
-				chainTestGenesis := fmt.Sprintf(testGenesisDocWithValidatorsFmt, chainId, testDefaultGenesisValidator)
+				chainTestGenesis := fmt.Sprintf(testGenesisDocWithValidatorsFmt, chainID, testDefaultGenesisValidator)
 				testGenesis += chainTestGenesis + ","
 
 				// resets priv validators to default state/key (as present in genesis)
 				// useDefaultPrivValidator=true
-				ResetMultiplexPrivValidator(globalCfg.BaseConfig, userAddress, chainId, nil, true)
+				ResetMultiplexPrivValidator(globalCfg.BaseConfig, userAddress, chainID, nil, true)
 			}
 		}
 
@@ -452,15 +362,15 @@ func ResetTestMultiplexNode(t testing.TB, numChains int) (string, *config.Config
 func ResetMultiplexPrivValidator(
 	conf config.BaseConfig,
 	userAddress string,
-	chainId string,
+	chainID string,
 	privValidator *privval.FilePV,
 	useDefaultPrivValidator bool,
 ) *privval.FilePV {
 	userConfDir := filepath.Join(conf.RootDir, config.DefaultConfigDir, userAddress)
 	userDataDir := filepath.Join(conf.RootDir, config.DefaultDataDir, userAddress)
 
-	privValKeyDir := filepath.Join(userConfDir, chainId)
-	privValStateDir := filepath.Join(userDataDir, chainId)
+	privValKeyDir := filepath.Join(userConfDir, chainID)
+	privValStateDir := filepath.Join(userDataDir, chainID)
 
 	privValKeyFile := filepath.Join(privValKeyDir, filepath.Base(conf.PrivValidatorKeyFile()))
 	privValStateFile := filepath.Join(privValStateDir, filepath.Base(conf.PrivValidatorStateFile()))
@@ -477,8 +387,7 @@ func ResetMultiplexPrivValidator(
 
 	// Not using default priv validator, we will either generate a random
 	// new priv validator key, or use the one provided with privValidator
-	filePV := &privval.FilePV{}
-
+	var filePV *privval.FilePV
 	if privValidator == nil {
 		// IMPORTANT: This generates a random privValidator private key
 		// TODO(midas): should not ignore if an error is produced.
@@ -488,13 +397,15 @@ func ResetMultiplexPrivValidator(
 	}
 
 	testPrivValidatorKey, _ := cmtjson.MarshalIndent(filePV.Key, "", "  ")
-	cmtos.MustWriteFile(privValKeyFile, []byte(testPrivValidatorKey), 0o644)
+	cmtos.MustWriteFile(privValKeyFile, testPrivValidatorKey, 0o644)
 
 	// We always reset priv validator state to 0-height
 	cmtos.MustWriteFile(privValStateFile, []byte(testPrivValidatorState), 0o644)
 
 	return filePV
 }
+
+// ----------------------------------------------------------------------------
 
 func useDefaultKeyGenFunc() func() (crypto.PrivKey, error) {
 	return func() (crypto.PrivKey, error) {
@@ -504,21 +415,23 @@ func useDefaultKeyGenFunc() func() (crypto.PrivKey, error) {
 
 // assertStartNodesMultiplex configures a nodes multiplex *randomly* and starts
 // individual nodes in a separate goroutine per network.
-func assertStartNodesMultiplex(t testing.TB, numChains int, customLogger cmtlog.Logger) (
+func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog.Logger) (
 	*config.Config,
-	mx.MultiplexMap[*node.Node],
+	mx.MultiplexMap[*cmtnode.Node],
 	*mx.Reactor,
 ) {
-	_, globalCfg := ResetTestMultiplexNode(t, numChains)
+	tb.Helper()
+
+	_, globalCfg := ResetTestMultiplexNode(tb, numChains)
 
 	// Forces multi-test allowance, disables GRPC
-	globalCfg.Instrumentation.Namespace = "cometbft:" + t.Name()
+	globalCfg.Instrumentation.Namespace = "cometbft:" + tb.Name()
 	globalCfg.GRPC.ListenAddress = ""            // disabled GRPC
 	globalCfg.GRPC.Privileged.ListenAddress = "" // disabled GRPC
 
 	// Seeds must be valid (or empty), otherwise dialing will fail
-	for chainId, _ := range globalCfg.ChainSeeds {
-		globalCfg.ChainSeeds[chainId] = ""
+	for chainID := range globalCfg.ChainSeeds {
+		globalCfg.ChainSeeds[chainID] = ""
 	}
 
 	if customLogger == nil {
@@ -532,9 +445,9 @@ func assertStartNodesMultiplex(t testing.TB, numChains int, customLogger cmtlog.
 		globalCfg,
 		customLogger,
 	)
-	require.NoError(t, err, "should create node instance")
-	require.NotNil(t, testMultiplex, "should return a multiplex map with a node")
-	require.Len(t, testMultiplex, numChains, fmt.Sprintf(
+	require.NoError(tb, err, "should create node instance")
+	require.NotNil(tb, testMultiplex, "should return a multiplex map with a node")
+	require.Len(tb, testMultiplex, numChains, fmt.Sprintf(
 		"should contain exactly %d networks", numChains))
 
 	// Reset wait group for every iteration
@@ -542,49 +455,117 @@ func assertStartNodesMultiplex(t testing.TB, numChains int, customLogger cmtlog.
 	wg.Add(len(testReactor.GetNetworks()))
 
 	// Test that we have all the required networks
-	for _, testChainId := range testReactor.GetNetworks() {
-		require.Contains(t, testMultiplex, testChainId)
-		require.NotNil(t, testMultiplex[testChainId])
+	for _, testChainID := range testReactor.GetNetworks() {
+		require.Contains(tb, testMultiplex, testChainID)
+		require.NotNil(tb, testMultiplex[testChainID])
 
 		// Type-assertion to verify that we have a correct instance
-		nodeInstance := testMultiplex[testChainId].GetInstance().(*node.Node)
-		userAddress, err := testReactor.GetChainRegistry().GetAddress(testChainId)
-		require.NoError(t, err, "should find user address by ChainID")
+		nodeInstance := testMultiplex[testChainID].GetInstance().(*cmtnode.Node)
+		userAddress, err := testReactor.GetChainRegistry().GetAddress(testChainID)
+		require.NoError(tb, err, "should find user address by ChainID")
 
 		// We reset the PrivValidator for every node and consensus reactors
-		usePrivValidatorFromFiles(t, nodeInstance, globalCfg, userAddress, testChainId)
+		usePrivValidatorFromFiles(tb, nodeInstance, globalCfg, userAddress, testChainID)
 
 		// Verify that we can start the node correctly
-		go func(cn *node.Node) {
+		go func(cn *cmtnode.Node) {
 			defer wg.Done()
 			// t.Logf("Starting new node: %s", cn.GenesisDoc().ChainID)
 			// t.Logf("Using listen addr: p2p:%s - rpc:%s", cn.Config().P2P.ListenAddress, cn.Config().RPC.ListenAddress)
 			err := cn.Start()
-			require.NoError(t, err)
+			require.NoError(tb, err)
 		}(nodeInstance)
 	}
 
 	// Wait for all nodes to be up and running
-	//t.Logf("Waiting for %d nodes to be up and running.", len(testReactor.GetNetworks()))
+	// t.Logf("Waiting for %d nodes to be up and running.", len(testReactor.GetNetworks()))
 	wg.Wait()
 
 	return globalCfg, testMultiplex, testReactor
 }
 
+func assertWaitForNodesMultiplexToProduceBlocks(
+	tb testing.TB,
+	testReactor *mx.Reactor,
+	testMultiplex mx.MultiplexMap[*cmtnode.Node],
+	expectedBlocks int,
+) {
+	tb.Helper()
+
+	if expectedBlocks == 0 {
+		return // Nothing to do
+	}
+
+	wg := sync.WaitGroup{}
+	wg.Add(len(testReactor.GetNetworks()))
+
+	actualNumBlocks := make(map[string]int, len(testReactor.GetNetworks()))
+	for _, testChainID := range testReactor.GetNetworks() {
+		// Test that we have the correct node instance
+		assert.Contains(tb, testMultiplex, testChainID)
+		assert.NotNil(tb, testMultiplex[testChainID])
+
+		// Type-assertion to verify that we have a correct instance
+		nodeInstance := testMultiplex[testChainID].GetInstance().(*cmtnode.Node)
+
+		// Parallel goroutines with internal blocks loops
+		go func(the_chain string, the_node *cmtnode.Node, maxBlocks int) {
+			// Wait for the node to produce blocks
+			blocksSub, err := the_node.EventBus().Subscribe(
+				context.Background(),
+				"node_test",
+				types.EventQueryNewBlock,
+			)
+			assert.NoError(tb, err)
+
+			numBlocks := 0
+
+		NODE_BLOCKS_LOOP:
+			for {
+				select {
+				case <-blocksSub.Out():
+					numBlocks++
+					if numBlocks == maxBlocks {
+						actualNumBlocks[the_chain] = numBlocks
+						wg.Done()
+						break NODE_BLOCKS_LOOP
+					}
+				case <-blocksSub.Canceled():
+					wg.Done()
+					break NODE_BLOCKS_LOOP
+				case <-time.After(15 * time.Second):
+					wg.Done()
+					break NODE_BLOCKS_LOOP
+				}
+			}
+		}(testChainID, nodeInstance, expectedBlocks)
+	}
+
+	// Wait for all nodes to produce 3 blocks in parallel
+	wg.Wait()
+
+	// We assert that all networks produced at least 3 blocks, if an error
+	// occurred on one of the networks, the map entry won't exist.
+	for _, chainID := range testReactor.GetNetworks() {
+		assert.Contains(tb, actualNumBlocks, chainID)
+		assert.Equal(tb, expectedBlocks, actualNumBlocks[chainID])
+	}
+}
+
 func usePrivValidatorFromFiles(
-	t testing.TB,
-	n *node.Node,
+	tb testing.TB,
+	n *cmtnode.Node,
 	conf *config.Config,
 	userAddress string,
-	chainId string,
+	chainID string,
 ) {
-	t.Helper()
+	tb.Helper()
 
 	userConfDir := filepath.Join(conf.RootDir, config.DefaultConfigDir, userAddress)
 	userDataDir := filepath.Join(conf.RootDir, config.DefaultDataDir, userAddress)
 
-	privValKeyDir := filepath.Join(userConfDir, chainId)
-	privValStateDir := filepath.Join(userDataDir, chainId)
+	privValKeyDir := filepath.Join(userConfDir, chainID)
+	privValStateDir := filepath.Join(userDataDir, chainID)
 
 	privValKeyFile := filepath.Join(privValKeyDir, filepath.Base(conf.PrivValidatorKeyFile()))
 	privValStateFile := filepath.Join(privValStateDir, filepath.Base(conf.PrivValidatorStateFile()))
@@ -592,7 +573,7 @@ func usePrivValidatorFromFiles(
 	// Reload the priv validator from files. This overwrites the PrivValidator
 	// so that it uses the default privval or a generated privval.
 	newPV, err := privval.LoadOrGenFilePV(privValKeyFile, privValStateFile, useDefaultKeyGenFunc())
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	// t.Logf("Using priv validator from files: %s\n", newPV.GetAddress())
 
 	n.SetPrivValidator(newPV)
@@ -642,8 +623,9 @@ var testLegacyGenesisDocFmt = `{
 	"app_hash": ""
 }`
 
-var testGenesisValidatorPubKey = "AT/+aaL1eB0477Mud9JMm8Sh8BIvOYlPGC9KkIUmFaE="
-var testDefaultGenesisValidator = `{
+var (
+	testGenesisValidatorPubKey  = "AT/+aaL1eB0477Mud9JMm8Sh8BIvOYlPGC9KkIUmFaE="
+	testDefaultGenesisValidator = `{
 	"pub_key": {
 		"type": "tendermint/PubKeyEd25519",
 		"value":"` + testGenesisValidatorPubKey + `"
@@ -651,6 +633,7 @@ var testDefaultGenesisValidator = `{
 	"power": "10",
 	"name": ""
 }`
+)
 
 // This produces a GenesisDocSet instance with exactly one chain.
 var testGenesisDocWithValidatorsFmt = `{
@@ -690,27 +673,6 @@ var testGenesisDocWithValidatorsFmt = `{
 		%s
 	],
 	"app_hash": ""
-}`
-
-var testValidatorFmt = `{
-	"pub_key": {
-		"type": "tendermint/PubKeyEd25519",
-		"value":"%s"
-	},
-	"power": "%d",
-	"name": ""
-}`
-
-var testPrivValidatorKeyFmt = `{
-  "address": "%s",
-  "pub_key": {
-    "type": "tendermint/PubKeyEd25519",
-    "value": "%s"
-  },
-  "priv_key": {
-    "type": "tendermint/PrivKeyEd25519",
-    "value": "%s"
-  }
 }`
 
 var testPrivValidatorState = `{

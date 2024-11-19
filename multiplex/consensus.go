@@ -2,6 +2,7 @@ package multiplex
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -24,31 +25,31 @@ import (
 // After the handshake, this method will *re-load the state machine*.
 func (reactor *Reactor) PrepareConsensusInstanceWithReactor(
 	ctx context.Context,
-	chainId string,
+	chainID string,
 ) error {
 	// First make sure the ABCI is setup correctly
 	if reactor.abciClient == nil {
-		return fmt.Errorf("missing ABCI client (proxyApp) for consensus handshake")
+		return errors.New("missing ABCI client (proxyApp) for consensus handshake")
 	}
 
 	// Get this network's app connections for consensus
-	proxyApp := reactor.abciClient.ToAppConns(chainId)
+	proxyApp := reactor.abciClient.ToAppConns(chainID)
 
 	// Used for retrieving GenesisDoc instance by chain
 	genesisDocProvider := reactor.GetGenesisProvider()
 	servicesProvider := reactor.GetServicesProvider()
 
 	// Used for retrieving state store instance by chain
-	stateProvider := reactor.GetInstanceProvider(KEY_STATE)
-	stateStoreProvider := reactor.GetInstanceProvider(KEY_STORE_STATE)
-	blockStoreProvider := reactor.GetInstanceProvider(KEY_STORE_BLOCK)
+	stateProvider := reactor.GetInstanceProvider(InstanceKeyState)
+	stateStoreProvider := reactor.GetInstanceProvider(InstanceKeyStateStore)
+	blockStoreProvider := reactor.GetInstanceProvider(InstanceKeyBlockStore)
 
 	// Retrieve the correct instances/services by chain
-	genesisDoc := genesisDocProvider(chainId)
-	stateMachine := stateProvider(chainId).(*HistoricalState)
-	stateStore := stateStoreProvider(chainId).(*ChainHistoryStore)
-	blockStore := blockStoreProvider(chainId).(*bs.BlockStore)
-	eventBus := servicesProvider(KEY_EVENTBUS, chainId).(*types.EventBus)
+	genesisDoc := genesisDocProvider(chainID)
+	stateMachine := stateProvider(chainID).(*HistoricalState)
+	stateStore := stateStoreProvider(chainID).(*ChainHistoryStore)
+	blockStore := blockStoreProvider(chainID).(*bs.BlockStore)
+	eventBus := servicesProvider(ServiceKeyEventBus, chainID).(*types.EventBus)
 
 	// 1) Consensus handshake with ABCI
 	handshaker := cs.NewHandshaker(
@@ -100,33 +101,33 @@ func (reactor *Reactor) PrepareConsensusInstanceWithReactor(
 // - `reactor/evidence`: The evidence reactor around state- and block stores.
 func (reactor *Reactor) CreateConsensusInstanceReactors(
 	ctx context.Context,
-	chainId string,
+	chainID string,
 	blockSync bool,
 ) error {
 	// First make sure the ABCI is setup correctly
 	if reactor.abciClient == nil {
-		return fmt.Errorf("missing ABCI client (proxyApp) for consensus execution")
+		return errors.New("missing ABCI client (proxyApp) for consensus execution")
 	}
 
 	// Used to retrieve configuration and state per chain.
-	configProvider := reactor.GetInstanceProvider(KEY_CONFIG)
-	statesProvider := reactor.GetInstanceProvider(KEY_STATE)
-	stateStoreProvider := reactor.GetInstanceProvider(KEY_STORE_STATE)
-	blockStoreProvider := reactor.GetInstanceProvider(KEY_STORE_BLOCK)
-	evidenceDbProvider := reactor.GetInstanceProvider(KEY_DB_BF)
-	privvalProvider := reactor.GetInstanceProvider(KEY_PRIVVAL)
+	configProvider := reactor.GetInstanceProvider(InstanceKeyConfig)
+	statesProvider := reactor.GetInstanceProvider(InstanceKeyState)
+	stateStoreProvider := reactor.GetInstanceProvider(InstanceKeyStateStore)
+	blockStoreProvider := reactor.GetInstanceProvider(InstanceKeyBlockStore)
+	evidenceDBProvider := reactor.GetInstanceProvider(InstanceKeyDatabaseEvidence)
+	privvalProvider := reactor.GetInstanceProvider(InstanceKeyPrivValidator)
 	servicesProvider := reactor.GetServicesProvider()
 
 	// The node config contains the configuration overwrite.
-	cfgOverwrite := configProvider(chainId).(*config.Config)
-	stateMachine := statesProvider(chainId).(*HistoricalState)
-	privValidator := privvalProvider(chainId).(types.PrivValidator)
-	eventBus := servicesProvider(KEY_EVENTBUS, chainId).(*types.EventBus)
+	cfgOverwrite := configProvider(chainID).(*config.Config)
+	stateMachine := statesProvider(chainID).(*HistoricalState)
+	privValidator := privvalProvider(chainID).(types.PrivValidator)
+	eventBus := servicesProvider(ServiceKeyEventBus, chainID).(*types.EventBus)
 
 	// Prometheus does not allow hyphens in metrics names, it must match
 	// following regexp: [a-zA-Z_:][a-zA-Z0-9_:]*
 	// see also: https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels
-	metricsNames := cfgOverwrite.Instrumentation.Namespace + "_" + strings.Replace(chainId, "-", "_", -1)
+	metricsNames := cfgOverwrite.Instrumentation.Namespace + "_" + strings.ReplaceAll(chainID, "-", "_")
 
 	// We can safely ignore the error because it triggers before in Reactor.
 	privValPubKey, _ := privValidator.GetPubKey()
@@ -134,10 +135,10 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	// 0) Retrieve prometheus metrics providers per module
 	//
 	// Metrics providers are also scoped per ChainID
-	memplMetricsProvider := mempl.PrometheusMetrics(metricsNames, "chain_id", chainId)
-	stateMetricsProvider := sm.PrometheusMetrics(metricsNames, "chain_id", chainId)
-	bsyncMetricsProvider := blocksync.PrometheusMetrics(metricsNames, "chain_id", chainId)
-	consensusMetricsProvider := cs.PrometheusMetrics(metricsNames, "chain_id", chainId)
+	memplMetricsProvider := mempl.PrometheusMetrics(metricsNames, "chain_id", chainID)
+	stateMetricsProvider := sm.PrometheusMetrics(metricsNames, "chain_id", chainID)
+	bsyncMetricsProvider := blocksync.PrometheusMetrics(metricsNames, "chain_id", chainID)
+	consensusMetricsProvider := cs.PrometheusMetrics(metricsNames, "chain_id", chainID)
 
 	// 1) Create the mempool / mempool reactor
 	//
@@ -145,7 +146,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	memplLogger := reactor.logger.With("module", "mempool")
 	mempool := mempl.NewCListMempool(
 		cfgOverwrite.Mempool,
-		reactor.abciClient.Mempool(chainId),
+		reactor.abciClient.Mempool(chainID),
 		stateMachine.LastBlockHeight,
 		mempl.WithMetrics(memplMetricsProvider),
 		mempl.WithPreCheck(sm.TxPreCheck(stateMachine.State.Copy())),
@@ -163,9 +164,9 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	mempoolReactor.SetLogger(memplLogger)
 
 	// 2) Create the evidence pool / evidence reactor
-	evidenceDB := evidenceDbProvider(chainId).(*ChainDB)
-	stateStore := stateStoreProvider(chainId).(*ChainHistoryStore)
-	blockStore := blockStoreProvider(chainId).(*bs.BlockStore)
+	evidenceDB := evidenceDBProvider(chainID).(*ChainDB)
+	stateStore := stateStoreProvider(chainID).(*ChainHistoryStore)
+	blockStore := blockStoreProvider(chainID).(*bs.BlockStore)
 
 	evidenceLogger := reactor.logger.With("module", "evidence")
 	evidencePool, err := evidence.NewPool(
@@ -187,7 +188,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	blockExecutor := sm.NewBlockExecutor(
 		stateStore,
 		reactor.logger.With("module", "state"),
-		reactor.abciClient.Consensus(chainId),
+		reactor.abciClient.Consensus(chainID),
 		mempool,
 		evidencePool,
 		blockStore,
@@ -242,11 +243,11 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	consensusReactor.SetEventBus(eventBus)
 
 	// Prepare registerable instances mapped to ChainID
-	reactor.RegisterService(KEY_REACTOR_MEMPOOL, chainId, mempoolReactor)
-	reactor.RegisterService(KEY_REACTOR_BLOCKSYNC, chainId, blockSyncReactor)
-	reactor.RegisterService(KEY_REACTOR_CONSENSUS, chainId, consensusReactor)
-	reactor.RegisterService(KEY_REACTOR_EVIDENCE, chainId, evidenceReactor)
-	reactor.RegisterInstance(KEY_FLAG_BLOCKSYNC, chainId, blockSync == true)
+	reactor.RegisterService(ServiceKeyMempoolReactor, chainID, mempoolReactor)
+	reactor.RegisterService(ServiceKeyBlockSyncReactor, chainID, blockSyncReactor)
+	reactor.RegisterService(ServiceKeyConsensusReactor, chainID, consensusReactor)
+	reactor.RegisterService(ServiceKeyEvidenceReactor, chainID, evidenceReactor)
+	reactor.RegisterInstance(InstanceKeyFlagBlockSync, chainID, blockSync)
 
 	return nil
 }

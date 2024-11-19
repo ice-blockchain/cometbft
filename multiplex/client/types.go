@@ -8,6 +8,15 @@ import (
 	"github.com/ice-blockchain/cometbft/config"
 )
 
+// ContextKey defines a string-based context value key.
+type ContextKey string
+
+// We will attach a user address and ChainID inside the context.
+const (
+	KeyAddress ContextKey = "Address"
+	KeyChainID ContextKey = "ChainID"
+)
+
 // ----------------------------------------------------------------------------
 // Configuration
 
@@ -20,7 +29,7 @@ import (
 // as a mutated [config.StateSyncConfig] object.
 //
 // This extension is executed by [mx.NewChainRegistry].
-// See also: [DefaultSyncConfigExtension]
+// See also: [DefaultSyncConfigExtension].
 type SyncConfigExtensionFn func(
 	context.Context,
 	*config.StateSyncConfig,
@@ -38,7 +47,7 @@ type SyncConfigExtensionFn func(
 // as a mutated string object.
 //
 // This extension is executed by [mx.NewChainRegistry].
-// See also: [DefaultSeedConfigExtension]
+// See also: [DefaultSeedConfigExtension].
 type SeedConfigExtensionFn func(
 	context.Context,
 	string,
@@ -56,7 +65,7 @@ type SeedConfigExtensionFn func(
 //
 // This extension is executed when blocks are finalized with a non-empty
 // validator updates set in the ABCI [abci.FinalizeBlockResponse] object.
-// See also: [DefaultValidatorUpdateExtension]
+// See also: [DefaultValidatorUpdateExtension].
 type ValidatorUpdateExtensionFn func(
 	context.Context,
 	[]abci.ValidatorUpdate,
@@ -71,7 +80,7 @@ type ValidatorUpdateExtensionFn func(
 //
 // This extension is executed when blocks are finalized with a non-empty
 // consensus parameter update in the ABCI [abci.FinalizeBlockResponse] object.
-// See also: [DefaultConsensusUpdateExtension]
+// See also: [DefaultConsensusUpdateExtension].
 type ConsensusUpdateExtensionFn func(
 	context.Context,
 	*v1.ConsensusParams,
@@ -88,7 +97,7 @@ type ConsensusUpdateExtensionFn func(
 // Implementations should return the mutated state as a `[]byte` slice.
 //
 // This extension is executed when snapshots are taken.
-// See also: [DefaultSnapshotMutationExtension]
+// See also: [DefaultSnapshotMutationExtension].
 type SnapshotMutationExtensionFn func(
 	context.Context,
 	[]byte,
@@ -102,7 +111,7 @@ type SnapshotMutationExtensionFn func(
 // Implementations should return an error if the audit of data fails.
 //
 // This extension is executed when snapshots are taken.
-// See also: [DefaultCheckMutationResuultExtension]
+// See also: [DefaultCheckMutationResuultExtension].
 type CheckMutationResultExtensionFn func(
 	context.Context,
 	[]byte,
@@ -116,7 +125,7 @@ type CheckMutationResultExtensionFn func(
 // Implementations should return the mutated snapshot as a `[]byte` slice.
 //
 // This extension is executed when snapshots are restored.
-// See also: [DefaultSnapshotRestoreExtension]
+// See also: [DefaultSnapshotRestoreExtension].
 type SnapshotRestoreExtensionFn func(
 	context.Context,
 	[]byte,
@@ -137,7 +146,7 @@ type SnapshotRestoreExtensionFn func(
 //
 // This extension may be executed by any of PrepareProposal, ProcessProposal
 // or FinalizeBlock methods, and should not execute expensive operations.
-// See also: [DefaultCheckTxExtension]
+// See also: [DefaultCheckTxExtension].
 type CheckTxExtensionFn func(
 	context.Context,
 	[]byte,
@@ -154,7 +163,7 @@ type CheckTxExtensionFn func(
 // Implementations should return the mutated slice as a `[][]byte` slice.
 //
 // This extension is executed as the **1st** stage in proposing blocks.
-// See also: [DefaultPrepareProposalExtension]
+// See also: [DefaultPrepareProposalExtension].
 type PrepareProposalExtensionFn func(
 	context.Context,
 	[][]byte,
@@ -168,7 +177,7 @@ type PrepareProposalExtensionFn func(
 // Implementations should return the mutated slice as a `[][]byte` slice.
 //
 // This extension is executed as the **2nd** stage in proposing blocks.
-// See also: [DefaultProcessProposalExtension]
+// See also: [DefaultProcessProposalExtension].
 type ProcessProposalExtensionFn func(
 	context.Context,
 	[][]byte,
@@ -186,7 +195,7 @@ type ProcessProposalExtensionFn func(
 // Implementations should return the mutated slice as a `[][]byte` slice.
 //
 // This extension is executed as the **3rd** stage in proposing blocks.
-// See also: [DefaultFinalizeBlockExtension]
+// See also: [DefaultFinalizeBlockExtension].
 type FinalizeBlockExtensionFn func(
 	context.Context,
 	[][]byte,
@@ -196,11 +205,11 @@ type FinalizeBlockExtensionFn func(
 // that are used in [InjectCommit] to delegate the post-processing of
 // finalized blocks, to potential extensions.
 //
-// This method accepts a *commited block height* as a `uint64`.
+// This method accepts a *committed block height* as a `uint64`.
 // Implementations should return nil or an error if a block is invalid.
 //
 // This extension is executed as the **4th** stage in proposing blocks.
-// See also: [DefaultCommitExtension]
+// See also: [DefaultCommitExtension].
 type CommitExtensionFn func(
 	context.Context,
 	uint64,

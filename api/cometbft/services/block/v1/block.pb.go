@@ -5,8 +5,8 @@ package v1
 
 import (
 	fmt "fmt"
-	v1 "github.com/ice-blockchain/cometbft/api/cometbft/types/v1"
 	proto "github.com/cosmos/gogoproto/proto"
+	v1 "github.com/ice-blockchain/cometbft/api/cometbft/types/v1"
 	io "io"
 	math "math"
 	math_bits "math/bits"

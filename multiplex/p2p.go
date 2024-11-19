@@ -38,7 +38,7 @@ func (reactor *Reactor) CreateTransportSwitches(ctx context.Context) error {
 
 	// Used to retrieve configuration and state per chain.
 	serviceProvider := reactor.GetServicesProvider()
-	configProvider := reactor.GetInstanceProvider(KEY_CONFIG)
+	configProvider := reactor.GetInstanceProvider(InstanceKeyConfig)
 	p2pMetricsProvider := p2p.PrometheusMetrics(
 		globalConfig.Instrumentation.Namespace+"_"+string(reactor.nodeKey.ID()),
 		"node_id", string(reactor.nodeKey.ID()),
@@ -49,9 +49,9 @@ func (reactor *Reactor) CreateTransportSwitches(ctx context.Context) error {
 	// for each replicated chain.
 	//
 	// Additionally, we feed the previously created consensus reactors.
-	for _, chainId := range reactor.GetNetworks() {
+	for _, chainID := range reactor.GetNetworks() {
 		// The config overwrite notably contains P2P.Seeds overwrite
-		cfgOverwrite := configProvider(chainId).(*config.Config)
+		cfgOverwrite := configProvider(chainID).(*config.Config)
 
 		// 1) Create the p2p transport
 		//
@@ -89,20 +89,20 @@ func (reactor *Reactor) CreateTransportSwitches(ctx context.Context) error {
 			p2p.WithMetrics(p2pMetricsProvider),
 		)
 		eventSwitch.SetLogger(p2pLogger)
-		eventSwitch.SetNodeInfo(reactor.nodeInfo.GetNodeInfo(chainId))
+		eventSwitch.SetNodeInfo(reactor.nodeInfo.GetNodeInfo(chainID))
 		eventSwitch.SetNodeKey(reactor.nodeKey)
 
 		// 3) Feed reactors from [CreateConsensusInstanceReactors]
 		//
 		// The event switch contains a pointer to internal module reactors.
 		eventSwitch.AddReactor("MEMPOOL",
-			serviceProvider(KEY_REACTOR_MEMPOOL, chainId).(*mempl.Reactor))
+			serviceProvider(ServiceKeyMempoolReactor, chainID).(*mempl.Reactor))
 		eventSwitch.AddReactor("BLOCKSYNC",
-			serviceProvider(KEY_REACTOR_BLOCKSYNC, chainId).(*blocksync.Reactor))
+			serviceProvider(ServiceKeyBlockSyncReactor, chainID).(*blocksync.Reactor))
 		eventSwitch.AddReactor("CONSENSUS",
-			serviceProvider(KEY_REACTOR_CONSENSUS, chainId).(*cs.Reactor))
+			serviceProvider(ServiceKeyConsensusReactor, chainID).(*cs.Reactor))
 		eventSwitch.AddReactor("EVIDENCE",
-			serviceProvider(KEY_REACTOR_EVIDENCE, chainId).(*evidence.Reactor))
+			serviceProvider(ServiceKeyEvidenceReactor, chainID).(*evidence.Reactor))
 
 		if len(persistentPeers) > 0 {
 			if err := eventSwitch.AddPersistentPeers(persistentPeers); err != nil {
@@ -117,8 +117,8 @@ func (reactor *Reactor) CreateTransportSwitches(ctx context.Context) error {
 		}
 
 		// Prepare registerable instances mapped to ChainID
-		reactor.RegisterInstance(KEY_P2P_TRANSPORT, chainId, transport)
-		reactor.RegisterInstance(KEY_P2P_SWITCH, chainId, eventSwitch)
+		reactor.RegisterInstance(InstanceKeyP2PTransport, chainID, transport)
+		reactor.RegisterInstance(InstanceKeyP2PSwitch, chainID, eventSwitch)
 	}
 
 	p2pLogger.Info("P2P Node ID",
@@ -146,23 +146,21 @@ func (reactor *Reactor) CreateAddressBooks(ctx context.Context) error {
 	chainRegistry := reactor.GetChainRegistry()
 
 	// Used to retrieve configuration and state per chain.
-	configProvider := reactor.GetInstanceProvider(KEY_CONFIG)
-	switchProvider := reactor.GetInstanceProvider(KEY_P2P_SWITCH)
+	configProvider := reactor.GetInstanceProvider(InstanceKeyConfig)
+	switchProvider := reactor.GetInstanceProvider(InstanceKeyP2PSwitch)
 
-	for _, chainId := range reactor.GetNetworks() {
+	for _, chainID := range reactor.GetNetworks() {
 		// The config overwrite notably contains P2P.Seeds overwrite
-		cfgOverwrite := configProvider(chainId).(*config.Config)
-		eventSwitch := switchProvider(chainId).(*p2p.Switch)
+		cfgOverwrite := configProvider(chainID).(*config.Config)
+		eventSwitch := switchProvider(chainID).(*p2p.Switch)
 
-		var (
-			chainSeedNodes = splitAndTrimEmpty(cfgOverwrite.P2P.Seeds, ",", " ")
-		)
+		chainSeedNodes := splitAndTrimEmpty(cfgOverwrite.P2P.Seeds, ",", " ")
 
 		// We can safely ignore the error as we know an address is available.
 		// Builds a custom address book path: %rootDir%/config/%address%/%chain%/
-		userAddress, _ := chainRegistry.GetAddress(chainId)
+		userAddress, _ := chainRegistry.GetAddress(chainID)
 		userConfDir := filepath.Join(cfgOverwrite.RootDir, config.DefaultConfigDir, userAddress)
-		addressBookPath := filepath.Join(userConfDir, chainId)
+		addressBookPath := filepath.Join(userConfDir, chainID)
 
 		// Uses default address book file name: addrbook.json
 		addrBookFile := filepath.Join(addressBookPath, config.DefaultAddrBookName)

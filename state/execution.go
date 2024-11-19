@@ -10,6 +10,7 @@ import (
 	"github.com/ice-blockchain/cometbft/internal/fail"
 	"github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/mempool"
+	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/proxy"
 	"github.com/ice-blockchain/cometbft/types"
 	cmttime "github.com/ice-blockchain/cometbft/types/time"
@@ -134,7 +135,7 @@ func (blockExec *BlockExecutor) CreateProposalBlock(
 	block := state.MakeBlock(height, txs, commit, evidence, proposerAddr)
 
 	// Inject the ChainID for access in ABCI
-	ctx = context.WithValue(ctx, "ChainID", state.ChainID)
+	ctx = context.WithValue(ctx, client.KeyChainID, state.ChainID)
 
 	rpp, err := blockExec.proxyApp.PrepareProposal(
 		ctx,
@@ -175,7 +176,7 @@ func (blockExec *BlockExecutor) ProcessProposal(
 ) (bool, error) {
 	// Inject the ChainID for access in ABCI
 	ctx := context.TODO()
-	ctx = context.WithValue(ctx, "ChainID", state.ChainID)
+	ctx = context.WithValue(ctx, client.KeyChainID, state.ChainID)
 
 	resp, err := blockExec.proxyApp.ProcessProposal(ctx, &abci.ProcessProposalRequest{
 		Hash:               block.Header.Hash(),
@@ -237,7 +238,7 @@ func (blockExec *BlockExecutor) applyBlock(state State, blockID types.BlockID, b
 
 	// Inject the ChainID for access in ABCI
 	ctx := context.TODO()
-	ctx = context.WithValue(ctx, "ChainID", state.ChainID)
+	ctx = context.WithValue(ctx, client.KeyChainID, state.ChainID)
 
 	abciResponse, err := blockExec.proxyApp.FinalizeBlock(ctx, &abci.FinalizeBlockRequest{
 		Hash:               block.Hash(),
@@ -362,7 +363,7 @@ func (blockExec *BlockExecutor) ExtendVote(
 	}
 
 	// Inject the ChainID for access in ABCI
-	ctx = context.WithValue(ctx, "ChainID", state.ChainID)
+	ctx = context.WithValue(ctx, client.KeyChainID, state.ChainID)
 
 	resp, err := blockExec.proxyApp.ExtendVote(ctx, &req)
 	if err != nil {
@@ -424,7 +425,7 @@ func (blockExec *BlockExecutor) Commit(
 
 	// Inject the ChainID for access in ABCI
 	ctx := context.TODO()
-	ctx = context.WithValue(ctx, "ChainID", state.ChainID)
+	ctx = context.WithValue(ctx, client.KeyChainID, state.ChainID)
 
 	// Commit block, get hash back
 	res, err := blockExec.proxyApp.Commit(ctx)

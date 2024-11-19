@@ -6,10 +6,10 @@ package v1beta2
 import (
 	context "context"
 	fmt "fmt"
-	v1beta2 "github.com/ice-blockchain/cometbft/api/cometbft/abci/v1beta2"
-	v1beta1 "github.com/ice-blockchain/cometbft/api/cometbft/rpc/grpc/v1beta1"
 	grpc1 "github.com/cosmos/gogoproto/grpc"
 	proto "github.com/cosmos/gogoproto/proto"
+	v1beta2 "github.com/ice-blockchain/cometbft/api/cometbft/abci/v1beta2"
+	v1beta1 "github.com/ice-blockchain/cometbft/api/cometbft/rpc/grpc/v1beta1"
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"

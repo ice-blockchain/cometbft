@@ -52,7 +52,7 @@ func NewReactor(config *cfg.MempoolConfig, mempool *CListMempool, waitSync bool)
 	return memR
 }
 
-// GetMempoolPtr returns a pointer to the CListMempool object
+// GetMempoolPtr returns a pointer to the CListMempool object.
 func (memR *Reactor) GetMempoolPtr() *CListMempool {
 	return memR.mempool
 }

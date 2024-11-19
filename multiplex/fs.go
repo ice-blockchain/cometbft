@@ -20,9 +20,8 @@ type MultiplexFS map[string]string
 // Note that a separate folder is created for every replicated chain and that
 // it is organized under a user address parent folder in the `data/` folder.
 func NewMultiplexFS(conf *config.Config) (multiplex MultiplexFS, err error) {
-
 	// When replication is *disabled*, we will create only one data dir
-	// This mimics the default behaviour of CometBFT blockchain nodes' data dir
+	// This mimics the default behavior of CometBFT blockchain nodes' data dir
 	if conf.Strategy == config.DefaultReplicationStrategy() {
 		multiplex = make(map[string]string, 1)
 		multiplex[""] = config.DefaultDataDir
@@ -42,16 +41,16 @@ func NewMultiplexFS(conf *config.Config) (multiplex MultiplexFS, err error) {
 		userConfDir := filepath.Join(baseConfDir, userAddress)
 
 		// .. and one subfolder by ChainID
-		for _, chainId := range chainIds {
-			chainId, err := NewExtendedChainIDFromLegacy(chainId)
+		for _, chainID := range chainIds {
+			chainID, err := NewExtendedChainIDFromLegacy(chainID)
 			if err != nil {
 				return multiplex, err
 			}
 
-			folderName := chainId.String()
+			folderName := chainID.String()
 			chainDataFolder := filepath.Join(userDataDir, folderName)
 			chainConfFolder := filepath.Join(userConfDir, folderName)
-			multiplex[chainId.String()] = chainDataFolder
+			multiplex[chainID.String()] = chainDataFolder
 
 			// Any error here means the directory is not accessible
 			if err := cmtos.EnsureDir(chainDataFolder, config.DefaultDirPerm); err != nil {

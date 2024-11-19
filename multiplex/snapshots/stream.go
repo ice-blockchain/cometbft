@@ -11,10 +11,10 @@ import (
 )
 
 const (
-	// Do not change chunk size without new snapshot format (must be uniform across nodes)
+	// Do not change chunk size without new snapshot format (must be uniform across nodes).
 	snapshotChunkSize  = uint64(10e6)
 	snapshotBufferSize = int(snapshotChunkSize)
-	// Do not change compression level without new snapshot format (must be uniform across nodes)
+	// Do not change compression level without new snapshot format (must be uniform across nodes).
 	snapshotCompressionLevel = 7
 )
 
@@ -33,7 +33,7 @@ type WriteCloser interface {
 // StreamWriter
 //
 // StreamWriter set up a stream pipeline to serialize snapshot nodes:
-// Exported Items -> delimited Protobuf -> zlib -> buffer -> chunkWriter -> chan io.ReadCloser
+// Exported Items -> delimited Protobuf -> zlib -> buffer -> chunkWriter -> chan io.ReadCloser.
 type StreamWriter struct {
 	chunkWriter *ChunkWriter
 	bufWriter   *bufio.Writer
@@ -59,12 +59,12 @@ func NewStreamWriter(ch chan<- io.ReadCloser) *StreamWriter {
 	}
 }
 
-// WriteMsg implements protoio.Write interface
+// WriteMsg implements protoio.Write interface.
 func (sw *StreamWriter) WriteMsg(msg proto.Message) error {
 	return sw.protoWriter.WriteMsg(msg)
 }
 
-// Close implements io.Closer interface
+// Close implements io.Closer interface.
 func (sw *StreamWriter) Close() error {
 	if err := sw.protoWriter.Close(); err != nil {
 		sw.chunkWriter.CloseWithError(err)
@@ -77,7 +77,7 @@ func (sw *StreamWriter) Close() error {
 	return sw.chunkWriter.Close()
 }
 
-// CloseWithError pass error to chunkWriter
+// CloseWithError pass error to chunkWriter.
 func (sw *StreamWriter) CloseWithError(err error) {
 	sw.chunkWriter.CloseWithError(err)
 }
@@ -86,7 +86,7 @@ func (sw *StreamWriter) CloseWithError(err error) {
 // StreamReader
 //
 // StreamReader set up a restore stream pipeline
-// chan io.ReadCloser -> chunkReader -> zlib -> delimited Protobuf -> ExportNode
+// chan io.ReadCloser -> chunkReader -> zlib -> delimited Protobuf -> ExportNode.
 type StreamReader struct {
 	chunkReader *ChunkReader
 	zReader     io.ReadCloser
@@ -108,12 +108,12 @@ func NewStreamReader(chunks <-chan io.ReadCloser) (*StreamReader, error) {
 	}, nil
 }
 
-// ReadMsg implements protoio.Reader interface
+// ReadMsg implements protoio.Reader interface.
 func (sr *StreamReader) ReadMsg(msg proto.Message) error {
 	return sr.protoReader.ReadMsg(msg)
 }
 
-// Close implements io.Closer interface
+// Close implements io.Closer interface.
 func (sr *StreamReader) Close() error {
 	var err error
 	if err1 := sr.protoReader.Close(); err1 != nil {

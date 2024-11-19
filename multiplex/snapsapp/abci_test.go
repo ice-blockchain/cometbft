@@ -3,7 +3,6 @@ package snapsapp_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"testing"
 
@@ -12,13 +11,12 @@ import (
 
 	abci "github.com/ice-blockchain/cometbft/api/cometbft/abci/v1"
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
-	sm "github.com/ice-blockchain/cometbft/state"
-	"github.com/ice-blockchain/cometbft/types"
-	cmttime "github.com/ice-blockchain/cometbft/types/time"
-
 	mx "github.com/ice-blockchain/cometbft/multiplex"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/snapsapp"
+	sm "github.com/ice-blockchain/cometbft/state"
+	"github.com/ice-blockchain/cometbft/types"
+	cmttime "github.com/ice-blockchain/cometbft/types/time"
 )
 
 var (
@@ -32,69 +30,74 @@ var (
 
 // Type-assertions ensure the compatibility of these mocks with the
 // multiplex client contract defined in the client package.
-var _ client.CheckTxExtensionFn = mockCheckTxExtension_WithError
-var _ client.PrepareProposalExtensionFn = mockPrepareProposalExtension_WithError
-var _ client.ProcessProposalExtensionFn = mockProcessProposalExtension_WithError
-var _ client.FinalizeBlockExtensionFn = mockFinalizeBlockExtension_WithError
-var _ client.CommitExtensionFn = mockCommitExtension_WithError
+var (
+	_ client.CheckTxExtensionFn         = mockCheckTxExtensionWithError
+	_ client.PrepareProposalExtensionFn = mockPrepareProposalExtensionWithError
+	_ client.ProcessProposalExtensionFn = mockProcessProposalExtensionWithError
+	_ client.FinalizeBlockExtensionFn   = mockFinalizeBlockExtensionWithError
+	_ client.CommitExtensionFn          = mockCommitExtensionWithError
+)
 
-// mockPrepareProposalExtension_WithError is an implementation that deep-copies
+// mockPrepareProposalExtensionWithError is an implementation that deep-copies
 // the transactions bytes slices and then panics.
 // CAUTION: this mock is intended to test panic recovery for extensions.
-func mockPrepareProposalExtension_WithError(
+func mockPrepareProposalExtensionWithError(
 	ctx context.Context,
 	baseTransactions [][]byte,
 ) [][]byte {
 	nextTransactions := baseTransactions[:]
+	func(_ [][]byte) {}(nextTransactions)
 	panic(errors.New(testPanicMessage))
-	return nextTransactions
+	return nextTransactions //nolint:govet
 }
 
-// mockProcessProposalExtension_WithError is an implementation that deep-copies
+// mockProcessProposalExtensionWithError is an implementation that deep-copies
 // the transactions bytes slices and then panics.
 // CAUTION: this mock is intended to test panic recovery for extensions.
-func mockProcessProposalExtension_WithError(
+func mockProcessProposalExtensionWithError(
 	ctx context.Context,
 	baseTransactions [][]byte,
 ) [][]byte {
 	nextTransactions := baseTransactions[:]
+	func(_ [][]byte) {}(nextTransactions)
 	panic(errors.New(testPanicMessage))
-	return nextTransactions
+	return nextTransactions //nolint:govet
 }
 
-// mockFinalizeBlockExtension_WithError is an implementation that deep-copies
+// mockFinalizeBlockExtensionWithError is an implementation that deep-copies
 // the transactions bytes slices and then panics.
 // CAUTION: this mock is intended to test panic recovery for extensions.
-func mockFinalizeBlockExtension_WithError(
+func mockFinalizeBlockExtensionWithError(
 	ctx context.Context,
 	baseTransactions [][]byte,
 ) [][]byte {
 	nextTransactions := baseTransactions[:]
+	func(_ [][]byte) {}(nextTransactions)
 	panic(errors.New(testPanicMessage))
-	return nextTransactions
+	return nextTransactions //nolint:govet
 }
 
-// mockCheckTxExtension_WithError is an implementation that deep-copies
+// mockCheckTxExtensionWithError is an implementation that deep-copies
 // the transaction bytes and then panics.
 // CAUTION: this mock is intended to test panic recovery for extensions.
-func mockCheckTxExtension_WithError(
+func mockCheckTxExtensionWithError(
 	ctx context.Context,
 	baseTransaction []byte,
 ) error {
 	nextTransactions := baseTransaction[:]
 	func(_ []byte) {}(nextTransactions)
 	panic(errors.New(testPanicMessage))
-	return nil
+	return nil //nolint:govet
 }
 
-// mockCommitExtension_WithError is an implementation which just panics
+// mockCommitExtensionWithError is an implementation which just panics
 // CAUTION: this mock is intended to test panic recovery for extensions.
-func mockCommitExtension_WithError(
+func mockCommitExtensionWithError(
 	ctx context.Context,
 	_ uint64,
 ) error {
 	panic(errors.New(testPanicMessage))
-	return nil
+	return nil //nolint:govet
 }
 
 // ----------------------------------------------------------------------------
@@ -105,32 +108,33 @@ func TestABCI_Info(t *testing.T) {
 	defer os.RemoveAll(suite.rootDir)
 
 	// We test using the "first network"
-	testChainId := suite.reactor.GetNetworks()[0]
+	testChainID := suite.reactor.GetNetworks()[0]
 
 	// Check that we have a correct state store
 	// We must cast to ChainHistoryStore for database access
-	chainStore := suite.reactor.GetStateStore(testChainId).(*mx.ChainHistoryStore)
+	chainStore := suite.reactor.GetStateStore(testChainID).(*mx.ChainHistoryStore)
 	require.NotNil(t, chainStore)
 
 	reqTestInfo := abci.InfoRequest{}
 
 	// Store custom state machine instance
 	expectHeight := int64(1500)
-	appState, appHash := makeState(t, testChainId, expectHeight)
-	chainStore.GetDatabase().Set(stateKey, appState.Bytes())
+	appState, appHash := makeState(t, testChainID, expectHeight)
+	err := chainStore.GetDatabase().Set(stateKey, appState.Bytes())
+	require.NoError(t, err)
 
 	// Should return empty given invalid ChainID
 	ctx := context.TODO()
-	ctx = context.WithValue(ctx, "ChainID", "unknown-chain")
+	ctx = context.WithValue(ctx, client.KeyChainID, "unknown-chain")
 	infoRes, err := suite.snapsApp.Info(ctx, &reqTestInfo)
 	assert.Nil(t, err, "should not error given Info request")
 	assert.Empty(t, infoRes.GetData())
 
 	// Should succeed given valid injected ChainID
-	ctx = context.WithValue(ctx, "ChainID", testChainId)
+	ctx = context.WithValue(ctx, client.KeyChainID, testChainID)
 	infoRes, err = suite.snapsApp.Info(ctx, &reqTestInfo)
 	assert.NoError(t, err, "should not error given Info request")
-	assert.Equal(t, testChainId, infoRes.GetData())
+	assert.Equal(t, testChainID, infoRes.GetData())
 	assert.Equal(t, appHash, infoRes.GetLastBlockAppHash())
 	assert.Equal(t, expectHeight, infoRes.GetLastBlockHeight())
 }
@@ -140,29 +144,31 @@ func TestABCI_InitChain(t *testing.T) {
 	defer os.RemoveAll(suite.rootDir)
 
 	// We test using the "first network"
-	testChainId := suite.reactor.GetNetworks()[0]
+	testChainID := suite.reactor.GetNetworks()[0]
 
 	// Check that we have a correct state store
 	// We must cast to ChainHistoryStore for database access
-	chainStore := suite.reactor.GetStateStore(testChainId).(*mx.ChainHistoryStore)
+	chainStore := suite.reactor.GetStateStore(testChainID).(*mx.ChainHistoryStore)
 	require.NotNil(t, chainStore)
 
 	// Store custom state machine instance
 	emptyState := &mx.HistoricalState{State: &sm.State{}, Data: []byte{}}
-	chainStore.GetDatabase().Set(stateKey, emptyState.Bytes())
+	err := chainStore.GetDatabase().Set(stateKey, emptyState.Bytes())
+	require.NoError(t, err)
 
 	// Should error given unknown ChainID
 	initChainRes, err := suite.snapsApp.InitChain(context.TODO(), &abci.InitChainRequest{
 		ChainId: "wrong-chain-id",
 	})
 	assert.Error(t, err)
+	assert.Nil(t, initChainRes)
 
 	// Store custom GENESIS state for InitChain
 	valPubKey := ed25519.GenPrivKey().PubKey()
 	fakeAppHash := []byte{1, 2, 3}
 	genState, err := sm.MakeGenesisState(&types.GenesisDoc{
 		GenesisTime:   cmttime.Now(),
-		ChainID:       testChainId,
+		ChainID:       testChainID,
 		InitialHeight: 0,
 		Validators: []types.GenesisValidator{{
 			Address: valPubKey.Address(),
@@ -180,12 +186,13 @@ func TestABCI_InitChain(t *testing.T) {
 		State: &genState,
 		Data:  []byte{},
 	}
-	chainStore.GetDatabase().Set(stateKey, archiveState.Bytes())
+	err = chainStore.GetDatabase().Set(stateKey, archiveState.Bytes())
+	require.NoError(t, err)
 
-	// Should succeed given corret ChainID
+	// Should succeed given correct ChainID
 	initChainRes, err = suite.snapsApp.InitChain(context.TODO(), &abci.InitChainRequest{
 		AppStateBytes: []byte("{}"),
-		ChainId:       testChainId, // must have valid JSON genesis file, even if empty
+		ChainId:       testChainID, // must have valid JSON genesis file, even if empty
 	})
 	assert.NoError(t, err)
 	assert.Equal(t, fakeAppHash, initChainRes.AppHash)
@@ -196,20 +203,20 @@ func TestABCI_InitChain_WithInitialHeight(t *testing.T) {
 	defer os.RemoveAll(suite.rootDir)
 
 	// We test using the "first network"
-	testChainId := suite.reactor.GetNetworks()[0]
+	testChainID := suite.reactor.GetNetworks()[0]
 
 	// Check that we have a correct state store
-	chainStore := suite.reactor.GetStateStore(testChainId)
+	chainStore := suite.reactor.GetStateStore(testChainID)
 	require.NotNil(t, chainStore)
 
 	// Attach an Initial Height
 	_, err := suite.snapsApp.InitChain(context.TODO(), &abci.InitChainRequest{
 		InitialHeight: 3,
 		AppStateBytes: []byte("{}"),
-		ChainId:       testChainId, // must have valid JSON genesis file, even if empty
+		ChainId:       testChainID, // must have valid JSON genesis file, even if empty
 	})
 	assert.NoError(t, err)
-	assert.Equal(t, int64(3), suite.snapsApp.LastBlockHeight(testChainId))
+	assert.Equal(t, int64(3), suite.snapsApp.LastBlockHeight(testChainID))
 }
 
 func TestABCI_PrepareProposal(t *testing.T) {
@@ -217,23 +224,23 @@ func TestABCI_PrepareProposal(t *testing.T) {
 	defer os.RemoveAll(suite.rootDir)
 
 	// We test using the "first network"
-	testChainId := suite.reactor.GetNetworks()[0]
+	testChainID := suite.reactor.GetNetworks()[0]
 
 	// Check that we have a correct state store
-	chainStore := suite.reactor.GetStateStore(testChainId)
+	chainStore := suite.reactor.GetStateStore(testChainID)
 	require.NotNil(t, chainStore)
 
 	// (0). Inject ChainID
 	ctx := context.TODO()
-	ctx = context.WithValue(ctx, "ChainID", testChainId)
+	ctx = context.WithValue(ctx, client.KeyChainID, testChainID)
 
 	// (1). PrepareProposal
-	bytes_tx1 := []byte{1, 2, 3}
-	bytes_tx2 := []byte{4, 5, 6}
+	bytesTx1 := []byte{1, 2, 3}
+	bytesTx2 := []byte{4, 5, 6}
 	reqPrepareProposal := abci.PrepareProposalRequest{
 		MaxTxBytes: 1000,
 		Height:     1,
-		Txs:        [][]byte{bytes_tx1, bytes_tx2},
+		Txs:        [][]byte{bytesTx1, bytesTx2},
 	}
 
 	resPrepareProposal, err := suite.snapsApp.PrepareProposal(ctx, &reqPrepareProposal)
@@ -244,36 +251,35 @@ func TestABCI_PrepareProposal(t *testing.T) {
 func TestABCI_PrepareProposal_ExtensionFailure(t *testing.T) {
 	// Forces a FAILING PrepareProposal extension
 	suite := NewSnapsAppSuite(t, snapsapp.WithPrepareProposalExtension(
-		mockPrepareProposalExtension_WithError,
+		mockPrepareProposalExtensionWithError,
 	))
 	defer os.RemoveAll(suite.rootDir)
 
 	// We test using the "first network"
-	testChainId := suite.reactor.GetNetworks()[0]
+	testChainID := suite.reactor.GetNetworks()[0]
 
 	// Check that we have a correct state store
-	chainStore := suite.reactor.GetStateStore(testChainId)
+	chainStore := suite.reactor.GetStateStore(testChainID)
 	require.NotNil(t, chainStore)
 
 	// (0). Inject ChainID
 	ctx := context.TODO()
-	ctx = context.WithValue(ctx, "ChainID", testChainId)
+	ctx = context.WithValue(ctx, client.KeyChainID, testChainID)
 
 	// ---------------------
 	// Errors
 	//
 	// - Must error and stop the block proposal process given faulty extension.
 
-	expectedError := fmt.Sprintf(
-		"CLIENT PANIC: failing prepare proposal extension: %s", testPanicMessage)
+	expectedError := "CLIENT PANIC: failing prepare proposal extension: " + testPanicMessage
 
 	// (1). PrepareProposal
-	bytes_tx1 := []byte{1, 2, 3}
-	bytes_tx2 := []byte{4, 5, 6}
+	bytesTx1 := []byte{1, 2, 3}
+	bytesTx2 := []byte{4, 5, 6}
 	reqPrepareProposal := abci.PrepareProposalRequest{
 		MaxTxBytes: 1000,
 		Height:     1,
-		Txs:        [][]byte{bytes_tx1, bytes_tx2},
+		Txs:        [][]byte{bytesTx1, bytesTx2},
 	}
 
 	// Should error given a failing PrepareProposal extension
@@ -290,20 +296,20 @@ func TestABCI_ProcessProposal(t *testing.T) {
 	defer os.RemoveAll(suite.rootDir)
 
 	// We test using the "first network"
-	testChainId := suite.reactor.GetNetworks()[0]
+	testChainID := suite.reactor.GetNetworks()[0]
 
 	// Check that we have a correct state store
-	chainStore := suite.reactor.GetStateStore(testChainId)
+	chainStore := suite.reactor.GetStateStore(testChainID)
 	require.NotNil(t, chainStore)
 
 	// (0). Inject ChainID
 	ctx := context.TODO()
-	ctx = context.WithValue(ctx, "ChainID", testChainId)
+	ctx = context.WithValue(ctx, client.KeyChainID, testChainID)
 
 	// (1). ProcessProposal
-	bytes_tx1 := []byte{1, 2, 3}
-	bytes_tx2 := []byte{4, 5, 6}
-	mergedTxBytes := [2][]byte{bytes_tx1, bytes_tx2}
+	bytesTx1 := []byte{1, 2, 3}
+	bytesTx2 := []byte{4, 5, 6}
+	mergedTxBytes := [2][]byte{bytesTx1, bytesTx2}
 	reqProcessProposal := abci.ProcessProposalRequest{
 		Txs:    mergedTxBytes[:],
 		Height: 1,
@@ -317,20 +323,20 @@ func TestABCI_ProcessProposal(t *testing.T) {
 func TestABCI_ProcessProposal_ExtensionFailure(t *testing.T) {
 	// Forces a FAILING ProcessProposal extension
 	suite := NewSnapsAppSuite(t, snapsapp.WithProcessProposalExtension(
-		mockProcessProposalExtension_WithError,
+		mockProcessProposalExtensionWithError,
 	))
 	defer os.RemoveAll(suite.rootDir)
 
 	// We test using the "first network"
-	testChainId := suite.reactor.GetNetworks()[0]
+	testChainID := suite.reactor.GetNetworks()[0]
 
 	// Check that we have a correct state store
-	chainStore := suite.reactor.GetStateStore(testChainId)
+	chainStore := suite.reactor.GetStateStore(testChainID)
 	require.NotNil(t, chainStore)
 
 	// (0). Inject ChainID
 	ctx := context.TODO()
-	ctx = context.WithValue(ctx, "ChainID", testChainId)
+	ctx = context.WithValue(ctx, client.KeyChainID, testChainID)
 
 	// ---------------------
 	// Errors
@@ -338,9 +344,9 @@ func TestABCI_ProcessProposal_ExtensionFailure(t *testing.T) {
 	// - Must *not* influence the processing stage, i.e. should accept proposal
 
 	// (1). ProcessProposal
-	bytes_tx1 := []byte{1, 2, 3}
-	bytes_tx2 := []byte{4, 5, 6}
-	mergedTxBytes := [2][]byte{bytes_tx1, bytes_tx2}
+	bytesTx1 := []byte{1, 2, 3}
+	bytesTx2 := []byte{4, 5, 6}
+	mergedTxBytes := [2][]byte{bytesTx1, bytesTx2}
 	reqProcessProposal := abci.ProcessProposalRequest{
 		Txs:    mergedTxBytes[:],
 		Height: 1,
@@ -357,15 +363,15 @@ func TestABCI_FinalizeBlock(t *testing.T) {
 	defer os.RemoveAll(suite.rootDir)
 
 	// We test using the "first network"
-	testChainId := suite.reactor.GetNetworks()[0]
+	testChainID := suite.reactor.GetNetworks()[0]
 
 	// Check that we have a correct state store
-	chainStore := suite.reactor.GetStateStore(testChainId)
+	chainStore := suite.reactor.GetStateStore(testChainID)
 	require.NotNil(t, chainStore)
 
 	// (0). Inject ChainID
 	ctx := context.TODO()
-	ctx = context.WithValue(ctx, "ChainID", testChainId)
+	ctx = context.WithValue(ctx, client.KeyChainID, testChainID)
 
 	// (1). FinalizeBlock
 	reqFinalizeBlock := abci.FinalizeBlockRequest{
@@ -382,23 +388,23 @@ func TestABCI_FinalizeBlock_WithInitialHeight(t *testing.T) {
 	defer os.RemoveAll(suite.rootDir)
 
 	// We test using the "first network"
-	testChainId := suite.reactor.GetNetworks()[0]
+	testChainID := suite.reactor.GetNetworks()[0]
 
 	// Check that we have a correct state store
-	chainStore := suite.reactor.GetStateStore(testChainId)
+	chainStore := suite.reactor.GetStateStore(testChainID)
 	require.NotNil(t, chainStore)
 
 	// Attach an Initial Height
 	_, err := suite.snapsApp.InitChain(context.TODO(), &abci.InitChainRequest{
 		InitialHeight: 3,
 		AppStateBytes: []byte("{}"),
-		ChainId:       testChainId, // must have valid JSON genesis file, even if empty
+		ChainId:       testChainID, // must have valid JSON genesis file, even if empty
 	})
 	require.NoError(t, err)
-	require.Equal(t, int64(3), suite.snapsApp.LastBlockHeight(testChainId))
+	require.Equal(t, int64(3), suite.snapsApp.LastBlockHeight(testChainID))
 
 	ctx := context.TODO()
-	ctx = context.WithValue(ctx, "ChainID", testChainId)
+	ctx = context.WithValue(ctx, client.KeyChainID, testChainID)
 
 	res, err := suite.snapsApp.FinalizeBlock(ctx, &abci.FinalizeBlockRequest{Height: 4})
 	assert.NoError(t, err)
@@ -408,28 +414,27 @@ func TestABCI_FinalizeBlock_WithInitialHeight(t *testing.T) {
 func TestABCI_FinalizeBlock_ExtensionFailure(t *testing.T) {
 	// Forces a FAILING FinalizeBlock extension
 	suite := NewSnapsAppSuite(t, snapsapp.WithFinalizeBlockExtension(
-		mockFinalizeBlockExtension_WithError,
+		mockFinalizeBlockExtensionWithError,
 	))
 	defer os.RemoveAll(suite.rootDir)
 
 	// We test using the "first network"
-	testChainId := suite.reactor.GetNetworks()[0]
+	testChainID := suite.reactor.GetNetworks()[0]
 
 	// Check that we have a correct state store
-	chainStore := suite.reactor.GetStateStore(testChainId)
+	chainStore := suite.reactor.GetStateStore(testChainID)
 	require.NotNil(t, chainStore)
 
 	// (0). Inject ChainID
 	ctx := context.TODO()
-	ctx = context.WithValue(ctx, "ChainID", testChainId)
+	ctx = context.WithValue(ctx, client.KeyChainID, testChainID)
 
 	// ---------------------
 	// Errors
 	//
 	// - Must error and stop the block finalization process given faulty extension.
 
-	expectedError := fmt.Sprintf(
-		"CLIENT PANIC: failing finalize block extension: %s", testPanicMessage)
+	expectedError := "CLIENT PANIC: failing finalize block extension: " + testPanicMessage
 
 	// (1). FinalizeBlock
 	reqFinalizeBlock := abci.FinalizeBlockRequest{
@@ -450,29 +455,29 @@ func TestABCI_Proposal_HappyPath(t *testing.T) {
 	defer os.RemoveAll(suite.rootDir)
 
 	// We test using the "first network"
-	testChainId := suite.reactor.GetNetworks()[0]
+	testChainID := suite.reactor.GetNetworks()[0]
 
 	// Check that we have a correct state store
-	chainStore := suite.reactor.GetStateStore(testChainId)
+	chainStore := suite.reactor.GetStateStore(testChainID)
 	require.NotNil(t, chainStore)
 
 	// (0). Inject ChainID
 	ctx := context.TODO()
-	ctx = context.WithValue(ctx, "ChainID", testChainId)
+	ctx = context.WithValue(ctx, client.KeyChainID, testChainID)
 
 	// (1). InitChain
 	_, err := suite.snapsApp.InitChain(context.TODO(), &abci.InitChainRequest{
-		ChainId: testChainId,
+		ChainId: testChainID,
 	})
 	assert.NoError(t, err, "should not error given correct ChainID (InitChain)")
 
 	// (2). PrepareProposal
-	bytes_tx1 := []byte{1, 2, 3}
-	bytes_tx2 := []byte{4, 5, 6}
+	bytesTx1 := []byte{1, 2, 3}
+	bytesTx2 := []byte{4, 5, 6}
 	reqPrepareProposal := abci.PrepareProposalRequest{
 		MaxTxBytes: 1000,
 		Height:     1,
-		Txs:        [][]byte{bytes_tx1, bytes_tx2},
+		Txs:        [][]byte{bytesTx1, bytesTx2},
 	}
 
 	resPrepareProposal, err := suite.snapsApp.PrepareProposal(ctx, &reqPrepareProposal)
@@ -480,7 +485,7 @@ func TestABCI_Proposal_HappyPath(t *testing.T) {
 	assert.Equal(t, 2, len(resPrepareProposal.Txs))
 
 	// (3). ProcessProposal
-	reqProposalMergedTxBytes := [2][]byte{bytes_tx1, bytes_tx2}
+	reqProposalMergedTxBytes := [2][]byte{bytesTx1, bytesTx2}
 	reqProcessProposal := abci.ProcessProposalRequest{
 		Txs:    reqProposalMergedTxBytes[:],
 		Height: reqPrepareProposal.Height,
@@ -491,7 +496,7 @@ func TestABCI_Proposal_HappyPath(t *testing.T) {
 	assert.Equal(t, abci.PROCESS_PROPOSAL_STATUS_ACCEPT, resProcessProposal.Status)
 
 	// (4). FinalizeBlock
-	lastBlockHeight := suite.snapsApp.LastBlockHeight(testChainId)
+	lastBlockHeight := suite.snapsApp.LastBlockHeight(testChainID)
 	resFinalizeBlock, err := suite.snapsApp.FinalizeBlock(ctx, &abci.FinalizeBlockRequest{
 		Height: lastBlockHeight + 1,
 		Txs:    reqProposalMergedTxBytes[:], // same as ProcessProposal
@@ -506,15 +511,15 @@ func TestABCI_CheckTx(t *testing.T) {
 	defer os.RemoveAll(suite.rootDir)
 
 	// We test using the "first network"
-	testChainId := suite.reactor.GetNetworks()[0]
+	testChainID := suite.reactor.GetNetworks()[0]
 
 	// Check that we have a correct state store
-	chainStore := suite.reactor.GetStateStore(testChainId)
+	chainStore := suite.reactor.GetStateStore(testChainID)
 	require.NotNil(t, chainStore)
 
 	// (0). Inject ChainID
 	ctx := context.TODO()
-	ctx = context.WithValue(ctx, "ChainID", testChainId)
+	ctx = context.WithValue(ctx, client.KeyChainID, testChainID)
 
 	// (1). CheckTx
 	testTransaction := []byte{1, 2, 3}
@@ -530,20 +535,20 @@ func TestABCI_CheckTx(t *testing.T) {
 func TestABCI_CheckTx_ExtensionFailure(t *testing.T) {
 	// Forces a FAILING CheckTx extension
 	suite := NewSnapsAppSuite(t, snapsapp.WithCheckTxExtension(
-		mockCheckTxExtension_WithError,
+		mockCheckTxExtensionWithError,
 	))
 	defer os.RemoveAll(suite.rootDir)
 
 	// We test using the "first network"
-	testChainId := suite.reactor.GetNetworks()[0]
+	testChainID := suite.reactor.GetNetworks()[0]
 
 	// Check that we have a correct state store
-	chainStore := suite.reactor.GetStateStore(testChainId)
+	chainStore := suite.reactor.GetStateStore(testChainID)
 	require.NotNil(t, chainStore)
 
 	// (0). Inject ChainID
 	ctx := context.TODO()
-	ctx = context.WithValue(ctx, "ChainID", testChainId)
+	ctx = context.WithValue(ctx, client.KeyChainID, testChainID)
 
 	// ---------------------
 	// Errors
@@ -566,15 +571,15 @@ func TestABCI_Commit(t *testing.T) {
 	defer os.RemoveAll(suite.rootDir)
 
 	// We test using the "first network"
-	testChainId := suite.reactor.GetNetworks()[0]
+	testChainID := suite.reactor.GetNetworks()[0]
 
 	// Check that we have a correct state store
-	chainStore := suite.reactor.GetStateStore(testChainId)
+	chainStore := suite.reactor.GetStateStore(testChainID)
 	require.NotNil(t, chainStore)
 
 	// (0). Inject ChainID
 	ctx := context.TODO()
-	ctx = context.WithValue(ctx, "ChainID", testChainId)
+	ctx = context.WithValue(ctx, client.KeyChainID, testChainID)
 
 	// (1). FinalizeBlock
 	reqFinalizeBlock := abci.FinalizeBlockRequest{
@@ -594,20 +599,20 @@ func TestABCI_Commit(t *testing.T) {
 
 func TestABCI_Commit_ExtensionFailure(t *testing.T) {
 	suite := NewSnapsAppSuite(t, snapsapp.WithCommitExtension(
-		mockCommitExtension_WithError,
+		mockCommitExtensionWithError,
 	))
 	defer os.RemoveAll(suite.rootDir)
 
 	// We test using the "first network"
-	testChainId := suite.reactor.GetNetworks()[0]
+	testChainID := suite.reactor.GetNetworks()[0]
 
 	// Check that we have a correct state store
-	chainStore := suite.reactor.GetStateStore(testChainId)
+	chainStore := suite.reactor.GetStateStore(testChainID)
 	require.NotNil(t, chainStore)
 
 	// (0). Inject ChainID
 	ctx := context.TODO()
-	ctx = context.WithValue(ctx, "ChainID", testChainId)
+	ctx = context.WithValue(ctx, client.KeyChainID, testChainID)
 
 	// (1). FinalizeBlock
 	reqFinalizeBlock := abci.FinalizeBlockRequest{

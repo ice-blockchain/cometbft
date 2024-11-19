@@ -43,7 +43,7 @@ func NewReactor(evpool *Pool) *Reactor {
 	return evR
 }
 
-// GetPoolPtr returns a pointer to the Pool object
+// GetPoolPtr returns a pointer to the Pool object.
 func (evR *Reactor) GetPoolPtr() *Pool {
 	return evR.evpool
 }

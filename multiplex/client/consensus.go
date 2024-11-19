@@ -21,15 +21,15 @@ import (
 // the proposed extensionFn callback, you can use these in your extension as
 // documented with [DefaultValidatorUpdateExtension].
 func ReportValidatorUpdate(
-	chainId string,
+	chainID string,
 	validatorUpdates []abci.ValidatorUpdate,
 	extensionFn ValidatorUpdateExtensionFn,
 ) error {
 	// Injects Address and ChainID to the context in case it is
 	// necessary inside the [ValidatorUpdateExtensionFn] extension.
-	userAddress := extractAddressFromChainID(chainId)
-	chainContext := context.WithValue(context.TODO(), "Address", userAddress)
-	chainContext = context.WithValue(chainContext, "ChainID", chainId)
+	userAddress := extractAddressFromChainID(chainID)
+	chainContext := context.WithValue(context.TODO(), KeyAddress, userAddress)
+	chainContext = context.WithValue(chainContext, KeyChainID, chainID)
 
 	// CALLBACK: You may add custom per-user-chain source code here.
 	//
@@ -53,15 +53,15 @@ func ReportValidatorUpdate(
 // the proposed extensionFn callback, you can use these in your extension as
 // documented with [DefaultConsensusUpdateExtension].
 func ReportConsensusUpdate(
-	chainId string,
+	chainID string,
 	consensusParams *v1.ConsensusParams,
 	extensionFn ConsensusUpdateExtensionFn,
 ) error {
 	// Injects Address and ChainID to the context in case it is
 	// necessary inside the [ValidatorUpdateExtensionFn] extension.
-	userAddress := extractAddressFromChainID(chainId)
-	chainContext := context.WithValue(context.TODO(), "Address", userAddress)
-	chainContext = context.WithValue(chainContext, "ChainID", chainId)
+	userAddress := extractAddressFromChainID(chainID)
+	chainContext := context.WithValue(context.TODO(), KeyAddress, userAddress)
+	chainContext = context.WithValue(chainContext, KeyChainID, chainID)
 
 	// CALLBACK: You may add custom per-user-chain source code here.
 	//

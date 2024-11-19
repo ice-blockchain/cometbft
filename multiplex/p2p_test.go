@@ -7,13 +7,14 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/ice-blockchain/cometbft/config"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	mx "github.com/ice-blockchain/cometbft/multiplex"
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/proxy"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // mockNodeInfoWithNetworks creates a [mx.MultiNetworkNodeInfo] instance that
@@ -32,14 +33,14 @@ func mockNodeInfoWithNetworks(
 	slices.Sort(networks)
 
 	// create versions and listen addresses per network
-	for i, chainId := range networks {
-		protocolVersion := mx.NewChainProtocolVersion(chainId, mx.DefaultProtocolVersion)
+	for i, chainID := range networks {
+		protocolVersion := mx.NewChainProtocolVersion(chainID, mx.DefaultProtocolVersion)
 		p2pListenAddr := fmt.Sprintf("127.0.0.1:%d", getFreePort())
 		rpcListenAddr := fmt.Sprintf("127.0.0.1:%d", getFreePort())
 
 		protocolVersions[i] = protocolVersion
-		listenAddresses[i] = mx.NewChainListenAddr(chainId, p2pListenAddr)
-		rpcNodeAddresses[i] = mx.NewChainListenAddr(chainId, rpcListenAddr)
+		listenAddresses[i] = mx.NewChainListenAddr(chainID, p2pListenAddr)
+		rpcNodeAddresses[i] = mx.NewChainListenAddr(chainID, rpcListenAddr)
 	}
 
 	return mx.MultiNetworkNodeInfo{
@@ -77,18 +78,18 @@ func TestMultiplexReactorCreateTransportSwitches(t *testing.T) {
 	err := reactor.CreateTransportSwitches(context.TODO())
 	assert.NoError(t, err, "should not error creating transports and switches")
 
-	transportsProvider := reactor.GetInstanceProvider(mx.KEY_P2P_TRANSPORT)
+	transportsProvider := reactor.GetInstanceProvider(mx.InstanceKeyP2PTransport)
 	assert.NotNil(t, transportsProvider, "transport provider must not be nil")
 
-	switchesProvider := reactor.GetInstanceProvider(mx.KEY_P2P_SWITCH)
+	switchesProvider := reactor.GetInstanceProvider(mx.InstanceKeyP2PSwitch)
 	assert.NotNil(t, switchesProvider, "event switch provider must not be nil")
 
-	for _, chainId := range reactor.GetNetworks() {
-		testTransport := transportsProvider(chainId).(*p2p.MultiplexTransport)
+	for _, chainID := range reactor.GetNetworks() {
+		testTransport := transportsProvider(chainID).(*p2p.MultiplexTransport)
 		assert.NotNil(t, testTransport)
 		assert.NotNil(t, testTransport.NetAddress())
 
-		testSwitch := switchesProvider(chainId).(*p2p.Switch)
+		testSwitch := switchesProvider(chainID).(*p2p.Switch)
 		assert.NotNil(t, testSwitch)
 
 		testReactors := testSwitch.Reactors()
@@ -126,16 +127,16 @@ func TestMultiplexReactorCreateAddressBooks(t *testing.T) {
 	assert.NoError(t, err, "should not error creating pex address books")
 
 	// Should set the AddrBook on [p2p.Switch]
-	switchesProvider := reactor.GetInstanceProvider(mx.KEY_P2P_SWITCH)
+	switchesProvider := reactor.GetInstanceProvider(mx.InstanceKeyP2PSwitch)
 	assert.NotNil(t, switchesProvider, "event switch provider must not be nil")
 
-	for _, chainId := range reactor.GetNetworks() {
+	for _, chainID := range reactor.GetNetworks() {
 		// Must be tested in chain_registry_test.go
-		userAddress, err := reactor.GetChainRegistry().GetAddress(chainId)
+		userAddress, err := reactor.GetChainRegistry().GetAddress(chainID)
 		require.NoError(t, err, "should not error given valid ChainID")
 		require.NotEmpty(t, userAddress)
 
-		eventSwitch := switchesProvider(chainId).(*p2p.Switch)
+		eventSwitch := switchesProvider(chainID).(*p2p.Switch)
 		assert.NotNil(t, eventSwitch)
 
 		// Do we have the PEX and AddrBook?
@@ -147,26 +148,26 @@ func TestMultiplexReactorCreateAddressBooks(t *testing.T) {
 
 // CAUTION: this test method sets up a full consensus multiplex with reactors.
 // CAUTION: this method *waits* for all networks to be configured with [Reactor#WaitForNetworks].
-func ResetTestMultiplexP2P(t testing.TB, numChains int) (string, *config.Config, *mx.Reactor) {
-	t.Helper()
+func ResetTestMultiplexP2P(tb testing.TB, numChains int) (string, *config.Config, *mx.Reactor) {
+	tb.Helper()
 
-	rootDir, err := os.MkdirTemp("", t.Name())
-	require.NoError(t, err)
+	rootDir, err := os.MkdirTemp("", tb.Name())
+	require.NoError(tb, err)
 
 	globalCfg := config.TestConfig()
 	globalCfg.SetRoot(rootDir)
-	globalCfg.MultiplexConfig = makeRandomMultiplexConfig(t, numChains)
+	globalCfg.MultiplexConfig = makeRandomMultiplexConfig(tb, numChains)
 	mockGenesisProvider := mockMultiplexGenesisDocProviderFunc(&globalCfg.MultiplexConfig, numChains)
 
 	// Create a test reactor
-	reactor := makeTestReactorWithGenesisDocProvider(t, globalCfg, mockGenesisProvider)
+	reactor := makeTestReactorWithGenesisDocProvider(tb, globalCfg, mockGenesisProvider)
 
 	// Start the reactor
 	err = reactor.Start()
-	require.NoError(t, err, "should start the multiplex reactor")
+	require.NoError(tb, err, "should start the multiplex reactor")
 
 	err = reactor.WaitForNetworks()
-	require.NoError(t, err, "should not error while waiting for networks")
+	require.NoError(tb, err, "should not error while waiting for networks")
 
 	// Start an ABCI client
 	abciClient := proxy.NewMultiplexAppConn(
@@ -176,23 +177,23 @@ func ResetTestMultiplexP2P(t testing.TB, numChains int) (string, *config.Config,
 	)
 	abciClient.SetLogger(cmtlog.NewNopLogger())
 	err = abciClient.Start()
-	require.NoError(t, err, "should start ABCI client with ChainConns interface")
+	require.NoError(tb, err, "should start ABCI client with ChainConns interface")
 
 	// Reactor: ABCI; ABCI: Reactor.
 	reactor.SetABCIClient(abciClient)
 
 	// Should now be able to do consensus handshake and load state machines
-	for _, chainId := range reactor.GetNetworks() {
-		err = reactor.PrepareConsensusInstanceWithReactor(context.TODO(), chainId)
-		require.NoError(t, err, "should not error for consensus handshake")
+	for _, chainID := range reactor.GetNetworks() {
+		err = reactor.PrepareConsensusInstanceWithReactor(context.TODO(), chainID)
+		require.NoError(tb, err, "should not error for consensus handshake")
 
 		blockSync := false
 		err := reactor.CreateConsensusInstanceReactors(
 			context.TODO(),
-			chainId,
+			chainID,
 			blockSync,
 		)
-		require.NoError(t, err, "should not error creating consensus reactors")
+		require.NoError(tb, err, "should not error creating consensus reactors")
 	}
 
 	return rootDir, globalCfg, reactor

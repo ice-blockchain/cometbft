@@ -4,25 +4,25 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/ice-blockchain/cometbft/crypto/tmhash"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/ice-blockchain/cometbft/crypto/tmhash"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 )
 
 func TestMultiplexClientInjectSnapshotMutation(t *testing.T) {
 	// address and fingerprint added to ChainID
-	testChainId := makeRandomTestChainID()
+	testChainID := makeRandomTestChainID()
 	baseStateBytes := []byte(`this is just an example, not a sm.State.`)
 	inputStateBytes := baseStateBytes[:]
 
 	// Execute the extension / injection, we intentionally force the type
 	// here to prevent compilation for extensions that wouldn't work correctly.
-	var injectSnapshotMutation []byte
+	var injectSnapshotMutation []byte //nolint:gosimple
 	injectSnapshotMutation = client.InjectSnapshotMutation(
-		testChainId,
+		testChainID,
 		baseStateBytes,
-		mockSnapshotMutationExtension_HashedState, // default_test.go
+		mockSnapshotMutationExtensionHashedState, // default_test.go
 	)
 
 	// Extension may not return nil
@@ -41,18 +41,18 @@ func TestMultiplexClientInjectSnapshotMutation(t *testing.T) {
 
 func TestMultiplexClientAuditMutationResult(t *testing.T) {
 	// address and fingerprint added to ChainID
-	testChainId := makeRandomTestChainID()
+	testChainID := makeRandomTestChainID()
 
 	// Prepare a base transaction
 	baseMutatedBytes := []byte(`this is not a real transaction.`)
 
 	// Execute the extension / injection, we intentionally force the type
 	// here to prevent compilation for extensions that wouldn't work correctly.
-	var errDelegateCheckTx error
+	var errDelegateCheckTx error //nolint:gosimple
 	errDelegateCheckTx = client.AuditMutationResult(
-		testChainId,
+		testChainID,
 		baseMutatedBytes,
-		mockCheckMutationResultExtension_SizeAsError, // default_test.go
+		mockCheckMutationResultExtensionSizeAsError, // default_test.go
 	)
 
 	// The extension should have formatted the bytes slice size as an Error
@@ -62,17 +62,17 @@ func TestMultiplexClientAuditMutationResult(t *testing.T) {
 
 func TestMultiplexClientInjectSnapshotRestore(t *testing.T) {
 	// address and fingerprint added to ChainID
-	testChainId := makeRandomTestChainID()
+	testChainID := makeRandomTestChainID()
 	baseStateBytes := []byte(`this is just an example, not a sm.State.`)
 	inputStateBytes := baseStateBytes[:]
 
 	// Execute the extension / injection, we intentionally force the type
 	// here to prevent compilation for extensions that wouldn't work correctly.
-	var injectSnapshotRestore []byte
+	var injectSnapshotRestore []byte //nolint:gosimple
 	injectSnapshotRestore = client.InjectSnapshotRestore(
-		testChainId,
+		testChainID,
 		baseStateBytes,
-		mockSnapshotRestoreExtension_HashedState, // default_test.go
+		mockSnapshotRestoreExtensionHashedState, // default_test.go
 	)
 
 	// Extension may not return nil

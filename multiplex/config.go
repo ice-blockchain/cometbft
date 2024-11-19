@@ -47,8 +47,8 @@ func WithStrategy(strategy config.ReplicationStrategy) func(*config.MultiplexCon
 func WithSyncConfig(syncConfigs map[string]*config.StateSyncConfig) func(*config.MultiplexConfig) {
 	return func(conf *config.MultiplexConfig) {
 		conf.SyncConfig = make(map[string]*config.StateSyncConfig, len(syncConfigs))
-		for chainId, syncConfig := range syncConfigs {
-			conf.SyncConfig[chainId] = syncConfig
+		for chainID, syncConfig := range syncConfigs {
+			conf.SyncConfig[chainID] = syncConfig
 		}
 	}
 }
@@ -59,8 +59,8 @@ func WithSyncConfig(syncConfigs map[string]*config.StateSyncConfig) func(*config
 func WithChainSeeds(chainSeeds map[string]string) func(*config.MultiplexConfig) {
 	return func(conf *config.MultiplexConfig) {
 		conf.ChainSeeds = make(map[string]string, len(chainSeeds))
-		for chainId, seedNodes := range chainSeeds {
-			conf.ChainSeeds[chainId] = seedNodes
+		for chainID, seedNodes := range chainSeeds {
+			conf.ChainSeeds[chainID] = seedNodes
 		}
 	}
 }
@@ -73,9 +73,7 @@ func WithUserChains(userChains map[string][]string) func(*config.MultiplexConfig
 		conf.UserChains = map[string][]string{}
 		for address, fingerprints := range userChains {
 			conf.UserChains[address] = make([]string, len(fingerprints))
-			for _, fp := range fingerprints {
-				conf.UserChains[address] = append(conf.UserChains[address], fp)
-			}
+			conf.UserChains[address] = append(conf.UserChains[address], fingerprints...)
 		}
 	}
 }
@@ -178,7 +176,7 @@ func NewConfigOverwrite(
 
 	// At least 2 witnesses are required for state-sync
 	mxConfig.StateSync.RPCServers = make([]string, len(syncConfig.RPCServers))
-	copy(mxConfig.StateSync.RPCServers, syncConfig.RPCServers[:])
+	copy(mxConfig.StateSync.RPCServers, syncConfig.RPCServers)
 
 	return mxConfig
 }

@@ -48,10 +48,10 @@ const readHeaderTimeout = 10 * time.Second
 type GenesisDocProvider func() (IChecksummedGenesisDoc, error)
 
 // IChecksummedGenesisDoc provides at least with a default genesis doc and its
-// SHA256 checksum
+// SHA256 checksum.
 type IChecksummedGenesisDoc interface {
 	DefaultGenesisDoc() (*types.GenesisDoc, error)
-	GenesisDocByChainID(string) (*types.GenesisDoc, error)
+	GenesisDocByChainID(chainID string) (*types.GenesisDoc, error)
 	GetChecksum() []byte
 }
 
@@ -62,17 +62,17 @@ type ChecksummedGenesisDoc struct {
 	Sha256Checksum []byte
 }
 
-// DefaultGenesisDoc() implements IChecksummedGenesisDoc
+// DefaultGenesisDoc() implements IChecksummedGenesisDoc.
 func (c *ChecksummedGenesisDoc) DefaultGenesisDoc() (*types.GenesisDoc, error) {
 	return c.GenesisDoc, nil
 }
 
-// GenesisDocByChainID() implements IChecksummedGenesisDoc
+// GenesisDocByChainID() implements IChecksummedGenesisDoc.
 func (c *ChecksummedGenesisDoc) GenesisDocByChainID(_ string) (*types.GenesisDoc, error) {
 	return c.GenesisDoc, nil
 }
 
-// GetChecksum() implements IChecksummedGenesisDoc
+// GetChecksum() implements IChecksummedGenesisDoc.
 func (c *ChecksummedGenesisDoc) GetChecksum() []byte {
 	return c.Sha256Checksum
 }
@@ -92,7 +92,7 @@ type CliParams struct {
 
 // DefaultGenesisDocProviderFunc returns a GenesisDocProvider that loads
 // the GenesisDoc from the config.GenesisFile() on the filesystem.
-// Default behaviour expects *singular mode* such that config.GenesisFile()
+// Default behavior expects *singular mode* such that config.GenesisFile()
 // contains the JSON of just *one* genesis instance.
 func DefaultGenesisDocProviderFunc(config *cfg.Config) GenesisDocProvider {
 	return func() (IChecksummedGenesisDoc, error) {

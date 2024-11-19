@@ -5,13 +5,13 @@ package v1beta1
 
 import (
 	fmt "fmt"
-	v1beta1 "github.com/ice-blockchain/cometbft/api/cometbft/abci/v1beta1"
-	v1beta11 "github.com/ice-blockchain/cometbft/api/cometbft/types/v1beta1"
-	v1 "github.com/ice-blockchain/cometbft/api/cometbft/version/v1"
 	_ "github.com/cosmos/gogoproto/gogoproto"
 	proto "github.com/cosmos/gogoproto/proto"
 	_ "github.com/cosmos/gogoproto/types"
 	github_com_cosmos_gogoproto_types "github.com/cosmos/gogoproto/types"
+	v1beta1 "github.com/ice-blockchain/cometbft/api/cometbft/abci/v1beta1"
+	v1beta11 "github.com/ice-blockchain/cometbft/api/cometbft/types/v1beta1"
+	v1 "github.com/ice-blockchain/cometbft/api/cometbft/version/v1"
 	io "io"
 	math "math"
 	math_bits "math/bits"

@@ -156,7 +156,7 @@ type Store interface {
 	Close() error
 }
 
-// DBStore exports the database store implementation
+// DBStore exports the database store implementation.
 type DBStore struct {
 	dbStore
 }
@@ -197,12 +197,14 @@ type StoreOptions struct {
 	DBKeyLayout string
 }
 
-var _ Store = (*dbStore)(nil)
-var _ Store = (*DBStore)(nil)
+var (
+	_ Store = (*dbStore)(nil)
+	_ Store = (*DBStore)(nil)
+)
 
 // GetDatabase returns the [dbm.DB] database adapter.
-func (dbs *dbStore) GetDatabase() dbm.DB {
-	return dbs.db
+func (store *dbStore) GetDatabase() dbm.DB {
+	return store.db
 }
 
 func IsEmpty(store dbStore) (bool, error) {

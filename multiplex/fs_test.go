@@ -8,7 +8,6 @@ import (
 
 	"github.com/ice-blockchain/cometbft/config"
 	cmtos "github.com/ice-blockchain/cometbft/internal/os"
-
 	mx "github.com/ice-blockchain/cometbft/multiplex"
 )
 
@@ -58,9 +57,9 @@ func TestMultiplexFSNewMultiplexFS(t *testing.T) {
 		"mx-chain-CC8E6555A3F401FF61DA098F94D325E7041BC43A-1A63C0E60122F9BBCC",
 	}
 
-	for _, failCaseChainId := range failCases {
+	for _, failCaseChainID := range failCases {
 		conf.BaseConfig = config.MultiplexTestBaseConfig(map[string]*config.StateSyncConfig{}, map[string]string{}, map[string][]string{
-			"CC8E6555A3F401FF61DA098F94D325E7041BC43A": {failCaseChainId},
+			"CC8E6555A3F401FF61DA098F94D325E7041BC43A": {failCaseChainID},
 		})
 		conf.SetRoot(rootDir)
 

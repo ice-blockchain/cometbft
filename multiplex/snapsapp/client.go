@@ -60,7 +60,7 @@ func GetFinalizeBlockExtension() client.FinalizeBlockExtensionFn {
 // GetCommitExtension returns the active audit extension for blocks.
 //
 // Note that you may change this method to activate a different extension,
-// i.e. after implementing a custom commited blocks auditing unit.
+// i.e. after implementing a custom committed blocks auditing unit.
 func GetCommitExtension() client.CommitExtensionFn {
 	return client.DefaultCommitExtension
 }

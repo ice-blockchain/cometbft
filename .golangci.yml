@@ -75,7 +75,7 @@ linters-settings:
       - default # Default section: contains all imports that could not be matched to another section type.
       - blank # blank imports
       - dot # dot imports
-      - prefix(github.com/cometbft/cometbft, github.com/cometbft/cometbft-db)
+      - prefix(github.com/cometbft/cometbft, github.com/cometbft/cometbft-db, github.com/ice-blockchain/cometbft)
     custom-order: true
   depguard:
     rules:
@@ -86,8 +86,10 @@ linters-settings:
         allow:
           - $gostd
           - github.com/BurntSushi/toml
+          - github.com/pelletier/go-toml/v2
           - github.com/Masterminds/semver/v3
           - github.com/cometbft
+          - github.com/ice-blockchain
           - github.com/cosmos
           - github.com/dgraph-io/badger/v4
           - github.com/go-git/go-git/v5
@@ -118,6 +120,7 @@ linters-settings:
           - github.com/adlio/schema
           - github.com/btcsuite/btcd
           - github.com/cometbft
+          - github.com/ice-blockchain
           - github.com/cosmos
           - github.com/dgraph-io/badger/v4
           - github.com/fortytw2/leaktest

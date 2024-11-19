@@ -9,9 +9,8 @@ import (
 	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	"github.com/ice-blockchain/cometbft/libs/protoio"
-	"github.com/ice-blockchain/cometbft/p2p"
-
 	mx "github.com/ice-blockchain/cometbft/multiplex"
+	"github.com/ice-blockchain/cometbft/p2p"
 )
 
 const (

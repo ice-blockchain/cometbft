@@ -22,7 +22,7 @@ servers, or which stores data in a separate database, etc.
   - [PrepareProposalExtensionFn]: Provides custom pre-processing units for transactions data.
   - [ProcessProposalExtensionFn]: Provides custom post-processing units for transactions data.
   - [FinalizeBlockExtensionFn]: Provides custom processing units for blocks data.
-  - [CommitExtensionFn]: Provides custom auditing/reporting units for commited blocks.
+  - [CommitExtensionFn]: Provides custom auditing/reporting units for committed blocks.
 
 We provide several example implementations that basically just *deep-copy* the
 input. Obviously, if you are developing a custom extension, you would do more

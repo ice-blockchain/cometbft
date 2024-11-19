@@ -12,14 +12,13 @@ import (
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	"github.com/ice-blockchain/cometbft/crypto/tmhash"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
+	mx "github.com/ice-blockchain/cometbft/multiplex"
+	"github.com/ice-blockchain/cometbft/multiplex/snapsapp"
 	"github.com/ice-blockchain/cometbft/node"
 	"github.com/ice-blockchain/cometbft/p2p"
 	sm "github.com/ice-blockchain/cometbft/state"
 	"github.com/ice-blockchain/cometbft/types"
 	cmttime "github.com/ice-blockchain/cometbft/types/time"
-
-	mx "github.com/ice-blockchain/cometbft/multiplex"
-	"github.com/ice-blockchain/cometbft/multiplex/snapsapp"
 )
 
 type (
@@ -28,12 +27,6 @@ type (
 		reactor  *mx.Reactor
 		logger   cmtlog.Logger
 		rootDir  string
-	}
-
-	SnapshotsConfig struct {
-		blocks             uint64
-		snapshotInterval   uint64
-		snapshotKeepRecent uint32
 	}
 )
 
@@ -103,7 +96,7 @@ func prepareMultiplexReactor(t *testing.T) (
 
 	// Create a custom chain id for each iteration (based on test name)
 	// This should be random enough to produce non-repeating values
-	testChainId := baseExampleChainID + strings.ToUpper(hex.EncodeToString(
+	testChainID := baseExampleChainID + strings.ToUpper(hex.EncodeToString(
 		tmhash.Sum([]byte(t.Name()))[:8], // 8 bytes only
 	))
 
@@ -112,7 +105,7 @@ func prepareMultiplexReactor(t *testing.T) (
 		map[string]*config.StateSyncConfig{},
 		map[string]string{},
 		map[string][]string{"CC8E6555A3F401FF61DA098F94D325E7041BC43A": {
-			testChainId,
+			testChainID,
 		}},
 	)
 	conf.SetRoot(rootDir)
@@ -131,7 +124,7 @@ func prepareMultiplexReactor(t *testing.T) (
 		conf,
 		cmtlog.NewNopLogger(),
 		testChainRegistry,
-		mockGenesisDocSetProviderFunc(testChainId),
+		mockGenesisDocSetProviderFunc(testChainID),
 	)
 
 	err = testReactor.Start()
@@ -147,7 +140,7 @@ func makeRandomNodeKey() *p2p.NodeKey {
 
 func makeState(
 	t *testing.T,
-	chainId string,
+	chainID string,
 	setHeight int64,
 ) (*mx.HistoricalState, []byte) {
 	t.Helper()
@@ -157,7 +150,7 @@ func makeState(
 
 	state, err := sm.MakeGenesisState(&types.GenesisDoc{
 		GenesisTime:   cmttime.Now(),
-		ChainID:       chainId,
+		ChainID:       chainID,
 		InitialHeight: 1000,
 		Validators: []types.GenesisValidator{{
 			Address: valPubKey.Address(),

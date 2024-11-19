@@ -15,15 +15,15 @@ import "context"
 // the proposed extensionFn callback, you can use these in your extension as
 // documented with [DefaultSnapshotMutationExtension].
 func InjectSnapshotMutation(
-	chainId string,
+	chainID string,
 	stateBytes []byte,
 	extensionFn SnapshotMutationExtensionFn,
 ) []byte {
 	// Injects Address and ChainID to the context in case it is
 	// necessary inside the [SnapshotMutationExtensionFn] extension.
-	userAddress := extractAddressFromChainID(chainId)
-	chainContext := context.WithValue(context.TODO(), "Address", userAddress)
-	chainContext = context.WithValue(chainContext, "ChainID", chainId)
+	userAddress := extractAddressFromChainID(chainID)
+	chainContext := context.WithValue(context.TODO(), KeyAddress, userAddress)
+	chainContext = context.WithValue(chainContext, KeyChainID, chainID)
 
 	// CALLBACK: You may add custom per-user-chain source code here.
 	//
@@ -47,15 +47,15 @@ func InjectSnapshotMutation(
 // the proposed extensionFn callback, you can use these in your extension as
 // documented with [DefaultCheckMutationResultExtension].
 func AuditMutationResult(
-	chainId string,
+	chainID string,
 	mutatedBytes []byte,
 	extensionFn CheckMutationResultExtensionFn,
 ) error {
 	// Injects Address and ChainID to the context in case it is
 	// necessary inside the [CheckMutationResultExtensionFn] extension.
-	userAddress := extractAddressFromChainID(chainId)
-	chainContext := context.WithValue(context.TODO(), "Address", userAddress)
-	chainContext = context.WithValue(chainContext, "ChainID", chainId)
+	userAddress := extractAddressFromChainID(chainID)
+	chainContext := context.WithValue(context.TODO(), KeyAddress, userAddress)
+	chainContext = context.WithValue(chainContext, KeyChainID, chainID)
 
 	// CALLBACK: You may add custom per-user-chain source code here.
 	//
@@ -78,15 +78,15 @@ func AuditMutationResult(
 // the proposed extensionFn callback, you can use these in your extension as
 // documented with [DefaultSnapshotRestoreExtension].
 func InjectSnapshotRestore(
-	chainId string,
+	chainID string,
 	stateBytes []byte,
 	extensionFn SnapshotRestoreExtensionFn,
 ) []byte {
 	// Injects Address and ChainID to the context in case it is
 	// necessary inside the [SnapshotRestoreExtensionFn] extension.
-	userAddress := extractAddressFromChainID(chainId)
-	chainContext := context.WithValue(context.TODO(), "Address", userAddress)
-	chainContext = context.WithValue(chainContext, "ChainID", chainId)
+	userAddress := extractAddressFromChainID(chainID)
+	chainContext := context.WithValue(context.TODO(), KeyAddress, userAddress)
+	chainContext = context.WithValue(chainContext, KeyChainID, chainID)
 
 	// CALLBACK: You may add custom per-user-chain source code here.
 	//

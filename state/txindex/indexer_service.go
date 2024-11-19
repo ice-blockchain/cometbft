@@ -130,12 +130,12 @@ func (is *IndexerService) OnStop() {
 	}
 }
 
-// GetTxIndexer returns the injected tx.TxIndexer instance
+// GetTxIndexer returns the injected tx.TxIndexer instance.
 func (is *IndexerService) GetTxIndexer() TxIndexer {
 	return is.txIdxr
 }
 
-// GetBlockIndexer returns the injected indexer.BlockIndexer instance
+// GetBlockIndexer returns the injected indexer.BlockIndexer instance.
 func (is *IndexerService) GetBlockIndexer() indexer.BlockIndexer {
 	return is.blockIdxr
 }

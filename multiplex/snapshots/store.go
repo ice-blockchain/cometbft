@@ -18,11 +18,6 @@ import (
 	"github.com/ice-blockchain/cometbft/multiplex/snapshots/types"
 )
 
-const (
-	// keyPrefixSnapshot is the prefix for snapshot database keys
-	keyPrefixSnapshot byte = 0x01
-)
-
 // Store is a snapshot store, containing snapshot metadata and binary chunks.
 type Store struct {
 	dir string
@@ -318,7 +313,7 @@ func (s *Store) saveChunk(chunkBody io.ReadCloser, index uint32, snapshot *types
 	return nil
 }
 
-// saveChunkContent save the chunk to disk
+// saveChunkContent save the chunk to disk.
 func (s *Store) saveChunkContent(chunk []byte, index uint32, snapshot *types.Snapshot) error {
 	path := s.PathChunk(snapshot.Height, snapshot.Format, index)
 	return os.WriteFile(path, chunk, 0o600)
@@ -384,7 +379,7 @@ func (s *Store) parseMetadataFilename(filename string) (height uint64, format ui
 
 func (s *Store) validateMetadataPath(path string) error {
 	dir, f := filepath.Split(path)
-	if dir != fmt.Sprintf("%s/", s.pathMetadataDir()) {
+	if dir != fmt.Sprintf("%s/", s.pathMetadataDir()) { //nolint:perfsprint
 		return fmt.Errorf("invalid snapshot metadata path %s", path)
 	}
 	_, _, err := s.parseMetadataFilename(f)

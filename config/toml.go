@@ -6,9 +6,9 @@ import (
 	"strings"
 	"text/template"
 
-	_ "embed"
-
 	toml "github.com/pelletier/go-toml/v2"
+
+	_ "embed"
 
 	cmtos "github.com/ice-blockchain/cometbft/internal/os"
 )
@@ -85,12 +85,6 @@ func EnsureRoot(rootDir string) {
 	EnsureConfig(rootDir, DefaultConfig())
 }
 
-// XXX: this func should probably be called by cmd/cometbft/commands/init.go
-// alongside the writing of the genesis.json and priv_validator.json.
-func writeDefaultConfigFile(configFilePath string) {
-	WriteConfigFile(configFilePath, DefaultConfig())
-}
-
 // WriteConfigFile renders config using the template and writes it to configFilePath.
 func WriteConfigFile(configFilePath string, config *Config) {
 	var buffer bytes.Buffer
@@ -107,8 +101,9 @@ func ReadConfigFile(configFilePath string) *Config {
 	var conf Config
 	confBytes := cmtos.MustReadFile(configFilePath)
 
-	// TODO(midas): should not dismiss unmarshaling errors (e.g. time.Duration)
-	toml.Unmarshal(confBytes, &conf)
+	if err := toml.Unmarshal(confBytes, &conf); err != nil {
+		panic(err)
+	}
 	return &conf
 }
 

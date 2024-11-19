@@ -13,19 +13,19 @@ import (
 // - struct ChainDB embeds a database instance and adds a ChainID
 // - type MultiplexDB maps database instances to ChainID values
 
-// ChainDBContext embeds a [config.DBContext] instance and adds a ChainID
+// ChainDBContext embeds a [config.DBContext] instance and adds a ChainID.
 type ChainDBContext struct {
 	ChainID string
 	config.DBContext
 }
 
-// ChainDB embeds a [dbm.DB] instance and adds a ChainID
+// ChainDB embeds a [dbm.DB] instance and adds a ChainID.
 type ChainDB struct {
 	ChainID string
 	dbm.DB
 }
 
-// MultiplexDB maps ChainIDs to database instances
+// MultiplexDB maps ChainIDs to database instances.
 type MultiplexDB map[string]*ChainDB
 
 // ----------------------------------------------------------------------------
@@ -47,25 +47,25 @@ func NewMultiplexDB(ctx *ChainDBContext) (multiplex MultiplexDB, err error) {
 		// Uses one subfolder by user
 		dbStorage := filepath.Join(ctx.Config.DBDir(), userAddress)
 
-		for _, chainId := range chainIds {
-			chainId, err := NewExtendedChainIDFromLegacy(chainId)
+		for _, chainID := range chainIds {
+			chainID, err := NewExtendedChainIDFromLegacy(chainID)
 			if err != nil {
 				return nil, err
 			}
 
 			// .. and one subfolder by ChainID
-			dbStorage = filepath.Join(dbStorage, chainId.String())
-			chainDb, err := dbm.NewDB(ctx.ID, dbType, dbStorage)
+			dbStorage = filepath.Join(dbStorage, chainID.String())
+			chainDB, err := dbm.NewDB(ctx.ID, dbType, dbStorage)
 			if err != nil {
 				return nil, err
 			}
 
 			db := &ChainDB{
-				ChainID: chainId.String(),
-				DB:      chainDb,
+				ChainID: chainID.String(),
+				DB:      chainDB,
 			}
 
-			multiplex[chainId.String()] = db
+			multiplex[chainID.String()] = db
 		}
 	}
 

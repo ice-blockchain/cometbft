@@ -10,11 +10,9 @@ import (
 
 	abci "github.com/ice-blockchain/cometbft/abci/types"
 	v1 "github.com/ice-blockchain/cometbft/api/cometbft/types/v1"
-	cmtjson "github.com/ice-blockchain/cometbft/libs/json"
-
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/crypto/tmhash"
-
+	cmtjson "github.com/ice-blockchain/cometbft/libs/json"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 )
 
@@ -27,22 +25,24 @@ const (
 
 // Type-assertions ensure the compatibility of these mocks with the
 // client contract defined in this client package.
-var _ client.SyncConfigExtensionFn = mockSyncConfigExtension_MutatesHeight
-var _ client.SeedConfigExtensionFn = mockSeedConfigExtension_PrefixOneSeed
-var _ client.ValidatorUpdateExtensionFn = mockValidatorUpdateExtension_CountAsError
-var _ client.ConsensusUpdateExtensionFn = mockConsensusUpdateExtension_MaxBytesAsError
-var _ client.SnapshotMutationExtensionFn = mockSnapshotMutationExtension_HashedState
-var _ client.CheckMutationResultExtensionFn = mockCheckMutationResultExtension_SizeAsError
-var _ client.SnapshotRestoreExtensionFn = mockSnapshotRestoreExtension_HashedState
-var _ client.CheckTxExtensionFn = mockCheckTxExtension_SizeAsError
-var _ client.PrepareProposalExtensionFn = mockPrepareProposalExtension_AppendOneTx
-var _ client.ProcessProposalExtensionFn = mockProcessProposalExtension_AppendOneTx
-var _ client.FinalizeBlockExtensionFn = mockFinalizeBlockExtension_AppendHash
-var _ client.CommitExtensionFn = mockCommitExtension_HeightAsError
+var (
+	_ client.SyncConfigExtensionFn          = mockSyncConfigExtensionMutatesHeight
+	_ client.SeedConfigExtensionFn          = mockSeedConfigExtensionPrefixOneSeed
+	_ client.ValidatorUpdateExtensionFn     = mockValidatorUpdateExtensionCountAsError
+	_ client.ConsensusUpdateExtensionFn     = mockConsensusUpdateExtensionMaxBytesAsError
+	_ client.SnapshotMutationExtensionFn    = mockSnapshotMutationExtensionHashedState
+	_ client.CheckMutationResultExtensionFn = mockCheckMutationResultExtensionSizeAsError
+	_ client.SnapshotRestoreExtensionFn     = mockSnapshotRestoreExtensionHashedState
+	_ client.CheckTxExtensionFn             = mockCheckTxExtensionSizeAsError
+	_ client.PrepareProposalExtensionFn     = mockPrepareProposalExtensionAppendOneTx
+	_ client.ProcessProposalExtensionFn     = mockProcessProposalExtensionAppendOneTx
+	_ client.FinalizeBlockExtensionFn       = mockFinalizeBlockExtensionAppendHash
+	_ client.CommitExtensionFn              = mockCommitExtensionHeightAsError
+)
 
-// mockSyncConfigExtension_MutatesHeight is an implementation that mutates the
+// mockSyncConfigExtensionMutatesHeight is an implementation that mutates the
 // baseSyncConf.TrustHeight and increases it by 1.
-func mockSyncConfigExtension_MutatesHeight(
+func mockSyncConfigExtensionMutatesHeight(
 	ctx context.Context,
 	baseSyncConf *config.StateSyncConfig,
 ) *config.StateSyncConfig {
@@ -60,9 +60,9 @@ func mockSyncConfigExtension_MutatesHeight(
 	return nextStateSyncConfig
 }
 
-// mockSeedConfigExtension_PrefixOneSeed is an implementation that mutates the
+// mockSeedConfigExtensionPrefixOneSeed is an implementation that mutates the
 // baseSeeds and prefixes it by adding "testNodeId@127.0.0.1:123,".
-func mockSeedConfigExtension_PrefixOneSeed(
+func mockSeedConfigExtensionPrefixOneSeed(
 	ctx context.Context,
 	baseSeeds string,
 ) string {
@@ -70,28 +70,28 @@ func mockSeedConfigExtension_PrefixOneSeed(
 	return nextSeeds
 }
 
-// mockValidatorUpdateExtension_CountAsError is an implementation that reads the
+// mockValidatorUpdateExtensionCountAsError is an implementation that reads the
 // baseValidators validator set and formats an error with the number of validators.
-func mockValidatorUpdateExtension_CountAsError(
+func mockValidatorUpdateExtensionCountAsError(
 	ctx context.Context,
 	baseValidators []abci.ValidatorUpdate,
 ) error {
 	return fmt.Errorf("Count validator updates: %d", len(baseValidators))
 }
 
-// mockConsensusUpdateExtension_MaxBytesAsError is an implementation that reads the
+// mockConsensusUpdateExtensionMaxBytesAsError is an implementation that reads the
 // consensusParams updates and formats an error with the max bytes content.
-func mockConsensusUpdateExtension_MaxBytesAsError(
+func mockConsensusUpdateExtensionMaxBytesAsError(
 	ctx context.Context,
 	baseConsensusParams *v1.ConsensusParams,
 ) error {
 	return fmt.Errorf("Max bytes: %v", baseConsensusParams.Block.MaxBytes)
 }
 
-// mockSnapshotMutationExtension_HashedState is an implementation that mutates the
+// mockSnapshotMutationExtensionHashedState is an implementation that mutates the
 // baseState by hashing it and returning *only its hash*.
 // CAUTION: this mock discards the state data for a deterministic hash of it.
-func mockSnapshotMutationExtension_HashedState(
+func mockSnapshotMutationExtensionHashedState(
 	ctx context.Context,
 	baseState []byte,
 ) []byte {
@@ -99,19 +99,19 @@ func mockSnapshotMutationExtension_HashedState(
 	return nextState
 }
 
-// mockCheckTxExtension_SizeAsError is an implementation that reads the
+// mockCheckMutationResultExtensionSizeAsError is an implementation that reads the
 // mutated state bytes and formats an error that prints the length of the byte slice.
-func mockCheckMutationResultExtension_SizeAsError(
+func mockCheckMutationResultExtensionSizeAsError(
 	ctx context.Context,
 	tx []byte,
 ) error {
 	return fmt.Errorf("Mutated state bytes: %d", len(tx))
 }
 
-// mockSnapshotRestoreExtension_HashedState is an implementation that mutates the
+// mockSnapshotRestoreExtensionHashedState is an implementation that mutates the
 // baseState by hashing it and returning *only its hash*.
 // CAUTION: this mock discards the state data for a deterministic hash of it.
-func mockSnapshotRestoreExtension_HashedState(
+func mockSnapshotRestoreExtensionHashedState(
 	ctx context.Context,
 	baseState []byte,
 ) []byte {
@@ -119,19 +119,19 @@ func mockSnapshotRestoreExtension_HashedState(
 	return nextState
 }
 
-// mockCheckTxExtension_SizeAsError is an implementation that reads the
+// mockCheckTxExtensionSizeAsError is an implementation that reads the
 // transaction bytes and formats an error that prints the length of the byte slice.
-func mockCheckTxExtension_SizeAsError(
+func mockCheckTxExtensionSizeAsError(
 	ctx context.Context,
 	tx []byte,
 ) error {
 	return fmt.Errorf("Transaction bytes: %d", len(tx))
 }
 
-// mockPrepareProposalExtension_AppendOneTx is an implementation that mutates the
+// mockPrepareProposalExtensionAppendOneTx is an implementation that mutates the
 // transactions slice so that it contains one more testable transaction.
 // CAUTION: this mock mutates the transactions data.
-func mockPrepareProposalExtension_AppendOneTx(
+func mockPrepareProposalExtensionAppendOneTx(
 	ctx context.Context,
 	baseTransactions [][]byte,
 ) [][]byte {
@@ -139,10 +139,10 @@ func mockPrepareProposalExtension_AppendOneTx(
 	return nextTransactions
 }
 
-// mockProcessProposalExtension_AppendOneTx is an implementation that mutates the
+// mockProcessProposalExtensionAppendOneTx is an implementation that mutates the
 // transactions slice so that it contains one more testable transaction.
 // CAUTION: this mock mutates the transactions data.
-func mockProcessProposalExtension_AppendOneTx(
+func mockProcessProposalExtensionAppendOneTx(
 	ctx context.Context,
 	baseTransactions [][]byte,
 ) [][]byte {
@@ -150,10 +150,10 @@ func mockProcessProposalExtension_AppendOneTx(
 	return nextTransactions
 }
 
-// mockFinalizeBlockExtension_AppendHash is an implementation that mutates the
-// transactions slice so that it contains a transations hash at the end.
+// mockFinalizeBlockExtensionAppendHash is an implementation that mutates the
+// transactions slice so that it contains a transitions hash at the end.
 // CAUTION: this mock mutates the transactions data.
-func mockFinalizeBlockExtension_AppendHash(
+func mockFinalizeBlockExtensionAppendHash(
 	ctx context.Context,
 	baseTransactions [][]byte,
 ) [][]byte {
@@ -168,9 +168,9 @@ func mockFinalizeBlockExtension_AppendHash(
 	return nextTransactions
 }
 
-// mockCommitExtension_HeightAsError is an implementation that reads the
+// mockCommitExtensionHeightAsError is an implementation that reads the
 // block height and formats an error to print it.
-func mockCommitExtension_HeightAsError(
+func mockCommitExtensionHeightAsError(
 	ctx context.Context,
 	blockHeight uint64,
 ) error {
@@ -190,7 +190,7 @@ func TestMultiplexClientDefaultSyncConfigExtension(t *testing.T) {
 
 	// Execute the extension / injection, we intentionally force the type
 	// here to prevent compilation for extensions that wouldn't work correctly.
-	var nextSyncConf *config.StateSyncConfig
+	var nextSyncConf *config.StateSyncConfig //nolint:gosimple
 	nextSyncConf = client.DefaultSyncConfigExtension(context.TODO(), baseConf.StateSync)
 	// Should deep-copy the object
 	// do some mutations to test deep-copy
@@ -239,7 +239,7 @@ func TestMultiplexClientDefaultValidatorUpdateExtension(t *testing.T) {
 
 	// Execute the extension / injection, we intentionally force the type
 	// here to prevent compilation for extensions that wouldn't work correctly.
-	var errValidatorUpdate error
+	var errValidatorUpdate error //nolint:gosimple
 	errValidatorUpdate = client.DefaultValidatorUpdateExtension(context.TODO(), baseValidators)
 
 	// Default extension returns nil (no error)
@@ -257,7 +257,7 @@ func TestMultiplexClientDefaultConsensusUpdateExtension(t *testing.T) {
 
 	// Execute the extension / injection, we intentionally force the type
 	// here to prevent compilation for extensions that wouldn't work correctly.
-	var errConsensusUpdate error
+	var errConsensusUpdate error //nolint:gosimple
 	errConsensusUpdate = client.DefaultConsensusUpdateExtension(context.TODO(), baseConsensusParams)
 
 	// Default extension returns nil (no error)
@@ -294,7 +294,7 @@ func TestMultiplexClientDefaultCheckMutationResultExtension(t *testing.T) {
 
 	// Execute the extension / injection, we intentionally force the type
 	// here to prevent compilation for extensions that wouldn't work correctly.
-	var errCheckMutationResults error
+	var errCheckMutationResults error //nolint:gosimple
 	errCheckMutationResults = client.DefaultCheckMutationResultExtension(context.TODO(), inputStateBytes)
 
 	// Default extension returns nil (no error)
@@ -330,7 +330,7 @@ func TestMultiplexClientDefaultCheckTxExtension(t *testing.T) {
 
 	// Execute the extension / injection, we intentionally force the type
 	// here to prevent compilation for extensions that wouldn't work correctly.
-	var errCheckTx error
+	var errCheckTx error //nolint:gosimple
 	errCheckTx = client.DefaultCheckTxExtension(context.TODO(), baseTransaction)
 
 	// Default extension returns nil (no error)
@@ -346,7 +346,7 @@ func TestMultiplexClientDefaultPrepareProposalExtension(t *testing.T) {
 
 	// Execute the extension / injection, we intentionally force the type
 	// here to prevent compilation for extensions that wouldn't work correctly.
-	var nextTransactions [][]byte
+	var nextTransactions [][]byte //nolint:gosimple
 	nextTransactions = client.DefaultPrepareProposalExtension(context.TODO(), inputTransactionsSlice)
 
 	// Extension may not return nil
@@ -370,7 +370,7 @@ func TestMultiplexClientDefaultProcessProposalExtension(t *testing.T) {
 
 	// Execute the extension / injection, we intentionally force the type
 	// here to prevent compilation for extensions that wouldn't work correctly.
-	var nextTransactions [][]byte
+	var nextTransactions [][]byte //nolint:gosimple
 	nextTransactions = client.DefaultProcessProposalExtension(context.TODO(), inputTransactionsSlice)
 
 	// Extension may not return nil
@@ -394,7 +394,7 @@ func TestMultiplexClientDefaultFinalizeBlockExtension(t *testing.T) {
 
 	// Execute the extension / injection, we intentionally force the type
 	// here to prevent compilation for extensions that wouldn't work correctly.
-	var nextTransactions [][]byte
+	var nextTransactions [][]byte //nolint:gosimple
 	nextTransactions = client.DefaultFinalizeBlockExtension(context.TODO(), inputTransactionsSlice)
 
 	// Extension may not return nil
@@ -415,7 +415,7 @@ func TestMultiplexClientDefaultCommitExtension(t *testing.T) {
 
 	// Execute the extension / injection, we intentionally force the type
 	// here to prevent compilation for extensions that wouldn't work correctly.
-	var errCommit error
+	var errCommit error //nolint:gosimple
 	errCommit = client.DefaultCommitExtension(context.TODO(), baseBlockHeight)
 
 	// Default extension returns nil (no error)

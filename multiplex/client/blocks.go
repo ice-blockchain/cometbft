@@ -19,15 +19,15 @@ import "context"
 // the proposed extensionFn callback, you can use these in your extension as
 // documented with [DefaultCheckTxExtension].
 func DelegateCheckTx(
-	chainId string,
+	chainID string,
 	transactionBytes []byte,
 	extensionFn CheckTxExtensionFn,
 ) error {
 	// Injects Address and ChainID to the context in case it is
 	// necessary inside the [CheckTxExtensionFn] extension.
-	userAddress := extractAddressFromChainID(chainId)
-	chainContext := context.WithValue(context.TODO(), "Address", userAddress)
-	chainContext = context.WithValue(chainContext, "ChainID", chainId)
+	userAddress := extractAddressFromChainID(chainID)
+	chainContext := context.WithValue(context.TODO(), KeyAddress, userAddress)
+	chainContext = context.WithValue(chainContext, KeyChainID, chainID)
 
 	// CALLBACK: You may add custom per-user-chain source code here.
 	//
@@ -50,15 +50,15 @@ func DelegateCheckTx(
 // the proposed extensionFn callback, you can use these in your extension as
 // documented with [DefaultPrepareProposalExtension].
 func InjectPrepareProposal(
-	chainId string,
+	chainID string,
 	transactionsData [][]byte,
 	extensionFn PrepareProposalExtensionFn,
 ) [][]byte {
 	// Injects Address and ChainID to the context in case it is
 	// necessary inside the [PrepareProposalExtensionFn] extension.
-	userAddress := extractAddressFromChainID(chainId)
-	chainContext := context.WithValue(context.TODO(), "Address", userAddress)
-	chainContext = context.WithValue(chainContext, "ChainID", chainId)
+	userAddress := extractAddressFromChainID(chainID)
+	chainContext := context.WithValue(context.TODO(), KeyAddress, userAddress)
+	chainContext = context.WithValue(chainContext, KeyChainID, chainID)
 
 	// CALLBACK: You may add custom per-user-chain source code here.
 	//
@@ -82,15 +82,15 @@ func InjectPrepareProposal(
 // the proposed extensionFn callback, you can use these in your extension as
 // documented with [DefaultProcessProposalExtension].
 func InjectProcessProposal(
-	chainId string,
+	chainID string,
 	transactionsData [][]byte,
 	extensionFn ProcessProposalExtensionFn,
 ) [][]byte {
 	// Injects Address and ChainID to the context in case it is
 	// necessary inside the [ProcessProposalExtensionFn] extension.
-	userAddress := extractAddressFromChainID(chainId)
-	chainContext := context.WithValue(context.TODO(), "Address", userAddress)
-	chainContext = context.WithValue(chainContext, "ChainID", chainId)
+	userAddress := extractAddressFromChainID(chainID)
+	chainContext := context.WithValue(context.TODO(), KeyAddress, userAddress)
+	chainContext = context.WithValue(chainContext, KeyChainID, chainID)
 
 	// CALLBACK: You may add custom per-user-chain source code here.
 	//
@@ -114,15 +114,15 @@ func InjectProcessProposal(
 // the proposed extensionFn callback, you can use these in your extension as
 // documented with [DefaultFinalizeBlockExtension].
 func InjectFinalizeBlock(
-	chainId string,
+	chainID string,
 	transactionsData [][]byte,
 	extensionFn FinalizeBlockExtensionFn,
 ) [][]byte {
 	// Injects Address and ChainID to the context in case it is
 	// necessary inside the [FinalizeBlockExtensionFn] extension.
-	userAddress := extractAddressFromChainID(chainId)
-	chainContext := context.WithValue(context.TODO(), "Address", userAddress)
-	chainContext = context.WithValue(chainContext, "ChainID", chainId)
+	userAddress := extractAddressFromChainID(chainID)
+	chainContext := context.WithValue(context.TODO(), KeyAddress, userAddress)
+	chainContext = context.WithValue(chainContext, KeyChainID, chainID)
 
 	// CALLBACK: You may add custom per-user-chain source code here.
 	//
@@ -134,27 +134,27 @@ func InjectFinalizeBlock(
 }
 
 // ReportCommit defines a callback that returns nil or an error if
-// reporting fails for a commited block.
+// reporting fails for a committed block.
 //
 // We provide an example [DefaultCommitExtension] implementation for the
 // extensionFn parameter which only copies the transaction bytes.
 //
 // This method is called by [snapsapp.Commit] and may be used to
-// post-process blocks as they are being commited.
+// post-process blocks as they are being committed.
 //
 // Note that we inject `Address` and `ChainID` in the Context before calling
 // the proposed extensionFn callback, you can use these in your extension as
 // documented with [DefaultCommitExtension].
 func ReportCommit(
-	chainId string,
+	chainID string,
 	chainHeight uint64,
 	extensionFn CommitExtensionFn,
 ) error {
 	// Injects Address and ChainID to the context in case it is
 	// necessary inside the [CommitExtensionFn] extension.
-	userAddress := extractAddressFromChainID(chainId)
-	chainContext := context.WithValue(context.TODO(), "Address", userAddress)
-	chainContext = context.WithValue(chainContext, "ChainID", chainId)
+	userAddress := extractAddressFromChainID(chainID)
+	chainContext := context.WithValue(context.TODO(), KeyAddress, userAddress)
+	chainContext = context.WithValue(chainContext, KeyChainID, chainID)
 
 	// CALLBACK: You may add custom per-user-chain source code here.
 	//

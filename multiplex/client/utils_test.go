@@ -11,7 +11,6 @@ import (
 
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	"github.com/ice-blockchain/cometbft/crypto/tmhash"
-
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 )
 
@@ -54,8 +53,8 @@ func TestMultiplexClientUtilsRegExpChainID(t *testing.T) {
 		"123-CC8E6555A3F401FF61DA098F94D325E7041BC43A-1A63C0E60122F9BB",
 	}
 
-	for _, testChainId := range testCases {
-		matches := extractor.FindStringSubmatch(testChainId)
+	for _, testChainID := range testCases {
+		matches := extractor.FindStringSubmatch(testChainID)
 		assert.Len(t, matches, expectedMatches)
 		assert.NotEmpty(t, matches[1], "RegExpChainID must extract prefix")  // prefix
 		assert.NotEmpty(t, matches[2], "RegExpChainID must extract address") // address

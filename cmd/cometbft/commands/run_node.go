@@ -21,7 +21,7 @@ var (
 	// Added flags for nodes multiplex:
 	// --multiplex: enables multiplex for init command
 	// --seeds-file: config-overwrite for seed nodes by chain
-	// --users-file: config-overwrite for user chains creation
+	// --users-file: config-overwrite for user chains creation.
 	enableMultiplex bool
 	seedsFile       string
 	usersFile       string
@@ -207,7 +207,7 @@ func NewRunMultiplexCmd(multiplexProvider mx.NodesMultiplexProvider) *cobra.Comm
 			wg := sync.WaitGroup{}
 			wg.Add(len(nodesMultiplex))
 
-			for nodeChainId, nodeInstance := range nodesMultiplex {
+			for nodeChainID, nodeInstance := range nodesMultiplex {
 				// Type-assertion makes sure we have a [*nm.Node]
 				runNode := nodeInstance.GetInstance().(*nm.Node)
 
@@ -242,7 +242,7 @@ func NewRunMultiplexCmd(multiplexProvider mx.NodesMultiplexProvider) *cobra.Comm
 							}
 						}
 					})
-				}(nodeChainId, runNode)
+				}(nodeChainID, runNode)
 			}
 
 			// Wait for all nodes to be up and running

@@ -10,9 +10,8 @@ import (
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	cmtos "github.com/ice-blockchain/cometbft/internal/os"
-	"github.com/ice-blockchain/cometbft/p2p"
-
 	mx "github.com/ice-blockchain/cometbft/multiplex"
+	"github.com/ice-blockchain/cometbft/p2p"
 )
 
 func TestMultiplexChainRegistryLoadSeedsFromFile(t *testing.T) {
@@ -36,7 +35,8 @@ func TestMultiplexChainRegistryLoadSeedsFromFile(t *testing.T) {
 	}
 
 	for _, failCaseSeedsBytes := range failCases {
-		cmtos.WriteFile(errfile.Name(), failCaseSeedsBytes, 0644)
+		err := cmtos.WriteFile(errfile.Name(), failCaseSeedsBytes, 0o644)
+		require.NoError(t, err)
 
 		// Should drop empty seed configurations
 		seeds, _ := mx.LoadSeedsFromFile(errfile.Name())
@@ -53,7 +53,8 @@ func TestMultiplexChainRegistryLoadSeedsFromFile(t *testing.T) {
 	seedsBytes := []byte(`{
 		"mx-chain-CC8E6555A3F401FF61DA098F94D325E7041BC43A-1A63C0E60122F9BB": "seed1@127.0.0.1:30001,seed2@127.0.0.1:30002"
 	}`)
-	cmtos.WriteFile(tmpfile.Name(), seedsBytes, 0644)
+	err = cmtos.WriteFile(tmpfile.Name(), seedsBytes, 0o644)
+	require.NoError(t, err)
 
 	seeds, err := mx.LoadSeedsFromFile(tmpfile.Name())
 	assert.NoError(t, err)
@@ -64,7 +65,8 @@ func TestMultiplexChainRegistryLoadSeedsFromFile(t *testing.T) {
 		"mx-chain-CC8E6555A3F401FF61DA098F94D325E7041BC43A-D1ED2B487F2E93CC": "seed2@127.0.0.1:30002",
 		"mx-chain-FF1410CEEB411E55487701C4FEE65AACE7115DC0-79F77E672C1DB0BC": "seed3@127.0.0.1:30003"
 	}`)
-	cmtos.WriteFile(tmpfile.Name(), seedsBytes, 0644)
+	err = cmtos.WriteFile(tmpfile.Name(), seedsBytes, 0o644)
+	require.NoError(t, err)
 
 	seeds, err = mx.LoadSeedsFromFile(tmpfile.Name())
 	assert.NoError(t, err)
@@ -195,8 +197,8 @@ func TestMultiplexChainRegistryGetStateSyncConfig(t *testing.T) {
 
 	// We can safely iterate the networks list from registry
 	// because state-sync config is not ordered specifically
-	for _, chainId := range testChainRegistry.GetChains() {
-		actualStateSyncConf, err := testChainRegistry.GetStateSyncConfig(chainId)
+	for _, chainID := range testChainRegistry.GetChains() {
+		actualStateSyncConf, err := testChainRegistry.GetStateSyncConfig(chainID)
 		assert.NoError(t, err, "should not error given existing ChainID")
 		assert.NotNil(t, actualStateSyncConf)
 		assert.IsType(t, &config.StateSyncConfig{}, actualStateSyncConf)
@@ -208,8 +210,8 @@ func TestMultiplexChainRegistryGetStateSyncConfig(t *testing.T) {
 		"nor-does-this-one",
 		"or also  this one",
 	}
-	for _, failChainId := range testFailCases {
-		_, err := testChainRegistry.GetAddress(failChainId)
+	for _, failCaseChainID := range testFailCases {
+		_, err := testChainRegistry.GetAddress(failCaseChainID)
 		assert.Error(t, err, "should error given unknown or invalid ChainID")
 	}
 }
@@ -228,8 +230,8 @@ func TestMultiplexChainRegistryGetSeeds(t *testing.T) {
 
 	// We can safely iterate the networks list from registry
 	// because seed nodes config is not ordered specifically
-	for _, chainId := range testChainRegistry.GetChains() {
-		actualSeeds, err := testChainRegistry.GetSeeds(chainId)
+	for _, chainID := range testChainRegistry.GetChains() {
+		actualSeeds, err := testChainRegistry.GetSeeds(chainID)
 		assert.NoError(t, err, "should not error given existing ChainID")
 		assert.NotNil(t, actualSeeds)
 		assert.NotEmpty(t, actualSeeds)
@@ -241,8 +243,8 @@ func TestMultiplexChainRegistryGetSeeds(t *testing.T) {
 		"nor-does-this-one",
 		"or also  this one",
 	}
-	for _, failChainId := range testFailCases {
-		_, err := testChainRegistry.GetAddress(failChainId)
+	for _, failChainID := range testFailCases {
+		_, err := testChainRegistry.GetAddress(failChainID)
 		assert.Error(t, err, "should error given unknown or invalid ChainID")
 	}
 }
@@ -261,8 +263,8 @@ func TestMultiplexChainRegistryGetAddress(t *testing.T) {
 
 	// Iterate the CONFIG to test for correct addresses retrievals
 	for userAddress, chainIds := range nodeCfg.UserChains {
-		for _, chainId := range chainIds {
-			actualAddress, err := testChainRegistry.GetAddress(chainId)
+		for _, chainID := range chainIds {
+			actualAddress, err := testChainRegistry.GetAddress(chainID)
 			assert.NoError(t, err, "should not error given existing ChainID")
 			assert.Equal(t, userAddress, actualAddress)
 		}
@@ -274,8 +276,8 @@ func TestMultiplexChainRegistryGetAddress(t *testing.T) {
 		"nor-does-this-one",
 		"or also  this one",
 	}
-	for _, failChainId := range testFailCases {
-		_, err := testChainRegistry.GetAddress(failChainId)
+	for _, failChainID := range testFailCases {
+		_, err := testChainRegistry.GetAddress(failChainID)
 		assert.Error(t, err, "should error given unknown or invalid ChainID")
 	}
 }
@@ -293,9 +295,9 @@ func TestMultiplexChainRegistryFindChain(t *testing.T) {
 	require.NoError(t, err, "should create chain registry from random multiplex config")
 
 	// GetChains is tested to return an alphabetically ordered slice of ChainID
-	for index, chainId := range testChainRegistry.GetChains() {
+	for index, chainID := range testChainRegistry.GetChains() {
 		// Should return the correct index in ordered slice
-		actualIndex, err := testChainRegistry.FindChain(chainId)
+		actualIndex, err := testChainRegistry.FindChain(chainID)
 		assert.NoError(t, err)
 		assert.Equal(t, index, actualIndex)
 	}
@@ -306,34 +308,24 @@ func TestMultiplexChainRegistryFindChain(t *testing.T) {
 		"nor-does-this-one",
 		"or also  this one",
 	}
-	for _, failChainId := range testFailCases {
-		errIndex, err := testChainRegistry.FindChain(failChainId)
+	for _, failChainID := range testFailCases {
+		errIndex, err := testChainRegistry.FindChain(failChainID)
 		assert.Error(t, err, "should error given unknown or invalid ChainID")
 		assert.Equal(t, -1, errIndex, "should return -1 given unknown or invalid ChainID")
 	}
 }
 
-func makeChainRegistryFromConfig(t testing.TB, conf config.MultiplexConfig) mx.ChainRegistry {
-	t.Helper()
+func makeChainRegistryFromConfig(tb testing.TB, conf config.MultiplexConfig) mx.ChainRegistry {
+	tb.Helper()
 
 	chainRegistry, err := mx.NewChainRegistry(&conf)
-	require.NoError(t, err, "should create chain registry from config")
+	require.NoError(tb, err, "should create chain registry from config")
 
 	return chainRegistry
 }
 
-func makeRandomChainRegistry(t testing.TB, numChains int) mx.ChainRegistry {
-	t.Helper()
-
-	multiplexConfig := makeRandomMultiplexConfig(t, numChains)
-	chainRegistry, err := mx.NewChainRegistry(&multiplexConfig)
-	require.NoError(t, err, "should create chain registry from random config")
-
-	return chainRegistry
-}
-
-func makeRandomMultiplexConfig(t testing.TB, numChains int) config.MultiplexConfig {
-	t.Helper()
+func makeRandomMultiplexConfig(tb testing.TB, numChains int) config.MultiplexConfig {
+	tb.Helper()
 
 	randomChainIDs := make([]string, numChains)
 	randChainSeeds := make(map[string]string, numChains)
@@ -345,19 +337,19 @@ func makeRandomMultiplexConfig(t testing.TB, numChains int) config.MultiplexConf
 		userAddress := userPubKey.Address().String()
 		fingerprint := makeFingerprint("Posts") // This is the "scope"
 
-		chainId, err := mx.NewExtendedChainID(userAddress, fingerprint)
-		require.NoError(t, err, "should create random ChainID")
+		chainID, err := mx.NewExtendedChainID(userAddress, fingerprint)
+		require.NoError(tb, err, "should create random ChainID")
 
 		randUserChains[userAddress] = make([]string, 1)
-		randUserChains[userAddress][0] = chainId.String()
+		randUserChains[userAddress][0] = chainID.String()
 
 		// Uses a fake (random) seed node ID
 		testSeedNodeKey := &p2p.NodeKey{PrivKey: ed25519.GenPrivKey()}
-		testSeedNodeId := testSeedNodeKey.ID()
+		testSeedNodeID := testSeedNodeKey.ID()
 
-		randomChainIDs[i] = chainId.String()
-		randChainSeeds[chainId.String()] = string(testSeedNodeId) + "@127.0.0.1:30001"
-		stateSyncConfs[chainId.String()] = config.DefaultStateSyncConfig()
+		randomChainIDs[i] = chainID.String()
+		randChainSeeds[chainID.String()] = string(testSeedNodeID) + "@127.0.0.1:30001"
+		stateSyncConfs[chainID.String()] = config.DefaultStateSyncConfig()
 	}
 
 	return config.MultiplexConfig{

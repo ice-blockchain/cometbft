@@ -10,7 +10,6 @@ import (
 	abci "github.com/ice-blockchain/cometbft/abci/types"
 	v1 "github.com/ice-blockchain/cometbft/api/cometbft/types/v1"
 	cmtjson "github.com/ice-blockchain/cometbft/libs/json"
-
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 )
 
@@ -25,7 +24,7 @@ const testValidatorJSON = `{
 
 func TestMultiplexClientReportValidatorUpdate(t *testing.T) {
 	// address and fingerprint added to ChainID
-	testChainId := makeRandomTestChainID()
+	testChainID := makeRandomTestChainID()
 
 	// unmarshal a test validator
 	testValidator := abci.ValidatorUpdate{}
@@ -37,11 +36,11 @@ func TestMultiplexClientReportValidatorUpdate(t *testing.T) {
 
 	// Execute the extension / injection, we intentionally force the type
 	// here to prevent compilation for extensions that wouldn't work correctly.
-	var errReportValidatorUpdate error
+	var errReportValidatorUpdate error //nolint:gosimple
 	errReportValidatorUpdate = client.ReportValidatorUpdate(
-		testChainId,
+		testChainID,
 		baseValidators,
-		mockValidatorUpdateExtension_CountAsError, // default_test.go
+		mockValidatorUpdateExtensionCountAsError, // default_test.go
 	)
 
 	// The extension should have formatted the validator set as an Error
@@ -51,7 +50,7 @@ func TestMultiplexClientReportValidatorUpdate(t *testing.T) {
 
 func TestMultiplexClientReportConsensusUpdate(t *testing.T) {
 	// address and fingerprint added to ChainID
-	testChainId := makeRandomTestChainID()
+	testChainID := makeRandomTestChainID()
 
 	// Prepare a consensus params instance
 	expectedMaxBytes := 123
@@ -63,11 +62,11 @@ func TestMultiplexClientReportConsensusUpdate(t *testing.T) {
 
 	// Execute the extension / injection, we intentionally force the type
 	// here to prevent compilation for extensions that wouldn't work correctly.
-	var errReportConsensusUpdate error
+	var errReportConsensusUpdate error //nolint:gosimple
 	errReportConsensusUpdate = client.ReportConsensusUpdate(
-		testChainId,
+		testChainID,
 		baseConsensusParams,
-		mockConsensusUpdateExtension_MaxBytesAsError, // default_test.go
+		mockConsensusUpdateExtensionMaxBytesAsError, // default_test.go
 	)
 
 	// The extension should have formatted the validator set as an Error

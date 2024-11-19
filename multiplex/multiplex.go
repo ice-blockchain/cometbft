@@ -29,12 +29,9 @@ import (
 // Start() method must be called in a separate goroutine to permit concurrent
 // consensus instances, blocks production and state machines replication.
 func (reactor *Reactor) createMultiplexNodesWithServices(
-	ctx context.Context,
+	_ context.Context,
 	options ...node.Option,
-) (
-	nodesMultiplex MultiplexMap[*node.Node],
-	err error,
-) {
+) MultiplexMap[*node.Node] {
 	// We shall iterate through all known networks and create separate
 	// multiplex transports and event switches for each replicated chain.
 	chainRegistry := reactor.GetChainRegistry()
@@ -42,55 +39,55 @@ func (reactor *Reactor) createMultiplexNodesWithServices(
 	// Used to retrieve configuration and state per chain.
 	genesisDocProvider := reactor.GetGenesisProvider()
 	serviceProvider := reactor.GetServicesProvider()
-	configProvider := reactor.GetInstanceProvider(KEY_CONFIG)
-	statesProvider := reactor.GetInstanceProvider(KEY_STATE)
-	privvalProvider := reactor.GetInstanceProvider(KEY_PRIVVAL)
-	switchProvider := reactor.GetInstanceProvider(KEY_P2P_SWITCH)
-	transportProvider := reactor.GetInstanceProvider(KEY_P2P_TRANSPORT)
-	stateStoreProvider := reactor.GetInstanceProvider(KEY_STORE_STATE)
-	blockStoreProvider := reactor.GetInstanceProvider(KEY_STORE_BLOCK)
+	configProvider := reactor.GetInstanceProvider(InstanceKeyConfig)
+	statesProvider := reactor.GetInstanceProvider(InstanceKeyState)
+	privvalProvider := reactor.GetInstanceProvider(InstanceKeyPrivValidator)
+	switchProvider := reactor.GetInstanceProvider(InstanceKeyP2PSwitch)
+	transportProvider := reactor.GetInstanceProvider(InstanceKeyP2PTransport)
+	stateStoreProvider := reactor.GetInstanceProvider(InstanceKeyStateStore)
+	blockStoreProvider := reactor.GetInstanceProvider(InstanceKeyBlockStore)
 
 	// Retrieve ordered list of networks
 	replicatedChains := chainRegistry.GetChains()
 	numReplicatedChains := len(replicatedChains)
 
 	// Allocate return objects
-	nodesMultiplex = make(MultiplexMap[*node.Node], numReplicatedChains)
+	nodesMultiplex := make(MultiplexMap[*node.Node], numReplicatedChains)
 
 	// We iterate through an ordered list of known networks to create
 	// one instance of [node.Node] for each replicated chain.
 	//
 	// This notably permits to keep backwards-compatibility with CometBFT.
-	for _, chainId := range replicatedChains {
+	for _, chainID := range replicatedChains {
 		// Config
-		genesisDoc := genesisDocProvider(chainId)
-		cfgOverwrite := configProvider(chainId).(*config.Config)
-		privValidator := privvalProvider(chainId).(types.PrivValidator)
+		genesisDoc := genesisDocProvider(chainID)
+		cfgOverwrite := configProvider(chainID).(*config.Config)
+		privValidator := privvalProvider(chainID).(types.PrivValidator)
 
 		// P2P
-		eventSwitch := switchProvider(chainId).(*p2p.Switch)
-		p2pTransport := transportProvider(chainId).(*p2p.MultiplexTransport)
+		eventSwitch := switchProvider(chainID).(*p2p.Switch)
+		p2pTransport := transportProvider(chainID).(*p2p.MultiplexTransport)
 		pexAddrBook := eventSwitch.GetAddrBook().(pex.AddrBook)
 
 		// Consensus
-		eventBus := serviceProvider(KEY_EVENTBUS, chainId).(*types.EventBus)
-		proxyApp := reactor.abciClient.ToAppConns(chainId)
-		memplReactor := serviceProvider(KEY_REACTOR_MEMPOOL, chainId).(*mempl.Reactor)
-		consensusReactor := serviceProvider(KEY_REACTOR_CONSENSUS, chainId).(*cs.Reactor)
-		evidenceReactor := serviceProvider(KEY_REACTOR_EVIDENCE, chainId).(*evidence.Reactor)
-		indexerService := serviceProvider(KEY_INDEXERS, chainId).(*txindex.IndexerService)
-		pruner := serviceProvider(KEY_PRUNER, chainId).(*sm.Pruner)
+		eventBus := serviceProvider(ServiceKeyEventBus, chainID).(*types.EventBus)
+		proxyApp := reactor.abciClient.ToAppConns(chainID)
+		memplReactor := serviceProvider(ServiceKeyMempoolReactor, chainID).(*mempl.Reactor)
+		consensusReactor := serviceProvider(ServiceKeyConsensusReactor, chainID).(*cs.Reactor)
+		evidenceReactor := serviceProvider(ServiceKeyEvidenceReactor, chainID).(*evidence.Reactor)
+		indexerService := serviceProvider(ServiceKeyIndexers, chainID).(*txindex.IndexerService)
+		pruner := serviceProvider(ServiceKeyPruner, chainID).(*sm.Pruner)
 
 		// State/Blocks
 		shouldStateSync := false // state-sync is disabled for nodes multiplexes
-		stateMachine := statesProvider(chainId).(*HistoricalState)
-		stateStore := stateStoreProvider(chainId).(*ChainHistoryStore)
-		blockStore := blockStoreProvider(chainId).(*bs.BlockStore)
+		stateMachine := statesProvider(chainID).(*HistoricalState)
+		stateStore := stateStoreProvider(chainID).(*ChainHistoryStore)
+		blockStore := blockStoreProvider(chainID).(*bs.BlockStore)
 
 		nodeInstance := node.NewNodeWithServices(
 			cfgOverwrite,
 			genesisDoc,
-			reactor.nodeInfo.GetNodeInfo(chainId),
+			reactor.nodeInfo.GetNodeInfo(chainID),
 			reactor.nodeKey,
 			privValidator,
 			pexAddrBook,
@@ -121,8 +118,8 @@ func (reactor *Reactor) createMultiplexNodesWithServices(
 		}
 
 		// Prepare registerable instances mapped to ChainID
-		nodesMultiplex[chainId] = NewChainInstance(chainId, nodeInstance)
+		nodesMultiplex[chainID] = NewChainInstance(chainID, nodeInstance)
 	}
 
-	return nodesMultiplex, nil
+	return nodesMultiplex
 }

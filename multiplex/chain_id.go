@@ -63,7 +63,7 @@ type extendedChainID struct {
 }
 
 // GetSeparator returns the fields separator constant.
-// GetSeparator implements ExtendedChainID
+// GetSeparator implements ExtendedChainID.
 func (c *extendedChainID) GetSeparator() string {
 	return fieldSeparator
 }
@@ -74,7 +74,7 @@ func (c *extendedChainID) GetSeparator() string {
 // notation defined with [crypto.tmhash.TruncatedSize] and represents a user
 // address which can be unmarshalled into a [crypto.Address].
 //
-// GetUserAddress implements ExtendedChainID
+// GetUserAddress implements ExtendedChainID.
 func (c *extendedChainID) GetUserAddress() string {
 	return c.UserAddress
 }
@@ -84,14 +84,14 @@ func (c *extendedChainID) GetUserAddress() string {
 // Note that the fingerprint is validated only for its' size, thus the content
 // may be arbitrary and is never parsed for validaty checks.
 //
-// GetFingerprint implements ExtendedChainID
+// GetFingerprint implements ExtendedChainID.
 func (c *extendedChainID) GetFingerprint() string {
 	return c.Fingerprint
 }
 
 // Format a formatted chain identifier that contains a user address and an
 // arbitrary 8 bytes fingerprint.
-// Format implements ExtendedChainID
+// Format implements ExtendedChainID.
 func (c *extendedChainID) Format() string {
 	// Extended ChainID contains prefix, user address and fingerprint
 	return strings.Join([]string{
@@ -102,7 +102,7 @@ func (c *extendedChainID) Format() string {
 }
 
 // String returns a formatted chain identifier.
-// String implements fmt.Stringer
+// String implements fmt.Stringer.
 func (c *extendedChainID) String() string {
 	return c.Format()
 }
@@ -144,14 +144,14 @@ func NewExtendedChainID(userAddress, fingerprint string) (ExtendedChainID, error
 // the user address and fingerprints which must both be present.
 //
 // The prefix is ignored to prevent using different prefixes than `mx-chain`.
-func NewExtendedChainIDFromLegacy(chainId string) (ExtendedChainID, error) {
-	if len(chainId) == 0 {
+func NewExtendedChainIDFromLegacy(chainID string) (ExtendedChainID, error) {
+	if len(chainID) == 0 {
 		return nil, errors.New("chain identifier may not be empty")
 	}
 
 	// Extract using regexp
 	extractor := regexp.MustCompile(`(.*)\-([A-F0-9]+)\-([A-F0-9]+)`)
-	matches := extractor.FindStringSubmatch(chainId)
+	matches := extractor.FindStringSubmatch(chainID)
 
 	if len(matches) == 0 || len(matches) < 4 {
 		return nil, errors.New("chain identifier must contain address and fingerprint")

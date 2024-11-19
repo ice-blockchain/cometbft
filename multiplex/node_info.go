@@ -38,25 +38,25 @@ type ChainProtocolVersion struct {
 
 // NewChainProtocolVersion creates a [ChainProtocolVersion] from
 // a ChainID and a legacy [p2p.ProtocolVersion].
-func NewChainProtocolVersion(chainId string, ver p2p.ProtocolVersion) ChainProtocolVersion {
+func NewChainProtocolVersion(chainID string, ver p2p.ProtocolVersion) ChainProtocolVersion {
 	return ChainProtocolVersion{
-		ChainID: chainId,
+		ChainID: chainID,
 		P2P:     ver.P2P,
 		Block:   ver.Block,
 		App:     ver.App,
 	}
 }
 
-// ChainListenAddr contains a ChainID and a listen address
+// ChainListenAddr contains a ChainID and a listen address.
 type ChainListenAddr struct {
 	ChainID    string `json:"chain_id"`
 	ListenAddr string `json:"listen_addr"`
 }
 
 // NewChainListenAddr wraps a listen address for a ChainID.
-func NewChainListenAddr(chainId string, laddr string) ChainListenAddr {
+func NewChainListenAddr(chainID string, laddr string) ChainListenAddr {
 	return ChainListenAddr{
-		ChainID:    chainId,
+		ChainID:    chainID,
 		ListenAddr: laddr,
 	}
 }
@@ -99,22 +99,22 @@ func (info MultiNetworkNodeInfo) GetChannels() cmtbytes.HexBytes {
 }
 
 // GetNodeInfo returns a [p2p.NodeInfo] instance by chain ID.
-func (info MultiNetworkNodeInfo) GetNodeInfo(chainId string) p2p.DefaultNodeInfo {
+func (info MultiNetworkNodeInfo) GetNodeInfo(chainID string) p2p.DefaultNodeInfo {
 	versionPos := slices.IndexFunc(info.ProtocolVersions, func(v ChainProtocolVersion) bool {
-		return v.ChainID == chainId
+		return v.ChainID == chainID
 	})
 
 	networkPos := slices.IndexFunc(info.Networks, func(n string) bool {
-		return n == chainId
+		return n == chainID
 	})
 
 	laddrPos := slices.IndexFunc(info.ListenAddrs, func(a ChainListenAddr) bool {
-		return a.ChainID == chainId
+		return a.ChainID == chainID
 	})
 
 	// Not finding a protocol version, network or listen address should never happen
 	if versionPos < 0 || networkPos < 0 || laddrPos < 0 {
-		panic(fmt.Sprintf("could not determine version and listen address for ChainID %s", chainId))
+		panic(fmt.Sprintf("could not determine version and listen address for ChainID %s", chainID)) //nolint:perfsprint
 	}
 
 	protocolVersion := info.ProtocolVersions[versionPos]
@@ -127,7 +127,7 @@ func (info MultiNetworkNodeInfo) GetNodeInfo(chainId string) p2p.DefaultNodeInfo
 			protocolVersion.App,
 		),
 		DefaultNodeID: info.DefaultNodeID,
-		Network:       chainId,
+		Network:       chainID,
 		Version:       info.Version,
 		Channels: []byte{
 			bc.BlocksyncChannel,
@@ -307,7 +307,6 @@ func (info MultiNetworkNodeInfo) HasChannel(chID byte) bool {
 }
 
 func (info MultiNetworkNodeInfo) ToProto() *mxp2p.MultiNetworkNodeInfo {
-
 	numReplicatedChains := len(info.Networks)
 	numVersions := len(info.ProtocolVersions)
 
@@ -324,7 +323,6 @@ func (info MultiNetworkNodeInfo) ToProto() *mxp2p.MultiNetworkNodeInfo {
 	dni.RPCAddresses = make([]*mxp2p.ChainListenAddr, numReplicatedChains)
 
 	for i, userChainID := range info.Networks {
-
 		versionPos := slices.IndexFunc(info.ProtocolVersions, func(v ChainProtocolVersion) bool {
 			return v.ChainID == userChainID
 		})
@@ -343,7 +341,7 @@ func (info MultiNetworkNodeInfo) ToProto() *mxp2p.MultiNetworkNodeInfo {
 
 		// Not being able to find a protocol version or network should never happen
 		if versionPos < 0 || networkPos < 0 || laddrPos < 0 {
-			panic(fmt.Sprintf("could not determine version and listen address for ChainID %s", userChainID))
+			panic(fmt.Sprintf("could not determine version and listen address for ChainID %s", userChainID)) //nolint:perfsprint
 		}
 
 		protocolVersion := info.ProtocolVersions[versionPos]
@@ -395,9 +393,7 @@ func MultiNetworkNodeInfoFromProto(pb *mxp2p.MultiNetworkNodeInfo) (MultiNetwork
 	listenAddrs := make([]ChainListenAddr, len(pb.ListenAddrs))
 	rpcAddresses := make([]ChainListenAddr, len(pb.RPCAddresses))
 
-	for i, chainId := range pb.Networks {
-		networks[i] = chainId
-	}
+	copy(networks, pb.Networks)
 
 	for i, pv := range pb.ProtocolVersions {
 		protocolVersions[i] = ChainProtocolVersion{

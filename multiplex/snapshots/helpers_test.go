@@ -15,10 +15,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
-	sm "github.com/ice-blockchain/cometbft/state"
-
 	"github.com/ice-blockchain/cometbft/multiplex/snapshots"
 	snapshottypes "github.com/ice-blockchain/cometbft/multiplex/snapshots/types"
+	sm "github.com/ice-blockchain/cometbft/state"
 )
 
 func checksums(slice [][]byte) [][]byte {
@@ -61,21 +60,6 @@ func readChunks(chunks <-chan io.ReadCloser) [][]byte {
 	return bodies
 }
 
-func makeSnapshotItems(slice [][]byte) []*snapshottypes.SnapshotItem {
-	items := make([]*snapshottypes.SnapshotItem, len(slice))
-	for i, chunk := range slice {
-		items[i] = &snapshottypes.SnapshotItem{
-			Item: &snapshottypes.SnapshotItem_Store{
-				Store: &snapshottypes.SnapshotStoreItem{
-					Payload: chunk,
-				},
-			},
-		}
-	}
-
-	return items
-}
-
 // snapshotItems serialize a array of bytes as SnapshotItem_Store, and return the chunks.
 func snapshotItems(items [][]byte) [][]byte {
 	// copy the same parameters from the code
@@ -103,7 +87,7 @@ func snapshotItems(items [][]byte) [][]byte {
 		_ = chunkWriter.Close()
 	}()
 
-	var chunks [][]byte
+	var chunks [][]byte //nolint:prealloc
 	for chunkBody := range ch {
 		chunk, err := io.ReadAll(chunkBody)
 		if err != nil {
@@ -161,7 +145,7 @@ func (m *mockStateSnapshotter) Restore(
 		if payload == nil {
 			break
 		}
-		m.items = append(m.items, []byte(payload.Payload))
+		m.items = append(m.items, payload.Payload)
 		keyCount++
 	}
 
@@ -182,14 +166,6 @@ func (m *mockStateSnapshotter) SnapshotFormat() uint32 {
 
 func (m *mockStateSnapshotter) SupportedFormats() []uint32 {
 	return []uint32{snapshottypes.CurrentFormat}
-}
-
-type mockStorageSnapshotter struct {
-	items map[string][]byte
-}
-
-func (m *mockStorageSnapshotter) Restore(version uint64) error {
-	return nil
 }
 
 type mockErrorStateSnapshotter struct{}

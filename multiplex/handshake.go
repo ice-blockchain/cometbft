@@ -13,13 +13,12 @@ import (
 // node multiplexes to exchange [mxp2p.MultiNetworkNodeInfo] messages between peers
 // and execute a handshake between nodeInfo and the returned [p2p.NodeInfo] instance.
 //
-// Mimics the same behaviour as the default implementation in [p2p.MultiplexTransport].
+// Mimics the same behavior as the default implementation in [p2p.MultiplexTransport].
 func MultiplexTransportHandshake(
 	c net.Conn,
 	timeout time.Duration,
 	nodeInfo p2p.NodeInfo,
 ) (p2p.NodeInfo, error) {
-
 	if err := c.SetDeadline(time.Now().Add(timeout)); err != nil {
 		return nil, err
 	}

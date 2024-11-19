@@ -12,6 +12,7 @@ import (
 	ssproto "github.com/ice-blockchain/cometbft/api/cometbft/statesync/v1"
 	"github.com/ice-blockchain/cometbft/config"
 	cmtsync "github.com/ice-blockchain/cometbft/libs/sync"
+	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/proxy"
 	sm "github.com/ice-blockchain/cometbft/state"
@@ -73,9 +74,9 @@ func NewReactor(
 }
 
 // ReactorWithChainID sets the ChainID of a statesync reactor.
-func ReactorWithChainID(chainId string) func(*Reactor) {
+func ReactorWithChainID(chainID string) func(*Reactor) {
 	return func(r *Reactor) {
-		r.ChainID = chainId
+		r.ChainID = chainID
 	}
 }
 
@@ -193,7 +194,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 
 			// Inject the ChainID for access in ABCI
 			ctx := context.TODO()
-			ctx = context.WithValue(ctx, "ChainID", r.ChainID)
+			ctx = context.WithValue(ctx, client.KeyChainID, r.ChainID)
 
 			resp, err := r.conn.LoadSnapshotChunk(ctx, &abci.LoadSnapshotChunkRequest{
 				Height: msg.Height,
@@ -253,7 +254,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 func (r *Reactor) recentSnapshots(n uint32) ([]*snapshot, error) {
 	// Inject the ChainID for access in ABCI
 	ctx := context.TODO()
-	ctx = context.WithValue(ctx, "ChainID", r.ChainID)
+	ctx = context.WithValue(ctx, client.KeyChainID, r.ChainID)
 
 	resp, err := r.conn.ListSnapshots(ctx, &abci.ListSnapshotsRequest{})
 	if err != nil {

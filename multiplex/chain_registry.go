@@ -11,7 +11,6 @@ import (
 
 	"github.com/ice-blockchain/cometbft/config"
 	cmtos "github.com/ice-blockchain/cometbft/internal/os"
-
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 )
 
@@ -21,32 +20,32 @@ import (
 // ChainRegistry defines a registry pattern contract which should be searchable
 // by ChainID and by user address.
 //
-// Note that it is preferrable that the ChainID slice returned with [GetChains]
+// Note that it is preferable that the ChainID slice returned with [GetChains]
 // is ordered to enable determinism on listing supported replicated chains.
 //
 // A cacheable chain provider is provided with [NewChainRegistry].
 type ChainRegistry interface {
 	// HasChain should return true if the ChainID can be found
-	HasChain(string) bool
+	HasChain(chainID string) bool
 
 	// GetChains should return an ordered slice of unique chain identifiers.
 	GetChains() []string
 
 	// GetStateSyncConfig should return the required configuration for state-sync.
 	// This method should return an error if no sync config can be found.
-	GetStateSyncConfig(string) (*config.StateSyncConfig, error)
+	GetStateSyncConfig(chainID string) (*config.StateSyncConfig, error)
 
 	// GetSeeds should return a comma-separated list of seed nodes (id@host:port).
 	// This method should return an error if no seed nodes can be found.
-	GetSeeds(string) (string, error)
+	GetSeeds(chainID string) (string, error)
 
 	// GetAddress should return the user address attached to a ChainID.
 	// This method should return an error if no address can be found.
-	GetAddress(string) (string, error)
+	GetAddress(chainID string) (string, error)
 
 	// FindChain should search for a ChainID and return its index or -1.
 	// This method should return an error if no address can be found.
-	FindChain(string) (int, error)
+	FindChain(chainID string) (int, error)
 }
 
 // Assert internal singletonChainRegistry satisfies ChainRegistry.
@@ -68,64 +67,64 @@ type singletonChainRegistry struct {
 }
 
 // HasChain returns true if the ChainID can be found
-// HasChain implements ChainRegistry
-func (r *singletonChainRegistry) HasChain(chainId string) bool {
-	return slices.Contains(r.ReplicatedChains, chainId)
+// HasChain implements ChainRegistry.
+func (r *singletonChainRegistry) HasChain(chainID string) bool {
+	return slices.Contains(r.ReplicatedChains, chainID)
 }
 
 // GetChains returns a flattened slice of ChainIDs.
 // Note that the ChainID slice is ordered in ascending alphabetical order.
-// GetChains implements ChainRegistry
+// GetChains implements ChainRegistry.
 func (r *singletonChainRegistry) GetChains() []string {
 	return r.ReplicatedChains
 }
 
 // GetStateSyncConfig returns the required configuration for the state-sync
 // service. The trusted period may be empty
-// GetStateSyncConfig implements ChainRegistry
+// GetStateSyncConfig implements ChainRegistry.
 func (r *singletonChainRegistry) GetStateSyncConfig(
-	chainId string,
+	chainID string,
 ) (*config.StateSyncConfig, error) {
 	// Contains the default minimal state-sync config
 	conf := config.DefaultStateSyncConfig()
 
-	if _, ok := r.SyncConfig[chainId]; !ok {
-		return conf, fmt.Errorf("could not find state-sync config for ChainID %s", chainId)
+	if _, ok := r.SyncConfig[chainID]; !ok {
+		return conf, fmt.Errorf("could not find state-sync config for ChainID %s", chainID)
 	}
 
-	return r.SyncConfig[chainId], nil
+	return r.SyncConfig[chainID], nil
 }
 
 // GetSeeds returns a comma-separated list of seed nodes using the format `id@host:port`
 // or returns an empty string and an error if no seeds can be found.
-// GetSeeds implements ChainRegistry
+// GetSeeds implements ChainRegistry.
 func (r *singletonChainRegistry) GetSeeds(
-	chainId string,
+	chainID string,
 ) (string, error) {
-	if _, ok := r.ChainSeeds[chainId]; ok {
-		return r.ChainSeeds[chainId], nil
+	if _, ok := r.ChainSeeds[chainID]; ok {
+		return r.ChainSeeds[chainID], nil
 	}
 
-	return "", fmt.Errorf("could not find seed nodes for ChainID %s", chainId)
+	return "", fmt.Errorf("could not find seed nodes for ChainID %s", chainID)
 }
 
 // GetAddress returns the user address attached to a chainId or returns
 // an empty string and an error if the ChainID cannot be found.
-// GetAddress implements ChainRegistry
+// GetAddress implements ChainRegistry.
 func (r *singletonChainRegistry) GetAddress(
-	chainId string,
+	chainID string,
 ) (string, error) {
-	if !slices.Contains(r.ReplicatedChains, chainId) {
-		return "", fmt.Errorf("could not find a user address for ChainID %s", chainId)
+	if !slices.Contains(r.ReplicatedChains, chainID) {
+		return "", fmt.Errorf("could not find a user address for ChainID %s", chainID)
 	}
 
 	for address, chains := range r.userChains {
-		if slices.Contains(chains, chainId) {
+		if slices.Contains(chains, chainID) {
 			return address, nil
 		}
 	}
 
-	return "", fmt.Errorf("could not find a user address for ChainID %s", chainId)
+	return "", fmt.Errorf("could not find a user address for ChainID %s", chainID)
 }
 
 // FindChain searches for a ChainID and returns its index or -1.
@@ -135,15 +134,15 @@ func (r *singletonChainRegistry) GetAddress(
 // of a node for the chain 'B', is 1 and the index for the chain 'A', is 0.
 //
 // Note that the ChainID slice is ordered in ascending alphabetical order.
-// FindChain implements ChainRegistry
-func (r *singletonChainRegistry) FindChain(chainId string) (int, error) {
+// FindChain implements ChainRegistry.
+func (r *singletonChainRegistry) FindChain(chainID string) (int, error) {
 	for i, cid := range r.GetChains() {
-		if cid == chainId {
+		if cid == chainID {
 			return i, nil
 		}
 	}
 
-	return -1, fmt.Errorf("could not find ChainID %s in replicated chains", chainId)
+	return -1, fmt.Errorf("could not find ChainID %s in replicated chains", chainID)
 }
 
 // ----------------------------------------------------------------------------
@@ -166,7 +165,7 @@ type ChainRegistryProvider func(*config.MultiplexConfig) (ChainRegistry, error)
 // implement blocking processes, they won't impact *runtime* afterwards.
 //
 // This method implementation supports concurrent calls.
-// NewChainRegistry implements ChainRegistryProvider
+// NewChainRegistry implements ChainRegistryProvider.
 func NewChainRegistry(conf *config.MultiplexConfig) (ChainRegistry, error) {
 	if conf.Strategy == DisableReplicationStrategy() {
 		return &singletonChainRegistry{}, nil
@@ -198,13 +197,13 @@ func NewChainRegistry(conf *config.MultiplexConfig) (ChainRegistry, error) {
 		registry.ReplicatedChains = []string{}
 
 		// Copy seed nodes and map to ChainID
-		for chainId, seedNodes := range injectChainSeeds {
-			registry.ChainSeeds[chainId] = seedNodes
+		for chainID, seedNodes := range injectChainSeeds {
+			registry.ChainSeeds[chainID] = seedNodes
 		}
 
 		// Copy state-sync config and map to ChainID
-		for chainId, syncConfig := range injectSyncConfig {
-			registry.SyncConfig[chainId] = syncConfig
+		for chainID, syncConfig := range injectSyncConfig {
+			registry.SyncConfig[chainID] = syncConfig
 		}
 
 		// Copy user addresses and ChainIDs
@@ -262,9 +261,9 @@ func LoadSeedsFromFile(file string) (map[string]string, error) {
 	}
 
 	// Drop empty seeds lists
-	for chainId, seeds := range chainSeeds {
+	for chainID, seeds := range chainSeeds {
 		if len(seeds) == 0 {
-			delete(chainSeeds, chainId)
+			delete(chainSeeds, chainID)
 		}
 	}
 
@@ -281,9 +280,8 @@ func LoadSeedsFromFile(file string) (map[string]string, error) {
 //
 // IMPORTANT: This method requires the ChainID field to contain a user address
 // of 20 bytes in hexadecimal format and an arbitrary fingerprint of 8 bytes.
-// e.g.: `mx-chain-FF080888BE0F48DE88927C3F49215B96548273AB-3E547E3280313019`
+// e.g.: `mx-chain-FF080888BE0F48DE88927C3F49215B96548273AB-3E547E3280313019`.
 func LoadChainsFromGenesisFile(genFile string) (map[string][]string, error) {
-
 	type returnEmptyMap map[string][]string
 
 	if !cmtos.FileExists(genFile) {

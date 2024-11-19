@@ -5,12 +5,12 @@ package v1beta1
 
 import (
 	fmt "fmt"
-	v1 "github.com/ice-blockchain/cometbft/api/cometbft/crypto/v1"
-	v11 "github.com/ice-blockchain/cometbft/api/cometbft/version/v1"
 	_ "github.com/cosmos/gogoproto/gogoproto"
 	proto "github.com/cosmos/gogoproto/proto"
 	_ "github.com/cosmos/gogoproto/types"
 	github_com_cosmos_gogoproto_types "github.com/cosmos/gogoproto/types"
+	v1 "github.com/ice-blockchain/cometbft/api/cometbft/crypto/v1"
+	v11 "github.com/ice-blockchain/cometbft/api/cometbft/version/v1"
 	io "io"
 	math "math"
 	math_bits "math/bits"

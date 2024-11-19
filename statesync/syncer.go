@@ -13,6 +13,7 @@ import (
 	"github.com/ice-blockchain/cometbft/libs/log"
 	cmtsync "github.com/ice-blockchain/cometbft/libs/sync"
 	"github.com/ice-blockchain/cometbft/light"
+	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/proxy"
 	sm "github.com/ice-blockchain/cometbft/state"
@@ -97,9 +98,9 @@ func newSyncer(
 }
 
 // syncerWithChainID sets the ChainID of a statesync syncer.
-func syncerWithChainID(chainId string) func(*syncer) {
+func syncerWithChainID(chainID string) func(*syncer) {
 	return func(s *syncer) {
-		s.ChainID = chainId
+		s.ChainID = chainID
 	}
 }
 
@@ -342,7 +343,7 @@ func (s *syncer) offerSnapshot(snapshot *snapshot) error {
 
 	// Inject the ChainID for access in ABCI
 	ctx := context.TODO()
-	ctx = context.WithValue(ctx, "ChainID", s.ChainID)
+	ctx = context.WithValue(ctx, client.KeyChainID, s.ChainID)
 
 	resp, err := s.conn.OfferSnapshot(ctx, &abci.OfferSnapshotRequest{
 		Snapshot: &abci.Snapshot{
@@ -388,7 +389,7 @@ func (s *syncer) applyChunks(chunks *chunkQueue) error {
 
 		// Inject the ChainID for access in ABCI
 		ctx := context.TODO()
-		ctx = context.WithValue(ctx, "ChainID", s.ChainID)
+		ctx = context.WithValue(ctx, client.KeyChainID, s.ChainID)
 
 		resp, err := s.conn.ApplySnapshotChunk(ctx, &abci.ApplySnapshotChunkRequest{
 			Index:  chunk.Index,
@@ -506,7 +507,7 @@ func (s *syncer) requestChunk(snapshot *snapshot, chunk uint32) {
 func (s *syncer) verifyApp(snapshot *snapshot, appVersion uint64) error {
 	// Inject the ChainID for access in ABCI
 	ctx := context.TODO()
-	ctx = context.WithValue(ctx, "ChainID", s.ChainID)
+	ctx = context.WithValue(ctx, client.KeyChainID, s.ChainID)
 
 	resp, err := s.connQuery.Info(ctx, proxy.InfoRequest)
 	if err != nil {

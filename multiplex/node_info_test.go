@@ -9,9 +9,8 @@ import (
 
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	cmtnet "github.com/ice-blockchain/cometbft/internal/net"
-	"github.com/ice-blockchain/cometbft/p2p"
-
 	mx "github.com/ice-blockchain/cometbft/multiplex"
+	"github.com/ice-blockchain/cometbft/p2p"
 )
 
 func TestMultiplexMultiNetworkNodeInfoValidate(t *testing.T) {

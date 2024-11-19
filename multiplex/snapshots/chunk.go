@@ -2,7 +2,6 @@ package snapshots
 
 import (
 	"errors"
-	stderrors "errors"
 	"fmt"
 	"io"
 	"math"
@@ -157,7 +156,7 @@ func (r *ChunkReader) Read(p []byte) (int, error) {
 		}
 	}
 	n, err := r.reader.Read(p)
-	if stderrors.Is(err, io.EOF) {
+	if errors.Is(err, io.EOF) {
 		err = r.reader.Close()
 		r.reader = nil
 		if err != nil {
@@ -175,7 +174,7 @@ func DrainChunks(chunks <-chan io.ReadCloser) {
 	}
 }
 
-// ValidRestoreHeight will check height is valid for snapshot restore or not
+// ValidRestoreHeight will check height is valid for snapshot restore or not.
 func ValidRestoreHeight(format uint32, height uint64) error {
 	if format != snapshottypes.CurrentFormat {
 		return fmt.Errorf("format %v: %w", format, snapshottypes.ErrUnknownFormat)

@@ -8,7 +8,6 @@ import (
 	abcitypes "github.com/ice-blockchain/cometbft/abci/types"
 	"github.com/ice-blockchain/cometbft/config"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
-
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/snapshots"
 )
@@ -34,7 +33,7 @@ const (
 //
 // Read-write mutexes are created to track initial heights on concurrent
 // threads, as well as for the currently working height in the process of
-// finalizing and commiting blocks.
+// finalizing and committing blocks.
 //
 // Note that *only one instance* of the SnapsApp application must be created
 // for node multiplexes. The SnapsApp application must be thread-safe and uses
@@ -113,10 +112,10 @@ func NewSnapsApplication(
 
 	// Each replicated chain creates its own snapshot manager instance
 	app.snapshotManagers = make(map[string]*snapshots.Manager, len(replicatedChains))
-	for _, chainId := range replicatedChains {
+	for _, chainID := range replicatedChains {
 		// Snapshots are stored in a different subfolder per chain
 		// i.e.: %rootDir%/data/%address%/%ChainID%/snapshots/...
-		chainDataFolder := storagePaths[chainId]
+		chainDataFolder := storagePaths[chainID]
 		snapshotsFolder := filepath.Join(chainDataFolder, "snapshots")
 
 		// A snapshots store creates a `metadata.db` file and folders per-height
@@ -126,54 +125,54 @@ func NewSnapsApplication(
 		}
 
 		// Retrieve a particular chain's state machine store
-		chainStore := reactor.GetStateStore(chainId)
+		chainStore := reactor.GetStateStore(chainID)
 
 		// The chain state machine implementation is passed as a commitment
-		// snapshotter - which executes after a block is commited.
+		// snapshotter - which executes after a block is committed.
 		// Snapshot() and Restore() are implemented in [ChainHistoryStore].
 		manager := snapshots.NewManager(
-			chainId,
+			chainID,
 			snapshotStore,
 			snapshotOptions,
 			chainStore,
 			logger,
 		)
 
-		app.snapshotManagers[chainId] = manager
+		app.snapshotManagers[chainID] = manager
 	}
 
 	return app
 }
 
-// InitialHeight returns the initial block height for a chainId.
-func (app *SnapsApp) InitialHeight(chainId string) int64 {
+// InitialHeight returns the initial block height for a chainID.
+func (app *SnapsApp) InitialHeight(chainID string) int64 {
 	app.ihMutex.RLock()
 	defer app.ihMutex.RUnlock()
 
-	return app.initialHeights[chainId]
+	return app.initialHeights[chainID]
 }
 
-// LastBlockHeight returns the last block height processed for a chainId.
-func (app *SnapsApp) LastBlockHeight(chainId string) int64 {
+// LastBlockHeight returns the last block height processed for a chainID.
+func (app *SnapsApp) LastBlockHeight(chainID string) int64 {
 	app.chMutex.RLock()
 	defer app.chMutex.RUnlock()
 
-	return app.currentHeights[chainId]
+	return app.currentHeights[chainID]
 }
 
-// FinalizeBlockHeight returns the latest finalizeBlock height
-func (app *SnapsApp) FinalizeBlockHeight(chainId string) int64 {
+// FinalizeBlockHeight returns the latest finalizeBlock height.
+func (app *SnapsApp) FinalizeBlockHeight(chainID string) int64 {
 	app.fbMutex.RLock()
 	defer app.fbMutex.RUnlock()
 
-	return app.finalizeBlockHeights[chainId]
+	return app.finalizeBlockHeights[chainID]
 }
 
-func (app *SnapsApp) setFinalizeBlockHeight(chainId string, reqHeight int64) error {
+func (app *SnapsApp) setFinalizeBlockHeight(chainID string, reqHeight int64) error {
 	app.fbMutex.Lock()
 	defer app.fbMutex.Unlock()
 
-	app.finalizeBlockHeights[chainId] = reqHeight
+	app.finalizeBlockHeights[chainID] = reqHeight
 	return nil
 }
 

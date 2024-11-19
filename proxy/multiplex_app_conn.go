@@ -70,49 +70,49 @@ func NewMultiplexAppConn(
 	return mac
 }
 
-// Mempool implements [ChainConns]
-func (conn *multiplexAppConn) Mempool(chainId string) AppConnMempool {
+// Mempool implements [ChainConns].
+func (conn *multiplexAppConn) Mempool(chainID string) AppConnMempool {
 	conn.connsMutex.RLock()
 	defer conn.connsMutex.RUnlock()
-	return conn.mempoolConns[chainId]
+	return conn.mempoolConns[chainID]
 }
 
-// Consensus implements [ChainConns]
-func (conn *multiplexAppConn) Consensus(chainId string) AppConnConsensus {
+// Consensus implements [ChainConns].
+func (conn *multiplexAppConn) Consensus(chainID string) AppConnConsensus {
 	conn.connsMutex.RLock()
 	defer conn.connsMutex.RUnlock()
-	return conn.consensusConns[chainId]
+	return conn.consensusConns[chainID]
 }
 
-// Query implements [ChainConns]
-func (conn *multiplexAppConn) Query(chainId string) AppConnQuery {
+// Query implements [ChainConns].
+func (conn *multiplexAppConn) Query(chainID string) AppConnQuery {
 	conn.connsMutex.RLock()
 	defer conn.connsMutex.RUnlock()
-	return conn.queryConns[chainId]
+	return conn.queryConns[chainID]
 }
 
-// Snapshot implements [ChainConns]
-func (conn *multiplexAppConn) Snapshot(chainId string) AppConnSnapshot {
+// Snapshot implements [ChainConns].
+func (conn *multiplexAppConn) Snapshot(chainID string) AppConnSnapshot {
 	conn.connsMutex.RLock()
 	defer conn.connsMutex.RUnlock()
-	return conn.snapshotConns[chainId]
+	return conn.snapshotConns[chainID]
 }
 
 // ToAppConns converts the instance to be AppConns compatible
 // Note that this method uses multiAppConn, not multiplexAppConn.
 //
-// ToAppConns implements [ChainConns]
-func (conn *multiplexAppConn) ToAppConns(chainId string) AppConns {
+// ToAppConns implements [ChainConns].
+func (conn *multiplexAppConn) ToAppConns(chainID string) AppConns {
 	conn.connsMutex.RLock()
 	defer conn.connsMutex.RUnlock()
 
 	// Note: this instance uses the legacy AppConns implementation
 	return &multiAppConn{
 		metrics:       conn.metrics,
-		consensusConn: conn.consensusConns[chainId],
-		mempoolConn:   conn.mempoolConns[chainId],
-		queryConn:     conn.queryConns[chainId],
-		snapshotConn:  conn.snapshotConns[chainId],
+		consensusConn: conn.consensusConns[chainID],
+		mempoolConn:   conn.mempoolConns[chainID],
+		queryConn:     conn.queryConns[chainID],
+		snapshotConn:  conn.snapshotConns[chainID],
 
 		consensusConnClient: conn.sharedClients.consensus,
 		mempoolConnClient:   conn.sharedClients.mempool,
@@ -123,7 +123,7 @@ func (conn *multiplexAppConn) ToAppConns(chainId string) AppConns {
 	}
 }
 
-// OnStart implements [service.Service]
+// OnStart implements [service.Service].
 func (conn *multiplexAppConn) OnStart() error {
 	if err := conn.startQueryClient(); err != nil {
 		return err
@@ -162,9 +162,9 @@ func (conn *multiplexAppConn) startQueryClient() error {
 	}
 
 	// .. But we create x connections with the client, one per replicated chain
-	for _, chainId := range conn.chainIds {
+	for _, chainID := range conn.chainIds {
 		conn.connsMutex.Lock()
-		conn.queryConns[chainId] = NewChainConnQuery(chainId, conn.sharedClients.query, conn.metrics)
+		conn.queryConns[chainID] = NewChainConnQuery(chainID, conn.sharedClients.query, conn.metrics)
 		conn.connsMutex.Unlock()
 	}
 
@@ -191,9 +191,9 @@ func (conn *multiplexAppConn) startSnapshotClient() error {
 	}
 
 	// .. But we create x connections with the client, one per replicated chain
-	for _, chainId := range conn.chainIds {
+	for _, chainID := range conn.chainIds {
 		conn.connsMutex.Lock()
-		conn.snapshotConns[chainId] = NewChainConnSnapshot(chainId, conn.sharedClients.snapshot, conn.metrics)
+		conn.snapshotConns[chainID] = NewChainConnSnapshot(chainID, conn.sharedClients.snapshot, conn.metrics)
 		conn.connsMutex.Unlock()
 	}
 
@@ -220,9 +220,9 @@ func (conn *multiplexAppConn) startMempoolClient() error {
 	}
 
 	// .. But we create x connections with the client, one per replicated chain
-	for _, chainId := range conn.chainIds {
+	for _, chainID := range conn.chainIds {
 		conn.connsMutex.Lock()
-		conn.mempoolConns[chainId] = NewChainConnMempool(chainId, conn.sharedClients.mempool, conn.metrics)
+		conn.mempoolConns[chainID] = NewChainConnMempool(chainID, conn.sharedClients.mempool, conn.metrics)
 		conn.connsMutex.Unlock()
 	}
 
@@ -250,9 +250,9 @@ func (conn *multiplexAppConn) startConsensusClient() error {
 	}
 
 	// .. But we create x connections with the client, one per replicated chain
-	for _, chainId := range conn.chainIds {
+	for _, chainID := range conn.chainIds {
 		conn.connsMutex.Lock()
-		conn.consensusConns[chainId] = NewChainConnConsensus(chainId, conn.sharedClients.consensus, conn.metrics)
+		conn.consensusConns[chainID] = NewChainConnConsensus(chainID, conn.sharedClients.consensus, conn.metrics)
 		conn.connsMutex.Unlock()
 	}
 
@@ -272,7 +272,7 @@ func (conn *multiplexAppConn) startClient(c abcicli.Client, addr string) error {
 	return nil
 }
 
-// OnStop implements [service.Service]
+// OnStop implements [service.Service].
 func (conn *multiplexAppConn) OnStop() {
 	conn.stopAllClients()
 }

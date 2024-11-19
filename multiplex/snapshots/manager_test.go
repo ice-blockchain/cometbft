@@ -9,7 +9,6 @@ import (
 
 	"github.com/ice-blockchain/cometbft/config"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
-
 	"github.com/ice-blockchain/cometbft/multiplex/snapshots"
 	"github.com/ice-blockchain/cometbft/multiplex/snapshots/types"
 )
@@ -61,16 +60,16 @@ func TestManager_LoadChunk(t *testing.T) {
 
 func TestManager_Take(t *testing.T) {
 	store := setupStore(t)
-	bytes_latestHeight3 := [][]byte{
+	bytesLatestHeight3 := [][]byte{
 		{3, 2, 0}, {3, 2, 1}, {3, 2, 2},
 	}
 
 	stateSnapshotter := &mockStateSnapshotter{
-		items: bytes_latestHeight3,
+		items: bytesLatestHeight3,
 	}
 
 	// see store_test.go setupStore() for height=3
-	expectChunks := snapshotItems(bytes_latestHeight3)
+	expectChunks := snapshotItems(bytesLatestHeight3)
 	manager := snapshots.NewManager("test-chain", store, opts, stateSnapshotter, cmtlog.NewNopLogger())
 
 	// nil manager should return error
@@ -255,16 +254,16 @@ func TestManager_TakeError(t *testing.T) {
 
 func TestSnapshot_Take_Restore(t *testing.T) {
 	store := setupStore(t)
-	bytes_latestHeight3 := [][]byte{
+	bytesLatestHeight3 := [][]byte{
 		{3, 2, 0}, {3, 2, 1}, {3, 2, 2},
 	}
 
 	stateSnapshotter := &mockStateSnapshotter{
-		items: bytes_latestHeight3,
+		items: bytesLatestHeight3,
 	}
 
 	// see store_test.go setupStore() for height=3
-	expectChunks := snapshotItems(bytes_latestHeight3)
+	expectChunks := snapshotItems(bytesLatestHeight3)
 
 	opts.Format = 2 // snapshot format 2 (see store_test.go)
 	manager := snapshots.NewManager("test-chain", store, opts, stateSnapshotter, cmtlog.NewNopLogger())
@@ -329,7 +328,7 @@ func TestSnapshot_Take_Restore(t *testing.T) {
 		}
 	}
 
-	assert.Equal(t, bytes_latestHeight3, stateSnapshotter.items)
+	assert.Equal(t, bytesLatestHeight3, stateSnapshotter.items)
 
 	snapshots, err = store.List()
 	require.NoError(t, err)
@@ -339,16 +338,16 @@ func TestSnapshot_Take_Restore(t *testing.T) {
 
 func TestSnapshot_Take_Prune(t *testing.T) {
 	store := setupStore(t)
-	bytes_latestHeight3 := [][]byte{
+	bytesLatestHeight3 := [][]byte{
 		{3, 2, 0}, {3, 2, 1}, {3, 2, 2},
 	}
 
 	stateSnapshotter := &mockStateSnapshotter{
-		items: bytes_latestHeight3,
+		items: bytesLatestHeight3,
 	}
 
 	// see store_test.go setupStore() for height=3
-	expectChunks := snapshotItems(bytes_latestHeight3)
+	expectChunks := snapshotItems(bytesLatestHeight3)
 
 	opts.Format = 2 // snapshot format 2 (see store_test.go)
 	manager := snapshots.NewManager("test-chain", store, opts, stateSnapshotter, cmtlog.NewNopLogger())
@@ -417,16 +416,16 @@ func TestSnapshot_Take_Prune(t *testing.T) {
 
 func TestSnapshot_Pruning_Take_Snapshot_Parallel(t *testing.T) {
 	store := setupStore(t)
-	bytes_latestHeight3 := [][]byte{
+	bytesLatestHeight3 := [][]byte{
 		{3, 2, 0}, {3, 2, 1}, {3, 2, 2},
 	}
 
 	stateSnapshotter := &mockStateSnapshotter{
-		items: bytes_latestHeight3,
+		items: bytesLatestHeight3,
 	}
 
 	// see store_test.go setupStore() for height=3
-	expectChunks := snapshotItems(bytes_latestHeight3)
+	expectChunks := snapshotItems(bytesLatestHeight3)
 
 	opts.Format = 2 // snapshot format 2 (see store_test.go)
 	manager := snapshots.NewManager("test-chain", store, opts, stateSnapshotter, cmtlog.NewNopLogger())
@@ -487,12 +486,12 @@ func TestSnapshot_Pruning_Take_Snapshot_Parallel(t *testing.T) {
 func TestSnapshot_SnapshotIfApplicable(t *testing.T) {
 	store := setupStore(t)
 
-	bytes_latestHeight3 := [][]byte{
+	bytesLatestHeight3 := [][]byte{
 		{3, 2, 0}, {3, 2, 1}, {3, 2, 2},
 	}
 
 	stateSnapshotter := &mockStateSnapshotter{
-		items: bytes_latestHeight3,
+		items: bytesLatestHeight3,
 	}
 
 	snapshotOpts := config.NewSnapshotOptions(1, 1, 1)

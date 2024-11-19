@@ -28,19 +28,19 @@ func (reactor *Reactor) InitMultiplexStates() error {
 	genesisDocProvider := reactor.GetGenesisProvider()
 
 	// Used for retrieving state database instance by chain
-	stateMachineProvider := reactor.GetInstanceProvider(KEY_DB_SM)
+	stateMachineProvider := reactor.GetInstanceProvider(InstanceKeyDatabaseState)
 
 	// Validate genesis configuration
 	// Then get genesis doc set hashes from dbs or update
-	for _, chainId := range reactor.GetNetworks() {
+	for _, chainID := range reactor.GetNetworks() {
 		// Validate per-chain genesis doc
-		genesisDoc := genesisDocProvider(chainId)
+		genesisDoc := genesisDocProvider(chainID)
 		if err := genesisDoc.ValidateAndComplete(); err != nil {
-			return fmt.Errorf("error in genesis doc for ChainID %s: %w", chainId, err)
+			return fmt.Errorf("error in genesis doc for ChainID %s: %w", chainID, err)
 		}
 
 		// Retrieve this chain's state database instance
-		stateDB := stateMachineProvider(chainId).(*ChainDB)
+		stateDB := stateMachineProvider(chainID).(*ChainDB)
 
 		// Validate the genesis doc hash vs. database
 		if err := ValidateGenesisDocChecksum(stateDB, genesisDoc); err != nil {
@@ -65,12 +65,14 @@ func (reactor *Reactor) InitMultiplexStates() error {
 			chainState.Data = []byte{}
 
 			// State machine was empty, update now
-			stateStore.Save(stateMachine)
+			if err := stateStore.Save(stateMachine); err != nil {
+				return fmt.Errorf("could not save newly initialized state machine: %w", err)
+			}
 		}
 
 		// Prepare registerable instance mapped to ChainID
-		reactor.RegisterInstance(KEY_STATE, chainId, chainState)
-		reactor.RegisterInstance(KEY_STORE_STATE, chainId, stateStore)
+		reactor.RegisterInstance(InstanceKeyState, chainID, chainState)
+		reactor.RegisterInstance(InstanceKeyStateStore, chainID, stateStore)
 	}
 
 	return nil
@@ -91,11 +93,11 @@ func (reactor *Reactor) InitMultiplexBlockStores() error {
 	globalConfig := reactor.GetNodeConfig()
 
 	// Used for retrieving blockstore database instance by chain
-	blockStoreProvider := reactor.GetInstanceProvider(KEY_DB_BS)
+	blockStoreProvider := reactor.GetInstanceProvider(InstanceKeyDatabaseBlock)
 
-	for _, chainId := range reactor.GetNetworks() {
+	for _, chainID := range reactor.GetNetworks() {
 		// Retrieve this chain's state database instance
-		blockstoreDB := blockStoreProvider(chainId).(*ChainDB)
+		blockstoreDB := blockStoreProvider(chainID).(*ChainDB)
 
 		// Initialize a [bs.BlockStore] (not snapshottable)
 		blockStore := bs.NewBlockStore(
@@ -105,7 +107,7 @@ func (reactor *Reactor) InitMultiplexBlockStores() error {
 		)
 
 		// Prepare registerable instance mapped to ChainID
-		reactor.RegisterInstance(KEY_STORE_BLOCK, chainId, blockStore)
+		reactor.RegisterInstance(InstanceKeyBlockStore, chainID, blockStore)
 	}
 
 	return nil

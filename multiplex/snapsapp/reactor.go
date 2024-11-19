@@ -8,7 +8,7 @@ import (
 // that is used to retrieve `stateStore` instances and networks.
 type Reactor interface {
 	// HasNetwork should return true if a ChainID is known to a node.
-	HasNetwork(string) bool
+	HasNetwork(chainID string) bool
 
 	// GetNetworks should return a slice of ChainID values known to a node.
 	GetNetworks() []string
@@ -17,5 +17,5 @@ type Reactor interface {
 	GetStoragePaths() map[string]string
 
 	// GetStateStore should return a pointer to a [snapshots.StateSnapshotter].
-	GetStateStore(string) snapshots.StateSnapshotter
+	GetStateStore(chainID string) snapshots.StateSnapshotter
 }

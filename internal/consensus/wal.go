@@ -108,7 +108,7 @@ func NewWAL(walFile string, groupOptions ...func(*auto.Group)) (*BaseWAL, error)
 	return wal, nil
 }
 
-// NewWALWithParams creates a BaseWAL pointer with provided parameters
+// NewWALWithParams creates a BaseWAL pointer with provided parameters.
 func NewWALWithParams(
 	group *auto.Group,
 	enc *WALEncoder,

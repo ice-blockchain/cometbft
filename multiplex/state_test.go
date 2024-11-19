@@ -31,9 +31,9 @@ func mockMultiplexGenesisDocProviderFunc(
 	// Requires synchrony between passed MultiplexConfig and numChains
 	index := 0
 	for _, chainIds := range conf.UserChains {
-		for _, chainId := range chainIds {
+		for _, chainID := range chainIds {
 			// CAUTION intentionally malleating GenesisDoc
-			genesisDocSet[index].ChainID = chainId
+			genesisDocSet[index].ChainID = chainID
 			index++
 		}
 	}
@@ -48,7 +48,7 @@ func mockMultiplexGenesisDocProviderFunc(
 
 func TestMultiplexReactorInitMultiplexStatesEmptyState(t *testing.T) {
 	numChains := 5
-	rootDir, _, reactor := ResetTestMultiplexState(t, numChains, mx.KEY_DB_SM) // Uses database/state
+	rootDir, _, reactor := ResetTestMultiplexState(t, numChains, mx.InstanceKeyDatabaseState) // Uses database/state
 	defer os.RemoveAll(rootDir)
 
 	// InitMultiplexStates() uses `ValidateGenesisDocChecksum()` which reads
@@ -56,26 +56,27 @@ func TestMultiplexReactorInitMultiplexStatesEmptyState(t *testing.T) {
 	// mock environment, where odd chain indexes *do not* have a hash in db
 	// and where even chain indexes *do* have a *valid* hash in db.
 	// This permits to test the Checksum validation feature.
-	for index, chainId := range reactor.GetNetworks() {
+	for index, chainID := range reactor.GetNetworks() {
 		// odd indexes do NOT have genesisDocHashKey set
 		// this means that InitMultiplexStates will set it
 		if index%2 != 0 {
 			continue
 		}
 
-		databaseProvider := reactor.GetInstanceProvider(mx.KEY_DB_SM)
+		databaseProvider := reactor.GetInstanceProvider(mx.InstanceKeyDatabaseState)
 		assert.NotNil(t, databaseProvider, "should return multiplex map of database instances")
 
-		stateDb := databaseProvider(chainId).(*mx.ChainDB)
-		assert.NotNil(t, stateDb, "should return valid ChainDB per ChainID")
+		stateDB := databaseProvider(chainID).(*mx.ChainDB)
+		assert.NotNil(t, stateDB, "should return valid ChainDB per ChainID")
 
 		// even indexes do have genesisDocHashKey set
 		// it must match the genesisDoc`s SHA256 hash
 		genesisDocProvider := reactor.GetGenesisProvider()
-		genesisDoc := genesisDocProvider(chainId)
+		genesisDoc := genesisDocProvider(chainID)
 		genesisDocJSON, err := cmtjson.Marshal(genesisDoc)
+		assert.NoError(t, err)
 		genesisDocHash := tmhash.Sum(genesisDocJSON)
-		err = stateDb.DB.SetSync(genesisDocHashKey, genesisDocHash)
+		err = stateDB.DB.SetSync(genesisDocHashKey, genesisDocHash)
 		assert.NoError(t, err)
 	}
 
@@ -83,24 +84,24 @@ func TestMultiplexReactorInitMultiplexStatesEmptyState(t *testing.T) {
 	err := reactor.InitMultiplexStates()
 	assert.NoError(t, err, "should not error given empty state in database")
 
-	statesProvider := reactor.GetInstanceProvider(mx.KEY_STATE)
+	statesProvider := reactor.GetInstanceProvider(mx.InstanceKeyState)
 	assert.NotNil(t, statesProvider, "should not error getting states provider")
 
 	// Do we have all state instances, with correct ChainID?
-	for _, chainId := range reactor.GetNetworks() {
-		chainState := statesProvider(chainId).(*mx.HistoricalState)
+	for _, chainID := range reactor.GetNetworks() {
+		chainState := statesProvider(chainID).(*mx.HistoricalState)
 		assert.NotNil(t, chainState, "state instance per chain must not be nil")
 
 		// And validate the ChainID
-		assert.Equal(t, chainId, chainState.ChainID)
+		assert.Equal(t, chainID, chainState.ChainID)
 
 		// Test that we also have a genesisDocHashKey filled now
-		databaseProvider := reactor.GetInstanceProvider(mx.KEY_DB_SM)
+		databaseProvider := reactor.GetInstanceProvider(mx.InstanceKeyDatabaseState)
 		assert.NotNil(t, databaseProvider, "should return multiplex map of database instances")
-		stateDb := databaseProvider(chainId).(*mx.ChainDB)
-		assert.NotNil(t, stateDb, "should return valid ChainDB per ChainID")
+		stateDB := databaseProvider(chainID).(*mx.ChainDB)
+		assert.NotNil(t, stateDB, "should return valid ChainDB per ChainID")
 
-		genesisDocHash, err := stateDb.DB.Get(genesisDocHashKey)
+		genesisDocHash, err := stateDB.DB.Get(genesisDocHashKey)
 		assert.NoError(t, err)
 		assert.NotEmpty(t, genesisDocHash)
 		assert.Len(t, genesisDocHash, tmhash.Size)
@@ -109,20 +110,20 @@ func TestMultiplexReactorInitMultiplexStatesEmptyState(t *testing.T) {
 
 func TestMultiplexReactorInitMultiplexStatesFilledState(t *testing.T) {
 	numChains := 5
-	rootDir, _, reactor := ResetTestMultiplexState(t, numChains, mx.KEY_DB_SM) // Uses database/state
+	rootDir, _, reactor := ResetTestMultiplexState(t, numChains, mx.InstanceKeyDatabaseState) // Uses database/state
 	defer os.RemoveAll(rootDir)
 
 	genesisDocProvider := reactor.GetGenesisProvider()
-	databaseProvider := reactor.GetInstanceProvider(mx.KEY_DB_SM)
+	databaseProvider := reactor.GetInstanceProvider(mx.InstanceKeyDatabaseState)
 	require.NotNil(t, databaseProvider, "should return multiplex map of database instances")
 
 	testChainBlockHeight := int64(123)
 
 	// Pre-populate the State store with some testable data
-	for _, chainId := range reactor.GetNetworks() {
-		genesisDoc := genesisDocProvider(chainId)
-		stateDb := databaseProvider(chainId).(*mx.ChainDB)
-		require.NotNil(t, stateDb, "should return valid ChainDB per ChainID")
+	for _, chainID := range reactor.GetNetworks() {
+		genesisDoc := genesisDocProvider(chainID)
+		stateDB := databaseProvider(chainID).(*mx.ChainDB)
+		require.NotNil(t, stateDB, "should return valid ChainDB per ChainID")
 
 		customState, err := sm.MakeGenesisState(genesisDoc)
 		require.NoError(t, err, "should create state from genesis doc")
@@ -140,7 +141,7 @@ func TestMultiplexReactorInitMultiplexStatesFilledState(t *testing.T) {
 		// mutate state with testable data
 		customState.LastBlockHeight = testChainBlockHeight // mutating Height
 		customState.LastBlockID = types.BlockID{}
-		customState.AppHash = tmhash.Sum([]byte(chainId)) // mutating AppHash
+		customState.AppHash = tmhash.Sum([]byte(chainID)) // mutating AppHash
 
 		archiveData := &mx.HistoricalState{
 			State: &customState,
@@ -148,7 +149,7 @@ func TestMultiplexReactorInitMultiplexStatesFilledState(t *testing.T) {
 		}
 
 		// CAUTION: we inject a custom State here
-		err = stateDb.DB.SetSync(stateKey, archiveData.Bytes())
+		err = stateDB.DB.SetSync(stateKey, archiveData.Bytes())
 		require.NoError(t, err, "should update state instance in database")
 	}
 
@@ -156,43 +157,43 @@ func TestMultiplexReactorInitMultiplexStatesFilledState(t *testing.T) {
 	err := reactor.InitMultiplexStates()
 	assert.NoError(t, err, "should not error given filled state in database")
 
-	statesProvider := reactor.GetInstanceProvider(mx.KEY_STATE)
+	statesProvider := reactor.GetInstanceProvider(mx.InstanceKeyState)
 	assert.NotNil(t, statesProvider, "should not error getting states provider")
 
 	// Do we have all state instances, with correct ChainID?
-	for _, chainId := range reactor.GetNetworks() {
-		chainState := statesProvider(chainId).(*mx.HistoricalState)
+	for _, chainID := range reactor.GetNetworks() {
+		chainState := statesProvider(chainID).(*mx.HistoricalState)
 		assert.NotNil(t, chainState, "state instance per chain must not be nil")
 
 		// And validate the loaded state instance contains our
-		// mutated values with correct correspondance.
-		assert.Equal(t, chainId, chainState.ChainID)
+		// mutated values with correct correspondence.
+		assert.Equal(t, chainID, chainState.ChainID)
 		assert.Equal(t, testChainBlockHeight, chainState.LastBlockHeight) // mutated height
 
-		expectedSha256 := tmhash.Sum([]byte(chainId))
+		expectedSha256 := tmhash.Sum([]byte(chainID))
 		assert.Equal(t, expectedSha256, chainState.AppHash) // mutated AppHash
 	}
 }
 
 func TestMultiplexReactorInitMultiplexBlockStores(t *testing.T) {
 	numChains := 5
-	rootDir, _, reactor := ResetTestMultiplexState(t, numChains, mx.KEY_DB_BS) // Uses database/blockStore
+	rootDir, _, reactor := ResetTestMultiplexState(t, numChains, mx.InstanceKeyDatabaseBlock) // Uses database/blockStore
 	defer os.RemoveAll(rootDir)
 
-	databaseProvider := reactor.GetInstanceProvider(mx.KEY_DB_BS)
+	databaseProvider := reactor.GetInstanceProvider(mx.InstanceKeyDatabaseBlock)
 	require.NotNil(t, databaseProvider, "should return multiplex map of database instances")
 
 	// Execute the method being tested
 	err := reactor.InitMultiplexBlockStores()
 	assert.NoError(t, err, "should not error given empty state in database")
 
-	blockStoresProvider := reactor.GetInstanceProvider(mx.KEY_STORE_BLOCK)
+	blockStoresProvider := reactor.GetInstanceProvider(mx.InstanceKeyBlockStore)
 	assert.NotNil(t, blockStoresProvider, "should not error getting states provider")
 
 	// Do we have all blockStore databases?
-	for _, chainId := range reactor.GetNetworks() {
+	for _, chainID := range reactor.GetNetworks() {
 		// Type-assertion makes sure we have correct type
-		chainBlockStore := blockStoresProvider(chainId).(*bs.BlockStore)
+		chainBlockStore := blockStoresProvider(chainID).(*bs.BlockStore)
 		assert.NotNil(t, chainBlockStore, "blockStore instance per chain must not be nil")
 		assert.IsType(t, &bs.BlockStore{}, chainBlockStore)
 	}
@@ -200,31 +201,31 @@ func TestMultiplexReactorInitMultiplexBlockStores(t *testing.T) {
 
 // CAUTION: the GenesisDocProvider is maleated to contain correct ChainIDs
 // CAUTION: the MultiplexConfig is entirely random and *not synchronized* with genesis docs.
-func ResetTestMultiplexState(t testing.TB, numChains int, dbInstanceKey string) (string, *config.Config, *mx.Reactor) {
-	t.Helper()
+func ResetTestMultiplexState(tb testing.TB, numChains int, dbInstanceKey string) (string, *config.Config, *mx.Reactor) {
+	tb.Helper()
 
-	rootDir, err := os.MkdirTemp("", t.Name())
-	require.NoError(t, err)
+	rootDir, err := os.MkdirTemp("", tb.Name())
+	require.NoError(tb, err)
 
 	nodeCfg := config.TestConfig()
 	nodeCfg.SetRoot(rootDir)
-	nodeCfg.MultiplexConfig = makeRandomMultiplexConfig(t, numChains)
+	nodeCfg.MultiplexConfig = makeRandomMultiplexConfig(tb, numChains)
 	mockGenesisProvider := mockMultiplexGenesisDocProviderFunc(&nodeCfg.MultiplexConfig, numChains)
 
 	// Create a test reactor
-	reactor := makeTestReactorWithGenesisDocProvider(t, nodeCfg, mockGenesisProvider)
+	reactor := makeTestReactorWithGenesisDocProvider(tb, nodeCfg, mockGenesisProvider)
 
 	// Prepares the database for each network
-	for index, chainId := range reactor.GetNetworks() {
+	for index, chainID := range reactor.GetNetworks() {
 		// We create one state database instance per chain
 		dbName := "chaindb-state-" + strconv.Itoa(index)
-		stateDb, err := dbm.NewDB(dbName, dbm.BackendType("memdb"), rootDir)
-		require.NoError(t, err)
+		stateDB, err := dbm.NewDB(dbName, dbm.BackendType("memdb"), rootDir)
+		require.NoError(tb, err)
 
 		// This instance is retrieved in InitMultiplexStates()
-		reactor.RegisterInstance(dbInstanceKey, chainId, &mx.ChainDB{
-			ChainID: chainId,
-			DB:      stateDb,
+		reactor.RegisterInstance(dbInstanceKey, chainID, &mx.ChainDB{
+			ChainID: chainID,
+			DB:      stateDB,
 		}) // "database/state"
 	}
 

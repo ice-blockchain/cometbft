@@ -321,7 +321,7 @@ func (mt *MultiplexTransport) Listen(addr NetAddress) error {
 	return nil
 }
 
-// GetListener returns the listener instance
+// GetListener returns the listener instance.
 func (mt *MultiplexTransport) GetListener() net.Listener {
 	return mt.listener
 }
@@ -603,7 +603,6 @@ func handshake(
 	timeout time.Duration,
 	nodeInfo NodeInfo,
 ) (NodeInfo, error) {
-
 	if err := c.SetDeadline(time.Now().Add(timeout)); err != nil {
 		return nil, err
 	}
