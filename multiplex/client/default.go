@@ -44,7 +44,7 @@ var (
 //
 // Note that we inject `Address` and `ChainID` in the Context before calling
 // the proposed extension callback, this example does not make use of these.
-func DefaultSyncConfigExtension(
+var DefaultSyncConfigExtension = func(
 	_ context.Context, // ctx
 	baseSyncConf *config.StateSyncConfig,
 ) *config.StateSyncConfig {
@@ -78,7 +78,7 @@ func DefaultSyncConfigExtension(
 //
 // Note that we inject `Address` and `ChainID` in the Context before calling
 // the proposed extension callback, this example does not make use of these.
-func DefaultSeedConfigExtension(
+var DefaultSeedConfigExtension = func(
 	_ context.Context, // ctx
 	baseSeeds string,
 ) string {
@@ -103,7 +103,7 @@ func DefaultSeedConfigExtension(
 //
 // Note that we inject `Address` and `ChainID` in the Context before calling
 // the proposed extension callback, this example does not make use of these.
-func DefaultValidatorUpdateExtension(
+var DefaultValidatorUpdateExtension = func(
 	_ context.Context, // ctx
 	validatorUpdates []abci.ValidatorUpdate,
 ) error {
@@ -126,7 +126,7 @@ func DefaultValidatorUpdateExtension(
 //
 // Note that we inject `Address` and `ChainID` in the Context before calling
 // the proposed extension callback, this example does not make use of these.
-func DefaultConsensusUpdateExtension(
+var DefaultConsensusUpdateExtension = func(
 	_ context.Context, // ctx
 	consensusParams *v1.ConsensusParams,
 ) error {
@@ -152,7 +152,7 @@ func DefaultConsensusUpdateExtension(
 //
 // Note that we inject `Address` and `ChainID` in the Context before calling
 // the proposed extension callback, this example does not make use of these.
-func DefaultSnapshotMutationExtension(
+var DefaultSnapshotMutationExtension = func(
 	_ context.Context, // ctx
 	baseState []byte,
 ) []byte {
@@ -174,7 +174,7 @@ func DefaultSnapshotMutationExtension(
 //
 // Note that we inject `Address` and `ChainID` in the Context before calling
 // the proposed extension callback, this example does not make use of these.
-func DefaultCheckMutationResultExtension(
+var DefaultCheckMutationResultExtension = func(
 	_ context.Context, // ctx
 	mutatedState []byte,
 ) error {
@@ -195,7 +195,7 @@ func DefaultCheckMutationResultExtension(
 //
 // Note that we inject `Address` and `ChainID` in the Context before calling
 // the proposed extension callback, this example does not make use of these.
-func DefaultSnapshotRestoreExtension(
+var DefaultSnapshotRestoreExtension = func(
 	_ context.Context, // ctx
 	baseState []byte,
 ) []byte {
@@ -223,7 +223,7 @@ func DefaultSnapshotRestoreExtension(
 //
 // Note that we inject `Address` and `ChainID` in the Context before calling
 // the proposed extension callback, this example does not make use of these.
-func DefaultCheckTxExtension(
+var DefaultCheckTxExtension = func(
 	_ context.Context, // ctx
 	transactionBytes []byte,
 ) error {
@@ -248,7 +248,7 @@ func DefaultCheckTxExtension(
 //
 // Note that we inject `ChainID` in the Context before calling the proposed
 // extension callback, this example does not make use of it.
-func DefaultPrepareProposalExtension(
+var DefaultPrepareProposalExtension = func(
 	_ context.Context, // ctx
 	baseTransactions [][]byte,
 ) [][]byte {
@@ -271,7 +271,7 @@ func DefaultPrepareProposalExtension(
 //
 // Note that we inject `ChainID` in the Context before calling the proposed
 // extension callback, this example does not make use of it.
-func DefaultProcessProposalExtension(
+var DefaultProcessProposalExtension = func(
 	_ context.Context, // ctx
 	baseTransactions [][]byte,
 ) [][]byte {
@@ -294,7 +294,7 @@ func DefaultProcessProposalExtension(
 //
 // Note that we inject `ChainID` in the Context before calling the proposed
 // extension callback, this example does not make use of it.
-func DefaultFinalizeBlockExtension(
+var DefaultFinalizeBlockExtension = func(
 	_ context.Context, // ctx
 	baseTransactions [][]byte,
 ) [][]byte {
@@ -316,7 +316,7 @@ func DefaultFinalizeBlockExtension(
 //
 // Note that we inject `Address` and `ChainID` in the Context before calling
 // the proposed extension callback, this example does not make use of these.
-func DefaultCommitExtension(
+var DefaultCommitExtension = func(
 	_ context.Context, // ctx
 	blockHeight uint64,
 ) error {
