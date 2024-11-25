@@ -17,17 +17,18 @@ import (
 // Type-assertions ensure the compatibility of this implementation with the
 // multiplex client contract defined in this package.
 var (
-	_ SyncConfigExtensionFn       = DefaultSyncConfigExtension
-	_ SeedConfigExtensionFn       = DefaultSeedConfigExtension
-	_ ValidatorUpdateExtensionFn  = DefaultValidatorUpdateExtension
-	_ ConsensusUpdateExtensionFn  = DefaultConsensusUpdateExtension
-	_ SnapshotMutationExtensionFn = DefaultSnapshotMutationExtension
-	_ SnapshotRestoreExtensionFn  = DefaultSnapshotRestoreExtension
-	_ CheckTxExtensionFn          = DefaultCheckTxExtension
-	_ PrepareProposalExtensionFn  = DefaultPrepareProposalExtension
-	_ ProcessProposalExtensionFn  = DefaultProcessProposalExtension
-	_ FinalizeBlockExtensionFn    = DefaultFinalizeBlockExtension
-	_ CommitExtensionFn           = DefaultCommitExtension
+	_ SyncConfigExtensionFn = DefaultSyncConfigExtension
+	_ SeedConfigExtensionFn = DefaultSeedConfigExtension
+
+	_ ValidatorUpdateExtensionFn = DefaultValidatorUpdateExtension
+	_ ConsensusUpdateExtensionFn = DefaultConsensusUpdateExtension
+	_ CheckTxExtensionFn         = DefaultCheckTxExtension
+	_ PrepareProposalExtensionFn = DefaultPrepareProposalExtension
+	_ ProcessProposalExtensionFn = DefaultProcessProposalExtension
+	_ FinalizeBlockExtensionFn   = DefaultFinalizeBlockExtension
+	_ CommitExtensionFn          = DefaultCommitExtension
+
+	_ CheckMutationResultExtensionFn = DefaultCheckMutationResultExtension
 )
 
 // ----------------------------------------------------------------------------
@@ -141,29 +142,7 @@ func DefaultConsensusUpdateExtension(
 }
 
 // ----------------------------------------------------------------------------
-// Snapshots
-
-// DefaultSnapshotMutationExtension is an example implementation for the state
-// mutation extension [SnapshotMutationExtensionFn]. A state mutation extension
-// may be used to *process* or *mutate* state raw bytes for a particular network.
-//
-// i.e. An extension may be implemented to store a full state machine's bytes
-// representation in a separate database instance.
-//
-// Note that we inject `Address` and `ChainID` in the Context before calling
-// the proposed extension callback, this example does not make use of these.
-func DefaultSnapshotMutationExtension(
-	_ context.Context, // ctx
-	baseState []byte,
-) []byte {
-	// e.g. You may interpret/use the UserAddress and ChainID in extensions.
-	//
-	// userAddress := ctx.Value("Address").(string)
-	// chainId := ctx.Value("ChainID").(string)
-
-	nextState := baseState
-	return nextState
-}
+// State
 
 // DefaultCheckMutationResultExtension is an example implementation for the
 // mutation audit extension [CheckMutationResultExtensionFn]. A mutation audit
@@ -184,28 +163,6 @@ func DefaultCheckMutationResultExtension(
 	// chainId := ctx.Value("ChainID").(string)
 
 	return nil
-}
-
-// DefaultSnapshotRestoreExtension is an example implementation for the state
-// restoration extension [SnapshotRestoreExtensionFn]. A state restoration
-// extension may be used to *process* restored state for a particular network.
-//
-// i.e. An extension may be implemented to store the restored state machine
-// bytes representation in a separate database instance.
-//
-// Note that we inject `Address` and `ChainID` in the Context before calling
-// the proposed extension callback, this example does not make use of these.
-func DefaultSnapshotRestoreExtension(
-	_ context.Context, // ctx
-	baseState []byte,
-) []byte {
-	// e.g. You may interpret/use the UserAddress and ChainID in extensions.
-	//
-	// userAddress := ctx.Value("Address").(string)
-	// chainId := ctx.Value("ChainID").(string)
-
-	nextState := baseState
-	return nextState
 }
 
 // ----------------------------------------------------------------------------

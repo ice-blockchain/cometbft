@@ -21,6 +21,7 @@ import (
 	cmtjson "github.com/ice-blockchain/cometbft/libs/json"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	mx "github.com/ice-blockchain/cometbft/multiplex"
+	"github.com/ice-blockchain/cometbft/multiplex/client"
 	cmtnode "github.com/ice-blockchain/cometbft/node"
 	"github.com/ice-blockchain/cometbft/privval"
 	"github.com/ice-blockchain/cometbft/proxy"
@@ -104,7 +105,7 @@ func TestMultiplexNodeNewLegacyNodeMultiplex(t *testing.T) {
 
 	// Create the [node.Node] instance, using [node.NewNode]
 	// nil-Reactor instance is ignored
-	testMultiplex, _, err := mx.NewLegacyNodeMultiplex(
+	testMultiplex, testReactor, shutdownFn, err := mx.NewLegacyNodeMultiplex(
 		context.Background(),
 		globalCfg,
 		makeRandomNodeKey(),
@@ -128,7 +129,7 @@ func TestMultiplexNodeNewLegacyNodeMultiplex(t *testing.T) {
 	require.NoError(t, err, "legacy node should start correctly")
 
 	defer func() {
-		err := legacyNode.Stop()
+		err := shutdownFn(testMultiplex, testReactor)
 		require.NoError(t, err)
 	}()
 }
@@ -161,10 +162,11 @@ func TestMultiplexNodeNewNodesMultiplexFallback(t *testing.T) {
 
 	// The multiplex configuration will be ignored due to disabled flag.
 	// Should create the [node.Node] instance, using [node.NewNode]
-	testMultiplex, _, err := mx.NewNodesMultiplex(
+	testMultiplex, testReactor, shutdownFn, err := mx.NewNodesMultiplex(
 		context.Background(),
 		globalCfg,
 		cmtlog.NewNopLogger(),
+		&client.DefaultClient{},
 	)
 	assert.NoError(t, err, "should create node instance")
 	assert.NotNil(t, testMultiplex, "should return a multiplex map with a node")
@@ -184,7 +186,7 @@ func TestMultiplexNodeNewNodesMultiplexFallback(t *testing.T) {
 	require.NoError(t, err, "legacy node should start correctly")
 
 	defer func() {
-		err := legacyNode.Stop()
+		err := shutdownFn(testMultiplex, testReactor)
 		require.NoError(t, err)
 	}()
 }
@@ -201,10 +203,11 @@ func TestMultiplexNodeNewNodesMultiplex(t *testing.T) {
 
 	// The multiplex configuration will be ENABLED.
 	// Should create the [node.Node] instance using [mx.NewNodesMultiplex]
-	testMultiplex, testReactor, err := mx.NewNodesMultiplex(
+	testMultiplex, testReactor, shutdownFn, err := mx.NewNodesMultiplex(
 		context.Background(),
 		globalCfg,
 		cmtlog.NewNopLogger(),
+		&client.DefaultClient{},
 	)
 	assert.NoError(t, err, "should create node instance")
 	assert.NotNil(t, testMultiplex, "should return a multiplex map with a node")
@@ -253,12 +256,10 @@ func TestMultiplexNodeNewNodesMultiplex(t *testing.T) {
 	wg.Wait()
 
 	// Shutdown routine
-	defer func(nodesMultiplex mx.MultiplexMap[*cmtnode.Node]) {
-		for _, nodeInstance := range nodesMultiplex {
-			ni := nodeInstance.GetInstance().(*cmtnode.Node)
-			_ = ni.Stop()
-		}
-	}(testMultiplex)
+	defer func() {
+		err := shutdownFn(testMultiplex, testReactor)
+		require.NoError(t, err)
+	}()
 }
 
 func TestMultiplexNodeNewNodesMultiplexSingleNetworkProduceBlocks(t *testing.T) {
@@ -268,16 +269,16 @@ func TestMultiplexNodeNewNodesMultiplexSingleNetworkProduceBlocks(t *testing.T) 
 	// For debug, change the logger to cmtlog.TestingLogger()
 	globalCfg,
 		testMultiplex,
-		testReactor := assertStartNodesMultiplex(t, numNetworks, cmtlog.NewNopLogger()) // 1 NETWORK!
+		testReactor,
+		shutdownFn := assertStartNodesMultiplex(t, numNetworks, cmtlog.NewNopLogger()) // 1 NETWORK!
 
 	// Shutdown routine
-	defer func(nodesMultiplex mx.MultiplexMap[*cmtnode.Node]) {
+	defer func() {
 		defer os.RemoveAll(globalCfg.RootDir)
-		for _, nodeInstance := range nodesMultiplex {
-			ni := nodeInstance.GetInstance().(*cmtnode.Node)
-			_ = ni.Stop()
-		}
-	}(testMultiplex)
+
+		err := shutdownFn(testMultiplex, testReactor)
+		require.NoError(t, err)
+	}()
 
 	expectedBlocks := 3
 	assertWaitForNodesMultiplexToProduceBlocks(t, testReactor, testMultiplex, expectedBlocks)
@@ -290,16 +291,16 @@ func TestMultiplexNodeNewNodesMultiplexProduceBlocks(t *testing.T) {
 	// For debug, change the logger to cmtlog.TestingLogger()
 	globalCfg,
 		testMultiplex,
-		testReactor := assertStartNodesMultiplex(t, numNetworks, cmtlog.NewNopLogger()) // 5 networks
+		testReactor,
+		shutdownFn := assertStartNodesMultiplex(t, numNetworks, cmtlog.NewNopLogger()) // 5 networks
 
 	// Shutdown routine
-	defer func(nodesMultiplex mx.MultiplexMap[*cmtnode.Node]) {
+	defer func() {
 		defer os.RemoveAll(globalCfg.RootDir)
-		for _, nodeInstance := range nodesMultiplex {
-			ni := nodeInstance.GetInstance().(*cmtnode.Node)
-			_ = ni.Stop()
-		}
-	}(testMultiplex)
+
+		err := shutdownFn(testMultiplex, testReactor)
+		require.NoError(t, err)
+	}()
 
 	expectedBlocks := 2
 	assertWaitForNodesMultiplexToProduceBlocks(t, testReactor, testMultiplex, expectedBlocks)
@@ -422,6 +423,7 @@ func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog
 	*config.Config,
 	mx.MultiplexMap[*cmtnode.Node],
 	*mx.Reactor,
+	mx.NodesMultiplexShutdownFn,
 ) {
 	tb.Helper()
 
@@ -443,10 +445,11 @@ func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog
 
 	// The multiplex configuration will be ENABLED.
 	// Should create the [node.Node] instance using [mx.NewNodesMultiplex]
-	testMultiplex, testReactor, err := mx.NewNodesMultiplex(
+	testMultiplex, testReactor, shutdownFn, err := mx.NewNodesMultiplex(
 		context.Background(),
 		globalCfg,
 		customLogger,
+		&client.DefaultClient{},
 	)
 	require.NoError(tb, err, "should create node instance")
 	require.NotNil(tb, testMultiplex, "should return a multiplex map with a node")
@@ -484,7 +487,7 @@ func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog
 	// t.Logf("Waiting for %d nodes to be up and running.", len(testReactor.GetNetworks()))
 	wg.Wait()
 
-	return globalCfg, testMultiplex, testReactor
+	return globalCfg, testMultiplex, testReactor, shutdownFn
 }
 
 func assertWaitForNodesMultiplexToProduceBlocks(

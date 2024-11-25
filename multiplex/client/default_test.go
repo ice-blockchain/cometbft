@@ -26,18 +26,18 @@ const (
 // Type-assertions ensure the compatibility of these mocks with the
 // client contract defined in this client package.
 var (
-	_ client.SyncConfigExtensionFn          = mockSyncConfigExtensionMutatesHeight
-	_ client.SeedConfigExtensionFn          = mockSeedConfigExtensionPrefixOneSeed
-	_ client.ValidatorUpdateExtensionFn     = mockValidatorUpdateExtensionCountAsError
-	_ client.ConsensusUpdateExtensionFn     = mockConsensusUpdateExtensionMaxBytesAsError
-	_ client.SnapshotMutationExtensionFn    = mockSnapshotMutationExtensionHashedState
+	_ client.SyncConfigExtensionFn = mockSyncConfigExtensionMutatesHeight
+	_ client.SeedConfigExtensionFn = mockSeedConfigExtensionPrefixOneSeed
+
+	_ client.ValidatorUpdateExtensionFn = mockValidatorUpdateExtensionCountAsError
+	_ client.ConsensusUpdateExtensionFn = mockConsensusUpdateExtensionMaxBytesAsError
+	_ client.CheckTxExtensionFn         = mockCheckTxExtensionSizeAsError
+	_ client.PrepareProposalExtensionFn = mockPrepareProposalExtensionAppendOneTx
+	_ client.ProcessProposalExtensionFn = mockProcessProposalExtensionAppendOneTx
+	_ client.FinalizeBlockExtensionFn   = mockFinalizeBlockExtensionAppendHash
+	_ client.CommitExtensionFn          = mockCommitExtensionHeightAsError
+
 	_ client.CheckMutationResultExtensionFn = mockCheckMutationResultExtensionSizeAsError
-	_ client.SnapshotRestoreExtensionFn     = mockSnapshotRestoreExtensionHashedState
-	_ client.CheckTxExtensionFn             = mockCheckTxExtensionSizeAsError
-	_ client.PrepareProposalExtensionFn     = mockPrepareProposalExtensionAppendOneTx
-	_ client.ProcessProposalExtensionFn     = mockProcessProposalExtensionAppendOneTx
-	_ client.FinalizeBlockExtensionFn       = mockFinalizeBlockExtensionAppendHash
-	_ client.CommitExtensionFn              = mockCommitExtensionHeightAsError
 )
 
 // mockSyncConfigExtensionMutatesHeight is an implementation that mutates the
@@ -88,17 +88,6 @@ func mockConsensusUpdateExtensionMaxBytesAsError(
 	return fmt.Errorf("Max bytes: %v", baseConsensusParams.Block.MaxBytes)
 }
 
-// mockSnapshotMutationExtensionHashedState is an implementation that mutates the
-// baseState by hashing it and returning *only its hash*.
-// CAUTION: this mock discards the state data for a deterministic hash of it.
-func mockSnapshotMutationExtensionHashedState(
-	ctx context.Context,
-	baseState []byte,
-) []byte {
-	nextState := tmhash.Sum(baseState[:])
-	return nextState
-}
-
 // mockCheckMutationResultExtensionSizeAsError is an implementation that reads the
 // mutated state bytes and formats an error that prints the length of the byte slice.
 func mockCheckMutationResultExtensionSizeAsError(
@@ -106,17 +95,6 @@ func mockCheckMutationResultExtensionSizeAsError(
 	tx []byte,
 ) error {
 	return fmt.Errorf("Mutated state bytes: %d", len(tx))
-}
-
-// mockSnapshotRestoreExtensionHashedState is an implementation that mutates the
-// baseState by hashing it and returning *only its hash*.
-// CAUTION: this mock discards the state data for a deterministic hash of it.
-func mockSnapshotRestoreExtensionHashedState(
-	ctx context.Context,
-	baseState []byte,
-) []byte {
-	nextState := tmhash.Sum(baseState[:])
-	return nextState
 }
 
 // mockCheckTxExtensionSizeAsError is an implementation that reads the
@@ -264,29 +242,6 @@ func TestMultiplexClientDefaultConsensusUpdateExtension(t *testing.T) {
 	assert.Nil(t, errConsensusUpdate, "DefaultConsensusUpdateExtension must return nil")
 }
 
-func TestMultiplexClientDefaultSnapshotMutationExtension(t *testing.T) {
-	baseStateBytes := []byte(`this is just an example, not a sm.State.`)
-	inputStateBytes := baseStateBytes[:]
-
-	// Execute the extension / injection, we intentionally force the type
-	// here to prevent compilation for extensions that wouldn't work correctly.
-	var nextStateBytes []byte
-	nextStateBytes = client.DefaultSnapshotMutationExtension(context.TODO(), inputStateBytes)
-	// Should deep-copy the string
-	// do some mutations to test deep-copy
-	nextStateBytes = append(nextStateBytes, []byte(`adding more`)...)
-
-	// Extension may not return nil
-	assert.NotNil(t, nextStateBytes, "DefaultSnapshotMutationExtension may not return nil")
-
-	// Must return a []byte
-	assert.NotEmpty(t, nextStateBytes)
-
-	// The extension does only a deep-copy, so we test that
-	// mutations did not execute on the input bytes slice.
-	assert.Equal(t, baseStateBytes, inputStateBytes)
-}
-
 func TestMultiplexClientDefaultCheckMutationResultExtension(t *testing.T) {
 	// Prepare a base transaction
 	baseStateBytes := []byte(`this is not a real transaction.`)
@@ -299,29 +254,6 @@ func TestMultiplexClientDefaultCheckMutationResultExtension(t *testing.T) {
 
 	// Default extension returns nil (no error)
 	assert.Nil(t, errCheckMutationResults, "DefaultCheckMutationResultExtension must return nil")
-}
-
-func TestMultiplexClientDefaultSnapshotRestoreExtension(t *testing.T) {
-	baseStateBytes := []byte(`this is just an example, not a sm.State.`)
-	inputStateBytes := baseStateBytes[:]
-
-	// Execute the extension / injection, we intentionally force the type
-	// here to prevent compilation for extensions that wouldn't work correctly.
-	var nextStateBytes []byte
-	nextStateBytes = client.DefaultSnapshotRestoreExtension(context.TODO(), inputStateBytes)
-	// Should deep-copy the string
-	// do some mutations to test deep-copy
-	nextStateBytes = append(nextStateBytes, []byte(`adding more`)...)
-
-	// Extension may not return nil
-	assert.NotNil(t, nextStateBytes, "DefaultSnapshotRestoreExtension may not return nil")
-
-	// Must return a []byte
-	assert.NotEmpty(t, nextStateBytes)
-
-	// The extension does only a deep-copy, so we test that
-	// mutations did not execute on the input bytes slice.
-	assert.Equal(t, baseStateBytes, inputStateBytes)
 }
 
 func TestMultiplexClientDefaultCheckTxExtension(t *testing.T) {

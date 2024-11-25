@@ -69,7 +69,6 @@ func NewSnapsAppSuite(t *testing.T, opts ...func(*snapsapp.SnapsApp)) *SnapsAppS
 	logger := cmtlog.NewNopLogger() // for debug change to TestingLogger()
 	app := snapsapp.NewSnapsApplication(
 		testReactor,
-		config.NewSnapshotOptions(1, 1, 1),
 		logger,
 		opts...,
 	)
@@ -110,10 +109,6 @@ func prepareMultiplexReactor(t *testing.T) (
 	)
 	conf.SetRoot(rootDir)
 
-	conf.SnapshotOptions = map[config.ReplicationStrategy]config.SnapshotOptions{}
-	conf.SnapshotOptions[config.NewReplicationStrategy("Network")] = config.NewSnapshotOptions(1, 1000, 3)
-	conf.SnapshotOptions[config.NewReplicationStrategy("History")] = config.NewSnapshotOptions(2, 2000, 3)
-
 	nodeKey := makeRandomNodeKey()
 	testChainRegistry, err := mx.NewChainRegistry(&conf.MultiplexConfig)
 	require.NoError(t, err, "should create chain registry instance")
@@ -142,7 +137,7 @@ func makeState(
 	t *testing.T,
 	chainID string,
 	setHeight int64,
-) (*mx.HistoricalState, []byte) {
+) (sm.State, []byte) {
 	t.Helper()
 
 	valPubKey := ed25519.GenPrivKey().PubKey()
@@ -169,8 +164,5 @@ func makeState(
 	state.LastBlockTime = cmttime.Now()
 	state.LastValidators = state.Validators
 
-	return &mx.HistoricalState{
-		State: &state,
-		Data:  []byte{},
-	}, state.AppHash
+	return state, state.AppHash
 }

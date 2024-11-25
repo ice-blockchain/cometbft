@@ -46,15 +46,15 @@ func (reactor *Reactor) PrepareConsensusInstanceWithReactor(
 
 	// Retrieve the correct instances/services by chain
 	genesisDoc := genesisDocProvider(chainID)
-	stateMachine := stateProvider(chainID).(*HistoricalState)
-	stateStore := stateStoreProvider(chainID).(*ChainHistoryStore)
+	stateMachine := stateProvider(chainID).(sm.State)
+	stateStore := stateStoreProvider(chainID).(sm.Store)
 	blockStore := blockStoreProvider(chainID).(*bs.BlockStore)
 	eventBus := servicesProvider(ServiceKeyEventBus, chainID).(*types.EventBus)
 
 	// 1) Consensus handshake with ABCI
 	handshaker := cs.NewHandshaker(
 		stateStore,
-		stateMachine.State.Copy(),
+		stateMachine,
 		blockStore,
 		genesisDoc,
 	)
@@ -120,7 +120,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 
 	// The node config contains the configuration overwrite.
 	cfgOverwrite := configProvider(chainID).(*config.Config)
-	stateMachine := statesProvider(chainID).(*HistoricalState)
+	stateMachine := statesProvider(chainID).(sm.State)
 	privValidator := privvalProvider(chainID).(types.PrivValidator)
 	eventBus := servicesProvider(ServiceKeyEventBus, chainID).(*types.EventBus)
 
@@ -149,8 +149,8 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 		reactor.abciClient.Mempool(chainID),
 		stateMachine.LastBlockHeight,
 		mempl.WithMetrics(memplMetricsProvider),
-		mempl.WithPreCheck(sm.TxPreCheck(stateMachine.State.Copy())),
-		mempl.WithPostCheck(sm.TxPostCheck(stateMachine.State.Copy())),
+		mempl.WithPreCheck(sm.TxPreCheck(stateMachine.Copy())),
+		mempl.WithPostCheck(sm.TxPostCheck(stateMachine.Copy())),
 	)
 	mempool.SetLogger(memplLogger)
 	mempoolReactor := mempl.NewReactor(
@@ -165,7 +165,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 
 	// 2) Create the evidence pool / evidence reactor
 	evidenceDB := evidenceDBProvider(chainID).(*ChainDB)
-	stateStore := stateStoreProvider(chainID).(*ChainHistoryStore)
+	stateStore := stateStoreProvider(chainID).(sm.Store)
 	blockStore := blockStoreProvider(chainID).(*bs.BlockStore)
 
 	evidenceLogger := reactor.logger.With("module", "evidence")
@@ -203,7 +203,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	// Don't start block sync if we're doing a state sync first or if
 	// we are the only validator on the network (caller sets blockSync).
 	blockSyncReactor := blocksync.NewReactor(
-		stateMachine.State.Copy(),
+		stateMachine.Copy(),
 		blockExecutor,
 		blockStore,
 		blockSync,
@@ -220,7 +220,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	consensusLogger := reactor.logger.With("module", "consensus")
 	consensusState := cs.NewState(
 		cfgOverwrite.Consensus, // contains overwrite of WAL
-		stateMachine.State.Copy(),
+		stateMachine.Copy(),
 		blockExecutor,
 		blockStore,
 		mempool,

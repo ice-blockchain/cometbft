@@ -199,7 +199,7 @@ func NewRunMultiplexCmd(multiplexProvider mx.NodesMultiplexProvider) *cobra.Comm
 			config.SetRoot(rootDir)
 
 			// Create the MultiplexMap of *node.Node instances
-			nodesMultiplex, err := multiplexProvider(config, logger)
+			nodesMultiplex, _, err := multiplexProvider(config, logger)
 			if err != nil {
 				return fmt.Errorf("failed to create multiplex: %w", err)
 			}

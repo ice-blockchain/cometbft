@@ -80,8 +80,8 @@ func (reactor *Reactor) createMultiplexNodesWithServices(
 
 		// State/Blocks
 		shouldStateSync := false // state-sync is disabled for nodes multiplexes
-		stateMachine := statesProvider(chainID).(*HistoricalState)
-		stateStore := stateStoreProvider(chainID).(*ChainHistoryStore)
+		stateMachine := statesProvider(chainID).(sm.State)
+		stateStore := stateStoreProvider(chainID).(sm.Store)
 		blockStore := blockStoreProvider(chainID).(*bs.BlockStore)
 
 		nodeInstance := node.NewNodeWithServices(
@@ -103,7 +103,7 @@ func (reactor *Reactor) createMultiplexNodesWithServices(
 			blockStore,
 			consensusReactor.GetState(), // cs.State
 			shouldStateSync,
-			stateMachine.State.Copy(), // stateSyncGenesis (sm.State)
+			stateMachine, // stateSyncGenesis (sm.State)
 		)
 
 		nodeInstance.BaseService = *service.NewBaseService(

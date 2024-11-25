@@ -9,7 +9,6 @@ import (
 
 	abcitypes "github.com/ice-blockchain/cometbft/abci/types"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
-	snapshottypes "github.com/ice-blockchain/cometbft/multiplex/snapshots/types"
 )
 
 // ----------------------------------------------------------------------------
@@ -30,14 +29,9 @@ func (app *SnapsApp) InitChain(
 	// Retrieve ChainID from request for InitChain
 	chainID := req.ChainId
 
-	// Make sure we handle only relevant snapshotting routines
+	// Make sure we handle only relevant InitChain routines
 	if !app.reactor.HasNetwork(chainID) {
 		return nil, fmt.Errorf("invalid chain-id on InitChain: %s is not replicated", chainID)
-	}
-
-	// Without snapshotter for this chain, we stop here
-	if _, ok := app.snapshotManagers[chainID]; !ok {
-		return &abcitypes.InitChainResponse{}, nil
 	}
 
 	// On a new chain, we consider the init chain block height as 0, even though
@@ -63,15 +57,19 @@ func (app *SnapsApp) InitChain(
 	app.chMutex.Unlock()
 	app.logger.Info("InitChain", "initialHeight", req.InitialHeight, "chainID", req.ChainId)
 
-	// Get the commitment snapshotter instance to retrieve current AppHash
-	snapshotter := app.snapshotManagers[req.ChainId].GetSnapshotter()
+	// Get the state machine instance to retrieve current AppHash
+	stateStore := app.reactor.GetStateStore(chainID)
+	stateMachine, err := stateStore.Load()
+	if err != nil {
+		return nil, fmt.Errorf("could not load state machine for %s from InitChain: %w", chainID, err)
+	}
 
 	// NOTE: We don't commit, but FinalizeBlock for block InitialHeight starts from
 	// this FinalizeBlockState.
 	return &abcitypes.InitChainResponse{
 		ConsensusParams: req.ConsensusParams,
 		Validators:      req.Validators,
-		AppHash:         snapshotter.AppHash(),
+		AppHash:         stateMachine.AppHash,
 	}, nil
 }
 
@@ -94,14 +92,9 @@ func (app *SnapsApp) Info(
 		return &abcitypes.InfoResponse{}, nil
 	}
 
-	// Without snapshotter for this chain, we stop here
-	if _, ok := app.snapshotManagers[chainID]; !ok {
-		app.logger.Error("snapshot manager not configured (Info)", "chain_id", chainID)
-		return &abcitypes.InfoResponse{}, nil
-	}
-
-	snapshotter := app.snapshotManagers[chainID].GetSnapshotter()
-	stateMachine, err := snapshotter.GetStateMachine()
+	// Get the state machine instance to retrieve current AppHash
+	stateStore := app.reactor.GetStateStore(chainID)
+	stateMachine, err := stateStore.Load()
 	if err != nil {
 		app.logger.Error("could not load state machine (Info)", "chain_id", chainID)
 		return &abcitypes.InfoResponse{}, err
@@ -121,228 +114,6 @@ func (app *SnapsApp) Info(
 // Query implements [abcitypes.Application].
 func (app *SnapsApp) Query(context.Context, *abcitypes.QueryRequest) (*abcitypes.QueryResponse, error) {
 	return &abcitypes.QueryResponse{Code: abcitypes.CodeTypeOK}, nil
-}
-
-// ----------------------------------------------------------------------------
-// Snapshots
-
-// ListSnapshots delegates to the correct snapshot manager to list recent
-// snapshots for the requested replicated chain.
-//
-// This method is called when a peer requests for snapshots. Note that the
-// response includes only snapshot metadata, not the snapshot chunks.
-//
-// ListSnapshots implements [abcitypes.Application].
-func (app *SnapsApp) ListSnapshots(
-	ctx context.Context,
-	req *abcitypes.ListSnapshotsRequest,
-) (*abcitypes.ListSnapshotsResponse, error) {
-	// Retrieve ChainID from context
-	chainID := ctx.Value(client.KeyChainID).(string)
-
-	resp := &abcitypes.ListSnapshotsResponse{Snapshots: []*abcitypes.Snapshot{}}
-
-	// Make sure we handle only relevant snapshotting routines
-	if !app.reactor.HasNetwork(chainID) {
-		return nil, fmt.Errorf("invalid chain-id on ListSnapshots: %s is not replicated", chainID)
-	}
-
-	// Without snapshotter for this chain, we stop here
-	if _, ok := app.snapshotManagers[chainID]; !ok {
-		app.logger.Error("snapshot manager not configured (ListSnapshots)", "chain_id", chainID)
-		return resp, nil
-	}
-
-	// Read recent snapshots from filesystem
-	snapshots, err := app.snapshotManagers[chainID].List()
-	if err != nil {
-		app.logger.Error("failed to list snapshots", "chain_id", chainID, "err", err)
-		return nil, err
-	}
-
-	// Marshal snapshots for ABCI transport
-	for _, snapshot := range snapshots {
-		abciSnapshot, err := snapshot.ToABCI()
-		if err != nil {
-			app.logger.Error("failed to convert ABCI snapshots", "chain_id", chainID, "err", err)
-			return nil, err
-		}
-
-		resp.Snapshots = append(resp.Snapshots, &abciSnapshot)
-	}
-
-	return resp, nil
-}
-
-// OfferSnapshot unmarshals snapshot metadata and starts the restoration of
-// snapshot chunks (download).
-//
-// This method is called when a peer received a list of snapshots and chooses
-// one to sync. It will initiate the download of snapshot chunks and restore
-// the snapshot data. Note that this method does not *apply* the snapshot.
-//
-// ListSnapshots implements [abcitypes.Application].
-func (app *SnapsApp) OfferSnapshot(
-	ctx context.Context,
-	req *abcitypes.OfferSnapshotRequest,
-) (*abcitypes.OfferSnapshotResponse, error) {
-	// Retrieve ChainID from context
-	chainID := ctx.Value(client.KeyChainID).(string)
-
-	// Make sure we handle only relevant snapshotting routines
-	if !app.reactor.HasNetwork(chainID) {
-		app.logger.Error("received irrelevant snapshot chain identifier (OfferSnapshot)", "chain_id", chainID)
-		return &abcitypes.OfferSnapshotResponse{Result: abcitypes.OFFER_SNAPSHOT_RESULT_ABORT}, nil
-	}
-
-	// Without snapshotter for this chain, we stop here
-	if _, ok := app.snapshotManagers[chainID]; !ok {
-		app.logger.Error("snapshot manager not configured (OfferSnapshot)", "chain_id", chainID)
-		return &abcitypes.OfferSnapshotResponse{Result: abcitypes.OFFER_SNAPSHOT_RESULT_ABORT}, nil
-	}
-
-	// Obviously we do not permit nil-snapshots
-	if req.Snapshot == nil {
-		app.logger.Error("received nil snapshot", "chain_id", chainID)
-		return &abcitypes.OfferSnapshotResponse{Result: abcitypes.OFFER_SNAPSHOT_RESULT_REJECT}, nil
-	}
-
-	// Unmarshal snapshots from ABCI transport
-	snapshot, err := snapshottypes.SnapshotFromABCI(req.Snapshot)
-	if err != nil {
-		app.logger.Error("failed to decode snapshot metadata", "chain_id", chainID, "err", err)
-		return &abcitypes.OfferSnapshotResponse{Result: abcitypes.OFFER_SNAPSHOT_RESULT_REJECT}, nil
-	}
-
-	// Verifies snapshot format and start downloading chunks
-	err = app.snapshotManagers[chainID].Restore(snapshot)
-	switch {
-	case err == nil:
-		return &abcitypes.OfferSnapshotResponse{Result: abcitypes.OFFER_SNAPSHOT_RESULT_ACCEPT}, nil
-
-	case errors.Is(err, snapshottypes.ErrUnknownFormat):
-		return &abcitypes.OfferSnapshotResponse{Result: abcitypes.OFFER_SNAPSHOT_RESULT_REJECT_FORMAT}, nil
-
-	case errors.Is(err, snapshottypes.ErrInvalidMetadata):
-		app.logger.Error(
-			"rejecting invalid snapshot",
-			"chain_id", chainID,
-			"height", req.Snapshot.Height,
-			"format", req.Snapshot.Format,
-			"err", err,
-		)
-		return &abcitypes.OfferSnapshotResponse{Result: abcitypes.OFFER_SNAPSHOT_RESULT_REJECT}, nil
-
-	default:
-		// CometBFT errors are defined here: https://github.com/ice-blockchain/cometbft/blob/main/statesync/syncer.go
-		// It may happen that in case of a CometBFT error, such as a timeout (which occurs after two minutes),
-		// the process is aborted. This is done intentionally because deleting the database programmatically
-		// can lead to more complicated situations.
-		app.logger.Error(
-			"failed to restore snapshot",
-			"chain_id", chainID,
-			"height", req.Snapshot.Height,
-			"format", req.Snapshot.Format,
-			"err", err,
-		)
-
-		// We currently don't support resetting the IAVL stores and retrying a
-		// different snapshot, so we ask CometBFT to abort all snapshot restoration.
-		return &abcitypes.OfferSnapshotResponse{Result: abcitypes.OFFER_SNAPSHOT_RESULT_ABORT}, nil
-	}
-}
-
-// LoadSnapshotChunk delegates to the correct snapshot manager to load a chunk
-// from the filesystem.
-//
-// This method is called to retrieve snapshot chunks which may be transported
-// to other peers, i.e. asynchronously called when a peer downloads chunks.
-//
-// LoadSnapshotChunk implements [abcitypes.Application].
-func (app *SnapsApp) LoadSnapshotChunk(
-	ctx context.Context,
-	req *abcitypes.LoadSnapshotChunkRequest,
-) (*abcitypes.LoadSnapshotChunkResponse, error) {
-	// Retrieve ChainID from context
-	chainID := ctx.Value(client.KeyChainID).(string)
-
-	// Make sure we handle only relevant snapshotting routines
-	if !app.reactor.HasNetwork(chainID) {
-		return nil, fmt.Errorf("invalid chain-id on ListSnapshots: %s is not replicated", chainID)
-	}
-
-	// Without snapshotter for this chain, we stop here
-	if _, ok := app.snapshotManagers[chainID]; !ok {
-		return &abcitypes.LoadSnapshotChunkResponse{}, nil
-	}
-
-	chunk, err := app.snapshotManagers[chainID].LoadChunk(req.Height, req.Format, req.Chunk)
-	if err != nil {
-		app.logger.Error(
-			"failed to load snapshot chunk",
-			"chain_id", chainID,
-			"height", req.Height,
-			"format", req.Format,
-			"chunk", req.Chunk,
-			"err", err,
-		)
-		return nil, err
-	}
-
-	return &abcitypes.LoadSnapshotChunkResponse{Chunk: chunk}, nil
-}
-
-// ApplySnapshotChunk applies snapshot chunks sequentially.
-//
-// This method is called when a peer received a snapshot chunk (downloaded).
-// The downloaded snapshot chunk will be applied with this method, thus
-// updating the filesystem. When all snapshot chunks have finished downloading,
-// the snapshot will be considered fully applied.
-//
-// ApplySnapshotChunk implements [abcitypes.Application].
-func (app *SnapsApp) ApplySnapshotChunk(
-	ctx context.Context,
-	req *abcitypes.ApplySnapshotChunkRequest,
-) (*abcitypes.ApplySnapshotChunkResponse, error) {
-	// Retrieve ChainID from context
-	chainID := ctx.Value(client.KeyChainID).(string)
-
-	// Make sure we handle only relevant snapshotting routines
-	if !app.reactor.HasNetwork(chainID) {
-		app.logger.Error("received irrelevant snapshot chain identifier (ApplySnapshotChunk)", "chain_id", chainID)
-		return &abcitypes.ApplySnapshotChunkResponse{Result: abcitypes.APPLY_SNAPSHOT_CHUNK_RESULT_ABORT}, nil
-	}
-
-	// Without snapshotter for this chain, we stop here
-	if _, ok := app.snapshotManagers[chainID]; !ok {
-		app.logger.Error("snapshot manager not configured (ApplySnapshotChunk)", "chain_id", chainID)
-		return &abcitypes.ApplySnapshotChunkResponse{Result: abcitypes.APPLY_SNAPSHOT_CHUNK_RESULT_ABORT}, nil
-	}
-
-	// Applies snapshot chunk in order (updates filesystem)
-	_, err := app.snapshotManagers[chainID].RestoreChunk(req.Chunk)
-	switch {
-	case err == nil:
-		return &abcitypes.ApplySnapshotChunkResponse{Result: abcitypes.APPLY_SNAPSHOT_CHUNK_RESULT_ACCEPT}, nil
-
-	case errors.Is(err, snapshottypes.ErrChunkHashMismatch):
-		app.logger.Error(
-			"chunk checksum mismatch; rejecting sender and requesting refetch",
-			"chain_id", chainID,
-			"chunk", req.Index,
-			"sender", req.Sender,
-			"err", err,
-		)
-		return &abcitypes.ApplySnapshotChunkResponse{
-			Result:        abcitypes.APPLY_SNAPSHOT_CHUNK_RESULT_RETRY,
-			RefetchChunks: []uint32{req.Index},
-			RejectSenders: []string{req.Sender},
-		}, nil
-
-	default:
-		app.logger.Error("failed to restore snapshot", "chain_id", chainID, "err", err)
-		return &abcitypes.ApplySnapshotChunkResponse{Result: abcitypes.APPLY_SNAPSHOT_CHUNK_RESULT_ABORT}, nil
-	}
 }
 
 // ----------------------------------------------------------------------------
@@ -593,20 +364,11 @@ func (app *SnapsApp) CheckTx(
 	return &abcitypes.CheckTxResponse{Code: abcitypes.CodeTypeOK}, err
 }
 
-// Commit may persist the application state if any data is relevant and it must
-// also determine whether a snapshot must be created, or not.
+// Commit may persist the application state if any data is relevant.
 //
 // This method is called after finalizing blocks. This method uses the snapshot
 // manager to determine whether a new snapshot must be taken or not, based on
 // the `interval` set in the [config.SnapshotOptions] instance for this chain.
-//
-// CAUTION:
-// We use [client.ReportCommit] to enable auditing or reporting about committed
-// blocks from a potential extension. It is important to note that if the
-// extension fails, the commitment stage is *unaffected*, i.e. an error in
-// auditing or reporting units *does not* affect commitment stage(s).
-// Note, the default (example) implementation for the Commit extension
-// always returns nil, such that **all committed blocks are accepted**.
 //
 // Commit implements [abcitypes.Application].
 func (app *SnapsApp) Commit(
@@ -626,12 +388,6 @@ func (app *SnapsApp) Commit(
 		return resp, nil
 	}
 
-	// Without snapshotter for this chain, we stop here
-	if _, ok := app.snapshotManagers[chainID]; !ok {
-		app.logger.Error("snapshot manager not configured (Commit)", "chain_id", chainID)
-		return resp, nil
-	}
-
 	app.fbMutex.RLock()
 	workingHeight := app.finalizeBlockHeights[chainID]
 	app.fbMutex.RUnlock()
@@ -647,7 +403,6 @@ func (app *SnapsApp) Commit(
 		// Proceed with commitment stage!
 	}
 
-	app.snapshotManagers[chainID].SnapshotIfApplicable(workingHeight)
 	return resp, nil
 }
 
@@ -683,6 +438,74 @@ func (app *SnapsApp) VerifyVoteExtension(context.Context, *abcitypes.VerifyVoteE
 }
 
 // ----------------------------------------------------------------------------
+// Snapshotting features are disabled
+
+// ListSnapshots is not supported as state-sync must be disabled.
+//
+// This method is called when a peer requests for snapshots. Note that the
+// response includes only snapshot metadata, not the snapshot chunks.
+//
+// ListSnapshots implements [abcitypes.Application].
+func (app *SnapsApp) ListSnapshots(
+	ctx context.Context,
+	req *abcitypes.ListSnapshotsRequest,
+) (*abcitypes.ListSnapshotsResponse, error) {
+	// ListSnapshots is not supported as state-sync must be disabled.
+	return &abcitypes.ListSnapshotsResponse{
+		Snapshots: []*abcitypes.Snapshot{},
+	}, nil
+}
+
+// OfferSnapshot is not supported as state-sync must be disabled.
+//
+// This method is called when a peer received a list of snapshots and chooses
+// one to sync. It will initiate the download of snapshot chunks and restore
+// the snapshot data. Note that this method does not *apply* the snapshot.
+//
+// OfferSnapshot implements [abcitypes.Application].
+func (app *SnapsApp) OfferSnapshot(
+	ctx context.Context,
+	req *abcitypes.OfferSnapshotRequest,
+) (*abcitypes.OfferSnapshotResponse, error) {
+	// OfferSnapshot is not supported as state-sync must be disabled.
+	return &abcitypes.OfferSnapshotResponse{
+		Result: abcitypes.OFFER_SNAPSHOT_RESULT_ABORT,
+	}, nil
+}
+
+// LoadSnapshotChunk is not supported as state-sync must be disabled.
+//
+// This method is called to retrieve snapshot chunks which may be transported
+// to other peers, i.e. asynchronously called when a peer downloads chunks.
+//
+// LoadSnapshotChunk implements [abcitypes.Application].
+func (app *SnapsApp) LoadSnapshotChunk(
+	ctx context.Context,
+	req *abcitypes.LoadSnapshotChunkRequest,
+) (*abcitypes.LoadSnapshotChunkResponse, error) {
+	// LoadSnapshotChunk is not supported as state-sync must be disabled.
+	return &abcitypes.LoadSnapshotChunkResponse{}, nil
+}
+
+// ApplySnapshotChunk is not supported as state-sync must be disabled.
+//
+// This method is called when a peer received a snapshot chunk (downloaded).
+// The downloaded snapshot chunk will be applied with this method, thus
+// updating the filesystem. When all snapshot chunks have finished downloading,
+// the snapshot will be considered fully applied.
+//
+// ApplySnapshotChunk implements [abcitypes.Application].
+func (app *SnapsApp) ApplySnapshotChunk(
+	ctx context.Context,
+	req *abcitypes.ApplySnapshotChunkRequest,
+) (*abcitypes.ApplySnapshotChunkResponse, error) {
+	// ApplySnapshotChunk is not supported as state-sync must be disabled.
+	return &abcitypes.ApplySnapshotChunkResponse{
+		Result: abcitypes.APPLY_SNAPSHOT_CHUNK_RESULT_ABORT,
+	}, nil
+}
+
+// ----------------------------------------------------------------------------
 // Extensions / Hooks
 
 // runCheckTxExtension executes a checktx extension. This method
@@ -699,13 +522,10 @@ func (app *SnapsApp) runCheckTxExtension(
 	transaction []byte,
 ) error {
 	// Prepare the contract for CheckTx extensions
-	var checkTxHook client.CheckTxExtensionFn
+	var checkTxHook client.CheckTxExtensionFn //nolint:gosimple
 
 	// Uses the default extension or the one configured
-	checkTxHook = GetCheckTxExtension()
-	if app.checkTxExtension != nil {
-		checkTxHook = app.checkTxExtension
-	}
+	checkTxHook = app.GetClientImpl().GetCheckTxExtension()
 
 	// Executes checktx extension and catches potential panics to ensure
 	// data consistency, also making a compromise on availability.
@@ -754,13 +574,10 @@ func (app *SnapsApp) runPrepareProposalExtension(
 ) ([][]byte, error) {
 	// Prepare the contract for finalize block extensions
 	var mutatedTransactions [][]byte
-	var prepareProposalHook client.PrepareProposalExtensionFn
+	var prepareProposalHook client.PrepareProposalExtensionFn //nolint:gosimple
 
 	// Uses the default extension or the one configured
-	prepareProposalHook = GetPrepareProposalExtension()
-	if app.prepareProposalExtension != nil {
-		prepareProposalHook = app.prepareProposalExtension
-	}
+	prepareProposalHook = app.GetClientImpl().GetPrepareProposalExtension()
 
 	// Executes prepare proposal extension and catches potential panics to ensure
 	// data consistency, also making a compromise on availability.
@@ -816,13 +633,10 @@ func (app *SnapsApp) runProcessProposalExtension(
 ) ([][]byte, error) {
 	// Prepare the contract for finalize block extensions
 	var mutatedTransactions [][]byte
-	var processProposalHook client.ProcessProposalExtensionFn
+	var processProposalHook client.ProcessProposalExtensionFn //nolint:gosimple
 
 	// Uses the default extension or the one configured
-	processProposalHook = GetProcessProposalExtension()
-	if app.processProposalExtension != nil {
-		processProposalHook = app.processProposalExtension
-	}
+	processProposalHook = app.GetClientImpl().GetProcessProposalExtension()
 
 	// Executes process proposal extension and catches potential panics to ensure
 	// that failing extensions do not influence the processing stage.
@@ -872,13 +686,10 @@ func (app *SnapsApp) runFinalizeBlockExtension(
 ) ([][]byte, error) {
 	// Prepare the contract for finalize block extensions
 	var mutatedTransactions [][]byte
-	var finalizeBlockHook client.FinalizeBlockExtensionFn
+	var finalizeBlockHook client.FinalizeBlockExtensionFn //nolint:gosimple
 
 	// Uses the default extension or the one configured
-	finalizeBlockHook = GetFinalizeBlockExtension()
-	if app.finalizeBlockExtension != nil {
-		finalizeBlockHook = app.finalizeBlockExtension
-	}
+	finalizeBlockHook = app.GetClientImpl().GetFinalizeBlockExtension()
 
 	// Executes finalize block extension and catches potential panics to ensure
 	// data consistency, also making a compromise on availability.
@@ -932,13 +743,10 @@ func (app *SnapsApp) runCommitExtension(
 	committedHeight uint64,
 ) error {
 	// Prepare the contract for commit extensions
-	var commitHook client.CommitExtensionFn
+	var commitHook client.CommitExtensionFn //nolint:gosimple
 
 	// Uses the default extension or the one configured
-	commitHook = GetCommitExtension()
-	if app.commitExtension != nil {
-		commitHook = app.commitExtension
-	}
+	commitHook = app.GetClientImpl().GetCommitExtension()
 
 	// Executes commit extension and catches potential panics to ensure that
 	// any errors *do not* influence the commitment stage.

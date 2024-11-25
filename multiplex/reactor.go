@@ -13,7 +13,7 @@ import (
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	cmtlibs "github.com/ice-blockchain/cometbft/libs/service"
-	"github.com/ice-blockchain/cometbft/multiplex/snapshots"
+	"github.com/ice-blockchain/cometbft/multiplex/snapsapp"
 	"github.com/ice-blockchain/cometbft/node"
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/privval"
@@ -28,6 +28,8 @@ import (
 	bs "github.com/ice-blockchain/cometbft/store"
 	"github.com/ice-blockchain/cometbft/types"
 )
+
+// TODO(midas): add ReplicationChannel to send chains updates: { address string, relays []string }
 
 const (
 	// Instance types.
@@ -119,6 +121,9 @@ type Reactor struct {
 	chainReadyCh    chan string
 	filesystemMutex sync.Mutex
 }
+
+// Type assertion to make sure this structure is compatible with snapsapp.
+var _ snapsapp.Reactor = (*Reactor)(nil)
 
 // NewReactor creates a new multiplex reactor around a [p2p.NodeKey],
 // a global node configuration with [config.Config] and a [ChainRegistry].
@@ -239,15 +244,15 @@ func (reactor *Reactor) GetInstanceProvider(multiplexName string) instanceProvid
 	}
 }
 
-// GetStateStore returns a [snapshots.StateSnapshotter].
+// GetStateStore returns a [sm.Store].
 //
 // GetStateStore implements [snapsapp.Reactor].
-func (reactor *Reactor) GetStateStore(chainID string) snapshots.StateSnapshotter {
+func (reactor *Reactor) GetStateStore(chainID string) sm.Store {
 	// Retrieves the "stateStore" instance map
 	stateStoreProvider := reactor.GetInstanceProvider(InstanceKeyStateStore)
 
 	// Returns the instance mapped by ChainID
-	return stateStoreProvider(chainID).(snapshots.StateSnapshotter)
+	return stateStoreProvider(chainID).(sm.Store)
 }
 
 // SetServicesProvider sets a custom services providereactor.
@@ -322,7 +327,7 @@ func (reactor *Reactor) RegisterInstance(
 }
 
 // ----------------------------------------------------------------------------
-// Reactor implement [cmtlibs.Service]
+// Reactor implements [cmtlibs.Service]
 
 // OnStart starts the multiplex reactor and must initialize the filesystem and
 // database instances, as well as the block and state stores such that after being
@@ -336,7 +341,7 @@ func (reactor *Reactor) RegisterInstance(
 // - `config`: the configuration overwrite for each network.
 // - `storage`: the filesystem paths for each network.
 // - `state`: the [sm.State] state machine instances (InitMultiplexStates).
-// - `stateStore`: the [ChainHistoryStore] instance attached (InitMultiplexStates).
+// - `stateStore`: the [sm.Store] instance attached (InitMultiplexStates).
 // - `database/blockstore`: the blockstore databases (initMultiplexDatabases).
 // - `database/state`: the state machine databases (initMultiplexDatabases).
 // - `database/tx_index`: the tx_index databases (initMultiplexDatabases).
@@ -390,6 +395,27 @@ func (reactor *Reactor) OnStart() error {
 	}
 
 	return nil
+}
+
+// OnStop stops the multiplex reactor and all the registered services that
+// are running, including the ABCI client if it is running.
+func (reactor *Reactor) OnStop() {
+	// Shutdown all registered services
+	reactor.servicesMutex.Lock()
+	defer reactor.servicesMutex.Unlock()
+	for _, servicesMultiplex := range reactor.servicesRegistry {
+		for _, chainService := range servicesMultiplex {
+			service := chainService.GetInstance().(cmtlibs.Service)
+			if service.IsRunning() {
+				service.Stop() //nolint:errcheck
+			}
+		}
+	}
+
+	// Also shutdown the ABCI client if running
+	if reactor.abciClient != nil && reactor.abciClient.IsRunning() {
+		reactor.abciClient.Stop() //nolint:errcheck
+	}
 }
 
 // WaitForNetworks waits for *all* configured networks to be readily configured.
@@ -571,7 +597,7 @@ func (reactor *Reactor) startNodeListeners(chainID string) error {
 	// Casting to ChainInstance before is required because the *instanceProviderFn*
 	// implementation provides a `any` typed variable which is not an interface.
 	nodeConfig := configProvider(chainID).(*config.Config)
-	stateStore := stateStoreProvider(chainID).(*ChainHistoryStore)
+	stateStore := stateStoreProvider(chainID).(sm.Store)
 	blockStore := blockStoreProvider(chainID).(*bs.BlockStore)
 
 	// We can safely ignore the error as we know an address is available.

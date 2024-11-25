@@ -16,6 +16,11 @@ import (
 	types "github.com/ice-blockchain/cometbft/types"
 )
 
+// Note: we use a separate key space for the genesis doc and doc hashes
+// to prevent mixing both storages as mxGenesisDocHash holds hash of
+// each GenesisDoc in the GenesisDocSet.
+var genesisDocHashKey = []byte("mxGenesisDocHash")
+
 // -----------------------------------------------------------------------------
 // ChecksummedGenesisDocSet
 

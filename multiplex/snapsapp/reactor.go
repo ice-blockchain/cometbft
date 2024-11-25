@@ -1,7 +1,7 @@
 package snapsapp
 
 import (
-	"github.com/ice-blockchain/cometbft/multiplex/snapshots"
+	sm "github.com/ice-blockchain/cometbft/state"
 )
 
 // Reactor defines the implementation contract for the multiplex reactor
@@ -16,6 +16,6 @@ type Reactor interface {
 	// GetStoragePaths should return storage paths mapped by ChainID.
 	GetStoragePaths() map[string]string
 
-	// GetStateStore should return a pointer to a [snapshots.StateSnapshotter].
-	GetStateStore(chainID string) snapshots.StateSnapshotter
+	// GetStateStore should return a pointer to a [sm.Store].
+	GetStateStore(chainID string) sm.Store
 }

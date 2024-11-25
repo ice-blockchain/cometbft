@@ -19,6 +19,8 @@ import (
 	"github.com/ice-blockchain/cometbft/types"
 )
 
+var stateKey = []byte("stateKey")
+
 // multiplexGenesisDocProviderFunc mocks a GenesisDocSet provider helper
 // by injecting ChainID values in genesis docs.
 // CAUTION this should only be done for testing.
@@ -89,7 +91,7 @@ func TestMultiplexReactorInitMultiplexStatesEmptyState(t *testing.T) {
 
 	// Do we have all state instances, with correct ChainID?
 	for _, chainID := range reactor.GetNetworks() {
-		chainState := statesProvider(chainID).(*mx.HistoricalState)
+		chainState := statesProvider(chainID).(sm.State)
 		assert.NotNil(t, chainState, "state instance per chain must not be nil")
 
 		// And validate the ChainID
@@ -142,14 +144,10 @@ func TestMultiplexReactorInitMultiplexStatesFilledState(t *testing.T) {
 		customState.LastBlockHeight = testChainBlockHeight // mutating Height
 		customState.LastBlockID = types.BlockID{}
 		customState.AppHash = tmhash.Sum([]byte(chainID)) // mutating AppHash
-
-		archiveData := &mx.HistoricalState{
-			State: &customState,
-			Data:  []byte{},
-		}
+		// TODO(midas): Fill customState.Data with custom data
 
 		// CAUTION: we inject a custom State here
-		err = stateDB.DB.SetSync(stateKey, archiveData.Bytes())
+		err = stateDB.DB.SetSync(stateKey, customState.Bytes())
 		require.NoError(t, err, "should update state instance in database")
 	}
 
@@ -162,7 +160,7 @@ func TestMultiplexReactorInitMultiplexStatesFilledState(t *testing.T) {
 
 	// Do we have all state instances, with correct ChainID?
 	for _, chainID := range reactor.GetNetworks() {
-		chainState := statesProvider(chainID).(*mx.HistoricalState)
+		chainState := statesProvider(chainID).(sm.State)
 		assert.NotNil(t, chainState, "state instance per chain must not be nil")
 
 		// And validate the loaded state instance contains our

@@ -19,11 +19,7 @@ import (
 	cmttime "github.com/ice-blockchain/cometbft/types/time"
 )
 
-var (
-	stateKey = []byte("stateKey")
-
-	testPanicMessage = "A panic which occurs in a ABCI extension"
-)
+var testPanicMessage = "A panic which occurs in a ABCI extension"
 
 // ----------------------------------------------------------------------------
 // Mocks
@@ -105,14 +101,16 @@ func mockCommitExtensionWithError(
 
 func TestABCI_Info(t *testing.T) {
 	suite := NewSnapsAppSuite(t)
-	defer os.RemoveAll(suite.rootDir)
+	defer func() {
+		defer os.RemoveAll(suite.rootDir)
+		suite.reactor.Stop() //nolint:errcheck
+	}()
 
 	// We test using the "first network"
 	testChainID := suite.reactor.GetNetworks()[0]
 
 	// Check that we have a correct state store
-	// We must cast to ChainHistoryStore for database access
-	chainStore := suite.reactor.GetStateStore(testChainID).(*mx.ChainHistoryStore)
+	chainStore := suite.reactor.GetStateStore(testChainID)
 	require.NotNil(t, chainStore)
 
 	reqTestInfo := abci.InfoRequest{}
@@ -120,7 +118,7 @@ func TestABCI_Info(t *testing.T) {
 	// Store custom state machine instance
 	expectHeight := int64(1500)
 	appState, appHash := makeState(t, testChainID, expectHeight)
-	err := chainStore.GetDatabase().Set(stateKey, appState.Bytes())
+	err := chainStore.Save(appState)
 	require.NoError(t, err)
 
 	// Should return empty given invalid ChainID
@@ -141,19 +139,21 @@ func TestABCI_Info(t *testing.T) {
 
 func TestABCI_InitChain(t *testing.T) {
 	suite := NewSnapsAppSuite(t)
-	defer os.RemoveAll(suite.rootDir)
+	defer func() {
+		defer os.RemoveAll(suite.rootDir)
+		suite.reactor.Stop() //nolint:errcheck
+	}()
 
 	// We test using the "first network"
 	testChainID := suite.reactor.GetNetworks()[0]
 
 	// Check that we have a correct state store
-	// We must cast to ChainHistoryStore for database access
-	chainStore := suite.reactor.GetStateStore(testChainID).(*mx.ChainHistoryStore)
+	chainStore := suite.reactor.GetStateStore(testChainID)
 	require.NotNil(t, chainStore)
 
 	// Store custom state machine instance
-	emptyState := &mx.HistoricalState{State: &sm.State{}, Data: []byte{}}
-	err := chainStore.GetDatabase().Set(stateKey, emptyState.Bytes())
+	emptyState := sm.State{}
+	err := chainStore.Save(emptyState)
 	require.NoError(t, err)
 
 	// Should error given unknown ChainID
@@ -182,11 +182,7 @@ func TestABCI_InitChain(t *testing.T) {
 	})
 	require.NoError(t, err, "should not error creating state machine")
 
-	archiveState := &mx.HistoricalState{
-		State: &genState,
-		Data:  []byte{},
-	}
-	err = chainStore.GetDatabase().Set(stateKey, archiveState.Bytes())
+	err = chainStore.Save(genState)
 	require.NoError(t, err)
 
 	// Should succeed given correct ChainID
@@ -200,7 +196,10 @@ func TestABCI_InitChain(t *testing.T) {
 
 func TestABCI_InitChain_WithInitialHeight(t *testing.T) {
 	suite := NewSnapsAppSuite(t)
-	defer os.RemoveAll(suite.rootDir)
+	defer func() {
+		defer os.RemoveAll(suite.rootDir)
+		suite.reactor.Stop() //nolint:errcheck
+	}()
 
 	// We test using the "first network"
 	testChainID := suite.reactor.GetNetworks()[0]
@@ -221,7 +220,10 @@ func TestABCI_InitChain_WithInitialHeight(t *testing.T) {
 
 func TestABCI_PrepareProposal(t *testing.T) {
 	suite := NewSnapsAppSuite(t)
-	defer os.RemoveAll(suite.rootDir)
+	defer func() {
+		defer os.RemoveAll(suite.rootDir)
+		suite.reactor.Stop() //nolint:errcheck
+	}()
 
 	// We test using the "first network"
 	testChainID := suite.reactor.GetNetworks()[0]
@@ -250,10 +252,15 @@ func TestABCI_PrepareProposal(t *testing.T) {
 
 func TestABCI_PrepareProposal_ExtensionFailure(t *testing.T) {
 	// Forces a FAILING PrepareProposal extension
-	suite := NewSnapsAppSuite(t, snapsapp.WithPrepareProposalExtension(
-		mockPrepareProposalExtensionWithError,
-	))
-	defer os.RemoveAll(suite.rootDir)
+	failImpl := mx.NewExtendedClient(&client.DefaultClient{})
+	failImpl.PrepareProposalExtension = mockPrepareProposalExtensionWithError
+
+	// Injects the failing client extension
+	suite := NewSnapsAppSuite(t, snapsapp.WithClientImpl(failImpl))
+	defer func() {
+		defer os.RemoveAll(suite.rootDir)
+		suite.reactor.Stop() //nolint:errcheck
+	}()
 
 	// We test using the "first network"
 	testChainID := suite.reactor.GetNetworks()[0]
@@ -293,7 +300,10 @@ func TestABCI_PrepareProposal_ExtensionFailure(t *testing.T) {
 
 func TestABCI_ProcessProposal(t *testing.T) {
 	suite := NewSnapsAppSuite(t)
-	defer os.RemoveAll(suite.rootDir)
+	defer func() {
+		defer os.RemoveAll(suite.rootDir)
+		suite.reactor.Stop() //nolint:errcheck
+	}()
 
 	// We test using the "first network"
 	testChainID := suite.reactor.GetNetworks()[0]
@@ -322,10 +332,15 @@ func TestABCI_ProcessProposal(t *testing.T) {
 
 func TestABCI_ProcessProposal_ExtensionFailure(t *testing.T) {
 	// Forces a FAILING ProcessProposal extension
-	suite := NewSnapsAppSuite(t, snapsapp.WithProcessProposalExtension(
-		mockProcessProposalExtensionWithError,
-	))
-	defer os.RemoveAll(suite.rootDir)
+	failImpl := mx.NewExtendedClient(&client.DefaultClient{})
+	failImpl.ProcessProposalExtension = mockProcessProposalExtensionWithError
+
+	// Injects the failing client extension
+	suite := NewSnapsAppSuite(t, snapsapp.WithClientImpl(failImpl))
+	defer func() {
+		defer os.RemoveAll(suite.rootDir)
+		suite.reactor.Stop() //nolint:errcheck
+	}()
 
 	// We test using the "first network"
 	testChainID := suite.reactor.GetNetworks()[0]
@@ -360,7 +375,10 @@ func TestABCI_ProcessProposal_ExtensionFailure(t *testing.T) {
 
 func TestABCI_FinalizeBlock(t *testing.T) {
 	suite := NewSnapsAppSuite(t)
-	defer os.RemoveAll(suite.rootDir)
+	defer func() {
+		defer os.RemoveAll(suite.rootDir)
+		suite.reactor.Stop() //nolint:errcheck
+	}()
 
 	// We test using the "first network"
 	testChainID := suite.reactor.GetNetworks()[0]
@@ -385,7 +403,10 @@ func TestABCI_FinalizeBlock(t *testing.T) {
 
 func TestABCI_FinalizeBlock_WithInitialHeight(t *testing.T) {
 	suite := NewSnapsAppSuite(t)
-	defer os.RemoveAll(suite.rootDir)
+	defer func() {
+		defer os.RemoveAll(suite.rootDir)
+		suite.reactor.Stop() //nolint:errcheck
+	}()
 
 	// We test using the "first network"
 	testChainID := suite.reactor.GetNetworks()[0]
@@ -413,10 +434,15 @@ func TestABCI_FinalizeBlock_WithInitialHeight(t *testing.T) {
 
 func TestABCI_FinalizeBlock_ExtensionFailure(t *testing.T) {
 	// Forces a FAILING FinalizeBlock extension
-	suite := NewSnapsAppSuite(t, snapsapp.WithFinalizeBlockExtension(
-		mockFinalizeBlockExtensionWithError,
-	))
-	defer os.RemoveAll(suite.rootDir)
+	failImpl := mx.NewExtendedClient(&client.DefaultClient{})
+	failImpl.FinalizeBlockExtension = mockFinalizeBlockExtensionWithError
+
+	// Injects the failing client extension
+	suite := NewSnapsAppSuite(t, snapsapp.WithClientImpl(failImpl))
+	defer func() {
+		defer os.RemoveAll(suite.rootDir)
+		suite.reactor.Stop() //nolint:errcheck
+	}()
 
 	// We test using the "first network"
 	testChainID := suite.reactor.GetNetworks()[0]
@@ -452,7 +478,10 @@ func TestABCI_FinalizeBlock_ExtensionFailure(t *testing.T) {
 
 func TestABCI_Proposal_HappyPath(t *testing.T) {
 	suite := NewSnapsAppSuite(t)
-	defer os.RemoveAll(suite.rootDir)
+	defer func() {
+		defer os.RemoveAll(suite.rootDir)
+		suite.reactor.Stop() //nolint:errcheck
+	}()
 
 	// We test using the "first network"
 	testChainID := suite.reactor.GetNetworks()[0]
@@ -508,7 +537,10 @@ func TestABCI_Proposal_HappyPath(t *testing.T) {
 
 func TestABCI_CheckTx(t *testing.T) {
 	suite := NewSnapsAppSuite(t)
-	defer os.RemoveAll(suite.rootDir)
+	defer func() {
+		defer os.RemoveAll(suite.rootDir)
+		suite.reactor.Stop() //nolint:errcheck
+	}()
 
 	// We test using the "first network"
 	testChainID := suite.reactor.GetNetworks()[0]
@@ -534,10 +566,15 @@ func TestABCI_CheckTx(t *testing.T) {
 
 func TestABCI_CheckTx_ExtensionFailure(t *testing.T) {
 	// Forces a FAILING CheckTx extension
-	suite := NewSnapsAppSuite(t, snapsapp.WithCheckTxExtension(
-		mockCheckTxExtensionWithError,
-	))
-	defer os.RemoveAll(suite.rootDir)
+	failImpl := mx.NewExtendedClient(&client.DefaultClient{})
+	failImpl.CheckTxExtension = mockCheckTxExtensionWithError
+
+	// Injects the failing client extension
+	suite := NewSnapsAppSuite(t, snapsapp.WithClientImpl(failImpl))
+	defer func() {
+		defer os.RemoveAll(suite.rootDir)
+		suite.reactor.Stop() //nolint:errcheck
+	}()
 
 	// We test using the "first network"
 	testChainID := suite.reactor.GetNetworks()[0]
@@ -568,7 +605,10 @@ func TestABCI_CheckTx_ExtensionFailure(t *testing.T) {
 
 func TestABCI_Commit(t *testing.T) {
 	suite := NewSnapsAppSuite(t)
-	defer os.RemoveAll(suite.rootDir)
+	defer func() {
+		defer os.RemoveAll(suite.rootDir)
+		suite.reactor.Stop() //nolint:errcheck
+	}()
 
 	// We test using the "first network"
 	testChainID := suite.reactor.GetNetworks()[0]
@@ -598,10 +638,16 @@ func TestABCI_Commit(t *testing.T) {
 }
 
 func TestABCI_Commit_ExtensionFailure(t *testing.T) {
-	suite := NewSnapsAppSuite(t, snapsapp.WithCommitExtension(
-		mockCommitExtensionWithError,
-	))
-	defer os.RemoveAll(suite.rootDir)
+	// Forces a FAILING Commit extension
+	failImpl := mx.NewExtendedClient(&client.DefaultClient{})
+	failImpl.CommitExtension = mockCommitExtensionWithError
+
+	// Injects the failing client extension
+	suite := NewSnapsAppSuite(t, snapsapp.WithClientImpl(failImpl))
+	defer func() {
+		defer os.RemoveAll(suite.rootDir)
+		suite.reactor.Stop() //nolint:errcheck
+	}()
 
 	// We test using the "first network"
 	testChainID := suite.reactor.GetNetworks()[0]

@@ -25,7 +25,13 @@ import (
 //
 // A cacheable chain provider is provided with [NewChainRegistry].
 type ChainRegistry interface {
-	// HasChain should return true if the ChainID can be found
+	// SetClientImpl should overwrite the client implementation.
+	SetClientImpl(cli client.Client) ChainRegistry
+
+	// GetClientImpl should return the active client implementation.
+	GetClientImpl() client.Client
+
+	// HasChain should return true if the ChainID can be found.
 	HasChain(chainID string) bool
 
 	// GetChains should return an ordered slice of unique chain identifiers.
@@ -61,9 +67,35 @@ type singletonChainRegistry struct {
 	// ReplicatedChains contains a slice of chain identifiers ordered alphabetically.
 	ReplicatedChains []string
 
-	// UserChains maps user addresses to a slice of ChainIDs
+	// userChains maps user addresses to a slice of ChainIDs
 	// This field is unexported to prevent unordered iteration.
 	userChains map[string][]string
+
+	// clientImpl contains an instance of a client implementation.
+	clientImpl client.Client
+}
+
+// WithClientImpl sets the client implementation to cli.
+func WithClientImpl(cli client.Client) func(ChainRegistry) {
+	return func(reg ChainRegistry) {
+		reg.SetClientImpl(cli)
+	}
+}
+
+// SetClientImpl sets the active client implementation.
+func (r *singletonChainRegistry) SetClientImpl(cli client.Client) ChainRegistry {
+	r.clientImpl = cli
+	return r
+}
+
+// GetClientImpl returns the active client implementation or the default client
+// if no other was used in options.
+func (r *singletonChainRegistry) GetClientImpl() client.Client {
+	if r.clientImpl == nil {
+		r.SetClientImpl(&client.DefaultClient{})
+	}
+
+	return r.clientImpl
 }
 
 // HasChain returns true if the ChainID can be found
@@ -166,7 +198,7 @@ type ChainRegistryProvider func(*config.MultiplexConfig) (ChainRegistry, error)
 //
 // This method implementation supports concurrent calls.
 // NewChainRegistry implements ChainRegistryProvider.
-func NewChainRegistry(conf *config.MultiplexConfig) (ChainRegistry, error) {
+func NewChainRegistry(conf *config.MultiplexConfig, options ...func(ChainRegistry)) (ChainRegistry, error) {
 	if conf.Strategy == DisableReplicationStrategy() {
 		return &singletonChainRegistry{}, nil
 	}
@@ -178,14 +210,6 @@ func NewChainRegistry(conf *config.MultiplexConfig) (ChainRegistry, error) {
 		err      error
 	}
 
-	// Uses the default extension implementation, i.e. deep-copy conf.StateSync
-	// see `multiplex/client.go` to use a custom state-sync config extension.
-	injectSyncConfig := client.InjectSyncConfig(conf, GetSyncConfigExtension())
-
-	// Uses the default extension implementation, i.e. deep-copy conf.ChainSeeds
-	// see `multiplex/client.go` to use a custom seed nodes config extension.
-	injectChainSeeds := client.InjectChainSeeds(conf, GetSeedConfigExtension())
-
 	// This implementation is cacheable in that the execution is guaranteed
 	// to be done only once. The returned ChainRegistry instance is the result
 	// of parsing the [config.MultiplexConfig] configuration object.
@@ -195,6 +219,22 @@ func NewChainRegistry(conf *config.MultiplexConfig) (ChainRegistry, error) {
 		registry.ChainSeeds = map[string]string{}
 		registry.userChains = map[string][]string{}
 		registry.ReplicatedChains = []string{}
+
+		// Permits overwrite of client implementation.
+		for _, option := range options {
+			option(registry)
+		}
+
+		// Use the default client implementation or a custom overwrite.
+		cli := registry.GetClientImpl()
+
+		// Uses the default extension implementation, i.e. deep-copy conf.StateSync
+		// see `multiplex/client.go` to use a custom state-sync config extension.
+		injectSyncConfig := client.InjectSyncConfig(conf, cli.GetSyncConfigExtension())
+
+		// Uses the default extension implementation, i.e. deep-copy conf.ChainSeeds
+		// see `multiplex/client.go` to use a custom seed nodes config extension.
+		injectChainSeeds := client.InjectChainSeeds(conf, cli.GetSeedConfigExtension())
 
 		// Copy seed nodes and map to ChainID
 		for chainID, seedNodes := range injectChainSeeds {

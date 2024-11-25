@@ -18,6 +18,102 @@ const (
 )
 
 // ----------------------------------------------------------------------------
+// Client
+
+// Client interface defines the contract for custom client implementations.
+//
+// See also: [DefaultClient].
+type Client interface {
+	// Configuration extensions
+	GetSyncConfigExtension() SyncConfigExtensionFn
+	GetSeedConfigExtension() SeedConfigExtensionFn
+
+	// Consensus & Data extensions
+	GetValidatorUpdateExtension() ValidatorUpdateExtensionFn
+	GetConsensusUpdateExtension() ConsensusUpdateExtensionFn
+	GetCheckTxExtension() CheckTxExtensionFn
+	GetPrepareProposalExtension() PrepareProposalExtensionFn
+	GetProcessProposalExtension() ProcessProposalExtensionFn
+	GetFinalizeBlockExtension() FinalizeBlockExtensionFn
+	GetCommitExtension() CommitExtensionFn
+
+	// Data consistency (audit) extensions
+	GetCheckMutationResultExtension() CheckMutationResultExtensionFn
+}
+
+// ----------------------------------------------------------------------------
+// DefaultClient
+
+// DefaultClient implements the [Client] interface using the example
+// implementation (default) in `client/default.go`.
+//
+// i.e. It uses the underlying [client.DefaultSeedConfigExtension].
+type DefaultClient struct{}
+
+// Assert that our implementations satisfy the Client interface.
+var _ Client = (*DefaultClient)(nil)
+
+// GetSyncConfigExtension returns the default configuration extension
+// for state-sync.
+func (DefaultClient) GetSyncConfigExtension() SyncConfigExtensionFn {
+	return DefaultSyncConfigExtension
+}
+
+// GetSeedConfigExtension returns the default configuration extension
+// for seed nodes.
+func (DefaultClient) GetSeedConfigExtension() SeedConfigExtensionFn {
+	return DefaultSeedConfigExtension
+}
+
+// GetValidatorUpdateExtension returns the default reporting extension
+// for validator set updates.
+func (DefaultClient) GetValidatorUpdateExtension() ValidatorUpdateExtensionFn {
+	return DefaultValidatorUpdateExtension
+}
+
+// GetConsensusUpdateExtension returns the default reporting extension
+// for consensus parameter updates.
+func (DefaultClient) GetConsensusUpdateExtension() ConsensusUpdateExtensionFn {
+	return DefaultConsensusUpdateExtension
+}
+
+// GetCheckTxExtension returns the default audit extension
+// for transactions.
+func (DefaultClient) GetCheckTxExtension() CheckTxExtensionFn {
+	return DefaultCheckTxExtension
+}
+
+// GetPrepareProposalExtension returns the default data extension
+// for preparing block proposals with transactions.
+func (DefaultClient) GetPrepareProposalExtension() PrepareProposalExtensionFn {
+	return DefaultPrepareProposalExtension
+}
+
+// GetProcessProposalExtension returns the default data extension
+// for processing block proposals' transactions.
+func (DefaultClient) GetProcessProposalExtension() ProcessProposalExtensionFn {
+	return DefaultProcessProposalExtension
+}
+
+// GetFinalizeBlockExtension returns the default data extension
+// for finalized blocks transactions data.
+func (DefaultClient) GetFinalizeBlockExtension() FinalizeBlockExtensionFn {
+	return DefaultFinalizeBlockExtension
+}
+
+// GetCommitExtension returns the default audit extension
+// for committed blocks.
+func (DefaultClient) GetCommitExtension() CommitExtensionFn {
+	return DefaultCommitExtension
+}
+
+// GetCheckMutationResultExtension returns the default audit extension
+// for mutations of snapshottable state machines.
+func (DefaultClient) GetCheckMutationResultExtension() CheckMutationResultExtensionFn {
+	return DefaultCheckMutationResultExtension
+}
+
+// ----------------------------------------------------------------------------
 // Configuration
 
 // SyncConfigExtensionFn provides an interface for state-sync config extensions
@@ -87,21 +183,7 @@ type ConsensusUpdateExtensionFn func(
 ) error
 
 // ----------------------------------------------------------------------------
-// Snapshots
-
-// SnapshotMutationExtensionFn provides an interface for state mutation extensions
-// that are used in [InjectSnapshotMutation] to delegate the processing of state
-// and the mutations of data, to potential extensions.
-//
-// This method accepts a *state instance* as a `[]byte` slice.
-// Implementations should return the mutated state as a `[]byte` slice.
-//
-// This extension is executed when snapshots are taken.
-// See also: [DefaultSnapshotMutationExtension].
-type SnapshotMutationExtensionFn func(
-	context.Context,
-	[]byte,
-) []byte
+// State
 
 // CheckMutationResultExtensionFn provides an interface for auditing the result
 // of state mutation extensions that are used in [InjectSnapshotMutation]. This
@@ -111,25 +193,11 @@ type SnapshotMutationExtensionFn func(
 // Implementations should return an error if the audit of data fails.
 //
 // This extension is executed when snapshots are taken.
-// See also: [DefaultCheckMutationResuultExtension].
+// See also: [DefaultCheckMutationResultExtension].
 type CheckMutationResultExtensionFn func(
 	context.Context,
 	[]byte,
 ) error
-
-// SnapshotRestoreExtensionFn provides an interface for snapshot restoration
-// extensions that are used in [InjectSnapshotRestore] to delegate the
-// processing of mutated snapshots, to potential extensions.
-//
-// This method accepts a *snapshot instance* as a `[]byte` slice.
-// Implementations should return the mutated snapshot as a `[]byte` slice.
-//
-// This extension is executed when snapshots are restored.
-// See also: [DefaultSnapshotRestoreExtension].
-type SnapshotRestoreExtensionFn func(
-	context.Context,
-	[]byte,
-) []byte
 
 // ----------------------------------------------------------------------------
 // Transactions / Blocks

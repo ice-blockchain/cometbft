@@ -3,6 +3,7 @@ package multiplex
 import (
 	"fmt"
 
+	sm "github.com/ice-blockchain/cometbft/state"
 	bs "github.com/ice-blockchain/cometbft/store"
 )
 
@@ -11,7 +12,7 @@ import (
 //
 // First, a state database instance is retrieved, then the GenesisDoc checksum
 // is validated against the hash stored in the state database.
-// Next, a [ChainHistoryStore] instance is created around the state database
+// Next, a [sm.Store] instance is created around the state database
 // instance for the respective replicated chain.
 //
 // And finally, this method will *load the state machine* using either the
@@ -47,22 +48,25 @@ func (reactor *Reactor) InitMultiplexStates() error {
 			return err
 		}
 
-		// Initialize a ChainHistoryStore (snapshottable)
+		// Initialize a replicable sm.Store
 		dbKeyLayoutVersion := globalConfig.Storage.ExperimentalKeyLayout
-		stateStore := NewChainHistoryStore(stateDB, dbKeyLayoutVersion)
+		stateStore := sm.NewStore(stateDB, sm.StoreOptions{
+			DBKeyLayout: dbKeyLayoutVersion,
+		})
 
 		// .. and load the state machine
-		chainState, _ := stateStore.LoadArchive(stateKey)
-		if chainState.State.IsEmpty() {
+		stateMachine, err := stateStore.Load()
+		if err != nil {
+			return fmt.Errorf("error loading state machine for ChainID %s: %w", chainID, err)
+		}
+
+		// .. or fill it from db/genesis doc
+		if stateMachine.IsEmpty() {
 			// Load the state from database or GenesisDoc
-			stateMachine, err := stateStore.LoadFromDBOrGenesisDoc(genesisDoc)
+			stateMachine, err = stateStore.LoadFromDBOrGenesisDoc(genesisDoc)
 			if err != nil {
 				return err
 			}
-
-			chainState = new(HistoricalState)
-			chainState.State = &stateMachine
-			chainState.Data = []byte{}
 
 			// State machine was empty, update now
 			if err := stateStore.Save(stateMachine); err != nil {
@@ -71,7 +75,7 @@ func (reactor *Reactor) InitMultiplexStates() error {
 		}
 
 		// Prepare registerable instance mapped to ChainID
-		reactor.RegisterInstance(InstanceKeyState, chainID, chainState)
+		reactor.RegisterInstance(InstanceKeyState, chainID, stateMachine)
 		reactor.RegisterInstance(InstanceKeyStateStore, chainID, stateStore)
 	}
 
