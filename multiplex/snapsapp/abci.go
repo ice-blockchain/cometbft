@@ -412,7 +412,6 @@ func (app *SnapsApp) PrepareProposal(
 			"CLIENT PANIC: failing prepare proposal extension: %w", err)
 	}
 
-	// TODO(midas): add PrepareTransactions() callback for per-tx mutations/storage
 	return &abcitypes.PrepareProposalResponse{Txs: preparedTxes}, nil
 }
 

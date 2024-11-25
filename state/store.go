@@ -126,6 +126,8 @@ type Store interface {
 	LoadLastFinalizeBlockResponse(height int64) (*abci.FinalizeBlockResponse, error)
 	// LoadConsensusParams loads the consensus params for a given height
 	LoadConsensusParams(height int64) (types.ConsensusParams, error)
+	// GetStateMutation returns a [StateMutationFn]
+	GetStateMutation() StateMutationFn
 	// Save overwrites the previous state with the updated one
 	Save(state State) error
 	// SaveFinalizeBlockResponse saves ABCIResponses for a given height
@@ -156,7 +158,12 @@ type Store interface {
 	Close() error
 }
 
-// DBStore exports the database store implementation.
+// StateMutationFn defines rules for state mutation functors which permit
+// to wrap state bytes in custom structures, e.g. HistoricalState.
+type StateMutationFn func([]byte) []byte
+
+// DBStore exports the database store implementation and attaches
+// a state mutation functor to wrap state in custom strructure.
 type DBStore struct {
 	dbStore
 }
@@ -168,9 +175,22 @@ func NewDBStore(db dbm.DB, options StoreOptions) Store {
 	}
 }
 
+// NewDBStoreWithMutation creates a [DBStore] instance using a [dbm.DB],
+// attaches a custom [StateMutationFn] and [StoreOptions].
+func NewDBStoreWithMutation(
+	db dbm.DB,
+	mutationFn StateMutationFn,
+	options StoreOptions,
+) Store {
+	return &DBStore{
+		dbStore: NewStoreWithMutation(db, mutationFn, options).(dbStore),
+	}
+}
+
 // dbStore wraps a db (github.com/cometbft/cometbft-db).
 type dbStore struct {
-	db dbm.DB
+	db         dbm.DB
+	mutationFn StateMutationFn
 
 	DBKeyLayout KeyLayout
 
@@ -251,6 +271,30 @@ func NewStore(db dbm.DB, options StoreOptions) Store {
 	}
 
 	return store
+}
+
+// NewStoreWithMutation creates a [dbStore] instance using a [dbm.DB],
+// attaches a custom [StateMutationFn] and [StoreOptions].
+func NewStoreWithMutation(
+	db dbm.DB,
+	mutationFn StateMutationFn,
+	options StoreOptions,
+) Store {
+	store := NewStore(db, options).(dbStore)
+	store.mutationFn = mutationFn
+	return store
+}
+
+// GetStateMutation returns a [StateMutationFn] or the default deep-copy functor.
+func (store dbStore) GetStateMutation() StateMutationFn {
+	if store.mutationFn == nil {
+		return func(in []byte) []byte {
+			out := in[:]
+			return out
+		}
+	}
+
+	return store.mutationFn
 }
 
 // LoadStateFromDBOrGenesisFile loads the most recent state from the database,
@@ -366,6 +410,11 @@ func (store dbStore) save(state State, key []byte) error {
 	// In case the state is big this can impact the metrics reporting
 	stateMarshallTime := time.Now()
 	stateBytes := state.Bytes()
+
+	// Execute any mutation that is outside of scope of the block
+	// execution, e.g. executing external wrapping of data.
+	mutationFn := store.GetStateMutation()
+	stateBytes = mutationFn(stateBytes)
 	stateMarshallDiff := time.Since(stateMarshallTime).Seconds()
 
 	if err := batch.Set(key, stateBytes); err != nil {

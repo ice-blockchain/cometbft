@@ -1,7 +1,10 @@
-# CometBFT
+# CometBFT Multiplex
 
-[Byzantine-Fault Tolerant][bft] [State Machine Replication][smr]. Or
-[Blockchain], for short.
+The [CometBFT] [Multiplex][mx] library contains features for running concurrent
+consensus instances with [Byzantine-Fault Tolerant][bft] [State Machine Replication][smr].
+Or running many [Blockchains] concurrently.
+
+The `multiplex` package implementation is available on branch [`multiplex`][mx].
 
 [![Version][version-badge]][version-url]
 [![API Reference][api-badge]][api-url]
@@ -10,13 +13,11 @@
 [![License][license-badge]][license-url]
 [![Sourcegraph][sg-badge]][sg-url]
 
-| Branch  | Tests                                          | Linting                                     |
-|---------|------------------------------------------------|---------------------------------------------|
-| main    | [![Tests][tests-badge]][tests-url]             | [![Lint][lint-badge]][lint-url]             |
-| v1.x    | [![Tests][tests-badge-v1x]][tests-url-v1x]     | [![Lint][lint-badge-v1x]][lint-url-v1x]     |
-| v0.38.x | [![Tests][tests-badge-v038x]][tests-url-v038x] | [![Lint][lint-badge-v038x]][lint-url-v038x] |
-| v0.37.x | [![Tests][tests-badge-v037x]][tests-url-v037x] | [![Lint][lint-badge-v037x]][lint-url-v037x] |
-| v0.34.x | [![Tests][tests-badge-v034x]][tests-url-v034x] | [![Lint][lint-badge-v034x]][lint-url-v034x] |
+| Branch    | Tests                                          | Linting                                     |
+|-----------|------------------------------------------------|---------------------------------------------|
+| multiplex | [![Tests][tests-badge-mx]][tests-url-mx]       | [![Lint][lint-badge-mx]][lint-url-mx]       |
+| main      | [![Tests][tests-badge]][tests-url]             | [![Lint][lint-badge]][lint-url]             |
+| v1.x      | [![Tests][tests-badge-v1x]][tests-url-v1x]     | [![Lint][lint-badge-v1x]][lint-url-v1x]     |
 
 CometBFT is a Byzantine Fault Tolerant (BFT) middleware that takes a
 state transition machine - written in any programming language - and securely
@@ -170,39 +171,33 @@ Funding for CometBFT development comes primarily from the [Interchain
 Foundation](https://interchain.io), a Swiss non-profit. Informal Systems also
 maintains [cometbft.com](https://cometbft.com).
 
+[CometBFT]: https://github.com/ice-blockchain/cometbft
+[mx]: https://github.com/ice-blockchain/cometbft/tree/multiplex/multiplex/README.md
 [bft]: https://en.wikipedia.org/wiki/Byzantine_fault_tolerance
 [smr]: https://en.wikipedia.org/wiki/State_machine_replication
-[Blockchain]: https://en.wikipedia.org/wiki/Blockchain
-[version-badge]: https://img.shields.io/github/v/release/cometbft/cometbft.svg
-[version-url]: https://github.com/cometbft/cometbft/releases/latest
+[Blockchains]: https://en.wikipedia.org/wiki/Blockchain
+[version-badge]: https://img.shields.io/github/v/release/ice-blockchain/cometbft.svg
+[version-url]: https://github.com/ice-blockchain/cometbft/releases/latest
 [api-badge]: https://camo.githubusercontent.com/915b7be44ada53c290eb157634330494ebe3e30a/68747470733a2f2f676f646f632e6f72672f6769746875622e636f6d2f676f6c616e672f6764646f3f7374617475732e737667
-[api-url]: https://pkg.go.dev/github.com/cometbft/cometbft
-[go-badge]: https://img.shields.io/badge/go-1.21-blue.svg
+[api-url]: https://pkg.go.dev/github.com/ice-blockchain/cometbft
+[go-badge]: https://img.shields.io/badge/go-1.23-blue.svg
 [go-url]: https://github.com/moovweb/gvm
 [discord-badge]: https://img.shields.io/discord/669268347736686612.svg
 [discord-url]: https://discord.gg/interchain
-[license-badge]: https://img.shields.io/github/license/cometbft/cometbft.svg
-[license-url]: https://github.com/cometbft/cometbft/blob/main/LICENSE
-[sg-badge]: https://sourcegraph.com/github.com/cometbft/cometbft/-/badge.svg
-[sg-url]: https://sourcegraph.com/github.com/cometbft/cometbft?badge
-[tests-url]: https://github.com/cometbft/cometbft/actions/workflows/tests.yml
-[tests-url-v1x]: https://github.com/cometbft/cometbft/actions/workflows/tests.yml?query=branch%3Av1.x
-[tests-url-v038x]: https://github.com/cometbft/cometbft/actions/workflows/tests.yml?query=branch%3Av0.38.x
-[tests-url-v037x]: https://github.com/cometbft/cometbft/actions/workflows/tests.yml?query=branch%3Av0.37.x
-[tests-url-v034x]: https://github.com/cometbft/cometbft/actions/workflows/tests.yml?query=branch%3Av0.34.x
-[tests-badge]: https://github.com/cometbft/cometbft/actions/workflows/tests.yml/badge.svg?branch=main
-[tests-badge-v1x]: https://github.com/cometbft/cometbft/actions/workflows/tests.yml/badge.svg?branch=v1.x
-[tests-badge-v038x]: https://github.com/cometbft/cometbft/actions/workflows/tests.yml/badge.svg?branch=v0.38.x
-[tests-badge-v037x]: https://github.com/cometbft/cometbft/actions/workflows/tests.yml/badge.svg?branch=v0.37.x
-[tests-badge-v034x]: https://github.com/cometbft/cometbft/actions/workflows/tests.yml/badge.svg?branch=v0.34.x
-[lint-badge]: https://github.com/cometbft/cometbft/actions/workflows/lint.yml/badge.svg?branch=main
-[lint-badge-v034x]: https://github.com/cometbft/cometbft/actions/workflows/lint.yml/badge.svg?branch=v0.34.x
-[lint-badge-v037x]: https://github.com/cometbft/cometbft/actions/workflows/lint.yml/badge.svg?branch=v0.37.x
-[lint-badge-v038x]: https://github.com/cometbft/cometbft/actions/workflows/lint.yml/badge.svg?branch=v0.38.x
-[lint-badge-v1x]: https://github.com/cometbft/cometbft/actions/workflows/lint.yml/badge.svg?branch=v1.x
-[lint-url]: https://github.com/cometbft/cometbft/actions/workflows/lint.yml
-[lint-url-v034x]: https://github.com/cometbft/cometbft/actions/workflows/lint.yml?query=branch%3Av0.34.x
-[lint-url-v037x]: https://github.com/cometbft/cometbft/actions/workflows/lint.yml?query=branch%3Av0.37.x
-[lint-url-v038x]: https://github.com/cometbft/cometbft/actions/workflows/lint.yml?query=branch%3Av0.38.x
-[lint-url-v1x]: https://github.com/cometbft/cometbft/actions/workflows/lint.yml?query=branch%3Av1.x
+[license-badge]: https://img.shields.io/github/license/ice-blockchain/cometbft.svg
+[license-url]: https://github.com/ice-blockchain/cometbft/blob/main/LICENSE
+[sg-badge]: https://sourcegraph.com/github.com/ice-blockchain/cometbft/-/badge.svg
+[sg-url]: https://sourcegraph.com/github.com/ice-blockchain/cometbft?badge
+[tests-url]: https://github.com/ice-blockchain/cometbft/actions/workflows/tests.yml
+[tests-url-mx]: https://github.com/ice-blockchain/cometbft/actions/workflows/tests.yml?query=branch%3Amultiplex
+[tests-url-v1x]: https://github.com/ice-blockchain/cometbft/actions/workflows/tests.yml?query=branch%3Av1.x
+[tests-badge]: https://github.com/ice-blockchain/cometbft/actions/workflows/tests.yml/badge.svg?branch=main
+[tests-badge-mx]: https://github.com/ice-blockchain/cometbft/actions/workflows/tests.yml/badge.svg?branch=multiplex
+[tests-badge-v1x]: https://github.com/ice-blockchain/cometbft/actions/workflows/tests.yml/badge.svg?branch=v1.x
+[lint-badge]: https://github.com/ice-blockchain/cometbft/actions/workflows/lint.yml/badge.svg?branch=main
+[lint-badge-v1x]: https://github.com/ice-blockchain/cometbft/actions/workflows/lint.yml/badge.svg?branch=v1.x
+[lint-badge-mx]: https://github.com/ice-blockchain/cometbft/actions/workflows/lint.yml/badge.svg?branch=multiplex
+[lint-url]: https://github.com/ice-blockchain/cometbft/actions/workflows/lint.yml
+[lint-url-v1x]: https://github.com/ice-blockchain/cometbft/actions/workflows/lint.yml?query=branch%3Av1.x
+[lint-url-mx]: https://github.com/ice-blockchain/cometbft/actions/workflows/lint.yml?query=branch%3Amultiplex
 [tm-core]: https://github.com/tendermint/tendermint

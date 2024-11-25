@@ -55,7 +55,7 @@ You can test the chunks stream, snapshots manager and snapshotting features
 using the following unit test suite:
 
 ```bash
-go test github.com/cometbft/cometbft/multiplex/snapshots -test.v -count=1
+go test github.com/ice-blockchain/cometbft/multiplex/snapshots -test.v -count=1
 ```
 
 Note that this test suite is apart from the `snapshots` package and implemented

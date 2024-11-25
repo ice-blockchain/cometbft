@@ -584,8 +584,6 @@ func NewNodeWithCliParams(ctx context.Context,
 // Note that [p2p.BaseReactor] implementing instances are retrieved from the
 // switch instance defined with [p2p.Switch]. This drastically reduces the
 // amount of memory allocated when creating the instance.
-//
-// TODO(midas): We may need/prefer a service providers approach here.
 func NewNodeWithServices(
 	config *cfg.Config,
 	genDoc *types.GenesisDoc,

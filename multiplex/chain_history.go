@@ -10,6 +10,7 @@ import (
 	"github.com/cosmos/gogoproto/proto"
 
 	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
+	cmtstate "github.com/ice-blockchain/cometbft/api/cometbft/state/v1"
 	cmtos "github.com/ice-blockchain/cometbft/internal/os"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/snapshots"
@@ -100,9 +101,36 @@ func NewChainHistoryStore(
 	chainDB *ChainDB,
 	dbKeyLayoutVersion string,
 ) *ChainHistoryStore {
+	// This mutation takes care of wrapping the sm.State object
+	// using the HistoricalState wrapper.
+	// TODO(midas): fill the Data slice with relevant data.
+	wrapMutationFn := func(in []byte) []byte {
+		sp := new(cmtstate.State)
+		err := proto.Unmarshal(in, sp)
+		if err != nil {
+			// DATA HAS BEEN CORRUPTED OR THE SPEC HAS CHANGED
+			cmtos.Exit(fmt.Sprintf(`StateMutation: Data has been corrupted or its spec has changed:
+			%v\n`, err))
+		}
+
+		stateMachine, err := sm.FromProto(sp)
+		if err != nil {
+			// DATA HAS BEEN CORRUPTED OR THE SPEC HAS CHANGED
+			cmtos.Exit(fmt.Sprintf(`StateMutation: State has been corrupted or its spec has changed:
+			%v\n`, err))
+		}
+
+		// TODO(midas): fill the Data slice with relevant data.
+		archive := &HistoricalState{
+			State: stateMachine,
+			Data:  []byte{},
+		}
+		return archive.Bytes()
+	}
+
 	return &ChainHistoryStore{
 		ChainID: chainDB.ChainID,
-		DBStore: sm.NewDBStore(chainDB, sm.StoreOptions{
+		DBStore: sm.NewDBStoreWithMutation(chainDB, wrapMutationFn, sm.StoreOptions{
 			DiscardABCIResponses: false,
 			DBKeyLayout:          dbKeyLayoutVersion,
 		}).(*sm.DBStore),

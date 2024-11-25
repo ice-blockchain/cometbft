@@ -387,11 +387,14 @@ func ResetMultiplexPrivValidator(
 
 	// Not using default priv validator, we will either generate a random
 	// new priv validator key, or use the one provided with privValidator
+	var err error
 	var filePV *privval.FilePV
 	if privValidator == nil {
 		// IMPORTANT: This generates a random privValidator private key
-		// TODO(midas): should not ignore if an error is produced.
-		filePV, _ = privval.GenFilePV(privValKeyFile, privValStateFile, useDefaultKeyGenFunc())
+		filePV, err = privval.GenFilePV(privValKeyFile, privValStateFile, useDefaultKeyGenFunc())
+		if err != nil {
+			panic(fmt.Errorf("could not generate a priv validator: %w", err))
+		}
 	} else {
 		filePV = privValidator
 	}

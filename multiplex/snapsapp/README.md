@@ -53,7 +53,7 @@ for `PrepareProposal`, `ProcessProposal`, `FinalizeBlock` and `Commit`.
 You can test the ABCI methods using the following unit test suite:
 
 ```bash
-go test github.com/cometbft/cometbft/multiplex/snapsapp -test.v -count=1
+go test github.com/ice-blockchain/cometbft/multiplex/snapsapp -test.v -count=1
 ```
 
 Note that this test suite is apart from the `snapsapp` package and implemented

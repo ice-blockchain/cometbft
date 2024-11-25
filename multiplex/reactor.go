@@ -277,8 +277,6 @@ func (reactor *Reactor) SetStoragePaths(fs MultiplexFS) {
 // by a given name and ChainID.
 //
 // The servicesMutex is RW-locked during the time this function takes to run.
-//
-// TODO(midas): add validation/encoding for services names.
 func (reactor *Reactor) RegisterService(
 	serviceName string,
 	chainID string,
@@ -303,8 +301,6 @@ func (reactor *Reactor) RegisterService(
 // by a given multiplexName and ChainID.
 //
 // The multiplexMutex is RW-locked during the time this function takes to run.
-//
-// TODO(midas): add validation/encoding for multiplex names.
 func (reactor *Reactor) RegisterInstance(
 	multiplexName string,
 	chainID string,
@@ -602,7 +598,7 @@ func (reactor *Reactor) startNodeListeners(chainID string) error {
 	// Uses a separate priv validator for each supported network to prevent
 	// signing blocks with the same private key multiple times.
 	//
-	// TODO(midas):
+	// TODO(midas): Add compatibility for PrivValidator as external socket client.
 	// Currently it's not possible to use external socket client as
 	// PrivValidator and we ignore Config.PrivValidatorListenAddr
 	privValKeyDir := filepath.Join(userConfDir, chainID)   // config/
@@ -618,11 +614,10 @@ func (reactor *Reactor) startNodeListeners(chainID string) error {
 	if err != nil {
 		return err
 	}
-	// TODO(midas): currently it's not possible to use external socket client as PrivValidatoreactor.
 
 	// 3) Blocks and Transactions Indexers
 	//
-	// TODO(midas):
+	// TODO(midas): Add per-chain postgresql indexer compatibility, currently only support kv.
 	// The scoped indexer functionality is compatible only with the `kv` indexer for now,
 	// postgresql compatibility must be added. Appending the scope hash to the chainID
 	// in the NewEventSink() call may be enough to allow multiple indexers instances.

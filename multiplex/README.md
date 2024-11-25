@@ -1,15 +1,16 @@
-/*
+# CometBFT Multiplex
+
 The [multiplex] package provides with an implementation of [CometBFT] that
 allows for running concurrent consensus instances, on many different chains
 in parallel.
 
-# Implementation
+## Implementation
 
-A [ChainRegistry] interface is used for the initial configuration of seed
+A `ChainRegistry` interface is used for the initial configuration of seed
 nodes, for connecting to existing chains, and for custom state-sync, which
 is currently disabled.
 Importantly, when multiplex is enabled, we expect the `genesis.json` file
-to contain a [GenesisDocSet] JSON.
+to contain a `GenesisDocSet` JSON.
 
 The `snapshots` package implements automatic support for [CometBFT]
 state sync bootstrapping of nodes which allows a new node to join a network
@@ -32,7 +33,7 @@ The `client` package implements a *default* client integration for multiplex
 features that may be used to *inject custom configuration* and to mutate
 or otherwise use state machines as they are replicated on the networks.
 
-## Source code conventions
+### Source code conventions
 
 We define some simple conventions in the `multiplex` package that must be
 followed to improve readability of the source code and to provide a more
@@ -47,7 +48,7 @@ standardized implementation.
 - Naming convention for imports with `mx` prefix for multiplex features.
 - Naming convention for imports with `cmt` prefix for cometbft features.
 
-# Configuration
+## Configuration
 
 A `config.MultiplexConfig` structure defines the multiplex state replication
 configuration for a CometBFT node connecting to one or many networks.
@@ -56,20 +57,20 @@ The `MultiplexConfig#UserChains` option is necessary for creating new
 replicated chains, while `MultiplexConfig#ChainSeeds` is necessary for
 connecting to existing ones.
 
-Individual fields documentation can be found in [config.MultiplexConfig].
+Individual fields documentation can be found in `config.MultiplexConfig`.
 
-## Options helpers:
+### Options helpers:
 
-- [WithStrategy]
-- [WithSyncConfig]
-- [WithChainSeeds]
-- [WithUserChains]
-- [WithP2PStartPort]
-- [WithRPCStartPort]
+- `WithStrategy`
+- `WithSyncConfig`
+- `WithChainSeeds`
+- `WithUserChains`
+- `WithP2PStartPort`
+- `WithRPCStartPort`
 
-## NewConfigOverwrite
+### NewConfigOverwrite
 
-To begin with, [NewConfigOverwrite] updates a node configuration in-place to
+To begin with, `NewConfigOverwrite` updates a node configuration in-place to
 overwrite the services listen addresses such that there is one P2P- and one RPC
 port per replicated chain. Following ports overwrite apply:
 
@@ -77,7 +78,7 @@ port per replicated chain. Following ports overwrite apply:
 - RPC: legacy `26657`, multiplex `40001`...`4000x` with x the index of nodes
 
 The *index of a node* generally represents the index of the ChainID as per
-the [ChainRegistry#GetChains] return value, e.g. given ChainIDs ['A','B','C'],
+the `ChainRegistry#GetChains` return value, e.g. given ChainIDs \['A','B','C'\],
 the index of a node for the chain 'B', is 1 and the index for the chain 'A',
 is 0.
 
@@ -88,9 +89,9 @@ so that each replicated chain *writes to a separate WAL-file*.
 Also, state-sync is forcefully **disabled** because the preferred method of
 synchronization with individual replicated chains is to use **block-sync**.
 
-## ReplicationStrategy
+### ReplicationStrategy
 
-The [ReplicationStrategy] exports a string interface that determines the type
+The `ReplicationStrategy` exports a string interface that determines the type
 of replication being executed on this node. This strategy is notably used to
 determine the type of node and if it should enable multiplex features.
 
@@ -104,9 +105,9 @@ synchronize with replicated chains or not. Nodes that are not configured to
 synchronize with replicated chains may only be used to synchronize with legacy
 cometbft blockchain networks which are not compatible with nodes multiplexes.
 
-## GenesisDocSet
+### GenesisDocSet
 
-The [GenesisDocSet] consists of a slice of `types.GenesisDoc` objects which
+The `GenesisDocSet` consists of a slice of `types.GenesisDoc` objects which
 define the initial conditions for a CometBFT node multiplex, in particular
 their validator set, consensus parameters and ChainID.
 
@@ -115,11 +116,11 @@ interface to enable compatibility with legacy nodes that use only a singular
 `types.GenesisDoc` instance to connect to only one network without multiplex.
 
 Importantly, when multiplex is enabled, we expect the `genesis.json` file
-to contain a [GenesisDocSet] JSON with one or many replicated chains.
+to contain a `GenesisDocSet` JSON with one or many replicated chains.
 
-# Client interface
+## Client interface
 
-## Extensions
+### Extensions
 
 We define the rules for *configuration extensions*, *consensus extensions* and
 also for *data extensions*, which may be used to overwrite configuration objects
@@ -129,31 +130,31 @@ database, etc.
 
 ### Interfaces
 
-  - [SeedConfigExtensionFn]: Provides custom seed nodes configuration values.
-  - [ValidatorUpdateExtensionFn]: Provides custom auditing/reporting units for validator updates.
-  - [ConsensusUpdateExtensionFn]: Provides custom auditing/reporting units for consensus parameter updates.
-  - [CheckTxExtensionFn]: Provides custom auditing/reporting units for transactions.
-  - [PrepareProposalExtensionFn]: Provides custom pre-processing units for transactions data.
-  - [ProcessProposalExtensionFn]: Provides custom post-processing units for transactions data.
-  - [FinalizeBlockExtensionFn]: Provides custom processing units for blocks data.
-  - [CommitExtensionFn]: Provides custom auditing/reporting units for committed blocks.
+  - `SeedConfigExtensionFn`: Provides custom seed nodes configuration values.
+  - `ValidatorUpdateExtensionFn`: Provides custom auditing/reporting units for validator updates.
+  - `ConsensusUpdateExtensionFn`: Provides custom auditing/reporting units for consensus parameter updates.
+  - `CheckTxExtensionFn`: Provides custom auditing/reporting units for transactions.
+  - `PrepareProposalExtensionFn`: Provides custom pre-processing units for transactions data.
+  - `ProcessProposalExtensionFn`: Provides custom post-processing units for transactions data.
+  - `FinalizeBlockExtensionFn`: Provides custom processing units for blocks data.
+  - `CommitExtensionFn`: Provides custom auditing/reporting units for committed blocks.
 
 We provide several example implementations that basically just *deep-copy* the
 input. Obviously, if you are developing a custom extension, you would do more
 than just deep-copy input objects.
 
-An example for [SeedConfigExtensionFn] is: [DefaultSeedConfigExtension]
-An example for [ValidatorUpdateExtensionFn] is: [DefaultValidatorUpdateExtension]
-An example for [ConsensusUpdateExtensionFn] is: [DefaultConsensusUpdateExtension]
-An example for [CheckTxExtensionFn] is: [DefaultCheckTxExtension]
-An example for [PrepareProposalExtensionFn] is: [DefaultPrepareProposalExtension]
-An example for [ProcessProposalExtensionFn] is: [DefaultProcessProposalExtension]
-An example for [FinalizeBlockExtensionFn] is: [DefaultFinalizeBlockExtension]
-An example for [CommitExtensionFn] is: [DefaultCommitExtension]
+An example for `SeedConfigExtensionFn` is: `DefaultSeedConfigExtension`
+An example for `ValidatorUpdateExtensionFn` is: `DefaultValidatorUpdateExtension`
+An example for `ConsensusUpdateExtensionFn` is: `DefaultConsensusUpdateExtension`
+An example for `CheckTxExtensionFn` is: `DefaultCheckTxExtension`
+An example for `PrepareProposalExtensionFn` is: `DefaultPrepareProposalExtension`
+An example for `ProcessProposalExtensionFn` is: `DefaultProcessProposalExtension`
+An example for `FinalizeBlockExtensionFn` is: `DefaultFinalizeBlockExtension`
+An example for `CommitExtensionFn` is: `DefaultCommitExtension`
 
 ## ChainRegistry
 
-A [ChainRegistry] interface is used for the initial configuration of seed
+A `ChainRegistry` interface is used for the initial configuration of seed
 nodes, for connecting to existing chains.
 
 This structure defines a registry pattern contract which should be searchable
@@ -165,22 +166,22 @@ IMPORTANT: This structure requires the ChainID field to contain a user address
 of 20 bytes in hexadecimal format and a fingerprint of 8 bytes.
 e.g.: `mx-chain-FF080888BE0F48DE88927C3F49215B96548273AB-3E547E3280313019`
 
-The [ChainRegistry] interface defines a contract for the methods:
+The `ChainRegistry` interface defines a contract for the methods:
 
-- [ChainRegistry#HasChain]: True when the ChainID is known by the peer.
-- [ChainRegistry#GetChains]: Returns an *ordered slice* of ChainID values.
-- [ChainRegistry#GetSeeds]: Returns a comma-separated list of seed nodes.
-- [ChainRegistry#GetStateSyncConfig]: Returns the custom state-sync config.
-- [ChainRegistry#GetAddress]: Finds a user address for a ChainID.
-- [ChainRegistry#FindChain]: Searches for a ChainID in the registry.
+- `ChainRegistry#HasChain`: True when the ChainID is known by the peer.
+- `ChainRegistry#GetChains`: Returns an *ordered slice* of ChainID values.
+- `ChainRegistry#GetSeeds`: Returns a comma-separated list of seed nodes.
+- `ChainRegistry#GetStateSyncConfig`: Returns the custom state-sync config.
+- `ChainRegistry#GetAddress`: Finds a user address for a ChainID.
+- `ChainRegistry#FindChain`: Searches for a ChainID in the registry.
 
-Note that we provide an internal implementation of the [ChainRegistry]
+Note that we provide an internal implementation of the `ChainRegistry`
 interface with `singletonChainRegistry` which is the implementation used
-under-the-hood by [NewChainRegistry].
+under-the-hood by `NewChainRegistry`.
 
 ## Reactor
 
-The [Reactor] implementation takes care of configuring node instances for the
+The `Reactor` implementation takes care of configuring node instances for the
 correct replicated blockchain networks. The reactor starts multiple listeners
 in parallel and sends messages on a channel to report about successful launch.
 
@@ -211,7 +212,7 @@ replicated chain.
 Return types of methods defined by this interface are compatible with
 `proxy.AppConns` to prevent breaking the ABCI integration.
 
-# Snapshots
+## Snapshots
 
 **The state-sync process is available but we recommend not to use it**, such
 as to *always* bootstrap new nodes using the *full historical data* of a
@@ -234,7 +235,7 @@ ABCI interface.
 Although the ABCI interface (and this manager) passes chunks as byte slices,
 the internal snapshot/restore APIs use IO streams (i.e. chan io.ReadCloser).
 
-# SnapsApp
+## SnapsApp
 
 SnapsApp defines an ABCI application around a multiplex chain registry, and
 which delegates snapshotting to a  `snapshots.Manager` implementation.
@@ -253,7 +254,7 @@ for node multiplexes. The SnapsApp application must be thread-safe and uses
 one `snapshots.Manager` instance per replicated chain, each allowing to
 state-sync with individual replicated chains.
 
-# Protobuf
+## Protobuf
 
 The `multiplex` package enables Protobuf messages for different purposes,
 e.g. for transporting Snapshots metadata or Nodes information.
@@ -262,7 +263,7 @@ We provide a *temporary* overwrite of Protobuf `.proto` files in a custom
 folder `multiplex/proto/`. We use a package of `cometbft.multiplex.v1` to
 mirror the currently available [CometBFT] API Protobuf generation.
 
-## MultiNetworkNodeInfo
+### MultiNetworkNodeInfo
 
 This Protobuf definition consists in defining a `p2p.NodeInfo` implementation
 that is compatible with node multiplex which are connected to multiple
@@ -277,7 +278,7 @@ Notable methods implementation include, but are not limited to:
 Note that the `MultiNetworkNodeInfo` Protobuf message is *compatible* with
 the legacy `cometbft.p2p.v1.NodeInfo`.
 
-### Generating from Protobuf definition
+#### Generating from Protobuf definition
 
 	protoc -I=$GOPATH/src \
 			-I=$GOPATH/pkg/mod/github.com/cosmos/gogoproto\@v1.6.0/
@@ -289,7 +290,7 @@ the legacy `cometbft.p2p.v1.NodeInfo`.
 	mv api/github.com/ice-blockchain/cometbft/* api/cometbft/
 	rm -rf api/github.com
 
-## Snapshot
+### Snapshot
 
 This Protobuf definition consists in defining a snapshot metadata type which
 is used to store metadata about snapshots on disk.
@@ -303,7 +304,7 @@ Notable methods implementation include, but are not limited to:
 - `GetFormat()`: Get the format number of a `Snapshot` instance.
 - `GetChunks()`: Get the number of chunks of a `Snapshot` instance.
 
-### Generating from Protobuf definition
+#### Generating from Protobuf definition
 
 	protoc -I=$GOPATH/src \
 			-I=$GOPATH/pkg/mod/github.com/cosmos/gogoproto\@v1.6.0/
@@ -315,7 +316,7 @@ Notable methods implementation include, but are not limited to:
 	mv api/github.com/ice-blockchain/cometbft/multiplex/snapshots/types/* multiplex/snapshots/types/
 	rm -rf api/github.com
 
-# Testing
+## Testing
 
 Multiple unit test suites are provided with the `multiplex` package. You can
 run one of these full unit test suites with the following commands:
@@ -343,7 +344,7 @@ using one of the following commands:
 	go test github.com/ice-blockchain/cometbft/multiplex/snapshots -run TestSnapshot.* -test.v
 	go test github.com/ice-blockchain/cometbft/multiplex/snapsapp -run TestABCI.* -test.v
 
-# Linter
+## Linter
 
 	# running the pre-commit step(s)
 	`make lint`
@@ -354,7 +355,7 @@ which can also be run manually with the following command:
 	# running the linter manually
 	golangci-lint run -c .golangci.yml --fix --disable revive,iface,recvcheck
 
-# Runtime
+## Runtime
 
 A more comprehensive *node setup guide* should be provided in a separate
 document. This section merely lists the *commands* that have been modified
@@ -366,7 +367,7 @@ or added as part of this implementation.
 	# starting the nodes multiplex (requires genesis.json)
 	go run ./cmd/cometbft/main.go multiplex --home /tmp/cometbftmx
 
-# References
+## References
 
 This implementation is based on [CometBFT] `v1.x` branch, which is still under
 active development. Therefore, it is utterly important to keep track of updates
@@ -400,5 +401,3 @@ committed to the upstream branch as listed here: [cometbft-v1x].
 [cometbft-abci]: https://docs.cometbft.com/v1.0/explanation/core/state-sync
 [cometbft-abcimethods]: https://docs.cometbft.com/v1.0/spec/abci/abci++_basic_concepts#state-sync-methods
 [cosmos-snapshots]: https://github.com/cosmos/cosmos-sdk/blob/release/v0.50.x/store/snapshots/README.md
-*/
-package multiplex

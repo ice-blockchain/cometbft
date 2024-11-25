@@ -172,8 +172,6 @@ func NewNodesMultiplex(
 	// Select a limited number of listeners message updates from
 	// the multiplex reactor channel. This loop forbids duplicate
 	// node initializations.
-	//
-	// TODO(midas): TBI whether loop can be removed to use `for select`.
 	for i := 0; i < len(knownNetworks); i++ {
 		// The multiplex reactor communicates the ChainID on a channel
 		// to tell this bootstrapper about the readiness of a node config

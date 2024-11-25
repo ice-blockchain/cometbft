@@ -58,7 +58,7 @@ just overwrite the `Default..Extension` method with your custom business logic.
 You can test the `client` package using the following unit test suite:
 
 ```bash
-go test github.com/cometbft/cometbft/multiplex/client -test.v -count=1
+go test github.com/ice-blockchain/cometbft/multiplex/client -test.v -count=1
 ```
 
 Note that this test suite is apart from the `client` package and implemented

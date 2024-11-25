@@ -143,8 +143,7 @@ func initMultiplexFilesWithConfig(config *cfg.Config) error {
 			return fmt.Errorf("failed to load multiplex config: %w", err)
 		}
 
-		// TODO(midas): remove debug logs
-		logger.Info("[DEBUG] found chains from genesis file", "cnt", len(userChains))
+		logger.Info("Found chains from genesis file", "cnt", len(userChains))
 	} else {
 		// Read the users.json file to create the map of slices with
 		// ChainIDs by user addresses.
@@ -153,7 +152,7 @@ func initMultiplexFilesWithConfig(config *cfg.Config) error {
 			return fmt.Errorf("failed to load multiplex config: %w", err)
 		}
 
-		logger.Info("Found user addresses", "cnt", len(userChains))
+		logger.Info("Found chains from users file", "cnt", len(userChains))
 	}
 
 	// Parse a --seeds-file option to force some chain seeds by config
