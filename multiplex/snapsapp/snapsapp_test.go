@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ice-blockchain/cometbft/config"
@@ -124,6 +125,9 @@ func prepareMultiplexReactor(t *testing.T) (
 
 	err = testReactor.Start()
 	require.NoError(t, err, "should not error starting multiplex reactor")
+
+	err = testReactor.WaitForNetworks()
+	assert.NoError(t, err, "should not error while waiting for networks")
 
 	return rootDir, conf, testReactor
 }

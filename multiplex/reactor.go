@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 
@@ -105,9 +106,14 @@ type Reactor struct {
 	// Services registry is a multiplex map which is searchable by service name
 	// and which contains other multiplex maps where keys are ChainID values.
 	//
+	// Services priority contains a slice of service names to keep track of the
+	// order of execution of services as used during the shutdown routine.
+	//
 	// To access this property, the mutex must be locked.
 	servicesMutex    sync.RWMutex
 	servicesRegistry NamedMultiplexMap[cmtlibs.Service]
+	servicesPriority map[string]uint32
+	servicesSequence []string
 
 	// Multiplex registry is a multiplex map which is searchable by service name
 	// and which contains other multiplex maps where keys are ChainID values.
@@ -151,6 +157,8 @@ func NewReactor(
 
 		// Allocations
 		servicesRegistry:  NamedMultiplexMap[cmtlibs.Service]{},
+		servicesPriority:  map[string]uint32{},
+		servicesSequence:  []string{},
 		multiplexRegistry: NamedMultiplexMap[any]{},
 
 		// Internals
@@ -300,6 +308,13 @@ func (reactor *Reactor) RegisterService(
 		chainID,
 		service,
 	)
+
+	// Add service to priorities list once
+	if _, ok := reactor.servicesPriority[serviceName]; !ok {
+		nextIndex := len(reactor.servicesPriority) + 1
+		reactor.servicesPriority[serviceName] = uint32(nextIndex)
+		reactor.servicesSequence = append(reactor.servicesSequence, serviceName)
+	}
 }
 
 // RegisterInstance inserts a generic instance in the multiplexRegistry,
@@ -384,6 +399,10 @@ func (reactor *Reactor) OnStart() error {
 		// Non-blocking execution using different goroutine
 		// i.e. one goroutine spawned per each replicated chain
 		go func(network string) {
+			// lock the filesystem mutex while creating priv val (fs)
+			reactor.filesystemMutex.Lock()
+			defer reactor.filesystemMutex.Unlock()
+
 			// Start node listeners
 			if err := reactor.startNodeListeners(network); err != nil {
 				panic(err)
@@ -399,22 +418,79 @@ func (reactor *Reactor) OnStart() error {
 
 // OnStop stops the multiplex reactor and all the registered services that
 // are running, including the ABCI client if it is running.
+//
+// A *reversed* services sequence is used to implement the LIFO strategy when
+// shutting down services as it is usual for services that are started last
+// to be using previously created instances of other services.
+//
+// As for the database multiplexes, they are used in an unordered format and
+// no specific order is used to close the database connection because every
+// database connection is independent of other database connections.
 func (reactor *Reactor) OnStop() {
-	// Shutdown all registered services
-	reactor.servicesMutex.Lock()
-	defer reactor.servicesMutex.Unlock()
-	for _, servicesMultiplex := range reactor.servicesRegistry {
-		for _, chainService := range servicesMultiplex {
-			service := chainService.GetInstance().(cmtlibs.Service)
-			if service.IsRunning() {
-				service.Stop() //nolint:errcheck
-			}
+	// Shutdown the ABCI client if running
+	if reactor.abciClient != nil && reactor.abciClient.IsRunning() {
+		if err := reactor.abciClient.Stop(); err != nil {
+			reactor.logger.Error(
+				"Error stopping the ABCI client", "err", err)
 		}
 	}
 
-	// Also shutdown the ABCI client if running
-	if reactor.abciClient != nil && reactor.abciClient.IsRunning() {
-		reactor.abciClient.Stop() //nolint:errcheck
+	// Shutdown all registered services atomically
+	reactor.servicesMutex.RLock()
+
+	// Uses LIFO strategy to shutdown registered services
+	servicesLIFO := reactor.servicesSequence
+	sort.Sort(sort.Reverse(sort.StringSlice(
+		servicesLIFO,
+	)))
+
+	for _, serviceName := range servicesLIFO {
+		// Services multiplex contains one instance per ChainID
+		servicesMultiplex := reactor.servicesRegistry[serviceName]
+
+		// Every service instance must be stopped if running
+		for _, chainService := range servicesMultiplex {
+			service := chainService.GetInstance().(cmtlibs.Service)
+			if service.IsRunning() {
+				if err := service.Stop(); err != nil {
+					reactor.logger.Error("Error stopping service",
+						"service", serviceName,
+						"err", err,
+					)
+				}
+			}
+		}
+	}
+	reactor.servicesMutex.RUnlock()
+
+	// Each database multiplex opens x dbs, no ordering or reversing is
+	// applied here as it doesn't matter which database is closed first.
+	dbKeys := []string{
+		InstanceKeyDatabaseBlock,
+		InstanceKeyDatabaseState,
+		InstanceKeyDatabaseIndex,
+		InstanceKeyDatabaseEvidence,
+	}
+
+	// Close database connections
+	for _, dbMultiplexKey := range dbKeys {
+		// Close all open database connections individually
+		reactor.multiplexMutex.RLock()
+
+		// Instances multiplex contains one instance per ChainID
+		if mx, ok := reactor.multiplexRegistry[dbMultiplexKey]; ok {
+			// Every database connection must be stopped
+			for _, chainInstance := range mx {
+				db := chainInstance.GetInstance().(*ChainDB)
+				if err := db.Close(); err != nil {
+					reactor.logger.Error("Error closing database connection",
+						"db", dbMultiplexKey,
+						"err", err,
+					)
+				}
+			}
+		}
+		reactor.multiplexMutex.RUnlock()
 	}
 }
 
@@ -618,7 +694,6 @@ func (reactor *Reactor) startNodeListeners(chainID string) error {
 		return fmt.Errorf("error starting event bus: %w", err)
 	}
 
-	reactor.filesystemMutex.Lock()
 	// 2) Priv Validator Service
 	//
 	// Uses a separate priv validator for each supported network to prevent
@@ -636,7 +711,6 @@ func (reactor *Reactor) startNodeListeners(chainID string) error {
 			return ed25519.GenPrivKey(), nil
 		},
 	)
-	reactor.filesystemMutex.Unlock()
 	if err != nil {
 		return err
 	}
