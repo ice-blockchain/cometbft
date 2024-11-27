@@ -12,22 +12,15 @@ is currently disabled.
 Importantly, when multiplex is enabled, we expect the `genesis.json` file
 to contain a `GenesisDocSet` JSON.
 
-The `snapshots` package implements automatic support for [CometBFT]
-state sync bootstrapping of nodes which allows a new node to join a network
-by simply fetching a recent snapshot of the application state instead of
-fetching and applying all historical blocks. This can reduce the time needed
-to join the network by several orders of magnitude (e.g. weeks to minutes).
-
-**The state-sync process is available but we recommend not to use it**, such
-as to *always* bootstrap new nodes using the *full historical data* of a
-network. This notably improves the redundancy and availability of replicated
-state machines. The state-sync process is *disabled* by default.
-
 The `snapsapp` package implements a multi-network ABCI application
-that enables state snapshotting, bootstrapping nodes with state-sync, and
-consensus events mapping for the client implementation including extensions
-interfaces for `PrepareProposal`, `ProcessProposal`, `FinalizeBlock` and also
-for the `Commit` stages.
+that enables consensus events mapping for the client implementation with
+extension interfaces for several stages of a consensus instance:
+
+- `CheckTx`: Define auditing/reporting units for transactions ;
+- `PrepareProposal`: Define pre-processing units for transactions data ;
+- `ProcessProposal`: Define post-processing units for transactions data ;
+- `FinalizeBlock`: Define processing units for blocks data ;
+- `Commit`: Define auditing/reporting units for committed blocks.
 
 The `client` package implements a *default* client integration for multiplex
 features that may be used to *inject custom configuration* and to mutate
@@ -130,6 +123,7 @@ database, etc.
 
 ### Interfaces
 
+  - `SyncConfigExtensionFn`: Provides custom state-sync configuration values.
   - `SeedConfigExtensionFn`: Provides custom seed nodes configuration values.
   - `ValidatorUpdateExtensionFn`: Provides custom auditing/reporting units for validator updates.
   - `ConsensusUpdateExtensionFn`: Provides custom auditing/reporting units for consensus parameter updates.
@@ -138,11 +132,13 @@ database, etc.
   - `ProcessProposalExtensionFn`: Provides custom post-processing units for transactions data.
   - `FinalizeBlockExtensionFn`: Provides custom processing units for blocks data.
   - `CommitExtensionFn`: Provides custom auditing/reporting units for committed blocks.
+  - `CheckMutationResultExtensionFn`: Provides custom auditing units for state mutation results.
 
 We provide several example implementations that basically just *deep-copy* the
 input. Obviously, if you are developing a custom extension, you would do more
 than just deep-copy input objects.
 
+An example for `SyncConfigExtensionFn` is: `DefaultSyncConfigExtension`
 An example for `SeedConfigExtensionFn` is: `DefaultSeedConfigExtension`
 An example for `ValidatorUpdateExtensionFn` is: `DefaultValidatorUpdateExtension`
 An example for `ConsensusUpdateExtensionFn` is: `DefaultConsensusUpdateExtension`
@@ -151,6 +147,7 @@ An example for `PrepareProposalExtensionFn` is: `DefaultPrepareProposalExtension
 An example for `ProcessProposalExtensionFn` is: `DefaultProcessProposalExtension`
 An example for `FinalizeBlockExtensionFn` is: `DefaultFinalizeBlockExtension`
 An example for `CommitExtensionFn` is: `DefaultCommitExtension`
+An example for `CheckMutationResultExtensionFn` is: `DefaultCheckMutationResultExtension`
 
 ## ChainRegistry
 
@@ -212,36 +209,10 @@ replicated chain.
 Return types of methods defined by this interface are compatible with
 `proxy.AppConns` to prevent breaking the ABCI integration.
 
-## Snapshots
-
-**The state-sync process is available but we recommend not to use it**, such
-as to *always* bootstrap new nodes using the *full historical data* of a
-network. This notably improves the redundancy and availability of replicated
-state machines.
-
-The state-sync process is *disabled* by default.
-
-The `snapshots` package implements automatic support for CometBFT state sync
-bootstrapping of nodes. State sync allows a new node joining a network to
-simply fetch a recent snapshot of the application state instead of fetching
-and applying all historical blocks. This can reduce the time needed to join the
-network by several orders of magnitude (e.g. weeks to minutes).
-
-The `snapshots.Manager` manages snapshot and restore operations for a
-replicated chain, making sure only a single long-running operation is in
-progress at any given time, and provides convenience methods mirroring the
-ABCI interface.
-
-Although the ABCI interface (and this manager) passes chunks as byte slices,
-the internal snapshot/restore APIs use IO streams (i.e. chan io.ReadCloser).
-
 ## SnapsApp
 
-SnapsApp defines an ABCI application around a multiplex chain registry, and
-which delegates snapshotting to a  `snapshots.Manager` implementation.
-
-This application creates snapshots of full state machines, without filtering
-any of the included properties: ChainID, ConsensusParams, Validators, etc.
+SnapsApp defines a multi-network ABCI application that enables consensus
+events mapping for the client implementation.
 
 Read-write mutexes are created to track initial heights on concurrent threads,
 as well as for the currently working height in the process of finalizing and
@@ -250,18 +221,16 @@ of creating blocks proposal, processing them, and/or to audit the data added
 with a committed block.
 
 Note that *only one instance* of the SnapsApp application must be created
-for node multiplexes. The SnapsApp application must be thread-safe and uses
-one `snapshots.Manager` instance per replicated chain, each allowing to
-state-sync with individual replicated chains.
+for node multiplexes.
 
 ## Protobuf
 
 The `multiplex` package enables Protobuf messages for different purposes,
 e.g. for transporting Snapshots metadata or Nodes information.
 
-We provide a *temporary* overwrite of Protobuf `.proto` files in a custom
-folder `multiplex/proto/`. We use a package of `cometbft.multiplex.v1` to
-mirror the currently available [CometBFT] API Protobuf generation.
+We provide an *extension* to the `api/` package using Protobuf `.proto` files
+in a custom folder `multiplex/proto/`. The package name `cometbft.multiplex.v1`
+is used to extend the currently available [CometBFT] API Protobuf generation.
 
 ### MultiNetworkNodeInfo
 
@@ -290,32 +259,6 @@ the legacy `cometbft.p2p.v1.NodeInfo`.
 	mv api/github.com/ice-blockchain/cometbft/* api/cometbft/
 	rm -rf api/github.com
 
-### Snapshot
-
-This Protobuf definition consists in defining a snapshot metadata type which
-is used to store metadata about snapshots on disk.
-
-The `Snapshot` and `SnapshotItem` Protobuf messages are designed to be used in
-`snapshots` and `snapsapp` and are published in `cometbft.multiplex.v1`.
-
-Notable methods implementation include, but are not limited to:
-
-- `GetHeight()`: Get the block height of a `Snapshot` instance.
-- `GetFormat()`: Get the format number of a `Snapshot` instance.
-- `GetChunks()`: Get the number of chunks of a `Snapshot` instance.
-
-#### Generating from Protobuf definition
-
-	protoc -I=$GOPATH/src \
-			-I=$GOPATH/pkg/mod/github.com/cosmos/gogoproto\@v1.6.0/
-			-I=proto/ \
-			-I=multiplex/proto/ \
-			--gogofaster_out=api/ \
-			multiplex/proto/cometbft/multiplex/v1/snapshot.proto
-
-	mv api/github.com/ice-blockchain/cometbft/multiplex/snapshots/types/* multiplex/snapshots/types/
-	rm -rf api/github.com
-
 ## Testing
 
 Multiple unit test suites are provided with the `multiplex` package. You can
@@ -324,7 +267,6 @@ run one of these full unit test suites with the following commands:
 	# running the full unit test suites
 	go test github.com/ice-blockchain/cometbft/multiplex -test.v
 	go test github.com/ice-blockchain/cometbft/multiplex/client -test.v
-	go test github.com/ice-blockchain/cometbft/multiplex/snapshots -test.v
 	go test github.com/ice-blockchain/cometbft/multiplex/snapsapp -test.v
 
 Alternatively, you can also run individual unit tests or unit test suites
@@ -339,9 +281,6 @@ using one of the following commands:
 	go test github.com/ice-blockchain/cometbft/multiplex -run TestMultiplexReactor.* -test.v
 	go test github.com/ice-blockchain/cometbft/multiplex -run TestMultiplexP2P.* -test.v
 	go test github.com/ice-blockchain/cometbft/multiplex/client -run TestMultiplexClient.* -test.v
-	go test github.com/ice-blockchain/cometbft/multiplex/snapshots -run TestChunk.* -test.v
-	go test github.com/ice-blockchain/cometbft/multiplex/snapshots -run TestManager.* -test.v
-	go test github.com/ice-blockchain/cometbft/multiplex/snapshots -run TestSnapshot.* -test.v
 	go test github.com/ice-blockchain/cometbft/multiplex/snapsapp -run TestABCI.* -test.v
 
 ## Linter
@@ -376,7 +315,6 @@ committed to the upstream branch as listed here: [cometbft-v1x].
 ## Links
 
 - Source code for `multiplex`: [multiplex]
-- Source code for `snapshots`: [snapshots]
 - Source code for `snapsapp`: [snapsapp]
 - Source code for `client`: [client]
 - Technical definition: [multiplex-notion]
@@ -385,19 +323,10 @@ committed to the upstream branch as listed here: [cometbft-v1x].
 
 - CometBFT v1.x Release Branch: [CometBFT]
 - CometBFT v1.x Commits Log: [cometbft-v1x]
-- CometBFT State Sync for Developers: [cometbft-statesync]
-- ABCI State Sync: [cometbft-abci]
-- ABCI State Sync Methods: [cometbft-abcimethods]
-- Cosmos-SDK State Sync Snapshotting: [cosmos-snapshots]
 
 [multiplex]: https://github.com/ice-blockchain/cometbft/tree/multiplex/
 [multiplex-notion]: https://www.notion.so/leftclick/Nodes-Multiplex-10d0a77b88c88050ac8bf75c012d1b00
-[snapshots]: https://github.com/ice-blockchain/cometbft/tree/multiplex/multiplex/snapshots/
 [snapsapp]: https://github.com/ice-blockchain/cometbft/tree/multiplex/multiplex/snapsapp/
 [client]: https://github.com/ice-blockchain/cometbft/tree/multiplex/multiplex/client/
 [CometBFT]: https://github.com/ice-blockchain/cometbft/tree/v1.x/README.md
 [cometbft-v1x]: https://github.com/ice-blockchain/cometbft/commits/v1.x/
-[cometbft-statesync]: https://medium.com/cometbft/cometbft-core-state-sync-for-developers-70a96ba3ee35
-[cometbft-abci]: https://docs.cometbft.com/v1.0/explanation/core/state-sync
-[cometbft-abcimethods]: https://docs.cometbft.com/v1.0/spec/abci/abci++_basic_concepts#state-sync-methods
-[cosmos-snapshots]: https://github.com/cosmos/cosmos-sdk/blob/release/v0.50.x/store/snapshots/README.md

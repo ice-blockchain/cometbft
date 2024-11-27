@@ -1,27 +1,23 @@
 /*
-The `snapsapp` package implements a multi-network ABCI application that enables
-state snapshotting and bootstrapping nodes with state-sync.
+The `snapsapp` package implements a multi-network ABCI application
+that enables consensus events mapping for the client implementation.
 
 # Application
 
 The [SnapsApp] structure is configured via the following instances:
 
 - A `Reactor` contains an implementation to retrieve networks and state stores.
-- A `config.SnapshotOptions` contains the snapshot options for the application.
-- A `map[string]*snapshots.Manager` contains the snapshot manager per replicated chain.
 
 When the SnapsApp is created, the replicated chains configuration is read from
-the reactor interface, and snapshots managers are created for each of
-the replicated chains, then mapped to their respective `ChainID`.
+the reactor interface and are validated upon ABCI requests at several stages
+of an individual consensus instance.
 
-The state store structure, that is retrieved from the reactor,using
-the [GetStateSttore] method, is expected to satisfy the interface
-named `snapshots.StateSnapshotter` by implementing: Snapshot(), Restore(),
-GetStateMachine() and AppHash().
+The state store structure, that is retrieved from the reactor, using
+the [GetStateStore] method, is expected to satisfy the [state.Store] interface.
 
-The SnapsApp ABCI application delegates to the snapshots manager and the
-snapshotter implementation for the underlying processes of taking snapshots
-and restoring them.
+The SnapsApp application enables consensus events mapping for the client
+implementation by running specific hooks at different stages of the consensus
+instance, including: `CheckTx`, `PrepareProposal` and `Commit`, amongst others.
 
 # ABCI
 
@@ -30,11 +26,8 @@ include, but are not limited to:
 
 - [SnapsApp#InitChain]: InitChain initializes the application's state.
 - [SnapsApp#Info]: Info returns information about the application.
-- [SnapsApp#Commit]: Commit must determine whether to create a snapshot or not.
-- [SnapsApp#ListSnapshots]: ListSnapshots must list recent snapshots.
-- [SnapsApp#OfferSnapshot]: OfferSnapshot must parses metadata and starts downloading chunks.
-- [SnapsApp#LoadSnapshotChunk]: LoadSnapshotChunk must load a snapshot chunk from filesystem.
-- [SnapsApp#ApplySnapshotChunk]: ApplySnapshotChunk applies snapshot chunks sequentially.
+- [SnapsApp#CheckTx]: CheckTx must validate individual transaction data.
+- [SnapsApp#Commit]: Commit must persist relevant application data.
 
 We also provide implementations for all other *required* methods, including
 for `PrepareProposal`, `ProcessProposal`, `FinalizeBlock` and `Commit`.
