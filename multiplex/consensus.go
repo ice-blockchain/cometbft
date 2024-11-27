@@ -244,9 +244,9 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 
 	// Prepare registerable instances mapped to ChainID
 	reactor.RegisterService(ServiceKeyMempoolReactor, chainID, mempoolReactor)
+	reactor.RegisterService(ServiceKeyEvidenceReactor, chainID, evidenceReactor)
 	reactor.RegisterService(ServiceKeyBlockSyncReactor, chainID, blockSyncReactor)
 	reactor.RegisterService(ServiceKeyConsensusReactor, chainID, consensusReactor)
-	reactor.RegisterService(ServiceKeyEvidenceReactor, chainID, evidenceReactor)
 	reactor.RegisterInstance(InstanceKeyFlagBlockSync, chainID, blockSync)
 
 	return nil

@@ -87,8 +87,22 @@ func OpenAutoFile(path string, autofileOptions ...func(*AutoFile)) (*AutoFile, e
 	af.hupc = make(chan os.Signal, 1)
 	signal.Notify(af.hupc, syscall.SIGHUP)
 	go func() {
-		for range af.hupc {
-			_ = af.closeFile()
+		// Put this goroutine on hold until one of the following is true:
+		// - a SIGHUP (hang-up) signal is intercepted ; or
+		// - the signal intercepting channel is closed.
+		for {
+			select {
+			case _, ok := <-af.hupc:
+				if ok {
+					// Received a SIGHUP
+					_ = af.closeFile()
+				}
+				return
+			// select never selects a blocking case, so in case
+			// the channel is nil, it selects default here.
+			default:
+				return
+			}
 		}
 	}()
 
