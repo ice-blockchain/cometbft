@@ -14,6 +14,7 @@ import (
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	cmtlibs "github.com/ice-blockchain/cometbft/libs/service"
+	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/snapsapp"
 	"github.com/ice-blockchain/cometbft/node"
 	"github.com/ice-blockchain/cometbft/p2p"
@@ -100,6 +101,7 @@ type Reactor struct {
 	userConfig   *config.MultiplexConfig
 	abciClient   proxy.ChainConns
 	storagePaths MultiplexFS
+	acceptorImpl client.Acceptor
 
 	// Networks information
 	networks []string
@@ -144,6 +146,7 @@ func NewReactor(
 	logger cmtlog.Logger,
 	chainRegistry ChainRegistry,
 	genesisDocsProvider node.GenesisDocProvider,
+	options ...func(*Reactor),
 ) *Reactor {
 	reactor := &Reactor{
 		// Provides the ChainRegistry interface
@@ -157,6 +160,9 @@ func NewReactor(
 		// Provides an *ordered* slice of ChainID
 		networks: chainRegistry.GetChains(),
 
+		// Provides a default acceptor implementation
+		acceptorImpl: &client.DefaultAcceptor{},
+
 		// Allocations
 		servicesRegistry:  NamedMultiplexMap[cmtlibs.Service]{},
 		servicesPriority:  map[string]uint32{},
@@ -167,6 +173,12 @@ func NewReactor(
 		logger:       logger,
 		chainReadyCh: make(chan string),
 	}
+
+	// Enable overwrite of some optional properties.
+	for _, option := range options {
+		option(reactor)
+	}
+
 	reactor.BaseReactor = *p2p.NewBaseReactor("Multiplex", reactor)
 
 	// Note that this expects the `genesis.json` to contain a GenesisDocSet.
@@ -181,6 +193,16 @@ func NewReactor(
 	reactor.initMultiplexProviders(icsGenesisDocSet)
 
 	return reactor
+}
+
+// WithAcceptor is an option helper to inject a custom acceptor implementation
+// which accepts a user address and an acceptor.
+func WithAcceptor(
+	acceptor client.Acceptor,
+) func(*Reactor) {
+	return func(r *Reactor) {
+		r.acceptorImpl = acceptor
+	}
 }
 
 // ----------------------------------------------------------------------------

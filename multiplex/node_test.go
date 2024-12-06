@@ -21,6 +21,7 @@ import (
 	cmtjson "github.com/ice-blockchain/cometbft/libs/json"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	mx "github.com/ice-blockchain/cometbft/multiplex"
+	"github.com/ice-blockchain/cometbft/multiplex/client"
 	cmtnode "github.com/ice-blockchain/cometbft/node"
 	"github.com/ice-blockchain/cometbft/privval"
 	"github.com/ice-blockchain/cometbft/proxy"
@@ -163,6 +164,7 @@ func TestMultiplexNodeNewNodesMultiplexFallback(t *testing.T) {
 	// Should create the [node.Node] instance, using [node.NewNode]
 	testMultiplex, _, err := mx.NewNodesMultiplex(
 		context.Background(),
+		&client.DefaultAcceptor{},
 		globalCfg,
 		cmtlog.NewNopLogger(),
 	)
@@ -203,6 +205,7 @@ func TestMultiplexNodeNewNodesMultiplex(t *testing.T) {
 	// Should create the [node.Node] instance using [mx.NewNodesMultiplex]
 	testMultiplex, testReactor, err := mx.NewNodesMultiplex(
 		context.Background(),
+		&client.DefaultAcceptor{},
 		globalCfg,
 		cmtlog.NewNopLogger(),
 	)
@@ -441,6 +444,7 @@ func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog
 	// Should create the [node.Node] instance using [mx.NewNodesMultiplex]
 	testMultiplex, testReactor, err := mx.NewNodesMultiplex(
 		context.Background(),
+		&client.DefaultAcceptor{},
 		globalCfg,
 		customLogger,
 	)

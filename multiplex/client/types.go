@@ -2,10 +2,6 @@ package client
 
 import (
 	"context"
-
-	abci "github.com/ice-blockchain/cometbft/abci/types"
-	v1 "github.com/ice-blockchain/cometbft/api/cometbft/types/v1"
-	"github.com/ice-blockchain/cometbft/config"
 )
 
 // ContextKey defines a string-based context value key.
@@ -17,268 +13,105 @@ const (
 	KeyChainID ContextKey = "ChainID"
 )
 
-// ----------------------------------------------------------------------------
-// Client
-
-// Client interface defines the contract for custom client implementations.
+// Transaction defines a wrapper for data attached to a fingerprint.
 //
-// See also: [DefaultClient].
+// Note that transaction fingerprints *may* hold plaintext scope names,
+// e.g. "posts", "likes". Privacy shall not be a concern here because the
+// ChainID is built using the user address and a *fingerprint hash*.
+type Transaction struct {
+	Data        []byte
+	Fingerprint string
+}
+
+// BroadcastStatus defines a wrapper for transaction broadcast status
+// which may contain an error and metadata about the current step.
+type BroadcastStatus struct {
+	Error    error
+	LastStep uint16
+	TxHashes [][]byte
+}
+
+// Acceptor defines the contract for client-side transactions verification.
+//
+// An acceptor instance is injected in a [Client] to perform pre-committing
+// verification of transactions data. If the acceptor method returns an error,
+// the transactions data must be discarded entirely.
+//
+// The acceptor shall always receive a batch of transactions which may concern
+// one or more than one independent cometbft network.
+//
+// See also: [Client].
+type Acceptor interface {
+	// AcceptBroadcastTx returns an error if any of the transactions
+	// should not be accepted, or if the batch must not be broadcast.
+	AcceptBroadcastTx(
+		ctx context.Context,
+		userAddress string,
+		transactions ...Transaction,
+	) error
+
+	// AcceptBroadcastTxRemoval returns an error if any of the transactions
+	// should not be accepted, or if the batch must not be broadcast.
+	AcceptBroadcastTxRemoval(
+		ctx context.Context,
+		userAddress string,
+		transactions ...Transaction,
+	) error
+}
+
+// Client defines the contract for multiplex client implementations.
+//
+// A client instance may be used to perform on-demand consensus instances
+// using a predefined list of active relays running a cometbft network.
+//
+// Transactions that are broadcast using a client instance will be broadcast
+// to other relays, then verified, before they are committed to a network.
+//
+// See also: [Acceptor].
 type Client interface {
-	// Configuration extensions
-	GetSyncConfigExtension() SyncConfigExtensionFn
-	GetSeedConfigExtension() SeedConfigExtensionFn
+	// GetAcceptor returns the injected [Acceptor] implementation.
+	GetAcceptor() Acceptor
 
-	// Consensus & Data extensions
-	GetValidatorUpdateExtension() ValidatorUpdateExtensionFn
-	GetConsensusUpdateExtension() ConsensusUpdateExtensionFn
-	GetCheckTxExtension() CheckTxExtensionFn
-	GetPrepareProposalExtension() PrepareProposalExtensionFn
-	GetProcessProposalExtension() ProcessProposalExtensionFn
-	GetFinalizeBlockExtension() FinalizeBlockExtensionFn
-	GetCommitExtension() CommitExtensionFn
+	// BroadcastTx sends an error to a notifier if any of the transactions
+	// fails basic verification, or if we fail to get a majority approval
+	// for the broadcast operation from healthy relays.
+	//
+	// This method should broadcast the transactions to all other relays and
+	// iff the calls to [Acceptor#AcceptBroadcastTx] by relays are successful,
+	// it should commit the transactions data.
+	//
+	// If any error happens during the broadcast process, the transactions
+	// data must be discarded.
+	// Otherwise, it should eventually persist the transactions data using
+	// active relays of one or many networks. The ChainID used for persisting
+	// data must be built using the userAddress and the [Transaction#Fingerprint].
+	BroadcastTx(
+		ctx context.Context,
+		userAddress string,
+		relays []string,
+		notifier chan<- BroadcastStatus,
+		transactions ...Transaction,
+	)
 
-	// Data consistency (audit) extensions
-	GetCheckMutationResultExtension() CheckMutationResultExtensionFn
+	// BroadcastTxRemoval sends an error to a notifier if any of the removal
+	// operations fail verification, or if we fail to get a majority approval
+	// for the broadcast operation from healthy relays.
+	//
+	// This method should broadcast the remove operations to all other relays
+	// and iff the calls to [Acceptor#AcceptBroadcastTxRemoval] by relays are
+	// successful, it should completely remove the persisted data.
+	//
+	// If any error happens during the broadcast process or during verification,
+	// the removal operations data must be discarded.
+	// Otherwise, it should eventually persist the removal operations data using
+	// active relays of so-called *removal history networks*. The ChainID used
+	// for persisting removal operations must be built using the userAddress
+	// and the [Transaction#Fingerprint] will be prefixed with `delete_`.
+	BroadcastTxRemoval(
+		ctx context.Context,
+		userAddress string,
+		relays []string,
+		notifier chan<- BroadcastStatus,
+		transactions ...Transaction,
+	)
 }
-
-// ----------------------------------------------------------------------------
-// DefaultClient
-
-// DefaultClient implements the [Client] interface using the example
-// implementation (default) in `client/default.go`.
-//
-// i.e. It uses the underlying [client.DefaultSeedConfigExtension].
-type DefaultClient struct{}
-
-// Assert that our implementations satisfy the Client interface.
-var _ Client = (*DefaultClient)(nil)
-
-// GetSyncConfigExtension returns the default configuration extension
-// for state-sync.
-func (DefaultClient) GetSyncConfigExtension() SyncConfigExtensionFn {
-	return DefaultSyncConfigExtension
-}
-
-// GetSeedConfigExtension returns the default configuration extension
-// for seed nodes.
-func (DefaultClient) GetSeedConfigExtension() SeedConfigExtensionFn {
-	return DefaultSeedConfigExtension
-}
-
-// GetValidatorUpdateExtension returns the default reporting extension
-// for validator set updates.
-func (DefaultClient) GetValidatorUpdateExtension() ValidatorUpdateExtensionFn {
-	return DefaultValidatorUpdateExtension
-}
-
-// GetConsensusUpdateExtension returns the default reporting extension
-// for consensus parameter updates.
-func (DefaultClient) GetConsensusUpdateExtension() ConsensusUpdateExtensionFn {
-	return DefaultConsensusUpdateExtension
-}
-
-// GetCheckTxExtension returns the default audit extension
-// for transactions.
-func (DefaultClient) GetCheckTxExtension() CheckTxExtensionFn {
-	return DefaultCheckTxExtension
-}
-
-// GetPrepareProposalExtension returns the default data extension
-// for preparing block proposals with transactions.
-func (DefaultClient) GetPrepareProposalExtension() PrepareProposalExtensionFn {
-	return DefaultPrepareProposalExtension
-}
-
-// GetProcessProposalExtension returns the default data extension
-// for processing block proposals' transactions.
-func (DefaultClient) GetProcessProposalExtension() ProcessProposalExtensionFn {
-	return DefaultProcessProposalExtension
-}
-
-// GetFinalizeBlockExtension returns the default data extension
-// for finalized blocks transactions data.
-func (DefaultClient) GetFinalizeBlockExtension() FinalizeBlockExtensionFn {
-	return DefaultFinalizeBlockExtension
-}
-
-// GetCommitExtension returns the default audit extension
-// for committed blocks.
-func (DefaultClient) GetCommitExtension() CommitExtensionFn {
-	return DefaultCommitExtension
-}
-
-// GetCheckMutationResultExtension returns the default audit extension
-// for mutations of snapshottable state machines.
-func (DefaultClient) GetCheckMutationResultExtension() CheckMutationResultExtensionFn {
-	return DefaultCheckMutationResultExtension
-}
-
-// ----------------------------------------------------------------------------
-// Configuration
-
-// SyncConfigExtensionFn provides an interface for state-sync config extensions
-// that are used in [InjectSyncConfig] to delegate the retrieval of state-sync
-// configuration objects to potential extensions.
-//
-// This method accepts a state-sync configuration [config.StateSyncConfig].
-// Implementations should return the prevailing state-sync configuration object
-// as a mutated [config.StateSyncConfig] object.
-//
-// This extension is executed by [mx.NewChainRegistry].
-// See also: [DefaultSyncConfigExtension].
-type SyncConfigExtensionFn func(
-	context.Context,
-	*config.StateSyncConfig,
-) *config.StateSyncConfig
-
-// SeedConfigExtensionFn provides an interface for seed nodes config extensions
-// that are used in [InjectChainSeeds] to delegate the retrieval of seed nodes
-// configuration strings to potential extensions.
-//
-// Note that the seed nodes configuration is a mere `string` which consist of
-// a comma-separated list of seed nodes with the format: `id@host:port`.
-//
-// This method accepts a string with a comma-separated list of seed nodes.
-// Implementations should return the prevailing seed nodes comma-separated list
-// as a mutated string object.
-//
-// This extension is executed by [mx.NewChainRegistry].
-// See also: [DefaultSeedConfigExtension].
-type SeedConfigExtensionFn func(
-	context.Context,
-	string,
-) string
-
-// ----------------------------------------------------------------------------
-// Consensus
-
-// ValidatorUpdateExtensionFn provides an interface for validator set updates
-// extensions that are used in [InjectValidatorUpdate] to delegate the
-// processing of validator set updates, to potential extensions.
-//
-// This method accepts a *validator update set* as a `[]abci.ValidatorUpdate`.
-// Implementations should return nil or an error if auditing fails.
-//
-// This extension is executed when blocks are finalized with a non-empty
-// validator updates set in the ABCI [abci.FinalizeBlockResponse] object.
-// See also: [DefaultValidatorUpdateExtension].
-type ValidatorUpdateExtensionFn func(
-	context.Context,
-	[]abci.ValidatorUpdate,
-) error
-
-// ConsensusUpdateExtensionFn provides an interface for consensus params
-// updates extensions that are used in [InjectConsensusUpdate] to delegate
-// the processing of consensus parameter updates, to potential extensions.
-//
-// This method accepts a *consensus parameter set* as a `v1.ConsensusParams`.
-// Implementations should return nil or an error if auditing fails.
-//
-// This extension is executed when blocks are finalized with a non-empty
-// consensus parameter update in the ABCI [abci.FinalizeBlockResponse] object.
-// See also: [DefaultConsensusUpdateExtension].
-type ConsensusUpdateExtensionFn func(
-	context.Context,
-	*v1.ConsensusParams,
-) error
-
-// ----------------------------------------------------------------------------
-// State
-
-// CheckMutationResultExtensionFn provides an interface for auditing the result
-// of state mutation extensions that are used in [InjectSnapshotMutation]. This
-// extension notably permits to audit data such as ensure data consistency.
-//
-// This method accepts a *state instance* as a `[]byte` slice.
-// Implementations should return an error if the audit of data fails.
-//
-// This extension is executed when snapshots are taken.
-// See also: [DefaultCheckMutationResultExtension].
-type CheckMutationResultExtensionFn func(
-	context.Context,
-	[]byte,
-) error
-
-// ----------------------------------------------------------------------------
-// Transactions / Blocks
-
-// CheckTxExtensionFn provides an interface for transaction checks extensions
-// that are used in [InjectCheckTx] to delegate the validation of transactions
-// to potential extensions.
-//
-// CAUTION: Expensive operations must not be run here but rather in the
-// commitment stage(s) of the blocks proposal process.
-//
-// This method accepts a *raw transaction* as a `[]byte` slice.
-// Implementations should return nil or an error if a transaction is invalid.
-//
-// This extension may be executed by any of PrepareProposal, ProcessProposal
-// or FinalizeBlock methods, and should not execute expensive operations.
-// See also: [DefaultCheckTxExtension].
-type CheckTxExtensionFn func(
-	context.Context,
-	[]byte,
-) error
-
-// PrepareProposalExtensionFn provides an interface for transactions mutation
-// extensions that are used in [InjectPrepareProposal] to delegate the
-// pre-processing of transactions data, to potential extensions.
-//
-// Note, transactions *may* be discarded by this handler so that they are
-// not included in the next block of the network.
-//
-// This method accepts a *transactions slice* as a `[][]byte` slice.
-// Implementations should return the mutated slice as a `[][]byte` slice.
-//
-// This extension is executed as the **1st** stage in proposing blocks.
-// See also: [DefaultPrepareProposalExtension].
-type PrepareProposalExtensionFn func(
-	context.Context,
-	[][]byte,
-) [][]byte
-
-// ProcessProposalExtensionFn provides an interface for transactions mutation
-// extensions that are used in [InjectProcessProposal] to delegate the
-// post-processing of transactions data, to potential extensions.
-//
-// This method accepts a *transactions slice* as a `[][]byte` slice.
-// Implementations should return the mutated slice as a `[][]byte` slice.
-//
-// This extension is executed as the **2nd** stage in proposing blocks.
-// See also: [DefaultProcessProposalExtension].
-type ProcessProposalExtensionFn func(
-	context.Context,
-	[][]byte,
-) [][]byte
-
-// FinalizeBlockExtensionFn provides an interface for blocks mutation extensions
-// that are used in [InjectFinalizeBlock] to delegate the post-processing of
-// state transactions data, to potential extensions.
-//
-// Note that transactions *may* be discarded or updated by this handler so that
-// the triggered [abcitypes.Event] contains a *mutated* slice of transactions
-// before finalizing the block - and thus use the mutated data.
-//
-// This method accepts a *transactions slice* as a `[][]byte` slice.
-// Implementations should return the mutated slice as a `[][]byte` slice.
-//
-// This extension is executed as the **3rd** stage in proposing blocks.
-// See also: [DefaultFinalizeBlockExtension].
-type FinalizeBlockExtensionFn func(
-	context.Context,
-	[][]byte,
-) [][]byte
-
-// CommitExtensionFn provides an interface for blocks auditing extensions
-// that are used in [InjectCommit] to delegate the post-processing of
-// finalized blocks, to potential extensions.
-//
-// This method accepts a *committed block height* as a `uint64`.
-// Implementations should return nil or an error if a block is invalid.
-//
-// This extension is executed as the **4th** stage in proposing blocks.
-// See also: [DefaultCommitExtension].
-type CommitExtensionFn func(
-	context.Context,
-	uint64,
-) error

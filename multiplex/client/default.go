@@ -1,288 +1,62 @@
 package client
 
-import (
-	"context"
+import "context"
 
-	abci "github.com/ice-blockchain/cometbft/abci/types"
-	v1 "github.com/ice-blockchain/cometbft/api/cometbft/types/v1"
-	"github.com/ice-blockchain/cometbft/config"
+type (
+	DefaultAcceptor struct{}
+	DefaultClient   struct{}
 )
 
-// ----------------------------------------------------------------------------
-// Extensions
-//
-// We hereby provide *example* implementations for the configuration extensions
-// that may be used to *inject configuration* from the client of this library.
-
-// Type-assertions ensure the compatibility of this implementation with the
-// multiplex client contract defined in this package.
 var (
-	_ SyncConfigExtensionFn = DefaultSyncConfigExtension
-	_ SeedConfigExtensionFn = DefaultSeedConfigExtension
-
-	_ ValidatorUpdateExtensionFn = DefaultValidatorUpdateExtension
-	_ ConsensusUpdateExtensionFn = DefaultConsensusUpdateExtension
-	_ CheckTxExtensionFn         = DefaultCheckTxExtension
-	_ PrepareProposalExtensionFn = DefaultPrepareProposalExtension
-	_ ProcessProposalExtensionFn = DefaultProcessProposalExtension
-	_ FinalizeBlockExtensionFn   = DefaultFinalizeBlockExtension
-	_ CommitExtensionFn          = DefaultCommitExtension
-
-	_ CheckMutationResultExtensionFn = DefaultCheckMutationResultExtension
+	_ Acceptor = (*DefaultAcceptor)(nil)
+	_ Client   = (*DefaultClient)(nil)
 )
 
-// ----------------------------------------------------------------------------
-// Configuration
-
-// DefaultSyncConfigExtension is an example implementation for the state-sync
-// config extension [SyncConfigExtensionFn]. A state-sync config extension may
-// be used to *overwrite* state-sync configuration for a particular network.
-//
-// Fields that may be provided from an external process may include:
-// - `StateSyncConfig.TrustPeriod`
-// - `StateSyncConfig.TrustHeight`
-// - `StateSyncConfig.TrustHash`
-//
-// Note that we inject `Address` and `ChainID` in the Context before calling
-// the proposed extension callback, this example does not make use of these.
-func DefaultSyncConfigExtension(
-	_ context.Context, // ctx
-	baseSyncConf *config.StateSyncConfig,
-) *config.StateSyncConfig {
-	// e.g. You may interpret/use the UserAddress and ChainID in extensions.
-	//
-	// userAddress := ctx.Value("Address").(string)
-	// chainId := ctx.Value("ChainID").(string)
-
-	// Deep-copy the StateSyncConfig object
-	nextStateSyncConfig := &config.StateSyncConfig{
-		Enable:              baseSyncConf.Enable,              // bool
-		TempDir:             baseSyncConf.TempDir,             // string
-		RPCServers:          baseSyncConf.RPCServers,          // []string
-		TrustPeriod:         baseSyncConf.TrustPeriod,         // time.Duration
-		TrustHeight:         baseSyncConf.TrustHeight,         // int64
-		TrustHash:           baseSyncConf.TrustHash,           // string
-		DiscoveryTime:       baseSyncConf.DiscoveryTime,       // time.Duration
-		ChunkRequestTimeout: baseSyncConf.ChunkRequestTimeout, // time.Duration
-		ChunkFetchers:       baseSyncConf.ChunkFetchers,       // int32
-	}
-
-	return nextStateSyncConfig
-}
-
-// DefaultSeedConfigExtension is an example implementation for the seed nodes
-// extension [SeedConfigExtensionFn]. A seed nodes config extension may
-// be used to *overwrite* seed nodes configuration for a particular network.
-//
-// i.e. An extension may be implemented to retrieve seed nodes from a custom
-// remote server, or to mutate the available baseSeeds from config.
-//
-// Note that we inject `Address` and `ChainID` in the Context before calling
-// the proposed extension callback, this example does not make use of these.
-func DefaultSeedConfigExtension(
-	_ context.Context, // ctx
-	baseSeeds string,
-) string {
-	// e.g. You may interpret/use the UserAddress and ChainID in extensions.
-	//
-	// userAddress := ctx.Value("Address").(string)
-	// chainId := ctx.Value("ChainID").(string)
-
-	nextSeeds := baseSeeds
-	return nextSeeds
-}
-
-// ----------------------------------------------------------------------------
-// Consensus
-
-// DefaultValidatorUpdateExtension is an example implementation for the
-// validator updates extension [ValidatorUpdateExtensionFn]. A custom auditing
-// and/or reporting unit may be used to evaluate the validator updates set.
-//
-// i.e. An extension may be implemented to report validator set updates to
-// a remove server, or to audit the validator updates.
-//
-// Note that we inject `Address` and `ChainID` in the Context before calling
-// the proposed extension callback, this example does not make use of these.
-func DefaultValidatorUpdateExtension(
-	_ context.Context, // ctx
-	validatorUpdates []abci.ValidatorUpdate,
+// AcceptBroadcastTx returns an error if any of the transactions
+// should not be accepted, or if the batch must not be broadcast.
+func (DefaultAcceptor) AcceptBroadcastTx(
+	_ context.Context,
+	_ string,
+	_ ...Transaction,
 ) error {
-	// e.g. You may interpret/use the UserAddress and ChainID in extensions.
-	//
-	// userAddress := ctx.Value("Address").(string)
-	// chainId := ctx.Value("ChainID").(string)
-
-	// e.g. You may audit the validatorUpdates or report to a remote server.
-
 	return nil
 }
 
-// DefaultConsensusUpdateExtension is an example implementation for the
-// consensus updates extension [ConsensusUpdateExtensionFn]. A custom auditing
-// and/or reporting unit may be used to evaluate the consensus parameters.
-//
-// i.e. An extension may be implemented to report consensus parameters to
-// a remove server, or to audit the parameter updates.
-//
-// Note that we inject `Address` and `ChainID` in the Context before calling
-// the proposed extension callback, this example does not make use of these.
-func DefaultConsensusUpdateExtension(
-	_ context.Context, // ctx
-	consensusParams *v1.ConsensusParams,
+// AcceptBroadcastTxRemoval returns an error if any of the transactions
+// should not be accepted, or if the batch must not be broadcast.
+func (DefaultAcceptor) AcceptBroadcastTxRemoval(
+	_ context.Context,
+	_ string,
+	_ ...Transaction,
 ) error {
-	// e.g. You may interpret/use the UserAddress and ChainID in extensions.
-	//
-	// userAddress := ctx.Value("Address").(string)
-	// chainId := ctx.Value("ChainID").(string)
-
-	// e.g. You may audit the consensusParams or report to a remote server.
-
 	return nil
 }
 
-// ----------------------------------------------------------------------------
-// State
-
-// DefaultCheckMutationResultExtension is an example implementation for the
-// mutation audit extension [CheckMutationResultExtensionFn]. A mutation audit
-// extension may be used to *verify* state mutation results (data consistency).
-//
-// i.e. An extension may be implemented to audit the mutated state machine
-// bytes representation by verifying the latest block hash attached.
-//
-// Note that we inject `Address` and `ChainID` in the Context before calling
-// the proposed extension callback, this example does not make use of these.
-func DefaultCheckMutationResultExtension(
-	_ context.Context, // ctx
-	mutatedState []byte,
-) error {
-	// e.g. You may interpret/use the UserAddress and ChainID in extensions.
-	//
-	// userAddress := ctx.Value("Address").(string)
-	// chainId := ctx.Value("ChainID").(string)
-
-	return nil
+// GetAcceptor returns the injected [Acceptor] implementation.
+func (DefaultClient) GetAcceptor() Acceptor {
+	return &DefaultAcceptor{}
 }
 
-// ----------------------------------------------------------------------------
-// Transactions / Blocks
-
-// DefaultCheckTxExtension is an example implementation for the transactions
-// auditing extension [CheckTxExtensionFn]. A custom auditing and/or reporting
-// unit may be used to evaluate the transaction.
-//
-// CAUTION: Expensive operations must not be run here but rather in the
-// commitment stage(s) of the blocks proposal process.
-//
-// i.e. An extension may be implemented to report transaction bytes to
-// a remove server, or to audit the transaction before it is added.
-//
-// Note that we inject `Address` and `ChainID` in the Context before calling
-// the proposed extension callback, this example does not make use of these.
-func DefaultCheckTxExtension(
-	_ context.Context, // ctx
-	transactionBytes []byte,
-) error {
-	// e.g. You may interpret/use the UserAddress and ChainID in extensions.
-	//
-	// userAddress := ctx.Value("Address").(string)
-	// chainId := ctx.Value("ChainID").(string)
-
-	// e.g. You may audit the transactionBytes.
-	// CAUTION: Expensive operations must not be run here.
-
-	return nil
+// BroadcastTx sends a status to a notifier if any of the transactions
+// fails basic verification, or if we fail to get a majority approval
+// for the broadcast operation from healthy relays.
+func (DefaultClient) BroadcastTx(
+	_ context.Context,
+	_ string,
+	_ []string,
+	_ chan<- BroadcastStatus,
+	_ ...Transaction,
+) {
 }
 
-// DefaultPrepareProposalExtension is an example implementation for the
-// transactions mutation extension [PrepareProposalExtensionFn]. A transactions
-// mutation extension may be used to *pre-process* or *mutate* transactions raw
-// bytes before they are added to a proposal for a particular network.
-//
-// i.e. An extension may be implemented to store transaction data bytes
-// representation in a separate database instance.
-//
-// Note that we inject `ChainID` in the Context before calling the proposed
-// extension callback, this example does not make use of it.
-func DefaultPrepareProposalExtension(
-	_ context.Context, // ctx
-	baseTransactions [][]byte,
-) [][]byte {
-	// e.g. You may interpret/use the UserAddress and ChainID in extensions.
-	//
-	// userAddress := ctx.Value("Address").(string)
-	// chainId := ctx.Value("ChainID").(string)
-
-	nextTransactions := baseTransactions
-	return nextTransactions
-}
-
-// DefaultProcessProposalExtension is an example implementation for the
-// transactions mutation extension [ProcessProposalExtensionFn]. A transactions
-// mutation extension may be used to *post-process* or *mutate* transactions
-// raw bytes as they are added to a proposal for a particular network.
-//
-// i.e. An extension may be implemented to store transaction data bytes
-// representation in a separate database instance.
-//
-// Note that we inject `ChainID` in the Context before calling the proposed
-// extension callback, this example does not make use of it.
-func DefaultProcessProposalExtension(
-	_ context.Context, // ctx
-	baseTransactions [][]byte,
-) [][]byte {
-	// e.g. You may interpret/use the UserAddress and ChainID in extensions.
-	//
-	// userAddress := ctx.Value("Address").(string)
-	// chainId := ctx.Value("ChainID").(string)
-
-	nextTransactions := baseTransactions
-	return nextTransactions
-}
-
-// DefaultFinalizeBlockExtension is an example implementation for the
-// transactions mutation extension [FinalizeBlockExtensionFn]. A transactions
-// mutation extension may be used to *post-process* or *mutate* transactions
-// raw bytes as they are added to a finalize block for a particular network.
-//
-// i.e. An extension may be implemented to store transaction data bytes
-// representation in a separate database instance.
-//
-// Note that we inject `ChainID` in the Context before calling the proposed
-// extension callback, this example does not make use of it.
-func DefaultFinalizeBlockExtension(
-	_ context.Context, // ctx
-	baseTransactions [][]byte,
-) [][]byte {
-	// e.g. You may interpret/use the UserAddress and ChainID in extensions.
-	//
-	// userAddress := ctx.Value("Address").(string)
-	// chainId := ctx.Value("ChainID").(string)
-
-	nextTransactions := baseTransactions
-	return nextTransactions
-}
-
-// DefaultCommitExtension is an example implementation for the committed blocks
-// auditing extension [CommitExtensionFn]. A custom auditing and/or reporting
-// unit may be used to evaluate the committed block height.
-//
-// i.e. An extension may be implemented to report confirmed block heights to
-// a remove server, or to audit the committed block.
-//
-// Note that we inject `Address` and `ChainID` in the Context before calling
-// the proposed extension callback, this example does not make use of these.
-func DefaultCommitExtension(
-	_ context.Context, // ctx
-	blockHeight uint64,
-) error {
-	// e.g. You may interpret/use the UserAddress and ChainID in extensions.
-	//
-	// userAddress := ctx.Value("Address").(string)
-	// chainId := ctx.Value("ChainID").(string)
-
-	// e.g. You may audit the blockHeight or report to a remote server.
-
-	return nil
+// BroadcastTxRemoval sends a status to a notifier if any of the removal
+// operations fail verification, or if we fail to get a majority approval
+// for the broadcast operation from healthy relays.
+func (DefaultClient) BroadcastTxRemoval(
+	_ context.Context,
+	_ string,
+	_ []string,
+	_ chan<- BroadcastStatus,
+	_ ...Transaction,
+) {
 }

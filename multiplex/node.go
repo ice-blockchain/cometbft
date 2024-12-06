@@ -13,6 +13,7 @@ import (
 	"github.com/ice-blockchain/cometbft/internal/evidence"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	mempl "github.com/ice-blockchain/cometbft/mempool"
+	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/snapsapp"
 	"github.com/ice-blockchain/cometbft/node"
 	"github.com/ice-blockchain/cometbft/p2p"
@@ -49,6 +50,7 @@ func DefaultNewNodesMultiplex(
 ) (MultiplexMap[*node.Node], error) {
 	nodesMultiplex, _, err := NewNodesMultiplex(
 		context.Background(),
+		&client.DefaultAcceptor{},
 		globalCfg,
 		logger,
 		options...,
@@ -85,6 +87,7 @@ func DefaultNewNodesMultiplex(
 // CAUTION: This method expects the genesis file to contain a GenesisDocSet.
 func NewNodesMultiplex(
 	ctx context.Context,
+	acceptor client.Acceptor,
 	globalCfg *config.Config,
 	logger cmtlog.Logger,
 	options ...node.Option,
@@ -127,6 +130,7 @@ func NewNodesMultiplex(
 		logger.With("module", "multiplex"),
 		chainRegistry,
 		genesisDocProvider,
+		WithAcceptor(acceptor),
 	)
 
 	// Warn the user about experimental status

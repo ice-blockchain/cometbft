@@ -1,57 +1,39 @@
-# Multiplex Client
+# Client
 
-The `client` package implements an example of a client for the multiplex
-library. Extensions can be implemented in this client or using the interfaces.
+This package provides a client contract for the multiplex library.
 
-This source code publishes a `multiplex/client` golang package.
+An `Acceptor` instance is injected in a `Client` to perform pre-committing
+verification of transactions data. If the acceptor method returns an error,
+the transactions data must be discarded entirely.
 
-## Extensions
-
-We define the rules for *configuration extensions* and *data extensions*,
-which may be used to get custom configuration objects and to process- or mutate
-data using a custom client business logic, e.g. which involve calls to remote
-servers, or which stores data in a separate database, etc.
+A [Client] instance may be used to perform on-demand consensus instances using
+a predefined list of active relays running a cometbft network. Transactions
+that are broadcast will be first broadcast to other relays, then verified,
+before they are committed to a network.
 
 ## Interfaces
 
-| Interface | Description |
-| --- | --- |
-| `SyncConfigExtensionFn` | Provides custom state-sync configuration values. |
-| `SeedConfigExtensionFn` | Provides custom seed nodes configuration values. |
-| `ValidatorUpdateExtensionFn` | Provides custom auditing/reporting for validator updates. |
-| `ConsensusUpdateExtensionFn` | Provides custom auditing/reporting for consensus updates. |
-| `CheckTxExtensionFn` | Provides custom auditing/reporting for individual transactions. |
-| `PrepareProposalExtensionFn` | Provides custom pre-processing units for transactions data. |
-| `ProcessProposalExtensionFn` | Provides custom post-processing units for transactions data. |
-| `FinalizeBlockExtensionFn` | Provides custom processing units for blocks data. |
-| `CommitExtensionFn` | Provides custom auditing/reporting for commited blocks. |
-| `CheckMutationResultExtensionFn` | Provides custom auditing units for state mutation results. |
+  - `Transaction`: A transaction consists of an object with Data and Fingerprint.
+  - `Acceptor`: Defines the contract for client-side transactions verification.
+  - `Client`: Defines the contract for multiplex client implementations.
 
-We provide several example implementations that basically just *deep-copy* the
-input. Obviously, if you are developing a custom extension, you would do more
-than just deep-copy input objects.
+## BroadcastTx
 
-An example for `SyncConfigExtensionFn` is: `DefaultSyncConfigExtension`
-An example for `SeedConfigExtensionFn` is: `DefaultSeedConfigExtension`
-An example for `ValidatorUpdateExtensionFn` is: `DefaultValidatorUpdateExtension`
-An example for `ConsensusUpdateExtensionFn` is: `DefaultConsensusUpdateExtension`
-An example for `CheckTxExtensionFn` is: `DefaultCheckTxExtension`
-An example for `PrepareProposalExtensionFn` is: `DefaultPrepareProposalExtension`
-An example for `ProcessProposalExtensionFn` is: `DefaultProcessProposalExtension`
-An example for `FinalizeBlockExtensionFn` is: `DefaultFinalizeBlockExtension`
-An example for `CommitExtensionFn` is: `DefaultCommitExtension`
-An example for `CheckMutationResultExtensionFn` is: `DefaultCheckMutationResultExtension`
+1. It is expected that any transaction batch forwarded to `Client#BroadcastTx`
+must have been previously accepted using `Acceptor#AcceptBroadcastTx` locally.
 
-## Custom extensions
+2. Transaction batches may concern one or more than one network, which must all
+exist by the time the transaction gets full acceptance of the relays.
 
-You may implement other extensions and use them by modifying the source code
-at `multiplex/client.go`. This file is present only for this purpose, thus if
-the extension you are developing should *become the default*, you may as well
-just overwrite the `Default..Extension` method with your custom business logic.
+3. A broadcast operation is built around a list of predefined relays, of which
+a majority must be healthy, a user address and a transactions batch.
+
+4. A complete consensus instance must succeed before a transaction batch may
+be committed, such that all relays effectively agree to persist the batch.
 
 ## Testing
 
-You can test the `client` package using the following unit test suite:
+You can test the client package using the following unit test suite:
 
 ```bash
 go test github.com/ice-blockchain/cometbft/multiplex/client -test.v -count=1

@@ -106,7 +106,14 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 ) error {
 	// First make sure the ABCI is setup correctly
 	if reactor.abciClient == nil {
-		return errors.New("missing ABCI client (proxyApp) for consensus execution")
+		return errors.New(
+			"missing ABCI client (proxyApp) for consensus execution")
+	}
+
+	extChainID, err := NewExtendedChainIDFromLegacy(chainID)
+	if err != nil {
+		return fmt.Errorf(
+			"found incompatible multiplex ChainID %s: %w", chainID, err)
 	}
 
 	// Used to retrieve configuration and state per chain.
@@ -158,6 +165,10 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 		cfgOverwrite.Mempool,
 		mempool,
 		blockSync, // "waitSync"
+		mempl.WithAcceptor(
+			extChainID.GetUserAddress(),
+			reactor.acceptorImpl,
+		),
 	)
 	if cfgOverwrite.Consensus.WaitForTxs() {
 		mempool.EnableTxsAvailable()

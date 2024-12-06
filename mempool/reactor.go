@@ -12,6 +12,7 @@ import (
 	protomem "github.com/ice-blockchain/cometbft/api/cometbft/mempool/v1"
 	cfg "github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/libs/log"
+	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/types"
 )
@@ -32,15 +33,30 @@ type Reactor struct {
 	// connections for different groups of peers.
 	activePersistentPeersSemaphore    *semaphore.Weighted
 	activeNonPersistentPeersSemaphore *semaphore.Weighted
+
+	// Inject custom transaction verification with an acceptor implementation.
+	txAcceptor  client.Acceptor
+	userAddress string
 }
 
 // NewReactor returns a new Reactor with the given config and mempool.
-func NewReactor(config *cfg.MempoolConfig, mempool *CListMempool, waitSync bool) *Reactor {
+func NewReactor(
+	config *cfg.MempoolConfig,
+	mempool *CListMempool,
+	waitSync bool,
+	options ...func(*Reactor),
+) *Reactor {
 	memR := &Reactor{
 		config:   config,
 		mempool:  mempool,
 		waitSync: atomic.Bool{},
 	}
+
+	// Enable overwrite of some optional properties.
+	for _, option := range options {
+		option(memR)
+	}
+
 	memR.BaseReactor = *p2p.NewBaseReactor("Mempool", memR)
 	if waitSync {
 		memR.waitSync.Store(true)
@@ -50,6 +66,18 @@ func NewReactor(config *cfg.MempoolConfig, mempool *CListMempool, waitSync bool)
 	memR.activeNonPersistentPeersSemaphore = semaphore.NewWeighted(int64(memR.config.ExperimentalMaxGossipConnectionsToNonPersistentPeers))
 
 	return memR
+}
+
+// WithAcceptor is an option helper to inject a custom acceptor implementation
+// which accepts a user address and an acceptor.
+func WithAcceptor(
+	userAddress string,
+	acceptor client.Acceptor,
+) func(*Reactor) {
+	return func(r *Reactor) {
+		r.txAcceptor = acceptor
+		r.userAddress = userAddress
+	}
 }
 
 // GetMempoolPtr returns a pointer to the CListMempool object.
@@ -152,6 +180,27 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 		if len(protoTxs) == 0 {
 			memR.Logger.Error("Received empty Txs message from peer", "src", e.Src)
 			return
+		}
+
+		// Forward the transaction to an Acceptor if any is available. This
+		// will delegate transaction verification locally to an acceptor.
+		if memR.txAcceptor != nil {
+			batch := []client.Transaction{}
+			for _, rawTx := range protoTxs {
+				batch = append(batch, client.RawTxToTransaction(rawTx))
+			}
+
+			err := memR.txAcceptor.AcceptBroadcastTx(
+				context.TODO(),
+				memR.userAddress,
+				batch...,
+			)
+			if err != nil {
+				memR.Logger.Debug("Acceptor rejected batch broadcast",
+					"address", memR.userAddress,
+				)
+				return // do not accept transaction
+			}
 		}
 
 		for _, txBytes := range protoTxs {
