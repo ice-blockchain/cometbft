@@ -13,7 +13,6 @@ import (
 	"github.com/ice-blockchain/cometbft/internal/evidence"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	mempl "github.com/ice-blockchain/cometbft/mempool"
-	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/snapsapp"
 	"github.com/ice-blockchain/cometbft/node"
 	"github.com/ice-blockchain/cometbft/p2p"
@@ -26,13 +25,6 @@ import (
 	"github.com/ice-blockchain/cometbft/version"
 )
 
-// NodesMultiplexShutdownFn describes a shutdown routine functor for
-// a nodes multiplex to gracefully stop operations on all nodes.
-type NodesMultiplexShutdownFn func(
-	MultiplexMap[*node.Node],
-	*Reactor,
-) error
-
 // NodesMultiplexProvider takes a config and a logger and returns a
 // ready-to-go nodes multiplex, i.e. [mx.MultiplexMap[*node.Node]].
 //
@@ -41,7 +33,7 @@ type NodesMultiplexProvider func(
 	*config.Config,
 	cmtlog.Logger,
 	...node.Option,
-) (MultiplexMap[*node.Node], NodesMultiplexShutdownFn, error)
+) (MultiplexMap[*node.Node], error)
 
 // DefaultNewNodesMultiplex returns a CometBFT Nodes Multiplex with default
 // settings for the PrivValidator, ClientCreator, GenesisDoc, and DBProvider.
@@ -54,19 +46,18 @@ func DefaultNewNodesMultiplex(
 	globalCfg *config.Config,
 	logger cmtlog.Logger,
 	options ...node.Option,
-) (MultiplexMap[*node.Node], NodesMultiplexShutdownFn, error) {
-	nodesMultiplex, _, shutdownFn, err := NewNodesMultiplex(
+) (MultiplexMap[*node.Node], error) {
+	nodesMultiplex, _, err := NewNodesMultiplex(
 		context.Background(),
 		globalCfg,
 		logger,
-		&client.DefaultClient{},
 		options...,
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	return nodesMultiplex, shutdownFn, nil
+	return nodesMultiplex, nil
 }
 
 // ----------------------------------------------------------------------------
@@ -96,18 +87,16 @@ func NewNodesMultiplex(
 	ctx context.Context,
 	globalCfg *config.Config,
 	logger cmtlog.Logger,
-	clientImpl client.Client,
 	options ...node.Option,
 ) (
 	MultiplexMap[*node.Node],
 	*Reactor,
-	NodesMultiplexShutdownFn,
 	error,
 ) {
 	// Creates one [p2p.NodeKey] instance per nodes multiplex
 	nodeKey, err := p2p.LoadOrGenNodeKey(globalCfg.NodeKeyFile())
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf(
+		return nil, nil, fmt.Errorf(
 			"failed to load or gen node key %s: %w", globalCfg.NodeKeyFile(), err)
 	}
 
@@ -123,9 +112,9 @@ func NewNodesMultiplex(
 	genesisDocProvider := MultiplexGenesisDocProviderFunc(globalCfg)
 
 	// Uses a singleton chain registry to interpret multiplex configurations
-	chainRegistry, err := NewChainRegistry(&globalCfg.MultiplexConfig, WithClientImpl(clientImpl))
+	chainRegistry, err := NewChainRegistry(&globalCfg.MultiplexConfig)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf(
+		return nil, nil, fmt.Errorf(
 			"failed to create the ChainRegistry: %w", err)
 	}
 
@@ -152,7 +141,7 @@ func NewNodesMultiplex(
 	//
 	// This method calls `mx.NewConfigOverwrite()` for each network.
 	if err := reactor.Start(); err != nil {
-		return nil, nil, nil, fmt.Errorf(
+		return nil, nil, fmt.Errorf(
 			"could not start the multiplex reactor: %w", err)
 	}
 
@@ -166,7 +155,6 @@ func NewNodesMultiplex(
 	localABCISnapsApp := proxy.NewLocalClientCreator(snapsapp.NewSnapsApplication(
 		reactor,
 		logger.With("module", "snapsapp"),
-		snapsapp.WithClientImpl(clientImpl),
 	))
 
 	// Start the ABCI client (proxyApp)
@@ -180,7 +168,7 @@ func NewNodesMultiplex(
 	)
 	abciClient.SetLogger(logger.With("module", "proxy"))
 	if err := abciClient.Start(); err != nil {
-		return nil, nil, nil, fmt.Errorf(
+		return nil, nil, fmt.Errorf(
 			"error starting proxy app connections: %w", err)
 	}
 
@@ -209,7 +197,7 @@ func NewNodesMultiplex(
 		// Make sure we can access the priv validator
 		privValPubKey, err := privValidator.GetPubKey()
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf(
+			return nil, nil, fmt.Errorf(
 				"could not read public key from priv validator: %w", err)
 		}
 
@@ -218,7 +206,7 @@ func NewNodesMultiplex(
 		//
 		// e.g. This also happens on restart of a node.
 		if err := reactor.PrepareConsensusInstanceWithReactor(ctx, chainID); err != nil {
-			return nil, nil, nil, fmt.Errorf(
+			return nil, nil, fmt.Errorf(
 				"error preparing consensus instance: %w", err)
 		}
 
@@ -241,7 +229,7 @@ func NewNodesMultiplex(
 		// Creates a mempool, evidence pool, block executor, blocksync
 		// and finally a consensus reactor.
 		if err := reactor.CreateConsensusInstanceReactors(ctx, chainID, blockSync); err != nil {
-			return nil, nil, nil, fmt.Errorf(
+			return nil, nil, fmt.Errorf(
 				"error starting consensus reactors: %w", err)
 		}
 
@@ -257,51 +245,35 @@ func NewNodesMultiplex(
 
 	nodeInfo, err := makeNodeInfo(globalCfg.Moniker, nodeKey, reactor)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 
 	// Reactor: Network; Network: Reactor.
 	reactor.nodeInfo = nodeInfo
 
 	// Create the [p2p.MultiplexTransports] instances
-	if err := reactor.CreateTransportSwitches(ctx); err != nil {
-		return nil, nil, nil, fmt.Errorf(
+	if err := reactor.CreateTransportSwitches(ctx, reactor.GetNetworks()); err != nil {
+		return nil, nil, fmt.Errorf(
 			"error creating p2p event switch: %w", err)
 	}
 
 	// Create the peer address books and set on switches
-	if err := reactor.CreateAddressBooks(ctx); err != nil {
-		return nil, nil, nil, fmt.Errorf(
+	if err := reactor.CreateAddressBooks(ctx, reactor.GetNetworks()); err != nil {
+		return nil, nil, fmt.Errorf(
 			"error creating the pex address books: %w", err)
 	}
 
 	// Inform about all replicated chains being configured
 	logger.Info("All nodes are now configured", "nodeId", string(nodeKey.ID()))
-	nodesMultiplex := reactor.createMultiplexNodesWithServices(ctx, options...)
 
-	// Prepare shutdown routine to be deferred externally
-	shutdownRoutineFn := func(
-		nm MultiplexMap[*node.Node],
-		r *Reactor,
-	) error {
-		// Stops all running node instances
-		for _, n := range nm {
-			ni := n.GetInstance().(*node.Node)
+	// Create node.Node instances (runtime) and inject "runtime/node" service.
+	nodesMultiplex := reactor.createMultiplexNodesWithServices(
+		ctx,
+		reactor.GetNetworks(),
+		options...,
+	)
 
-			if err := ni.Stop(); err != nil {
-				return err
-			}
-		}
-
-		// Stops reactor services (notably ABCI client)
-		if err := r.Stop(); err != nil {
-			return err
-		}
-
-		return nil
-	}
-
-	return nodesMultiplex, reactor, shutdownRoutineFn, nil
+	return nodesMultiplex, reactor, nil
 }
 
 // ----------------------------------------------------------------------------
@@ -324,7 +296,6 @@ func NewLegacyNodeMultiplex(
 ) (
 	MultiplexMap[*node.Node],
 	*Reactor,
-	NodesMultiplexShutdownFn,
 	error,
 ) {
 	multiplex := MultiplexMap[*node.Node]{}
@@ -338,7 +309,7 @@ func NewLegacyNodeMultiplex(
 		},
 	)
 	if err != nil {
-		return multiplex, nil, nil, err
+		return multiplex, nil, err
 	}
 
 	// Uses the default genesisDoc provider functor
@@ -358,7 +329,7 @@ func NewLegacyNodeMultiplex(
 		options...,
 	)
 	if err != nil {
-		return multiplex, nil, nil, err
+		return multiplex, nil, err
 	}
 
 	// Read the GenesisDoc, errors can be ignored as they would have triggered
@@ -372,24 +343,7 @@ func NewLegacyNodeMultiplex(
 	// as a fallback for when multiplex configuration is inconsistent or missing.
 	multiplex[genesisDoc.ChainID] = NewChainInstance[*node.Node](genesisDoc.ChainID, readyNode)
 
-	// Prepare shutdown routine to be deferred externally
-	shutdownRoutineFn := func(
-		nm MultiplexMap[*node.Node],
-		_ *Reactor,
-	) error {
-		// Stops legacy node instance
-		for _, n := range nm {
-			ni := n.GetInstance().(*node.Node)
-
-			if err := ni.Stop(); err != nil {
-				return err
-			}
-		}
-
-		return nil
-	}
-
-	return multiplex, &Reactor{}, shutdownRoutineFn, nil
+	return multiplex, &Reactor{}, nil
 }
 
 // ----------------------------------------------------------------------------

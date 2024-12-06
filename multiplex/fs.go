@@ -35,34 +35,56 @@ func NewMultiplexFS(conf *config.Config) (multiplex MultiplexFS, err error) {
 	// i.e.: data/%address%/%ChainID%/...
 	baseDataDir := filepath.Join(conf.BaseConfig.RootDir, config.DefaultDataDir)
 	baseConfDir := filepath.Join(conf.BaseConfig.RootDir, config.DefaultConfigDir)
-	for userAddress, chainIds := range conf.UserChains {
+	for _, chainIds := range conf.UserChains {
 		// Uses one subfolder by user in data/ and one in config/
-		userDataDir := filepath.Join(baseDataDir, userAddress)
-		userConfDir := filepath.Join(baseConfDir, userAddress)
-
-		// .. and one subfolder by ChainID
+		// .. and one subfolder by ChainID in the user subfolders
 		for _, chainID := range chainIds {
 			chainID, err := NewExtendedChainIDFromLegacy(chainID)
 			if err != nil {
 				return multiplex, err
 			}
 
-			folderName := chainID.String()
-			chainDataFolder := filepath.Join(userDataDir, folderName)
-			chainConfFolder := filepath.Join(userConfDir, folderName)
+			_, chainDataFolder, err := EnsureNetworkFS(chainID, baseConfDir, baseDataDir)
+			if err != nil {
+				return multiplex, err
+			}
+
 			multiplex[chainID.String()] = chainDataFolder
-
-			// Any error here means the directory is not accessible
-			if err := cmtos.EnsureDir(chainDataFolder, config.DefaultDirPerm); err != nil {
-				return multiplex, fmt.Errorf("missing mandatory data folder %s: %w", chainDataFolder, err)
-			}
-
-			// Any error here means the directory is not accessible
-			if err := cmtos.EnsureDir(chainConfFolder, config.DefaultDirPerm); err != nil {
-				return multiplex, fmt.Errorf("missing mandatory config folder %s: %w", chainConfFolder, err)
-			}
 		}
 	}
 
 	return multiplex, nil
+}
+
+// EnsureNetworkFS creates a filesystem structure for a single network
+// with a user folder located in data/ and config/, and which contains
+// one subfolder per network, using the ChainID.
+//
+// Return order is: config folder, data folder, error.
+func EnsureNetworkFS(
+	chainID ExtendedChainID,
+	baseConfDir string,
+	baseDataDir string,
+) (string, string, error) {
+	// Uses one subfolder by user in data/ and one in config/
+	userDataDir := filepath.Join(baseDataDir, chainID.GetUserAddress())
+	userConfDir := filepath.Join(baseConfDir, chainID.GetUserAddress())
+
+	// .. and one subfolder by ChainID
+	chainDataFolder := filepath.Join(userDataDir, chainID.String())
+	chainConfFolder := filepath.Join(userConfDir, chainID.String())
+
+	// Any error here means the directory is not accessible
+	if err := cmtos.EnsureDir(chainDataFolder, config.DefaultDirPerm); err != nil {
+		return "", "", fmt.Errorf(
+			"missing mandatory data folder %s: %w", chainDataFolder, err)
+	}
+
+	// Any error here means the directory is not accessible
+	if err := cmtos.EnsureDir(chainConfFolder, config.DefaultDirPerm); err != nil {
+		return "", "", fmt.Errorf(
+			"missing mandatory config folder %s: %w", chainConfFolder, err)
+	}
+
+	return chainConfFolder, chainDataFolder, nil
 }

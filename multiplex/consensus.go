@@ -143,6 +143,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	// 1) Create the mempool / mempool reactor
 	//
 	// BREAKING: We do not permit using the NopMempool.
+	// TODO(midas): add client instance reactor.clientImpl
 	memplLogger := reactor.logger.With("module", "mempool")
 	mempool := mempl.NewCListMempool(
 		cfgOverwrite.Mempool,

@@ -31,7 +31,10 @@ import (
 //
 // TODO(midas): TBI impact of ABCI query that uses /p2p/filter, discarded here.
 // TODO(midas): we must probably divide the max peers by the number of known networks.
-func (reactor *Reactor) CreateTransportSwitches(ctx context.Context) error {
+func (reactor *Reactor) CreateTransportSwitches(
+	ctx context.Context,
+	networks []string,
+) error {
 	// Used for global metrics provider
 	globalConfig := reactor.GetNodeConfig()
 	p2pLogger := reactor.logger.With("module", "p2p")
@@ -49,7 +52,7 @@ func (reactor *Reactor) CreateTransportSwitches(ctx context.Context) error {
 	// for each replicated chain.
 	//
 	// Additionally, we feed the previously created consensus reactors.
-	for _, chainID := range reactor.GetNetworks() {
+	for _, chainID := range networks {
 		// The config overwrite notably contains P2P.Seeds overwrite
 		cfgOverwrite := configProvider(chainID).(*config.Config)
 
@@ -137,7 +140,10 @@ func (reactor *Reactor) CreateTransportSwitches(ctx context.Context) error {
 // one `addrbook.json` file exists per each replicated chain.
 //
 // Note that this method must be called after [CreateTransportSwitches].
-func (reactor *Reactor) CreateAddressBooks(ctx context.Context) error {
+func (reactor *Reactor) CreateAddressBooks(
+	ctx context.Context,
+	networks []string,
+) error {
 	// Used for logging with custom address book
 	p2pLogger := reactor.logger.With("module", "p2p")
 
@@ -149,7 +155,7 @@ func (reactor *Reactor) CreateAddressBooks(ctx context.Context) error {
 	configProvider := reactor.GetInstanceProvider(InstanceKeyConfig)
 	switchProvider := reactor.GetInstanceProvider(InstanceKeyP2PSwitch)
 
-	for _, chainID := range reactor.GetNetworks() {
+	for _, chainID := range networks {
 		// The config overwrite notably contains P2P.Seeds overwrite
 		cfgOverwrite := configProvider(chainID).(*config.Config)
 		eventSwitch := switchProvider(chainID).(*p2p.Switch)

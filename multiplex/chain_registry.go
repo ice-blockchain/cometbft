@@ -11,7 +11,6 @@ import (
 
 	"github.com/ice-blockchain/cometbft/config"
 	cmtos "github.com/ice-blockchain/cometbft/internal/os"
-	"github.com/ice-blockchain/cometbft/multiplex/client"
 )
 
 // -----------------------------------------------------------------------------
@@ -25,11 +24,8 @@ import (
 //
 // A cacheable chain provider is provided with [NewChainRegistry].
 type ChainRegistry interface {
-	// SetClientImpl should overwrite the client implementation.
-	SetClientImpl(cli client.Client) ChainRegistry
-
-	// GetClientImpl should return the active client implementation.
-	GetClientImpl() client.Client
+	// AddChain should add a new ChainID for userAddress.
+	AddChain(userAddress string, chainID string) ChainRegistry
 
 	// HasChain should return true if the ChainID can be found.
 	HasChain(chainID string) bool
@@ -70,32 +66,43 @@ type singletonChainRegistry struct {
 	// userChains maps user addresses to a slice of ChainIDs
 	// This field is unexported to prevent unordered iteration.
 	userChains map[string][]string
-
-	// clientImpl contains an instance of a client implementation.
-	clientImpl client.Client
 }
 
-// WithClientImpl sets the client implementation to cli.
-func WithClientImpl(cli client.Client) func(ChainRegistry) {
-	return func(reg ChainRegistry) {
-		reg.SetClientImpl(cli)
+// AddChain adds a new ChainID to the ReplicatedChains slice.
+//
+// This method may be used to add a new ChainID to a ChainRegistry after it
+// was initialized around a configuration object.
+//
+// NOTE: The ChainSeeds and SyncConfig configuration objects for the added
+// network are set to empty values. The ChainSeeds is obviously empty because
+// the added (new) network doesn't have peers yet.
+//
+// This method accepts a userAddress and chainID.
+// AddChain implements ChainRegistry.
+func (r *singletonChainRegistry) AddChain(
+	userAddress string,
+	chainID string,
+) ChainRegistry {
+	// Nothing to do if the ChainID is known.
+	if r.HasChain(chainID) {
+		return r
 	}
-}
 
-// SetClientImpl sets the active client implementation.
-func (r *singletonChainRegistry) SetClientImpl(cli client.Client) ChainRegistry {
-	r.clientImpl = cli
+	// Append to list of available ChainID
+	r.ReplicatedChains = append(r.ReplicatedChains, chainID)
+	r.ChainSeeds[chainID] = ""
+	r.SyncConfig[chainID] = config.DefaultStateSyncConfig()
+
+	// Also append to user mapped ChainID
+	if _, ok := r.userChains[userAddress]; !ok {
+		r.userChains[userAddress] = []string{}
+	}
+	r.userChains[userAddress] = append(r.userChains[userAddress], chainID)
+
+	// Sort networks slices alphabetically by ChainID
+	sort.Strings(r.ReplicatedChains)
+	sort.Strings(r.userChains[userAddress])
 	return r
-}
-
-// GetClientImpl returns the active client implementation or the default client
-// if no other was used in options.
-func (r *singletonChainRegistry) GetClientImpl() client.Client {
-	if r.clientImpl == nil {
-		r.SetClientImpl(&client.DefaultClient{})
-	}
-
-	return r.clientImpl
 }
 
 // HasChain returns true if the ChainID can be found
@@ -225,24 +232,13 @@ func NewChainRegistry(conf *config.MultiplexConfig, options ...func(ChainRegistr
 			option(registry)
 		}
 
-		// Use the default client implementation or a custom overwrite.
-		cli := registry.GetClientImpl()
-
-		// Uses the default extension implementation, i.e. deep-copy conf.StateSync
-		// see `multiplex/client.go` to use a custom state-sync config extension.
-		injectSyncConfig := client.InjectSyncConfig(conf, cli.GetSyncConfigExtension())
-
-		// Uses the default extension implementation, i.e. deep-copy conf.ChainSeeds
-		// see `multiplex/client.go` to use a custom seed nodes config extension.
-		injectChainSeeds := client.InjectChainSeeds(conf, cli.GetSeedConfigExtension())
-
 		// Copy seed nodes and map to ChainID
-		for chainID, seedNodes := range injectChainSeeds {
+		for chainID, seedNodes := range conf.ChainSeeds {
 			registry.ChainSeeds[chainID] = seedNodes
 		}
 
 		// Copy state-sync config and map to ChainID
-		for chainID, syncConfig := range injectSyncConfig {
+		for chainID, syncConfig := range conf.SyncConfig {
 			registry.SyncConfig[chainID] = syncConfig
 		}
 

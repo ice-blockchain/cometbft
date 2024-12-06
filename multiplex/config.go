@@ -1,6 +1,7 @@
 package multiplex
 
 import (
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -97,19 +98,11 @@ func WithRPCStartPort(rpcStartPort uint16) func(*config.MultiplexConfig) {
 }
 
 // NewConfigOverwrite updates a node configuration in-place to overwrite the
-// services listen addresses such that there is one P2P- and one RPC port per
-// replicated chain. Following ports overwrite apply:
+// services listen addresses and uses the chainRegistry instance to retrieve
+// seed nodes configuration and state-sync configuration.
 //
-// - P2P: legacy `26656`, multiplex `30001`...`3000x` with x the index of nodes
-// - RPC: legacy `26657`, multiplex `40001`...`4000x` with x the index of nodes
-//
-// This method also overwrites the `P2P.Seeds` configuration option such that
-// each replicated chain uses its own seed nodes, and the `WAL` file is changed
-// so that each replicated chain writes to a separate WAL-file.
-// Also, state-sync is forcefully enabled because it is the preferred method
-// of synchronization with individual replicated chains.
-//
-// It returns the newly created *deep-copy* of the node configuration.
+// This method uses [NewConfigOverwriteWithParameters] after having read the
+// parameters from the chainRegistry.
 func NewConfigOverwrite(
 	baseConfig *config.Config,
 	chainRegistry ChainRegistry,
@@ -122,20 +115,63 @@ func NewConfigOverwrite(
 	// Find index of ChainID (deterministic due to sorting)
 	nodeIdx, err := chainRegistry.FindChain(withChainID)
 	if err != nil {
-		panic(err.Error())
+		panic(fmt.Errorf(
+			"could not find ChainID %s: %w", withChainID, err))
 	}
-
-	// Errors would have been handled in above statement
-	address, _ := chainRegistry.GetAddress(withChainID)
 
 	// Seed nodes *may* be empty, error ignored here.
 	seedNodes, _ := chainRegistry.GetSeeds(withChainID)
 
-	// Sync configuration contains trust options for state-sync.
-	syncConfig, err := chainRegistry.GetStateSyncConfig(withChainID)
+	// Sync configuration contains disabled state-sync configuration.
+	syncConfig := config.DefaultStateSyncConfig()
+	syncConfig.Enable = false
+
+	// Deep-copy the config.Config object and overwrite ports.
+	mxConfig, err := NewConfigOverwriteWithParameters(
+		baseConfig,
+		withChainID,
+		seedNodes,
+		syncConfig,
+		p2pStartPort+nodeIdx,
+		rpcStartPort+nodeIdx,
+	)
 	if err != nil {
-		panic(err.Error())
+		panic(fmt.Errorf(
+			"could create a config overwrite for ChainID %s: %w", withChainID, err))
 	}
+
+	return mxConfig
+}
+
+// NewConfigOverwriteWithParameters updates a node configuration in-place to
+// overwrite the services listen addresses such that there is one P2P- and
+// one RPC port per replicated chain. Following ports overwrite apply:
+//
+// - P2P: legacy `26656`, multiplex `30001`...`3000x` with x the index of nodes
+// - RPC: legacy `26657`, multiplex `40001`...`4000x` with x the index of nodes
+//
+// This method also overwrites the `P2P.Seeds` configuration option such that
+// each replicated chain uses its own seed nodes, and the `WAL` file is changed
+// so that each replicated chain writes to a separate WAL-file.
+//
+// It returns the newly created *deep-copy* of the node configuration.
+func NewConfigOverwriteWithParameters(
+	baseConfig *config.Config,
+	withChainID string,
+	seedNodes string,
+	syncConfig *config.StateSyncConfig,
+	p2pPortOverwrite int,
+	rpcPortOverwrite int,
+) (*config.Config, error) {
+	// Validate the provided ChainID
+	extChainID, err := NewExtendedChainIDFromLegacy(withChainID)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"found incompatible ChainID %s: %w", withChainID, err)
+	}
+
+	// Errors would have been handled in above statement
+	address := extChainID.GetUserAddress()
 
 	// Deep-copy the config object to create multiple nodes
 	mxConfig := deepCopyConfig(baseConfig)
@@ -145,14 +181,14 @@ func NewConfigOverwrite(
 	mxConfig.P2P.Seeds = seedNodes // CAUTION: always uses seeds!
 	mxConfig.P2P.ListenAddress = overwriteListenPort(
 		baseConfig.P2P.ListenAddress,
-		p2pStartPort+nodeIdx,
+		p2pPortOverwrite,
 	)
 
 	// ----------------------------
 	// RPC Configuration Overwrite
 	mxConfig.RPC.ListenAddress = overwriteListenPort(
 		baseConfig.RPC.ListenAddress,
-		rpcStartPort+nodeIdx,
+		rpcPortOverwrite,
 	)
 
 	// ----------------------------
@@ -178,7 +214,7 @@ func NewConfigOverwrite(
 	mxConfig.StateSync.RPCServers = make([]string, len(syncConfig.RPCServers))
 	copy(mxConfig.StateSync.RPCServers, syncConfig.RPCServers)
 
-	return mxConfig
+	return mxConfig, nil
 }
 
 // -----------------------------------------------------------------------------

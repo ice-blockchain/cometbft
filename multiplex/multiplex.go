@@ -28,14 +28,14 @@ import (
 // created node instances. It is important to note that each node instance's
 // Start() method must be called in a separate goroutine to permit concurrent
 // consensus instances, blocks production and state machines replication.
+//
+// This method also registers services in the servicesRegistry:
+// - `runtime/node`: The node instance or runtime service.
 func (reactor *Reactor) createMultiplexNodesWithServices(
 	_ context.Context,
+	networks []string,
 	options ...node.Option,
 ) MultiplexMap[*node.Node] {
-	// We shall iterate through all known networks and create separate
-	// multiplex transports and event switches for each replicated chain.
-	chainRegistry := reactor.GetChainRegistry()
-
 	// Used to retrieve configuration and state per chain.
 	genesisDocProvider := reactor.GetGenesisProvider()
 	serviceProvider := reactor.GetServicesProvider()
@@ -47,18 +47,14 @@ func (reactor *Reactor) createMultiplexNodesWithServices(
 	stateStoreProvider := reactor.GetInstanceProvider(InstanceKeyStateStore)
 	blockStoreProvider := reactor.GetInstanceProvider(InstanceKeyBlockStore)
 
-	// Retrieve ordered list of networks
-	replicatedChains := chainRegistry.GetChains()
-	numReplicatedChains := len(replicatedChains)
-
 	// Allocate return objects
-	nodesMultiplex := make(MultiplexMap[*node.Node], numReplicatedChains)
+	nodesMultiplex := MultiplexMap[*node.Node]{}
 
 	// We iterate through an ordered list of known networks to create
 	// one instance of [node.Node] for each replicated chain.
 	//
 	// This notably permits to keep backwards-compatibility with CometBFT.
-	for _, chainID := range replicatedChains {
+	for _, chainID := range networks {
 		// Config
 		genesisDoc := genesisDocProvider(chainID)
 		cfgOverwrite := configProvider(chainID).(*config.Config)
@@ -119,6 +115,9 @@ func (reactor *Reactor) createMultiplexNodesWithServices(
 
 		// Prepare registerable instances mapped to ChainID
 		nodesMultiplex[chainID] = NewChainInstance(chainID, nodeInstance)
+
+		// Add to service shutdown routine by registration
+		reactor.RegisterService(ServiceKeyNodeRuntime, chainID, nodeInstance)
 	}
 
 	return nodesMultiplex

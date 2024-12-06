@@ -5,7 +5,6 @@ import (
 
 	abcitypes "github.com/ice-blockchain/cometbft/abci/types"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
-	"github.com/ice-blockchain/cometbft/multiplex/client"
 )
 
 const (
@@ -48,10 +47,6 @@ type SnapsApp struct {
 	// The finalized block heights consist of working block heights.
 	fbMutex              *sync.RWMutex
 	finalizeBlockHeights map[string]int64
-
-	// Extensions / Hooks
-	cliMutex   *sync.RWMutex
-	clientImpl client.Client
 }
 
 var _ abcitypes.Application = (*SnapsApp)(nil)
@@ -64,25 +59,16 @@ func NewSnapsApplication(
 	options ...func(*SnapsApp),
 ) *SnapsApp {
 	app := &SnapsApp{
-		reactor:  reactor,
-		logger:   logger,
-		chMutex:  new(sync.RWMutex),
-		ihMutex:  new(sync.RWMutex),
-		fbMutex:  new(sync.RWMutex),
-		cliMutex: new(sync.RWMutex),
+		reactor: reactor,
+		logger:  logger,
+		chMutex: new(sync.RWMutex),
+		ihMutex: new(sync.RWMutex),
+		fbMutex: new(sync.RWMutex),
 	}
 
 	// Apply all options before anything else
 	for _, option := range options {
 		option(app)
-	}
-
-	// Set default client if not set with options
-	app.cliMutex.RLock()
-	clientImpl := app.clientImpl
-	app.cliMutex.RUnlock()
-	if clientImpl == nil {
-		app.SetClientImpl(&client.DefaultClient{})
 	}
 
 	// Use the reactor to retrieve chains of interest
@@ -104,23 +90,6 @@ func NewSnapsApplication(
 	app.fbMutex.Unlock()
 
 	return app
-}
-
-// SetClientImpl sets the active client implementation.
-func (app *SnapsApp) SetClientImpl(cli client.Client) {
-	app.cliMutex.Lock()
-	defer app.cliMutex.Unlock()
-
-	app.clientImpl = cli
-}
-
-// GetClientImpl returns the active client implementation or the default client
-// if no other was used in options.
-func (app *SnapsApp) GetClientImpl() client.Client {
-	app.cliMutex.RLock()
-	defer app.cliMutex.RUnlock()
-
-	return app.clientImpl
 }
 
 // InitialHeight returns the initial block height for a chainID.
@@ -153,17 +122,4 @@ func (app *SnapsApp) setFinalizeBlockHeight(chainID string, reqHeight int64) err
 
 	app.finalizeBlockHeights[chainID] = reqHeight
 	return nil
-}
-
-// ----------------------------------------------------------------------------
-// SnapsApp option helpers
-
-// WithClientImpl is an option helper that allows you to overwrite
-// the default client implementation and all the extensions.
-func WithClientImpl(
-	clientImpl client.Client,
-) func(*SnapsApp) {
-	return func(app *SnapsApp) {
-		app.SetClientImpl(clientImpl)
-	}
 }

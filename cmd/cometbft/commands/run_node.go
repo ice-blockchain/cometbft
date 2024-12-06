@@ -199,7 +199,7 @@ func NewRunMultiplexCmd(multiplexProvider mx.NodesMultiplexProvider) *cobra.Comm
 			config.SetRoot(rootDir)
 
 			// Create the MultiplexMap of *node.Node instances
-			nodesMultiplex, _, err := multiplexProvider(config, logger)
+			nodesMultiplex, err := multiplexProvider(config, logger)
 			if err != nil {
 				return fmt.Errorf("failed to create multiplex: %w", err)
 			}
@@ -219,10 +219,10 @@ func NewRunMultiplexCmd(multiplexProvider mx.NodesMultiplexProvider) *cobra.Comm
 				// Running the following code is highly unrecommended in
 				// a production environment. Please use this feature with
 				// caution as it is still being actively developed.
-				go func(chainId string, sn *nm.Node) {
+				go func(chainID string, sn *nm.Node) {
 					defer wg.Done()
 
-					logger.Info("Starting new node", "chain", chainId)
+					logger.Info("Starting new node", "chain_id", chainID)
 					logger.Info("Using custom listen addresses",
 						"p2p", sn.Config().P2P.ListenAddress,
 						"rpc", sn.Config().RPC.ListenAddress,
@@ -232,7 +232,7 @@ func NewRunMultiplexCmd(multiplexProvider mx.NodesMultiplexProvider) *cobra.Comm
 						panic(fmt.Errorf("failed to start node: %w", err))
 					}
 
-					logger.Info("Started node", "chain", chainId, "nodeInfo", sn.Switch().NodeInfo())
+					logger.Info("Started node", "chain_id", chainID, "nodeInfo", sn.Switch().NodeInfo())
 
 					// Stop upon receiving SIGTERM or CTRL-C.
 					cmtos.TrapSignal(logger, func() {

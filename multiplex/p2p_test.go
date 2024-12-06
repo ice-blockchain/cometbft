@@ -75,7 +75,7 @@ func TestMultiplexReactorCreateTransportSwitches(t *testing.T) {
 	reactor.SetNodeInfo(testNodeInfo)
 
 	// Should create [p2p.MultiplexTransport] instances
-	err := reactor.CreateTransportSwitches(context.TODO())
+	err := reactor.CreateTransportSwitches(context.TODO(), reactor.GetNetworks())
 	assert.NoError(t, err, "should not error creating transports and switches")
 
 	transportsProvider := reactor.GetInstanceProvider(mx.InstanceKeyP2PTransport)
@@ -119,11 +119,11 @@ func TestMultiplexReactorCreateAddressBooks(t *testing.T) {
 	)
 	reactor.SetNodeInfo(testNodeInfo)
 
-	err := reactor.CreateTransportSwitches(context.TODO())
+	err := reactor.CreateTransportSwitches(context.TODO(), reactor.GetNetworks())
 	require.NoError(t, err, "should not error creating transports and switches")
 
 	// Should create [p2p.pex.AddrBook] instances
-	err = reactor.CreateAddressBooks(context.TODO())
+	err = reactor.CreateAddressBooks(context.TODO(), reactor.GetNetworks())
 	assert.NoError(t, err, "should not error creating pex address books")
 
 	// Should set the AddrBook on [p2p.Switch]

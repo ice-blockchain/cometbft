@@ -56,6 +56,7 @@ const (
 	ServiceKeyBlockSyncReactor = "reactor/blockSync"
 	ServiceKeyConsensusReactor = "reactor/consensus"
 	ServiceKeyEvidenceReactor  = "reactor/evidence"
+	ServiceKeyNodeRuntime      = "runtime/node"
 )
 
 // serviceProviderFn provides a [cmtlibs.Service] instance by name and ChainID.
@@ -91,6 +92,7 @@ type Reactor struct {
 	servicesProvider   func(string, string) cmtlibs.Service // service by name, e.g. "eventBus", and ChainID
 	multiplexProvider  func(string) MultiplexMap[any]       // multiplex by name, e.g. "database", "state", etc.
 	genesisDocProvider func(string) *types.GenesisDoc       // genesis doc by ChainID
+	initialGenesisDocs *ChecksummedGenesisDocSet
 
 	// Node configuration
 	nodeKey      *p2p.NodeKey
@@ -175,6 +177,7 @@ func NewReactor(
 	}
 
 	// Initialize all providers
+	reactor.initialGenesisDocs = icsGenesisDocSet.(*ChecksummedGenesisDocSet)
 	reactor.initMultiplexProviders(icsGenesisDocSet)
 
 	return reactor
@@ -339,6 +342,50 @@ func (reactor *Reactor) RegisterInstance(
 		chainID,
 		instance,
 	)
+}
+
+// RegisterNetwork updates the necessary resources to permit executing a
+// new network node runtime for userAddress and chainID.
+//
+// This method notably mutates the chainRegistry, the networks list,
+// the ABCI client and the MultiNetworkNodeInfo instance of the reactor.
+//
+// Subsequent dialing of this relay will include the new network.
+func (reactor *Reactor) RegisterNetwork(
+	userAddress string,
+	chainID string,
+) error {
+	// Nothing to do if the ChainID is known.
+	if reactor.HasNetwork(chainID) {
+		return nil
+	}
+
+	// First things first, ChainRegistry must be updated.
+	reactor.chainRegistry = reactor.chainRegistry.AddChain(
+		userAddress,
+		chainID,
+	)
+
+	// .. because it must reflect on our list of networks.
+	reactor.networks = reactor.chainRegistry.GetChains()
+
+	// Injects new AppConns in MultiplexAppConn for ABCI.
+	reactor.abciClient.AddNetwork(chainID)
+
+	// Update the MultiNetworkNodeInfo instance (just a re-make).
+	updatedNodeInfo, err := makeNodeInfo(
+		reactor.nodeInfo.Moniker,
+		reactor.nodeKey,
+		reactor,
+	)
+	if err != nil {
+		return fmt.Errorf("could not update multi network node info: %w", err)
+	}
+
+	// Injects the updated node info instance in the reactor.
+	reactor.nodeInfo = updatedNodeInfo
+
+	return nil
 }
 
 // ----------------------------------------------------------------------------
