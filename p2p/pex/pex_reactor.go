@@ -408,6 +408,12 @@ func (r *Reactor) SetEnsurePeersPeriod(d time.Duration) {
 	r.ensurePeersPeriod = d
 }
 
+// ForceEnsurePeers wakes up the ensurePeersRoutine when asked.
+func (r *Reactor) ForceEnsurePeers() bool {
+	r.ensurePeersCh <- struct{}{}
+	return true
+}
+
 // Ensures that sufficient peers are connected. (continuous).
 func (r *Reactor) ensurePeersRoutine() {
 	defer r.peersRoutineWg.Done()

@@ -224,6 +224,18 @@ func (sw *Switch) SetNodeKey(nodeKey *NodeKey) {
 	sw.nodeKey = nodeKey
 }
 
+// GetPeerConfig returns the peer configuration object.
+func (sw *Switch) GetPeerConfig() peerConfig {
+	return peerConfig{
+		chDescs:       sw.chDescs,
+		onPeerError:   sw.StopPeerForError,
+		isPersistent:  sw.IsPeerPersistent,
+		reactorsByCh:  sw.reactorsByCh,
+		msgTypeByChID: sw.msgTypeByChID,
+		metrics:       sw.metrics,
+	}
+}
+
 // ---------------------------------------------------------------------
 // Service start/stop
 
