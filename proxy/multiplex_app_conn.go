@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"fmt"
+	"slices"
 
 	abcicli "github.com/ice-blockchain/cometbft/abci/client"
 	cmtos "github.com/ice-blockchain/cometbft/internal/os"
@@ -51,15 +52,14 @@ func NewMultiplexAppConn(
 	clientCreator ClientCreator,
 	metrics *Metrics,
 ) ChainConns {
-	numChains := len(chainIds)
 	mac := &multiplexAppConn{
 		chainIds:       chainIds,
 		metrics:        metrics,
 		connsMutex:     new(cmtsync.RWMutex),
-		consensusConns: make(map[string]AppConnConsensus, numChains),
-		mempoolConns:   make(map[string]AppConnMempool, numChains),
-		queryConns:     make(map[string]AppConnQuery, numChains),
-		snapshotConns:  make(map[string]AppConnSnapshot, numChains),
+		consensusConns: map[string]AppConnConsensus{},
+		mempoolConns:   map[string]AppConnMempool{},
+		queryConns:     map[string]AppConnQuery{},
+		snapshotConns:  map[string]AppConnSnapshot{},
 
 		clientCreator: clientCreator,
 		sharedClients: &sharedConnClients{
@@ -68,6 +68,24 @@ func NewMultiplexAppConn(
 	}
 	mac.BaseService = *service.NewBaseService(nil, "multiplexAppConn", mac)
 	return mac
+}
+
+// AddNetwork implements [ChainConns].
+func (conn *multiplexAppConn) AddNetwork(chainID string) {
+	if slices.Contains(conn.chainIds, chainID) {
+		return
+	}
+
+	conn.connsMutex.Lock()
+	defer conn.connsMutex.Unlock()
+
+	cli := conn.sharedClients
+
+	conn.chainIds = append(conn.chainIds, chainID)
+	conn.queryConns[chainID] = NewChainConnQuery(chainID, cli.query, conn.metrics)
+	conn.snapshotConns[chainID] = NewChainConnSnapshot(chainID, cli.snapshot, conn.metrics)
+	conn.mempoolConns[chainID] = NewChainConnMempool(chainID, cli.mempool, conn.metrics)
+	conn.consensusConns[chainID] = NewChainConnConsensus(chainID, cli.consensus, conn.metrics)
 }
 
 // Mempool implements [ChainConns].

@@ -25,6 +25,9 @@ import (
 type ChainConns interface {
 	service.Service
 
+	// Add a network connection pool
+	AddNetwork(chainID string)
+
 	// Mempool connection
 	Mempool(chainID string) AppConnMempool
 	// Consensus connection
