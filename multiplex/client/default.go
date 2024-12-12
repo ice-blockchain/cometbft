@@ -32,6 +32,16 @@ func (DefaultAcceptor) AcceptBroadcastTxRemoval(
 	return nil
 }
 
+// RollbackTx should execute custom business logic such as removing data
+// previously committed for a transaction batch that is being rollbacked.
+func (DefaultAcceptor) RollbackTx(
+	_ context.Context,
+	_ string,
+	_ ...Transaction,
+) error {
+	return nil
+}
+
 // GetAcceptor returns the injected [Acceptor] implementation.
 func (DefaultClient) GetAcceptor() Acceptor {
 	return &DefaultAcceptor{}

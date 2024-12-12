@@ -57,6 +57,14 @@ type Acceptor interface {
 		userAddress string,
 		transactions ...Transaction,
 	) error
+
+	// RollbackTx should execute custom business logic such as removing data
+	// previously committed for a transaction batch that is being rollbacked.
+	RollbackTx(
+		ctx context.Context,
+		userAddress string,
+		transactions ...Transaction,
+	) error
 }
 
 // Client defines the contract for multiplex client implementations.
@@ -79,6 +87,9 @@ type Client interface {
 	// This method should broadcast the transactions to all other relays and
 	// iff the calls to [Acceptor#AcceptBroadcastTx] by relays are successful,
 	// it should commit the transactions data.
+	// If commitment does not succeed for any reason outside of the scope of
+	// acceptance, e.g. hd failure, this method calls [Acceptor#RollbackTx]
+	// and broadcasts a RollbackTxs message to other relays' mempool reactor.
 	//
 	// If any error happens during the broadcast process, the transactions
 	// data must be discarded.
