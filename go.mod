@@ -18,7 +18,7 @@ require (
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/orderedcode v0.0.1
 	github.com/gorilla/websocket v1.5.3
-	github.com/ice-blockchain/cometbft/api v1.0.0-mx.3
+	github.com/ice-blockchain/cometbft/api v1.0.0-mx.4
 	github.com/lib/pq v1.10.9
 	github.com/minio/highwayhash v1.0.3
 	github.com/ory/dockertest v3.3.5+incompatible
@@ -50,7 +50,6 @@ require (
 	github.com/oasisprotocol/curve25519-voi v0.0.0-20220708102147-0a8a51822cae
 	github.com/pelletier/go-toml/v2 v2.2.2
 	github.com/supranational/blst v0.3.13
-	go.uber.org/goleak v1.3.0
 	golang.org/x/exp v0.0.0-20231110203233-9a3e6036ecaa
 	golang.org/x/sync v0.8.0
 	gonum.org/v1/gonum v0.15.1
