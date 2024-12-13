@@ -8,10 +8,16 @@ message Txs {
   repeated bytes txs = 1;
 }
 
+// RollbackTxs contains a list of transactions to remove from the mempool.
+message RollbackTxs {
+  repeated bytes txs = 1;
+}
+
 // Message is an abstract mempool message.
 message Message {
   // Sum of all possible messages.
   oneof sum {
     Txs txs = 1;
+    RollbackTxs rollback_txs = 2;
   }
 }
