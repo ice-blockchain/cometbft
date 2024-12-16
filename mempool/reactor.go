@@ -170,6 +170,46 @@ func (memR *Reactor) AddPeer(peer p2p.Peer) {
 func (memR *Reactor) Receive(e p2p.Envelope) {
 	memR.Logger.Debug("Receive", "src", e.Src, "chId", e.ChannelID, "msg", e.Message)
 	switch msg := e.Message.(type) {
+	case *protomem.RollbackTxs:
+		protoTxs := msg.GetTxs()
+		if len(protoTxs) == 0 {
+			memR.Logger.Error("Received empty RollbackTxs message from peer", "src", e.Src)
+			return
+		}
+
+		// Rollback operations are processed iff we have an acceptor instance.
+		if memR.txAcceptor == nil {
+			return
+		}
+
+		// Format transaction batch for Acceptor call.
+		batch := []client.Transaction{}
+		for _, rawTx := range protoTxs {
+			batch = append(batch, client.RawTxToTransaction(rawTx))
+		}
+
+		// Forward the transaction rollbacks to an Acceptor.
+		err := memR.txAcceptor.RollbackTx(
+			context.TODO(),
+			memR.userAddress,
+			batch...,
+		)
+		if err != nil {
+			memR.Logger.Debug("Acceptor rejected batch rollback",
+				"address", memR.userAddress,
+			)
+			return // Nothing to do
+		}
+
+		// Rollback transactions by removing them from the mempool.
+		for _, rawTx := range protoTxs {
+			memTx := types.Tx(rawTx) // mempool Tx from bytes
+			if err := memR.mempool.RemoveTxByKey(memTx.Key()); err != nil {
+				memR.Logger.Debug("Rollback transaction not in local mempool (not an error)",
+					"tx", log.NewLazySprintf("%X", memTx.Hash()),
+					"error", err.Error())
+			}
+		}
 	case *protomem.Txs:
 		if memR.WaitSync() {
 			memR.Logger.Debug("Ignored message received while syncing", "msg", msg)
