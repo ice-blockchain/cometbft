@@ -61,7 +61,7 @@ func mockNodeInfoWithNetworks(
 	}
 }
 
-func TestMultiplexReactorCreateTransportSwitches(t *testing.T) {
+func TestMultiplexReactorCreateTransportSwitchesWithReactors(t *testing.T) {
 	numChains := 5
 	rootDir, globalCfg, reactor := ResetTestMultiplexP2P(t, numChains)
 	defer os.RemoveAll(rootDir)
@@ -75,7 +75,7 @@ func TestMultiplexReactorCreateTransportSwitches(t *testing.T) {
 	reactor.SetNodeInfo(testNodeInfo)
 
 	// Should create [p2p.MultiplexTransport] instances
-	err := reactor.CreateTransportSwitches(context.TODO(), reactor.GetNetworks())
+	err := reactor.CreateTransportSwitchesWithReactors(context.TODO(), reactor.GetNetworks())
 	assert.NoError(t, err, "should not error creating transports and switches")
 
 	transportsProvider := reactor.GetInstanceProvider(mx.InstanceKeyP2PTransport)
@@ -119,7 +119,7 @@ func TestMultiplexReactorCreateAddressBooks(t *testing.T) {
 	)
 	reactor.SetNodeInfo(testNodeInfo)
 
-	err := reactor.CreateTransportSwitches(context.TODO(), reactor.GetNetworks())
+	err := reactor.CreateTransportSwitchesWithReactors(context.TODO(), reactor.GetNetworks())
 	require.NoError(t, err, "should not error creating transports and switches")
 
 	// Should create [p2p.pex.AddrBook] instances

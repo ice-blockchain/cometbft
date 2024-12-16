@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ice-blockchain/cometbft/config"
@@ -15,6 +16,56 @@ import (
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/p2p/pex"
 )
+
+// CreateTransportSwitch creates a singular [p2p.Switch] attached
+// to a per-network [p2p.MultiplexTransport] instance and attaches
+// a relay's [MultiNetworkNodeInfo] to communicate with it.
+func (reactor *Reactor) CreateTransportSwitch(
+	chainID string,
+	withNodeInfo MultiNetworkNodeInfo,
+) error {
+	// We just need to create one p2p.Switch per network
+	reactor.multiplexMutex.RLock()
+	defer reactor.multiplexMutex.RUnlock()
+	if _, ok := reactor.multiplexRegistry[InstanceKeyP2PSwitch]; ok {
+		return nil
+	}
+
+	// Prometheus does not allow hyphens in metrics names, it must match
+	// following regexp: [a-zA-Z_:][a-zA-Z0-9_:]*
+	// see also: https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels
+	p2pChainsMetricsId := strings.Join([]string{
+		reactor.nodeConfig.Instrumentation.Namespace,
+		string(reactor.nodeKey.ID()),
+		strings.ReplaceAll(chainID, "-", "_"),
+	}, "_")
+	p2pMetricsProvider := p2p.PrometheusMetrics(p2pChainsMetricsId,
+		"node_id", string(reactor.nodeKey.ID()),
+	)
+
+	// Create a p2p.MultiplexTransport instance with handshake
+	// around a MultiNetworkNodeInfo and using the local node key.
+	mConnConfig := p2p.MConnConfig(reactor.nodeConfig.P2P)
+	chainTransport := p2p.NewMultiplexTransportWithCustomHandshake(
+		reactor.nodeInfo, // local nodeInfo
+		*reactor.nodeKey,
+		mConnConfig,
+		MultiplexTransportHandshake,
+	)
+
+	eventSwitch := p2p.NewSwitch(
+		reactor.nodeConfig.P2P,
+		chainTransport,
+		p2p.WithMetrics(p2pMetricsProvider),
+	)
+	eventSwitch.SetLogger(reactor.logger.With("module", "p2p"))
+	eventSwitch.SetNodeInfo(withNodeInfo.GetNodeInfo(chainID))
+	eventSwitch.SetNodeKey(reactor.nodeKey)
+
+	reactor.RegisterInstance(InstanceKeyP2PTransport, chainID, chainTransport)
+	reactor.RegisterInstance(InstanceKeyP2PSwitch, chainID, eventSwitch)
+	return nil
+}
 
 // CreateTransportSwitches initializes P2P transports using the legacy
 // structure [p2p.MultiplexTransport], but injects a *custom TLS handshake*
@@ -31,7 +82,7 @@ import (
 //
 // TODO(midas): TBI impact of ABCI query that uses /p2p/filter, discarded here.
 // TODO(midas): we must probably divide the max peers by the number of known networks.
-func (reactor *Reactor) CreateTransportSwitches(
+func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 	ctx context.Context,
 	networks []string,
 ) error {

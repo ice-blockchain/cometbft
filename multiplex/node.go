@@ -256,7 +256,7 @@ func NewNodesMultiplex(
 	reactor.nodeInfo = nodeInfo
 
 	// Create the [p2p.MultiplexTransports] instances
-	if err := reactor.CreateTransportSwitches(ctx, reactor.GetNetworks()); err != nil {
+	if err := reactor.CreateTransportSwitchesWithReactors(ctx, reactor.GetNetworks()); err != nil {
 		return nil, nil, fmt.Errorf(
 			"error creating p2p event switch: %w", err)
 	}
