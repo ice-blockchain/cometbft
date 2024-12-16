@@ -27,7 +27,6 @@ type Transaction struct {
 // which may contain an error and metadata about the current step.
 type BroadcastStatus struct {
 	Error    error
-	LastStep uint16
 	TxHashes [][]byte
 }
 
