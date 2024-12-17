@@ -2,7 +2,6 @@ package multiplex
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -263,11 +262,6 @@ func NewChainRegistry(conf *config.MultiplexConfig, options ...func(ChainRegistr
 	cRegistry := regWithErr.instance
 	if regWithErr.err != nil {
 		return &singletonChainRegistry{}, regWithErr.err
-	}
-
-	// Let the client handle multiplex misconfiguration
-	if conf.Strategy == NetworkReplicationStrategy() && len(cRegistry.ReplicatedChains) == 0 {
-		return &singletonChainRegistry{}, errors.New("found 0 replicated chains - in network replication, at least one is required")
 	}
 
 	return cRegistry, nil

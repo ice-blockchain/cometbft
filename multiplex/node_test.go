@@ -350,8 +350,13 @@ func ResetTestMultiplexNode(tb testing.TB, numChains int) (string, *config.Confi
 			}
 		}
 
-		// Removes last comma and closes json array
-		testGenesis = testGenesis[:len(testGenesis)-1] + `]`
+		if 0 == len(globalCfg.UserChains) {
+			testGenesis = testGenesis + `]`
+		} else {
+			// Removes last comma and closes json array
+			testGenesis = testGenesis[:len(testGenesis)-1] + `]`
+		}
+
 		cmtos.MustWriteFile(genesisFilePath, []byte(testGenesis), 0o644)
 	}
 

@@ -13,7 +13,7 @@ import (
 	cmtos "github.com/ice-blockchain/cometbft/internal/os"
 	cmtjson "github.com/ice-blockchain/cometbft/libs/json"
 	"github.com/ice-blockchain/cometbft/node"
-	types "github.com/ice-blockchain/cometbft/types"
+	"github.com/ice-blockchain/cometbft/types"
 )
 
 // Note: we use a separate key space for the genesis doc and doc hashes
@@ -212,14 +212,19 @@ func ValidateGenesisDocChecksum(database *ChainDB, genesisDoc *types.GenesisDoc)
 // CAUTION: this method expects the genesis file to contain a GenesisDocSet.
 func MultiplexGenesisDocProviderFunc(nodeCfg *config.Config) node.GenesisDocProvider {
 	return func() (node.IChecksummedGenesisDoc, error) {
+		emptyGenesisDocSet := &ChecksummedGenesisDocSet{
+			GenesisDocs:    GenesisDocSet{},
+			Sha256Checksum: []byte{},
+		}
+
 		jsonBlob, err := os.ReadFile(nodeCfg.GenesisFile())
 		if err != nil {
-			return nil, fmt.Errorf("couldn't read GenesisDocSet from file: %w", err)
+			return emptyGenesisDocSet, fmt.Errorf("couldn't read GenesisDocSet from file: %w", err)
 		}
 
 		genDocSet, err := GenesisDocSetFromJSON(jsonBlob)
 		if err != nil {
-			return nil, err
+			return emptyGenesisDocSet, err
 		}
 
 		incomingChecksum := tmhash.Sum(jsonBlob)

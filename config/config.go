@@ -310,11 +310,6 @@ func MultiplexBaseConfig(
 	userChains map[string][]string,
 	multiplexOptions ...func(*MultiplexConfig),
 ) BaseConfig {
-	// Validate or return defaults
-	if len(chainSeeds) == 0 && len(userChains) == 0 {
-		return DefaultBaseConfig()
-	}
-
 	// Multiplex features will be enabled.
 	config := DefaultBaseConfig()
 	config.MultiplexConfig = MultiplexConfig{

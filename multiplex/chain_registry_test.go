@@ -127,19 +127,18 @@ func TestMultiplexChainRegistryNewChainRegistry(t *testing.T) {
 	assert.NoError(t, err, "should not error given disabled multiplex configuration")
 	assert.Empty(t, stopRegistry.GetChains())
 
-	// Should error given empty replicated chains but "Network" strategy
+	// ----------------
+	// Successes
+
+	// Should not error given empty chains with "Network" strategy
 	misConf := config.MultiplexTestBaseConfig( // contains ReplicationStrategy("Network")
 		map[string]*config.StateSyncConfig{},
-		map[string]string{
-			"mx-chain-CC8E6555A3F401FF61DA098F94D325E7041BC43A-1A63C0E60122F9BB": "id@host:port",
-		},
+		map[string]string{},
 		map[string][]string{},
 	)
 	_, err = mx.NewChainRegistry(&misConf.MultiplexConfig)
-	assert.Error(t, err, "should error given no replicated chains")
+	assert.NoError(t, err, "should not error given empty replicated chains")
 
-	// ----------------
-	// Successes
 	minimalConf := config.MultiplexTestBaseConfig(
 		map[string]*config.StateSyncConfig{},
 		map[string]string{},

@@ -24,13 +24,13 @@ func TestMultiplexConfigDefaultLegacyFallback(t *testing.T) {
 }
 
 func TestMultiplexConfigMultiplexBaseConfig(t *testing.T) {
-	// Must detect empty multiplex config
+	// Must accept empty multiplex config
 	conf := config.MultiplexBaseConfig(
 		map[string]*config.StateSyncConfig{},
 		map[string]string{},
 		map[string][]string{},
 	)
-	assert.Equal(t, config.DefaultReplicationStrategy(), conf.Strategy)
+	assert.Equal(t, mx.NetworkReplicationStrategy(), conf.Strategy)
 
 	// Must accept chainSeeds
 	conf = config.MultiplexBaseConfig(

@@ -101,6 +101,7 @@ type Reactor struct {
 	userConfig   *config.MultiplexConfig
 	abciClient   proxy.ChainConns
 	storagePaths MultiplexFS
+	configsPaths MultiplexFS
 	acceptorImpl client.Acceptor
 
 	// Networks information
@@ -168,6 +169,8 @@ func NewReactor(
 		servicesPriority:  map[string]uint32{},
 		servicesSequence:  []string{},
 		multiplexRegistry: NamedMultiplexMap[any]{},
+		storagePaths:      MultiplexFS{},
+		configsPaths:      MultiplexFS{},
 
 		// Internals
 		logger:       logger,
@@ -182,10 +185,11 @@ func NewReactor(
 	reactor.BaseReactor = *p2p.NewBaseReactor("Multiplex", reactor)
 
 	// Note that this expects the `genesis.json` to contain a GenesisDocSet.
-	// This call to the underlying provider Validates the GenesisDocSet.
+	// This call to the underlying provider Validates the GenesisDocSet or
+	// creates an empty genesis doc set with no checksum to verify.
 	icsGenesisDocSet, err := genesisDocsProvider()
 	if err != nil {
-		panic(err)
+		reactor.logger.Debug("CAUTION: Using empty GenesisDocSet (not an error)")
 	}
 
 	// Initialize all providers
