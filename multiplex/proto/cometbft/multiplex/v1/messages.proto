@@ -1,0 +1,34 @@
+syntax = "proto3";
+package cometbft.multiplex.v1;
+
+option go_package = "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1";
+
+import "gogoproto/gogo.proto";
+import "google/protobuf/timestamp.proto";
+import "cometbft/types/v1/validator.proto";
+import "cometbft/types/v1/params.proto";
+
+// ChainParams contains the parameters needed to connect to one chain.
+message ChainParams {
+  google.protobuf.Timestamp         genesis_time     = 1 [(gogoproto.nullable) = false, (gogoproto.stdtime)  = true];
+  string                            chain_id         = 2 [(gogoproto.customname) = "ChainID"];
+  cometbft.types.v1.ConsensusParams consensus_params = 3;
+  cometbft.types.v1.ValidatorSet    validators       = 4 [(gogoproto.nullable) = false];
+  bytes                             app_hash         = 5;
+  bytes                             app_state_bytes  = 6;
+  int64                             initial_height   = 7;
+}
+
+// ChainReplicationRequest requests to replicate a new chain with replication details.
+message ChainReplicationRequest {
+  string      chain_id     = 1 [(gogoproto.customname) = "ChainID"];
+  ChainParams chain_params = 4;
+}
+
+// Message is an abstract multiplex message.
+message Message {
+  // Sum of all possible messages.
+  oneof sum {
+    ChainReplicationRequest  chain_replication_request  = 1;
+  }
+}
