@@ -7,6 +7,7 @@ import (
 	"os"
 	"slices"
 
+	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/crypto/merkle"
 	"github.com/ice-blockchain/cometbft/crypto/tmhash"
@@ -132,6 +133,36 @@ func (genDocSet GenesisDocSet) SearchGenesisDocByChainID(
 
 //------------------------------------------------------------
 // Providers
+
+// GenesisDocFromChainParams creates a genesisDoc from transported ChainParams
+// which should contain all the genesisDoc properties.
+func GenesisDocFromChainParams(params *mxp2p.ChainParams) (types.GenesisDoc, error) {
+	// Unmarshal protobuf
+	consensusParams := types.ConsensusParamsFromProto(*params.ConsensusParams)
+	validatorSet, err := types.ValidatorSetFromProto(&params.Validators)
+	if err != nil {
+		return types.GenesisDoc{}, err
+	}
+
+	genesisValidators := []types.GenesisValidator{}
+	for _, validator := range validatorSet.Validators {
+		genesisValidators = append(genesisValidators, types.GenesisValidator{
+			Address: validator.Address,
+			PubKey:  validator.PubKey,
+			Power:   validator.VotingPower,
+		})
+	}
+
+	return types.GenesisDoc{
+		GenesisTime:     params.GenesisTime,
+		ChainID:         params.ChainID,
+		InitialHeight:   int64(params.InitialHeight),
+		ConsensusParams: &consensusParams,
+		Validators:      genesisValidators,
+		AppHash:         params.AppHash,
+		AppState:        params.AppStateBytes, // TODO(midas): appStateBytes initialization
+	}, nil
+}
 
 // GenesisDocSetFromJSON unmarshalls JSON data into a GenesisDocSet.
 func GenesisDocSetFromJSON(jsonBlob []byte) (GenesisDocSet, error) {

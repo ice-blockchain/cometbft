@@ -13,11 +13,12 @@ import (
 	"github.com/stretchr/testify/require"
 
 	dbm "github.com/cometbft/cometbft-db"
+	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	"github.com/ice-blockchain/cometbft/crypto/tmhash"
 	cmtjson "github.com/ice-blockchain/cometbft/libs/json"
 	mx "github.com/ice-blockchain/cometbft/multiplex"
-	types "github.com/ice-blockchain/cometbft/types"
+	"github.com/ice-blockchain/cometbft/types"
 	cmttime "github.com/ice-blockchain/cometbft/types/time"
 )
 
@@ -269,6 +270,89 @@ func TestMultiplexGenesisDocSetValidateGenesisDocChecksum(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, true, bytes.Equal(expectedSha256, actualSha256))
 	}
+}
+
+func TestMultiplexGenesisDocFromChainParams(t *testing.T) {
+	rootDir, err := os.MkdirTemp("", t.Name())
+	require.NoError(t, err)
+	defer os.RemoveAll(rootDir)
+
+	// Test with one validator
+	genValidator := ed25519.GenPrivKey()
+	cmtConsensus := types.DefaultConsensusParams().ToProto()
+
+	cmtValidators, err := types.NewValidatorSet([]*types.Validator{
+		types.NewValidator(genValidator.PubKey(), 10),
+	}).ToProto()
+	assert.NoError(t, err)
+	assert.NotNil(t, cmtValidators)
+
+	chainParams := &mxp2p.ChainParams{
+		GenesisTime:     cmttime.Now(),
+		ChainID:         "genesis-test1",
+		InitialHeight:   1,
+		ConsensusParams: &cmtConsensus,
+		Validators:      *cmtValidators,
+		AppHash:         []byte{1, 2, 3},
+		AppStateBytes:   []byte("data"),
+	}
+
+	actualGenesisDoc, err := mx.GenesisDocFromChainParams(chainParams)
+	assert.NoError(t, err, "should format ChainParams as GenesisDoc")
+	assert.NotNil(t, actualGenesisDoc.GenesisTime)
+	assert.Equal(t, "genesis-test1", actualGenesisDoc.ChainID)
+	assert.NotEmpty(t, actualGenesisDoc.AppHash)
+	assert.NotEmpty(t, actualGenesisDoc.AppState)
+
+	// Test with many validators and mutate consensus params
+	numValidators := 7
+	validatorSetMany := types.NewValidatorSet([]*types.Validator{
+		types.NewValidator(ed25519.GenPrivKey().PubKey(), 10),
+		types.NewValidator(ed25519.GenPrivKey().PubKey(), 10),
+		types.NewValidator(ed25519.GenPrivKey().PubKey(), 10),
+		types.NewValidator(ed25519.GenPrivKey().PubKey(), 10),
+		types.NewValidator(ed25519.GenPrivKey().PubKey(), 10),
+		types.NewValidator(ed25519.GenPrivKey().PubKey(), 10),
+		types.NewValidator(ed25519.GenPrivKey().PubKey(), 10),
+	})
+	cmtValidatorsMany, err := validatorSetMany.ToProto()
+	assert.NoError(t, err)
+	assert.NotNil(t, cmtValidatorsMany)
+	assert.Len(t, cmtValidatorsMany.Validators, numValidators)
+
+	expectedConsensusChange := int64(123456789)
+	expectedInitialHeight := int64(101)
+	expectedAppVersion := uint64(123)
+
+	newConsensus := types.DefaultConsensusParams()
+	newConsensus.Block.MaxBytes = expectedConsensusChange
+	newConsensus.Block.MaxGas = expectedConsensusChange
+	newConsensus.Version.App = expectedAppVersion
+	cmtNewConsensus := newConsensus.ToProto()
+
+	chainParamsMany := &mxp2p.ChainParams{
+		GenesisTime:     cmttime.Now(),
+		ChainID:         "genesis-test2",
+		InitialHeight:   expectedInitialHeight,
+		ConsensusParams: &cmtNewConsensus,
+		Validators:      *cmtValidatorsMany,
+		AppHash:         []byte{3, 2, 1},
+		AppStateBytes:   []byte("data2"),
+	}
+
+	actualGenesisDoc2, err := mx.GenesisDocFromChainParams(chainParamsMany)
+	assert.NoError(t, err, "should format ChainParams as GenesisDoc")
+	assert.NotNil(t, actualGenesisDoc2.GenesisTime)
+	assert.Equal(t, "genesis-test2", actualGenesisDoc2.ChainID)
+	assert.Equal(t, expectedInitialHeight, actualGenesisDoc2.InitialHeight)
+	assert.Len(t, actualGenesisDoc2.Validators, numValidators)
+	assert.NotEmpty(t, actualGenesisDoc2.AppHash)
+	assert.NotEmpty(t, actualGenesisDoc2.AppState)
+
+	actualConsensusParams := actualGenesisDoc2.ConsensusParams
+	assert.Equal(t, expectedConsensusChange, actualConsensusParams.Block.MaxBytes)
+	assert.Equal(t, expectedConsensusChange, actualConsensusParams.Block.MaxGas)
+	assert.Equal(t, expectedAppVersion, actualConsensusParams.Version.App)
 }
 
 func randomGenesisDocSet(opt ...int) mx.GenesisDocSet {
