@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"io"
 )
 
 // ContextKey defines a string-based context value key.
@@ -64,6 +65,14 @@ type Acceptor interface {
 		userAddress string,
 		transactions ...Transaction,
 	) error
+
+	// RollbackTxRemoval should execute custom business logic such as removing
+	// data previously committed for a removal operation that is rollbacked.
+	RollbackTxRemoval(
+		ctx context.Context,
+		userAddress string,
+		transactions ...Transaction,
+	) error
 }
 
 // Client defines the contract for multiplex client implementations.
@@ -76,9 +85,6 @@ type Acceptor interface {
 //
 // See also: [Acceptor].
 type Client interface {
-	// GetAcceptor returns the injected [Acceptor] implementation.
-	GetAcceptor() Acceptor
-
 	// BroadcastTx sends an error to a notifier if any of the transactions
 	// fails basic verification, or if we fail to get a majority approval
 	// for the broadcast operation from healthy relays.
@@ -124,4 +130,18 @@ type Client interface {
 		notifier chan<- BroadcastStatus,
 		transactions ...Transaction,
 	)
+}
+
+// Server defines the contract for replication backend implementations.
+//
+// A server instance must be started before replication can happen and
+// before broadcast operations can be forwarded to the [Client].
+type Server interface {
+	io.Closer
+
+	// GetAcceptor returns the injected [Acceptor] implementation.
+	GetAcceptor() Acceptor
+
+	// MustStart executes a replication backend.
+	MustStart()
 }

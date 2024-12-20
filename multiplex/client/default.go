@@ -5,11 +5,13 @@ import "context"
 type (
 	DefaultAcceptor struct{}
 	DefaultClient   struct{}
+	DefaultServer   struct{}
 )
 
 var (
 	_ Acceptor = (*DefaultAcceptor)(nil)
 	_ Client   = (*DefaultClient)(nil)
+	_ Server   = (*DefaultServer)(nil)
 )
 
 // AcceptBroadcastTx returns an error if any of the transactions
@@ -42,9 +44,14 @@ func (DefaultAcceptor) RollbackTx(
 	return nil
 }
 
-// GetAcceptor returns the injected [Acceptor] implementation.
-func (DefaultClient) GetAcceptor() Acceptor {
-	return &DefaultAcceptor{}
+// RollbackTxRemoval should execute custom business logic such as removing
+// data previously committed for a removal operation that is rollbacked.
+func (DefaultAcceptor) RollbackTxRemoval(
+	_ context.Context,
+	_ string,
+	_ ...Transaction,
+) error {
+	return nil
 }
 
 // BroadcastTx sends a status to a notifier if any of the transactions
@@ -70,3 +77,16 @@ func (DefaultClient) BroadcastTxRemoval(
 	_ ...Transaction,
 ) {
 }
+
+// Close implements io.Closer
+func (DefaultServer) Close() error {
+	return nil
+}
+
+// GetAcceptor returns the injected [Acceptor] implementation.
+func (DefaultServer) GetAcceptor() Acceptor {
+	return &DefaultAcceptor{}
+}
+
+// MustStart must start a replication backend or return an error.
+func (DefaultServer) MustStart() {}
