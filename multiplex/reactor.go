@@ -106,7 +106,7 @@ type Reactor struct {
 
 	// Networks information
 	networks []string
-	nodeInfo MultiNetworkNodeInfo
+	nodeInfo *MultiNetworkNodeInfo
 
 	// Services registry is a multiplex map which is searchable by service name
 	// and which contains other multiplex maps where keys are ChainID values.
@@ -229,6 +229,21 @@ func (reactor *Reactor) GetStoragePaths() map[string]string {
 	return reactor.storagePaths
 }
 
+// GetConfigsPaths returns a [MultiplexFS] instance.
+func (reactor *Reactor) GetConfigsPaths() map[string]string {
+	return reactor.configsPaths
+}
+
+// GetChecksummedGenesisDocSet returns a [ChecksummedGenesisDocSet] instance.
+func (reactor *Reactor) GetChecksummedGenesisDocSet() *ChecksummedGenesisDocSet {
+	return reactor.initialGenesisDocs
+}
+
+// GetMultiNetworkNodeInfo returns a [MultiNetworkNodeInfo] pointer.
+func (reactor *Reactor) GetMultiNetworkNodeInfo() *MultiNetworkNodeInfo {
+	return reactor.nodeInfo
+}
+
 // GetNodeKey returns the [p2p.NodeKey] instance.
 func (reactor *Reactor) GetNodeKey() *p2p.NodeKey {
 	return reactor.nodeKey
@@ -276,6 +291,10 @@ func (reactor *Reactor) GetInstanceProvider(multiplexName string) instanceProvid
 		reactor.multiplexMutex.RLock()
 		defer reactor.multiplexMutex.RUnlock()
 
+		if _, ok := multiplex[chainId]; !ok {
+			return nil
+		}
+
 		// Returns the underlying instance (castable)
 		return multiplex[chainId].GetInstance()
 	}
@@ -306,13 +325,18 @@ func (reactor *Reactor) SetABCIClient(abciClient proxy.ChainConns) {
 
 // SetNodeInfo sets a custom [MultiNetworkNodeInfo] instance.
 // Note that this method is only used in tests for now.
-func (reactor *Reactor) SetNodeInfo(nodeInfo MultiNetworkNodeInfo) {
+func (reactor *Reactor) SetNodeInfo(nodeInfo *MultiNetworkNodeInfo) {
 	reactor.nodeInfo = nodeInfo
 }
 
 // SetStoragePaths sets a custom [MultiplexFS] map of storage paths.
 func (reactor *Reactor) SetStoragePaths(fs MultiplexFS) {
 	reactor.storagePaths = fs
+}
+
+// SetConfigsPaths sets a custom [MultiplexFS] map of configs paths.
+func (reactor *Reactor) SetConfigsPaths(fs MultiplexFS) {
+	reactor.configsPaths = fs
 }
 
 // RegisterService inserts a [cmtlibs.Service] instance in the registry
@@ -387,7 +411,7 @@ func (reactor *Reactor) RegisterNetwork(
 	}
 
 	// First things first, ChainRegistry must be updated.
-	reactor.chainRegistry = reactor.chainRegistry.AddChain(
+	reactor.chainRegistry.AddChain(
 		userAddress,
 		chainID,
 	)
@@ -396,11 +420,13 @@ func (reactor *Reactor) RegisterNetwork(
 	reactor.networks = reactor.chainRegistry.GetChains()
 
 	// Injects new AppConns in MultiplexAppConn for ABCI.
-	reactor.abciClient.AddNetwork(chainID)
+	if reactor.abciClient != nil {
+		reactor.abciClient.AddNetwork(chainID)
+	}
 
 	// Update the MultiNetworkNodeInfo instance (just a re-make).
 	updatedNodeInfo, err := makeNodeInfo(
-		reactor.nodeInfo.Moniker,
+		reactor.nodeConfig.Moniker,
 		reactor.nodeKey,
 		reactor,
 	)
@@ -554,7 +580,7 @@ func (reactor *Reactor) OnStop() {
 		if mx, ok := reactor.multiplexRegistry[dbMultiplexKey]; ok {
 			// Every database connection must be stopped
 			for _, chainInstance := range mx {
-				db := chainInstance.GetInstance().(*ChainDB)
+				db := chainInstance.GetInstance().(dbm.DB)
 				if err := db.Close(); err != nil {
 					reactor.logger.Error("Error closing database connection",
 						"db", dbMultiplexKey,

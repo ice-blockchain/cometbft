@@ -411,9 +411,9 @@ func makeNodeInfo(
 	moniker string,
 	nodeKey *p2p.NodeKey,
 	reactor *Reactor,
-) (MultiNetworkNodeInfo, error) {
+) (*MultiNetworkNodeInfo, error) {
 	// Get an ordered list of replicated chains
-	knownNetworks := reactor.GetChainRegistry().GetChains()
+	knownNetworks := reactor.GetNetworks()
 	countNetworks := len(knownNetworks)
 
 	configProvider := reactor.GetInstanceProvider(InstanceKeyConfig)
@@ -424,6 +424,11 @@ func makeNodeInfo(
 	p2pListenAddrs := make([]ChainListenAddr, countNetworks)
 	rpcListenAddrs := make([]ChainListenAddr, countNetworks)
 	for i, chainID := range knownNetworks {
+		// Fill only for *fully* supported networks (available now).
+		if nil == configProvider(chainID) || nil == statesProvider(chainID) {
+			continue
+		}
+
 		cfgOverwrite := configProvider(chainID).(*config.Config)
 		stateMachine := statesProvider(chainID).(sm.State)
 
@@ -438,7 +443,7 @@ func makeNodeInfo(
 	}
 
 	txIndexerStatus := "on"
-	nodeInfo := MultiNetworkNodeInfo{
+	nodeInfo := &MultiNetworkNodeInfo{
 		DefaultNodeID:    nodeKey.ID(),
 		Networks:         knownNetworks,
 		ProtocolVersions: protocolVersions,

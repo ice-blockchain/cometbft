@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	dbm "github.com/cometbft/cometbft-db"
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/internal/blocksync"
 	cs "github.com/ice-blockchain/cometbft/internal/consensus"
@@ -176,7 +177,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	mempoolReactor.SetLogger(memplLogger)
 
 	// 2) Create the evidence pool / evidence reactor
-	evidenceDB := evidenceDBProvider(chainID).(*ChainDB)
+	evidenceDB := evidenceDBProvider(chainID).(dbm.DB)
 	stateStore := stateStoreProvider(chainID).(sm.Store)
 	blockStore := blockStoreProvider(chainID).(*bs.BlockStore)
 

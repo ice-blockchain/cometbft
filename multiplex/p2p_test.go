@@ -23,7 +23,7 @@ func mockNodeInfoWithNetworks(
 	id p2p.ID,
 	name string,
 	networks []string,
-) mx.MultiNetworkNodeInfo {
+) *mx.MultiNetworkNodeInfo {
 	numNetworks := len(networks)
 	protocolVersions := make([]mx.ChainProtocolVersion, numNetworks)
 	listenAddresses := make([]mx.ChainListenAddr, numNetworks)
@@ -43,7 +43,7 @@ func mockNodeInfoWithNetworks(
 		rpcNodeAddresses[i] = mx.NewChainListenAddr(chainID, rpcListenAddr)
 	}
 
-	return mx.MultiNetworkNodeInfo{
+	return &mx.MultiNetworkNodeInfo{
 		Networks:         networks,
 		ProtocolVersions: protocolVersions,
 		ListenAddrs:      listenAddresses,

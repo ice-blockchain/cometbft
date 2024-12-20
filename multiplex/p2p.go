@@ -93,10 +93,6 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 	// Used to retrieve configuration and state per chain.
 	serviceProvider := reactor.GetServicesProvider()
 	configProvider := reactor.GetInstanceProvider(InstanceKeyConfig)
-	p2pMetricsProvider := p2p.PrometheusMetrics(
-		globalConfig.Instrumentation.Namespace+"_"+string(reactor.nodeKey.ID()),
-		"node_id", string(reactor.nodeKey.ID()),
-	)
 
 	// We iterate through an ordered list of known networks to create
 	// one instance of [p2p.MultiplexTransport] and one instance of [p2p.Switch]
@@ -106,6 +102,18 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 	for _, chainID := range networks {
 		// The config overwrite notably contains P2P.Seeds overwrite
 		cfgOverwrite := configProvider(chainID).(*config.Config)
+
+		// Prometheus does not allow hyphens in metrics names, it must match
+		// following regexp: [a-zA-Z_:][a-zA-Z0-9_:]*
+		// see also: https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels
+		p2pChainsMetricsId := strings.Join([]string{
+			globalConfig.Instrumentation.Namespace,
+			string(reactor.nodeKey.ID()),
+			strings.ReplaceAll(chainID, "-", "_"),
+		}, "_")
+		p2pMetricsProvider := p2p.PrometheusMetrics(p2pChainsMetricsId,
+			"node_id", string(reactor.nodeKey.ID()),
+		)
 
 		// 1) Create the p2p transport
 		//

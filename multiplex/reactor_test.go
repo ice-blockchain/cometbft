@@ -18,6 +18,7 @@ import (
 	"github.com/ice-blockchain/cometbft/node"
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/types"
+	cmttime "github.com/ice-blockchain/cometbft/types/time"
 )
 
 func makeRandomNodeKey() *p2p.NodeKey {
@@ -304,6 +305,118 @@ func TestMultiplexReactorRegisterInstance(t *testing.T) {
 		assert.NoError(t, err, "should retrieve key from database")
 		assert.Equal(t, []byte(chainID), actualChainID)
 	}
+}
+
+func TestMultiplexReactorRegisterNetwork(t *testing.T) {
+	numNetworks := 1
+
+	// Initialize and START the nodes multiplex
+	// For debug, change the logger to cmtlog.TestingLogger()
+	testExtChainID,
+		testReactor,
+		shutdownFn := ResetTestMultiplexReactorRuntimeWithInjection(t, numNetworks, cmtlog.NewNopLogger())
+
+	// Shutdown routine
+	defer shutdownFn()
+
+	testUserAddress := testExtChainID.GetUserAddress()
+	testChainID := testExtChainID.String()
+
+	// Act
+	registerErr := testReactor.RegisterNetwork(testUserAddress, testChainID)
+	assert.NoError(t, registerErr, "should register network in running reactor")
+
+	// Test that we injected the ChainID
+	assert.Len(t, testReactor.GetNetworks(), numNetworks+1) // Injected 1
+	assert.Equal(t, true, testReactor.HasNetwork(testChainID))
+
+	// Also test that we updated MultiNetworkNodeInfo
+	testMultiNetNodeInfo := testReactor.GetMultiNetworkNodeInfo()
+	assert.NotNil(t, testMultiNetNodeInfo)
+
+	actualChainNodeInfo := testMultiNetNodeInfo.GetNodeInfo(testChainID)
+	assert.NotNil(t, actualChainNodeInfo)
+	assert.Equal(t, testChainID, actualChainNodeInfo.Network)
+}
+
+// ----------------------------------------------------------------------------
+// Helpers
+
+// CAUTION: This helper starts a nodes multiplex of numChains random chains.
+// CAUTION: This helper injects a random chain in the pre-configured Reactor.
+func ResetTestMultiplexReactorRuntimeWithInjection(
+	tb testing.TB,
+	numChains int,
+	customLogger cmtlog.Logger,
+) (mx.ExtendedChainID, *mx.Reactor, func()) {
+	tb.Helper()
+
+	// Initialize and START the nodes multiplex
+	// For debug, change the logger to cmtlog.TestingLogger()
+	globalCfg, _,
+		testReactor := assertStartNodesMultiplex(tb, numChains, customLogger)
+
+	// Shutdown routine
+	shutdownRoutine := func() {
+		defer os.RemoveAll(globalCfg.RootDir)
+
+		err := testReactor.Stop()
+		require.NoError(tb, err)
+	}
+
+	// Generate new random network ChainID
+	newUserPubKey := ed25519.GenPrivKey().PubKey()
+	newUserAddress := newUserPubKey.Address().String()
+	fingerprint := makeFingerprint("Posts") // This is the "scope"
+
+	testExtChainID, err := mx.NewExtendedChainID(newUserAddress, fingerprint)
+	require.NoError(tb, err)
+
+	testChainID := testExtChainID.String()
+
+	// Inject testChainID resources
+	allocErr := testReactor.AllocateNetwork(testChainID)
+	require.NoError(tb, allocErr, "should allocate network resources")
+
+	// Inject GenesisDoc to prepare state machine
+	configsPaths := testReactor.GetConfigsPaths()
+	require.Contains(tb, configsPaths, testChainID)
+
+	testConfDir := configsPaths[testChainID]
+	testValidator := ed25519.GenPrivKey()
+	testGenesisDoc := types.GenesisDoc{
+		GenesisTime:     cmttime.Now(),
+		ChainID:         testChainID,
+		ConsensusParams: types.DefaultConsensusParams(),
+		Validators: []types.GenesisValidator{
+			types.GenesisValidator{
+				Address: testValidator.PubKey().Address(),
+				PubKey:  testValidator.PubKey(),
+				Power:   10,
+			},
+		},
+		InitialHeight: int64(123),
+	}
+
+	testIcsGenDocSet, injectErr := testReactor.InjectGenesisDoc(
+		testChainID,
+		testConfDir,
+		testGenesisDoc,
+	)
+	require.NoError(tb, injectErr, "should inject network genesis doc")
+
+	// Prepare state machine for injected network
+	stateErr := testReactor.InjectStateMachine(testChainID, testIcsGenDocSet)
+	require.NoError(tb, stateErr, "should inject network state machine")
+
+	// Prepare config overwrite (ports, seeds, etc.)
+	actualConfOverwrite, configErr := testReactor.MakeNetworkConfigOverwrite(testExtChainID)
+	require.NoError(tb, configErr, "should inject network config overwrite")
+
+	// .. must also register in Reactor
+	testReactor.RegisterInstance(mx.InstanceKeyConfig, testChainID, actualConfOverwrite)
+
+	return testExtChainID, testReactor, shutdownRoutine
 }
 
 // Do not use this in TestMultiplexReactorNewReactor.
