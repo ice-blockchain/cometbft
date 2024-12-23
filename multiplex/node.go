@@ -168,7 +168,7 @@ func NewNodesMultiplex(
 	abciClient := proxy.NewMultiplexAppConn(
 		reactor.GetNetworks(),
 		localABCISnapsApp,
-		proxy.PrometheusMetrics(globalCfg.Instrumentation.Namespace),
+		proxy.PrometheusMetrics(globalCfg.Instrumentation.Namespace+"_"+string(nodeKey.ID())),
 	)
 	abciClient.SetLogger(logger.With("module", "proxy"))
 	if err := abciClient.Start(); err != nil {
@@ -458,6 +458,7 @@ func makeNodeInfo(
 			evidence.EvidenceChannel,
 			statesync.SnapshotChannel, statesync.ChunkChannel,
 			pex.PexChannel,
+			ReplicationChannel,
 		},
 		Moniker: moniker,
 		Other: p2p.DefaultNodeInfoOther{

@@ -164,6 +164,32 @@ func GenesisDocFromChainParams(params *mxp2p.ChainParams) (types.GenesisDoc, err
 	}, nil
 }
 
+// GenesisDocToChainParams creates a ChainParams object from a GenesisDoc.
+func GenesisDocToChainParams(genesisDoc types.GenesisDoc) (*mxp2p.ChainParams, error) {
+
+	vals := make([]*types.Validator, len(genesisDoc.Validators))
+	for i, v := range genesisDoc.Validators {
+		vals[i] = types.NewValidator(v.PubKey, v.Power)
+	}
+	vset := types.NewValidatorSet(vals)
+	protoVals, err := vset.ToProto()
+	if err != nil {
+		return &mxp2p.ChainParams{}, err
+	}
+
+	protoParams := genesisDoc.ConsensusParams.ToProto()
+
+	return &mxp2p.ChainParams{
+		GenesisTime:     genesisDoc.GenesisTime,
+		ChainID:         genesisDoc.ChainID,
+		ConsensusParams: &protoParams,
+		Validators:      *protoVals,
+		AppHash:         genesisDoc.AppHash,
+		AppStateBytes:   genesisDoc.AppState,
+		InitialHeight:   genesisDoc.InitialHeight,
+	}, nil
+}
+
 // GenesisDocSetFromJSON unmarshalls JSON data into a GenesisDocSet.
 func GenesisDocSetFromJSON(jsonBlob []byte) (GenesisDocSet, error) {
 	genDocSet := GenesisDocSet{}

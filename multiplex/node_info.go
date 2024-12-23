@@ -16,6 +16,7 @@ import (
 	cmtbytes "github.com/ice-blockchain/cometbft/libs/bytes"
 	mempl "github.com/ice-blockchain/cometbft/mempool"
 	"github.com/ice-blockchain/cometbft/p2p"
+	"github.com/ice-blockchain/cometbft/p2p/pex"
 	"github.com/ice-blockchain/cometbft/statesync"
 	"github.com/ice-blockchain/cometbft/version"
 )
@@ -135,6 +136,8 @@ func (info MultiNetworkNodeInfo) GetNodeInfo(chainID string) p2p.DefaultNodeInfo
 			mempl.MempoolChannel,
 			evidence.EvidenceChannel,
 			statesync.SnapshotChannel, statesync.ChunkChannel,
+			pex.PexChannel,
+			ReplicationChannel,
 		},
 		Moniker: info.Moniker,
 		Other:   info.Other,

@@ -1,6 +1,7 @@
 package multiplex
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -9,6 +10,7 @@ import (
 	"sync"
 
 	dbm "github.com/cometbft/cometbft-db"
+	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/crypto"
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
@@ -31,9 +33,10 @@ import (
 	"github.com/ice-blockchain/cometbft/types"
 )
 
-// TODO(midas): add ReplicationChannel to send chains updates: { address string, relays []string }
-
 const (
+	// ReplicationChannel is used to send replicated chain updates.
+	ReplicationChannel = byte(0x90)
+
 	// Instance types.
 	InstanceKeyConfig           = "config"
 	InstanceKeyStorage          = "storage"
@@ -300,6 +303,11 @@ func (reactor *Reactor) GetInstanceProvider(multiplexName string) instanceProvid
 	}
 }
 
+// GetLogger returns a [cmtlog.Logger] instance.
+func (reactor *Reactor) GetLogger() cmtlog.Logger {
+	return reactor.logger
+}
+
 // GetStateStore returns a [sm.Store].
 //
 // GetStateStore implements [snapsapp.Reactor].
@@ -337,6 +345,11 @@ func (reactor *Reactor) SetStoragePaths(fs MultiplexFS) {
 // SetConfigsPaths sets a custom [MultiplexFS] map of configs paths.
 func (reactor *Reactor) SetConfigsPaths(fs MultiplexFS) {
 	reactor.configsPaths = fs
+}
+
+// SetLogger sets a custom [cmtlog.Logger] instance.
+func (reactor *Reactor) SetLogger(logger cmtlog.Logger) {
+	reactor.logger = logger
 }
 
 // RegisterService inserts a [cmtlibs.Service] instance in the registry
@@ -438,6 +451,58 @@ func (reactor *Reactor) RegisterNetwork(
 	reactor.nodeInfo = updatedNodeInfo
 
 	return nil
+}
+
+// ----------------------------------------------------------------------------
+// Reactor implements p2p.Reactor
+
+// GetChannels implements p2p.Reactor.
+func (*Reactor) GetChannels() []*p2p.ChannelDescriptor {
+	return []*p2p.ChannelDescriptor{
+		{
+			ID: ReplicationChannel,
+			// Lower priority than blocksync, evidence, mempool & consensus
+			Priority:    3,
+			MessageType: &mxp2p.Message{},
+		},
+	}
+}
+
+// AddPeer implements p2p.Reactor.
+func (r *Reactor) AddPeer(peer p2p.Peer) {}
+
+// RemovePeer implements p2p.Reactor.
+func (r *Reactor) RemovePeer(peer p2p.Peer, _ any) {}
+
+// Receive implements p2p.Reactor.
+func (r *Reactor) Receive(e p2p.Envelope) {
+	r.Logger.Debug("Receive", "src", e.Src, "chId", e.ChannelID)
+
+	switch msg := e.Message.(type) {
+	case *mxp2p.ChainReplicationRequest:
+		r.logger.Debug("Now processing ChainReplicationRequest", "msg", msg)
+
+		if err := r.handleChainReplicationRequest(msg); err != nil {
+			r.logger.Error(
+				"CONSENSUS PANIC! Error with ChainReplicationRequest",
+				"chain_id", msg.ChainID,
+				"err", err,
+			)
+			return
+		}
+
+		r.logger.Debug("This relay now replicates new chain", "chain_id", msg.ChainID)
+		// Done.
+
+	default:
+		r.logger.Error(
+			"Unknown message type",
+			"src", e.Src,
+			"chId", e.ChannelID,
+			"msg", e.Message,
+		)
+		return
+	}
 }
 
 // ----------------------------------------------------------------------------
@@ -672,6 +737,8 @@ func (reactor *Reactor) initMultiplexProviders(
 // - `database/state`: the state machine databases.
 // - `database/tx_index`: the tx_index databases.
 // - `database/evidence`: the evidence databases.
+//
+// TODO(midas): refactoring with MakeNetworkDatabases.
 func (reactor *Reactor) initMultiplexDatabases() error {
 	// Create blockstore databases
 	bsMultiplexDB, err := NewMultiplexDB(&ChainDBContext{
@@ -726,6 +793,7 @@ func (reactor *Reactor) initMultiplexDatabases() error {
 // - `blockstore`: the created/opened block stores.
 //
 // TODO(midas): add multiplex metric "MultiplexStateLoadDurationSeconds".
+// TODO(midas): refactoring with MakeNetworkStateMachine.
 func (reactor *Reactor) loadMultiplexState() error {
 	// Initialize database tables and instances
 	err := reactor.initMultiplexDatabases()
@@ -829,7 +897,7 @@ func (reactor *Reactor) startNodeListeners(chainID string) error {
 
 		// Casting to ChainInstance before is required because the *instanceProviderFn*
 		// implementation provides a `any` typed variable which is not an interface.
-		indexerDatabase := databaseProvider(chainID).(*ChainDB)
+		indexerDatabase := databaseProvider(chainID).(dbm.DB)
 
 		txIndexer = txidxkv.NewTxIndex(indexerDatabase)
 		blockIndexer = blockidxkv.New(
@@ -876,5 +944,74 @@ func (reactor *Reactor) startNodeListeners(chainID string) error {
 	reactor.RegisterService(ServiceKeyEventBus, chainID, eventBus)
 	reactor.RegisterService(ServiceKeyIndexers, chainID, indexerService)
 	reactor.RegisterService(ServiceKeyPruner, chainID, pruner)
+	return nil
+}
+
+// handleChainReplicationRequest processes a ChainReplicationRequest.
+// This method allocates the resources necessary to spawn a NEW thread which
+// consists of running a complete node runtime. It will inject the parameters
+// necessary for blocks production and it will spawn a parallel goroutine with
+// a call to [node.Node#Start].
+func (r *Reactor) handleChainReplicationRequest(
+	req *mxp2p.ChainReplicationRequest,
+) error {
+	// Build the ExtendedChainID to retrieve user address from ChainID.
+	extChainID, err := NewExtendedChainIDFromLegacy(req.ChainID)
+	if err != nil {
+		return fmt.Errorf(
+			"invalid ChainID %s: %w", req.ChainID, err)
+	}
+	userAddress := extChainID.GetUserAddress()
+
+	// Pre-allocates filesystem, database and priv validator.
+	if err := r.AllocateNetwork(req.ChainID); err != nil {
+		return fmt.Errorf(
+			"could not allocate network resources: %w", err)
+	}
+
+	// Initialize the network genesis parameters
+	genesisDoc, err := GenesisDocFromChainParams(req.GetChainParams())
+	if err != nil {
+		return fmt.Errorf(
+			"invalid genesis parameters: %w", err)
+	}
+
+	// Config folder is created in AllocateNetwork
+	newConfDir := r.configsPaths[req.ChainID]
+	icsGenesisDocSet, err := r.InjectGenesisDoc(req.ChainID, newConfDir, genesisDoc)
+	if err != nil {
+		return fmt.Errorf(
+			"could not inject genesis doc: %w", err)
+	}
+
+	// Initialize the state machine and block store
+	if err := r.InjectStateMachine(req.ChainID, icsGenesisDocSet); err != nil {
+		return fmt.Errorf(
+			"could not inject state machine: %w", err)
+	}
+
+	// Initialize custom configuration overwrites (ports, fs, etc.)
+	configOverwrite, err := r.MakeNetworkConfigOverwrite(extChainID)
+	if err != nil {
+		return fmt.Errorf(
+			"could not create config overwrite: %w", err)
+	}
+
+	// Inject the new ChainID in the running reactor.
+	r.RegisterInstance(InstanceKeyConfig, req.ChainID, configOverwrite)
+
+	// This call updates the internal chainRegistry, nodeInfo and ABCI.
+	if err = r.RegisterNetwork(userAddress, req.ChainID); err != nil {
+		return fmt.Errorf(
+			"could not register new ChainID: %w", err)
+	}
+
+	// Inject a *running* node.Node for the new network.
+	// TODO(midas): currently not passing any node options.
+	if err = r.InjectNewRuntime(context.Background(), req.ChainID); err != nil {
+		return fmt.Errorf(
+			"could not spawn node runtime: %w", err)
+	}
+
 	return nil
 }
