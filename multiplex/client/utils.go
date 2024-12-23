@@ -13,6 +13,11 @@ import (
 // GetFingerprint returns a hash which consists of the first 8-bytes
 // of a SHA-256 of the plaintext input.
 func GetFingerprint(plaintext string) string {
+	_, hexErr := hex.DecodeString(plaintext)
+	if len(plaintext) == 16 && hexErr == nil {
+		return strings.ToUpper(plaintext)
+	}
+
 	return strings.ToUpper(hex.EncodeToString(
 		tmhash.Sum([]byte(plaintext))[:8], // 8-bytes
 	))
