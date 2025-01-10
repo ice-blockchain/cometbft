@@ -27,7 +27,7 @@ func (reactor *Reactor) CreateTransportSwitch(
 	// We just need to create one p2p.Switch per network
 	reactor.multiplexMutex.RLock()
 	defer reactor.multiplexMutex.RUnlock()
-	if _, ok := reactor.multiplexRegistry[InstanceKeyP2PSwitch]; ok {
+	if _, ok := reactor.multiplexRegistry[InstanceKeyP2PSwitch][chainID]; ok {
 		return nil
 	}
 

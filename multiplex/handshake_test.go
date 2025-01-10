@@ -63,7 +63,7 @@ func TestMultiplexTransportHandshake(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ni, err := mx.MultiplexTransportHandshake(c, 20*time.Millisecond, emptyNodeInfo())
+	ni, err := mx.MultiplexTransportHandshake(c, 20*time.Millisecond, &mx.MultiNetworkNodeInfo{})
 	if err != nil {
 		t.Fatal(err)
 	}

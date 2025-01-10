@@ -97,6 +97,15 @@ func WithRPCStartPort(rpcStartPort uint16) func(*config.MultiplexConfig) {
 	}
 }
 
+// WithBroadcastPort is an option helper that allows you to overwrite the
+// default BroadcastPort in [MultiplexConfig].
+// By default, this option is set to 50001.
+func WithBroadcastPort(broadcastPort uint16) func(*config.MultiplexConfig) {
+	return func(conf *config.MultiplexConfig) {
+		conf.BroadcastPort = broadcastPort
+	}
+}
+
 // NewConfigOverwrite updates a node configuration in-place to overwrite the
 // services listen addresses and uses the chainRegistry instance to retrieve
 // seed nodes configuration and state-sync configuration.

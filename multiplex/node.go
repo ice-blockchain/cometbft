@@ -442,6 +442,19 @@ func makeNodeInfo(
 		rpcListenAddrs[i] = NewChainListenAddr(chainID, cfgOverwrite.RPC.ListenAddress)
 	}
 
+	// If no replicated chains are available,
+	// the listen address must use BroadcastPort
+	baseListenAddr := reactor.nodeConfig.P2P.ListenAddress
+	broadcastPort := int(reactor.nodeConfig.BroadcastPort)
+
+	// With no networks, we have only P2P to communicate
+	p2pListenAddr := overwriteListenPort(baseListenAddr, broadcastPort)
+	rpcListenAddr := ""
+	if len(knownNetworks) > 0 {
+		p2pListenAddr = p2pListenAddrs[0].ListenAddr
+		rpcListenAddr = rpcListenAddrs[0].ListenAddr
+	}
+
 	txIndexerStatus := "on"
 	nodeInfo := &MultiNetworkNodeInfo{
 		DefaultNodeID:    nodeKey.ID(),
@@ -449,7 +462,7 @@ func makeNodeInfo(
 		ProtocolVersions: protocolVersions,
 		ListenAddrs:      p2pListenAddrs,
 		RPCAddresses:     rpcListenAddrs,
-		ListenAddr:       p2pListenAddrs[0].ListenAddr,
+		ListenAddr:       p2pListenAddr,
 		Version:          version.CMTSemVer,
 		Channels: []byte{
 			bc.BlocksyncChannel,
@@ -463,7 +476,7 @@ func makeNodeInfo(
 		Moniker: moniker,
 		Other: p2p.DefaultNodeInfoOther{
 			TxIndex:    txIndexerStatus,
-			RPCAddress: rpcListenAddrs[0].ListenAddr,
+			RPCAddress: rpcListenAddr,
 		},
 	}
 

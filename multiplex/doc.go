@@ -59,6 +59,7 @@ Individual fields documentation can be found in [config.MultiplexConfig].
 - [WithUserChains]
 - [WithP2PStartPort]
 - [WithRPCStartPort]
+- [WithBroadcastPort]
 
 ## NewConfigOverwrite
 

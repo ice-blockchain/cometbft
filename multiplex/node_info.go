@@ -9,6 +9,7 @@ import (
 
 	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
 	tmp2p "github.com/ice-blockchain/cometbft/api/cometbft/p2p/v1"
+	"github.com/ice-blockchain/cometbft/config"
 	bc "github.com/ice-blockchain/cometbft/internal/blocksync"
 	cs "github.com/ice-blockchain/cometbft/internal/consensus"
 	"github.com/ice-blockchain/cometbft/internal/evidence"
@@ -89,6 +90,31 @@ type MultiNetworkNodeInfo struct {
 // Assert MultiNetworkNodeInfo satisfies NodeInfo.
 var _ p2p.NodeInfo = MultiNetworkNodeInfo{}
 
+// NewMultiNetworkNodeInfo creates a new instance around a nodeCfg, a nodeKey
+// and a listenAddr.
+// Note that the liveness of listenAddr is not validated here.
+func NewMultiNetworkNodeInfo(
+	nodeCfg *config.Config,
+	nodeKey *p2p.NodeKey,
+	listenAddr *p2p.NetAddress,
+) *MultiNetworkNodeInfo {
+	return &MultiNetworkNodeInfo{
+		Networks:         []string{},
+		ProtocolVersions: []ChainProtocolVersion{},
+		ListenAddrs:      []ChainListenAddr{},
+		RPCAddresses:     []ChainListenAddr{},
+		DefaultNodeID:    nodeKey.ID(),
+		Version:          nodeCfg.Version,
+		Moniker:          nodeCfg.Moniker,
+		ListenAddr:       listenAddr.DialString(),
+		Channels:         []byte{ReplicationChannel},
+		Other: p2p.DefaultNodeInfoOther{
+			TxIndex:    "off",
+			RPCAddress: "",
+		},
+	}
+}
+
 // ID returns the node's peer ID.
 func (info MultiNetworkNodeInfo) ID() p2p.ID {
 	return info.DefaultNodeID
@@ -160,13 +186,15 @@ func (info MultiNetworkNodeInfo) Validate() error {
 	// ID is already validated.
 
 	// Validate all P2P listen addresses
-	if _, err := p2p.NewNetAddressString(p2p.IDAddressString(info.ID(), info.ListenAddr)); err != nil {
-		return err
-	}
-	for _, laddr := range info.ListenAddrs {
-		_, err := p2p.NewNetAddressString(p2p.IDAddressString(info.ID(), laddr.ListenAddr))
-		if err != nil {
+	if len(info.ListenAddr) > 0 && info.ListenAddr != p2p.EmptyNetAddress {
+		if _, err := p2p.NewNetAddressString(p2p.IDAddressString(info.ID(), info.ListenAddr)); err != nil {
 			return err
+		}
+		for _, laddr := range info.ListenAddrs {
+			_, err := p2p.NewNetAddressString(p2p.IDAddressString(info.ID(), laddr.ListenAddr))
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -270,7 +298,7 @@ func (info MultiNetworkNodeInfo) CompatibleWith(otherInfo p2p.NodeInfo) error {
 	}
 
 	// nodes must share at least one replicated chain
-	if !haveCommonReplicatedChain {
+	if !haveCommonReplicatedChain && len(info.ProtocolVersions) > 0 {
 		return errors.New("peer does not have at least one replicated chain in common")
 	}
 

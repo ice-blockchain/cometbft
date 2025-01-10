@@ -236,6 +236,15 @@ func (sw *Switch) GetPeerConfig() peerConfig {
 	}
 }
 
+// Transport returns the switch's Transport.
+func (sw *Switch) Transport() *MultiplexTransport {
+	if sw.transport != nil {
+		return sw.transport.(*MultiplexTransport)
+	}
+
+	return nil
+}
+
 // ---------------------------------------------------------------------
 // Service start/stop
 
@@ -243,9 +252,10 @@ func (sw *Switch) GetPeerConfig() peerConfig {
 func (sw *Switch) OnStart() error {
 	// Start reactors
 	for _, reactor := range sw.reactors {
-		err := reactor.Start()
-		if err != nil {
-			return fmt.Errorf("failed to start %v: %w", reactor, err)
+		if !reactor.IsRunning() {
+			if err := reactor.Start(); err != nil {
+				return fmt.Errorf("failed to start %v: %w", reactor, err)
+			}
 		}
 	}
 

@@ -28,7 +28,7 @@ func MultiplexTransportHandshake(
 
 		pbpeerNodeInfo mxp2p.MultiNetworkNodeInfo
 		peerNodeInfo   MultiNetworkNodeInfo
-		ourNodeInfo    = nodeInfo.(MultiNetworkNodeInfo)
+		ourNodeInfo    = nodeInfo.(*MultiNetworkNodeInfo)
 	)
 
 	go func(errc chan<- error, c net.Conn) {

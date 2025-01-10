@@ -313,12 +313,13 @@ func MultiplexBaseConfig(
 	// Multiplex features will be enabled.
 	config := DefaultBaseConfig()
 	config.MultiplexConfig = MultiplexConfig{
-		Strategy:     NewReplicationStrategy("Network"),
-		SyncConfig:   syncConfig,
-		ChainSeeds:   chainSeeds,
-		UserChains:   userChains,
-		P2PStartPort: uint16(30001),
-		RPCStartPort: uint16(40001),
+		Strategy:      NewReplicationStrategy("Network"),
+		SyncConfig:    syncConfig,
+		ChainSeeds:    chainSeeds,
+		UserChains:    userChains,
+		P2PStartPort:  uint16(30001),
+		RPCStartPort:  uint16(40001),
+		BroadcastPort: uint16(50001),
 	}
 
 	// permits overwriting default multiplex config, e.g. `mx.WithStrategy()`.
@@ -1767,6 +1768,11 @@ type MultiplexConfig struct {
 	// multiplex. Other nodes in the multiplex *increment* this value by their
 	// respective *index* in a slice of ChainIDs sorted lexicographically.
 	RPCStartPort uint16 `mapstructure:"p2p_listen_port"`
+
+	// BroadcastPort contains a network port number which defaults to 50001
+	// and which is used to communicate with relays that do not yet host
+	// any replicated chains. The listener is created in [MultiplexBackend].
+	BroadcastPort uint16 `mapstructure:"broadcast_port"`
 
 	// SnapshotOptions contains the configuration for state-sync snapshots
 	// including the currently tracked *format*, blocks *interval* and the

@@ -307,17 +307,25 @@ func TestMultiplexNodeNewNodesMultiplexProduceBlocks(t *testing.T) {
 // ----------------------------------------------------------------------------
 // Helpers
 
-// CAUTION: this test method sets up a random multiplex with a valid GenesisDocSet.
-// CAUTION: this method forcefully *disables state-sync* to permit starting new networks.
-func ResetTestMultiplexNode(tb testing.TB, numChains int) (string, *config.Config) {
+func ResetTestMultiplexNodeWithRootDirAndPorts(
+	tb testing.TB,
+	numChains int,
+	rootDir string,
+	p2pStartPort uint16,
+	rpcStartPort uint16,
+	broadcastPort uint16,
+) (string, *config.Config) {
 	tb.Helper()
 
-	rootDir, err := os.MkdirTemp("", tb.Name())
+	rootDir, err := os.MkdirTemp("", rootDir)
 	require.NoError(tb, err)
 
 	globalCfg := config.TestConfig()
 	globalCfg.SetRoot(rootDir)
 	globalCfg.MultiplexConfig = makeRandomMultiplexConfig(tb, numChains)
+	globalCfg.P2PStartPort = p2pStartPort
+	globalCfg.RPCStartPort = rpcStartPort
+	globalCfg.BroadcastPort = broadcastPort
 
 	// We always *disable* state-sync for network nodes
 	for chainID := range globalCfg.SyncConfig {
@@ -361,6 +369,21 @@ func ResetTestMultiplexNode(tb testing.TB, numChains int) (string, *config.Confi
 	}
 
 	return rootDir, globalCfg
+}
+
+// CAUTION: this test method sets up a random multiplex with a valid GenesisDocSet.
+// CAUTION: this method forcefully *disables state-sync* to permit starting new networks.
+func ResetTestMultiplexNode(tb testing.TB, numChains int) (string, *config.Config) {
+	tb.Helper()
+
+	return ResetTestMultiplexNodeWithRootDirAndPorts(
+		tb,
+		numChains,
+		tb.Name(),
+		30001, // p2p
+		40001, // rpc
+		50001, // broadcast
+	)
 }
 
 func ResetMultiplexPrivValidator(

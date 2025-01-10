@@ -129,6 +129,7 @@ type Reactor struct {
 	// To access this property, the mutex must be locked.
 	multiplexMutex    sync.RWMutex
 	multiplexRegistry NamedMultiplexMap[any]
+	multiplexMetrics  NamedMultiplexMap[any]
 
 	// Internal
 	logger          cmtlog.Logger
@@ -172,6 +173,7 @@ func NewReactor(
 		servicesPriority:  map[string]uint32{},
 		servicesSequence:  []string{},
 		multiplexRegistry: NamedMultiplexMap[any]{},
+		multiplexMetrics:  NamedMultiplexMap[any]{},
 		storagePaths:      MultiplexFS{},
 		configsPaths:      MultiplexFS{},
 
@@ -405,6 +407,34 @@ func (reactor *Reactor) RegisterInstance(
 		chainID,
 		instance,
 	)
+}
+
+// RegisterMetrics inserts a generic metrics instance in the multiplexMetrics,
+// by a given metricsName and ChainID.
+//
+// The multiplexMutex is RW-locked during the time this function takes to run.
+func (reactor *Reactor) RegisterMetrics(
+	moduleName string,
+	metricsName string,
+	providerFn func() interface{},
+) interface{} {
+	reactor.multiplexMutex.Lock()
+	defer reactor.multiplexMutex.Unlock()
+
+	// Allocate namespace if necessary
+	if _, ok := reactor.multiplexMetrics[moduleName]; !ok {
+		reactor.multiplexMetrics[moduleName] = MultiplexMap[interface{}]{}
+	}
+
+	if _, ok := reactor.multiplexMetrics[moduleName][metricsName]; !ok {
+		// Store a generic instance by name and ChainID in a multiplex
+		reactor.multiplexMetrics[moduleName][metricsName] = NewChainInstance[any](
+			metricsName,
+			providerFn(),
+		)
+	}
+
+	return reactor.multiplexMetrics[moduleName][metricsName].GetInstance()
 }
 
 // RegisterNetwork updates the necessary resources to permit executing a
@@ -658,6 +688,12 @@ func (reactor *Reactor) OnStop() {
 	}
 }
 
+// OnReset implements Service by panicking.
+func (reactor *Reactor) OnReset() error {
+	reactor.logger.Debug("Reset multiplex reactor")
+	return nil
+}
+
 // WaitForNetworks waits for *all* configured networks to be readily configured.
 // This method expects updates on the chainReadyCh private channel for each
 // of the configured replicated chains. A [sync.WaitGroup] is used.
@@ -706,7 +742,8 @@ func (reactor *Reactor) initMultiplexProviders(
 		defer reactor.servicesMutex.RUnlock()
 
 		if _, ok := reactor.servicesRegistry[serviceName]; !ok {
-			panic(fmt.Errorf("could not load services by name %s", serviceName))
+			// allocate in-place
+			reactor.servicesRegistry[serviceName] = MultiplexMap[cmtlibs.Service]{}
 		}
 
 		if _, ok := reactor.servicesRegistry[serviceName][chainId]; !ok {
@@ -722,7 +759,8 @@ func (reactor *Reactor) initMultiplexProviders(
 		defer reactor.multiplexMutex.RUnlock()
 
 		if _, ok := reactor.multiplexRegistry[multiplexName]; !ok {
-			panic(fmt.Errorf("could not load multiplex by name %s", multiplexName))
+			// allocate in-place
+			reactor.multiplexRegistry[multiplexName] = MultiplexMap[any]{}
 		}
 
 		return reactor.multiplexRegistry[multiplexName]
@@ -852,7 +890,9 @@ func (reactor *Reactor) startNodeListeners(chainID string) error {
 	// following regexp: [a-zA-Z_:][a-zA-Z0-9_:]*
 	// see also: https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels
 	metricsNames := nodeConfig.Instrumentation.Namespace + ":" + strings.ReplaceAll(chainID, "-", "_")
-	stateMetricsProvider := sm.PrometheusMetrics(metricsNames, "chain_id", chainID)
+	stateMetricsProvider := reactor.RegisterMetrics("state", metricsNames, func() interface{} {
+		return sm.PrometheusMetrics(metricsNames, "chain_id", chainID)
+	}).(*sm.Metrics)
 
 	// 1) Event Bus Service
 	eventBus := types.NewEventBus()

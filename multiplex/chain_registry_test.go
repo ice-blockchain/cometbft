@@ -326,6 +326,14 @@ func makeChainRegistryFromConfig(tb testing.TB, conf config.MultiplexConfig) mx.
 func makeRandomMultiplexConfig(tb testing.TB, numChains int) config.MultiplexConfig {
 	tb.Helper()
 
+	if numChains == 0 {
+		return config.MultiplexBaseConfig(
+			map[string]*config.StateSyncConfig{},
+			map[string]string{},
+			map[string][]string{},
+		).MultiplexConfig
+	}
+
 	randomChainIDs := make([]string, numChains)
 	randChainSeeds := make(map[string]string, numChains)
 	randUserChains := make(map[string][]string, numChains)
@@ -352,12 +360,13 @@ func makeRandomMultiplexConfig(tb testing.TB, numChains int) config.MultiplexCon
 	}
 
 	return config.MultiplexConfig{
-		Strategy:     mx.NetworkReplicationStrategy(),
-		SyncConfig:   stateSyncConfs,
-		ChainSeeds:   randChainSeeds,
-		UserChains:   randUserChains,
-		P2PStartPort: 30001,
-		RPCStartPort: 40001,
+		Strategy:      mx.NetworkReplicationStrategy(),
+		SyncConfig:    stateSyncConfs,
+		ChainSeeds:    randChainSeeds,
+		UserChains:    randUserChains,
+		P2PStartPort:  30001,
+		RPCStartPort:  40001,
+		BroadcastPort: 50001,
 		SnapshotOptions: map[config.ReplicationStrategy]config.SnapshotOptions{
 			mx.HistoryReplicationStrategy(): config.NewSnapshotOptions(1, 1, 1),
 		},

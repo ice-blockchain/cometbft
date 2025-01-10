@@ -22,6 +22,11 @@ import (
 // - `state`: the [sm.State] state machine instances.
 // - `stateStore`: the [sm.Store] instance attached to the database.
 func (reactor *Reactor) InitMultiplexStates() error {
+	if len(reactor.GetNetworks()) == 0 {
+		// Nothing to do for now
+		return nil
+	}
+
 	// Used for database key layouts
 	globalConfig := reactor.GetNodeConfig()
 
@@ -93,6 +98,11 @@ func (reactor *Reactor) InitMultiplexStates() error {
 // This method also registers instances in the multiplexRegistry:
 // - `blockStore`: the [bs.BlockStore] instance attached to the database.
 func (reactor *Reactor) InitMultiplexBlockStores() error {
+	if len(reactor.GetNetworks()) == 0 {
+		// Nothing to do for now
+		return nil
+	}
+
 	// Used for database key layouts
 	globalConfig := reactor.GetNodeConfig()
 

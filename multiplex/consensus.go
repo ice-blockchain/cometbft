@@ -142,11 +142,23 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 
 	// 0) Retrieve prometheus metrics providers per module
 	//
-	// Metrics providers are also scoped per ChainID
-	memplMetricsProvider := mempl.PrometheusMetrics(metricsNames, "chain_id", chainID)
-	stateMetricsProvider := sm.PrometheusMetrics(metricsNames, "chain_id", chainID)
-	bsyncMetricsProvider := blocksync.PrometheusMetrics(metricsNames, "chain_id", chainID)
-	consensusMetricsProvider := cs.PrometheusMetrics(metricsNames, "chain_id", chainID)
+	// Metrics providers are also scoped per ChainID and the registration
+	// permits to work with multiple node restarts without resetting metrics.
+	memplMetricsProvider := reactor.RegisterMetrics("mempool", metricsNames, func() interface{} {
+		return mempl.PrometheusMetrics(metricsNames, "chain_id", chainID)
+	}).(*mempl.Metrics)
+
+	stateMetricsProvider := reactor.RegisterMetrics("state", metricsNames, func() interface{} {
+		return sm.PrometheusMetrics(metricsNames, "chain_id", chainID)
+	}).(*sm.Metrics)
+
+	bsyncMetricsProvider := reactor.RegisterMetrics("blocksync", metricsNames, func() interface{} {
+		return blocksync.PrometheusMetrics(metricsNames, "chain_id", chainID)
+	}).(*blocksync.Metrics)
+
+	consensusMetricsProvider := reactor.RegisterMetrics("consensus", metricsNames, func() interface{} {
+		return cs.PrometheusMetrics(metricsNames, "chain_id", chainID)
+	}).(*cs.Metrics)
 
 	// 1) Create the mempool / mempool reactor
 	//

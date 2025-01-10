@@ -326,6 +326,24 @@ func (mt *MultiplexTransport) GetListener() net.Listener {
 	return mt.listener
 }
 
+// IsListening returns true if currently listening.
+func (mt *MultiplexTransport) IsListening() bool {
+	if mt.listener == nil {
+		return false
+	}
+
+	select {
+	case _, ok := <-mt.closec:
+		if !ok {
+			return false
+		}
+	default:
+		// Transport is not closed
+	}
+
+	return true
+}
+
 // AddChannel registers a channel to nodeInfo.
 // NOTE: NodeInfo must be of type DefaultNodeInfo else channels won't be updated
 // This is a bit messy at the moment but is cleaned up in the following version

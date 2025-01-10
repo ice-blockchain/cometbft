@@ -31,6 +31,11 @@ func NewMultiplexFS(conf *config.Config) (multiplex MultiplexFS, err error) {
 	// This multiplex maps ChainIDs to filesystem paths
 	multiplex = map[string]string{}
 
+	// Must initialize root filesystem structure (config/, data/)
+	if err := config.EnsureFilesystem(conf.BaseConfig.RootDir); err != nil {
+		return multiplex, err
+	}
+
 	// Storage is located in ChainID subfolders per each user
 	// i.e.: data/%address%/%ChainID%/...
 	baseDataDir := filepath.Join(conf.BaseConfig.RootDir, config.DefaultDataDir)
