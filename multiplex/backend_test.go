@@ -2,6 +2,7 @@ package multiplex_test
 
 import (
 	"os"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -281,6 +282,7 @@ func TestMultiplexBackendDiscoverRelayNetworksWithTwoRelays(t *testing.T) {
 	rootDirs,
 		servers := ResetTestMultiplexBackendTwoInParallel(
 		t,
+		0, // 0 networks
 		loggerRelay1,
 		loggerRelay2,
 	)
@@ -331,15 +333,359 @@ func TestMultiplexBackendDiscoverRelayNetworksWithTwoRelays(t *testing.T) {
 	assert.Empty(t, actualListenAddrs)
 }
 
+func TestMultiplexBackendDiscoverRelayNetworksIncompatibleRelays(t *testing.T) {
+	numChains := 3
+
+	// For debug, change the loggers to cmtlog.TestingLogger()
+	loggerRelay1 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
+	loggerRelay2 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-2")
+
+	// Uses config.TestConfig() and random MultiplexConfig
+	rootDirs,
+		servers := ResetTestMultiplexBackendTwoInParallel(
+		t,
+		numChains,
+		loggerRelay1,
+		loggerRelay2,
+	)
+	require.NotEmpty(t, servers)
+	require.Len(t, rootDirs, 2)
+	require.Len(t, servers, 2)
+
+	defer func() {
+		defer os.RemoveAll(rootDirs[0])
+		defer os.RemoveAll(rootDirs[1])
+
+		if servers[0] != nil {
+			err := servers[0].Close()
+			assert.NoError(t, err, "should shutdown first server gracefully")
+		}
+
+		if servers[1] != nil {
+			err := servers[1].Close()
+			assert.NoError(t, err, "should shutdown second server gracefully")
+		}
+	}()
+
+	// Start the node backend
+	servers[0].MustStart()
+	servers[1].MustStart()
+
+	// server 0 talks to server 1
+	sourceSwitch := servers[0].EventSwitch()
+	sourceReactor := servers[0].GetReactor()
+	recipientSwitch := servers[1].EventSwitch()
+	recipientReactor := servers[1].GetReactor()
+
+	sourceSwitch.AddUnconditionalPeerIDs([]string{string(recipientReactor.GetNodeKey().ID())})
+	recipientSwitch.AddUnconditionalPeerIDs([]string{string(sourceReactor.GetNodeKey().ID())})
+
+	// Act - Relay 1 communicates with Relay 2
+	testRelayAddr := string(recipientReactor.GetNodeKey().ID()) + "@127.0.0.1"
+	actualNetworks,
+		actualListenAddrs,
+		discoverErr := servers[0].DiscoverRelayNetworks(
+		sourceSwitch,
+		testRelayAddr,
+		50002, // second relay uses broadcast port 50002
+	)
+
+	assert.Error(t, discoverErr, "incompatible: peer does not have at least one replicated chain in common")
+	assert.Empty(t, actualNetworks)
+	assert.Empty(t, actualListenAddrs)
+}
+
+func TestMultiplexBackendDiscoverRelayNetworksCompatibleRelays(t *testing.T) {
+	numChains := 3
+	numRelays := 2
+
+	// For debug, change the loggers to cmtlog.TestingLogger()
+	loggerRelay1 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
+	loggerRelay2 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-2")
+
+	// Uses config.TestConfig() and random MultiplexConfig
+	rootDirs,
+		servers := ResetTestMultiplexBackendCompatibleRelays(
+		t,
+		numChains,
+		numRelays,
+		loggerRelay1,
+		loggerRelay2,
+	)
+	require.NotEmpty(t, servers)
+	require.Len(t, rootDirs, numRelays)
+	require.Len(t, servers, numRelays)
+
+	defer func() {
+		for i := 0; i < len(servers); i++ {
+			defer os.RemoveAll(rootDirs[i])
+
+			if servers[i] != nil {
+				err := servers[i].Close()
+				assert.NoError(t, err, "should shutdown server at index: "+strconv.Itoa(i))
+			}
+		}
+	}()
+
+	// Start the node backend
+	for i := 0; i < len(servers); i++ {
+		servers[i].MustStart()
+	}
+
+	// server 0 talks to server 1
+	sourceSwitch := servers[0].EventSwitch()
+	sourceReactor := servers[0].GetReactor()
+	recipientSwitch := servers[1].EventSwitch()
+	recipientReactor := servers[1].GetReactor()
+
+	sourceSwitch.AddUnconditionalPeerIDs([]string{string(recipientReactor.GetNodeKey().ID())})
+	recipientSwitch.AddUnconditionalPeerIDs([]string{string(sourceReactor.GetNodeKey().ID())})
+
+	// Act - Relay 1 communicates with Relay 2
+	testRelayAddr := string(recipientReactor.GetNodeKey().ID()) + "@127.0.0.1"
+	actualNetworks,
+		actualListenAddrs,
+		discoverErr := servers[0].DiscoverRelayNetworks(
+		sourceSwitch,
+		testRelayAddr,
+		50101, // second relay uses broadcast port 50101
+	)
+
+	assert.NoError(t, discoverErr) // NO error!
+	assert.NotEmpty(t, actualNetworks)
+	assert.NotEmpty(t, actualListenAddrs)
+	assert.Len(t, actualNetworks, numChains)
+}
+
+func TestMultiplexBackendDiscoverRelayNetworksSevenCompatibleRelays(t *testing.T) {
+	numChains := 3
+	numRelays := 7
+
+	// For debug, change the loggers to cmtlog.TestingLogger()
+	loggerRelay1 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
+	loggerRelay2 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-2")
+	loggerRelay3 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-3")
+	loggerRelay4 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-4")
+	loggerRelay5 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-5")
+	loggerRelay6 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-6")
+	loggerRelay7 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-7")
+
+	// Uses config.TestConfig() and random MultiplexConfig
+	rootDirs,
+		servers := ResetTestMultiplexBackendCompatibleRelays(
+		t,
+		numChains,
+		numRelays,
+		loggerRelay1,
+		loggerRelay2,
+		loggerRelay3,
+		loggerRelay4,
+		loggerRelay5,
+		loggerRelay6,
+		loggerRelay7,
+	)
+	require.NotEmpty(t, servers)
+	require.Len(t, rootDirs, numRelays)
+	require.Len(t, servers, numRelays)
+
+	defer func() {
+		for i := 0; i < len(servers); i++ {
+			defer os.RemoveAll(rootDirs[i])
+
+			if servers[i] != nil {
+				err := servers[i].Close()
+				assert.NoError(t, err, "should shutdown server at index: "+strconv.Itoa(i))
+			}
+		}
+	}()
+
+	// Start the node backends
+	for i := 0; i < len(servers); i++ {
+		servers[i].MustStart()
+	}
+
+	// Test where RELAY_1 talks to RELAY_X
+	sourceSwitch := servers[0].EventSwitch()
+	sourceReactor := servers[0].GetReactor()
+	sourceRelayID := string(sourceReactor.GetNodeKey().ID())
+	for i := 1; i < len(servers); i++ {
+		recipientSwitch := servers[i].EventSwitch()
+		recipientReactor := servers[i].GetReactor()
+		recipientRelayID := string(recipientReactor.GetNodeKey().ID())
+
+		sourceSwitch.AddUnconditionalPeerIDs([]string{recipientRelayID})
+		recipientSwitch.AddUnconditionalPeerIDs([]string{sourceRelayID})
+
+		// Act - Relay 1 communicates with Relay X
+		testRelayAddr := recipientRelayID + "@127.0.0.1"
+		actualNetworks,
+			actualListenAddrs,
+			discoverErr := servers[0].DiscoverRelayNetworks(
+			sourceSwitch,
+			testRelayAddr,
+			uint16(50001+(i*100)), // see ResetTestMultiplexBackendCompatibleRelays
+		)
+
+		assert.NoError(t, discoverErr) // NO error!
+		assert.NotEmpty(t, actualNetworks)
+		assert.NotEmpty(t, actualListenAddrs)
+		assert.Len(t, actualNetworks, numChains)
+	}
+}
+
 func TestMultiplexBackendFetchRelayAddresses(t *testing.T) {
+	numChains := 3
+	numRelays := 2
+
+	// For debug, change the loggers to cmtlog.TestingLogger()
+	loggerRelay1 := cmtlog.NewNopLogger() //cmtlog.TestingLogger().With("process", "relay-1")
+	loggerRelay2 := cmtlog.NewNopLogger() //cmtlog.TestingLogger().With("process", "relay-2")
+
+	// Uses config.TestConfig() and random MultiplexConfig
+	rootDirs,
+		servers := ResetTestMultiplexBackendCompatibleRelays(
+		t,
+		numChains,
+		numRelays,
+		loggerRelay1,
+		loggerRelay2,
+	)
+	require.NotEmpty(t, servers)
+	require.Len(t, rootDirs, numRelays)
+	require.Len(t, servers, numRelays)
+
+	defer func() {
+		for i := 0; i < len(servers); i++ {
+			defer os.RemoveAll(rootDirs[i])
+
+			if servers[i] != nil {
+				err := servers[i].Close()
+				assert.NoError(t, err, "should shutdown server at index: "+strconv.Itoa(i))
+			}
+		}
+	}()
+
+	// Start the node backends
+	for i := 0; i < len(servers); i++ {
+		servers[i].MustStart()
+	}
+
+	// server 0 talks to server 1
+	sourceSwitch := servers[0].EventSwitch()
+	sourceReactor := servers[0].GetReactor()
+	recipientSwitch := servers[1].EventSwitch()
+	recipientReactor := servers[1].GetReactor()
+
+	sourceSwitch.AddUnconditionalPeerIDs([]string{string(recipientReactor.GetNodeKey().ID())})
+	recipientSwitch.AddUnconditionalPeerIDs([]string{string(sourceReactor.GetNodeKey().ID())})
+
+	// Act - Relay 1 fetches addresses of Relay 2
+	testRelayAddr := string(recipientReactor.GetNodeKey().ID()) + "@127.0.0.1"
+	chainRelays, errorRelays := servers[0].FetchRelayAddresses([]string{
+		testRelayAddr,
+	})
+
+	assert.Len(t, errorRelays, 0) // NO error!
+	assert.Len(t, chainRelays, numChains)
+
+	for testChainID, testChainRelays := range chainRelays {
+		assert.NotEmpty(t, testChainID)
+		assert.NotEmpty(t, testChainRelays)
+	}
+}
+
+func TestMultiplexBackendAddTransactions(t *testing.T) {
+	// Uses config.TestConfig() and random MultiplexConfig
+	// For debug, change the logger to cmtlog.TestingLogger()
+	rootDir,
+		server := ResetTestMultiplexBackend(t, 1, cmtlog.NewNopLogger()) // 1 network
+	require.NotNil(t, server)
+
+	defer func() {
+		defer os.RemoveAll(rootDir)
+		if server != nil {
+			err := server.Close()
+			assert.NoError(t, err, "should shutdown gracefully")
+		}
+	}()
+
+	// Start the node backend
+	server.MustStart()
+
+	testChainID := server.GetReactor().GetNetworks()[0]
+	testExtChainID, err := mx.NewExtendedChainIDFromLegacy(testChainID)
+	require.NoError(t, err)
+
+	// Act - Adds a transaction to running mempool
+	actualErr := server.AddTransactions(
+		testExtChainID.GetUserAddress(),
+		client.Transaction{
+			Data:        []byte{1, 2, 3},
+			Fingerprint: testExtChainID.GetFingerprint(),
+		},
+	)
+	assert.NoError(t, actualErr, "should add transaction to mempool")
+}
+
+func TestMultiplexBackendRemoveTransactions(t *testing.T) {
+	// Uses config.TestConfig() and random MultiplexConfig
+	// For debug, change the logger to cmtlog.TestingLogger()
+	rootDir,
+		server := ResetTestMultiplexBackend(t, 1, cmtlog.NewNopLogger()) // 1 network
+	require.NotNil(t, server)
+
+	defer func() {
+		defer os.RemoveAll(rootDir)
+		if server != nil {
+			err := server.Close()
+			assert.NoError(t, err, "should shutdown gracefully")
+		}
+	}()
+
+	// Start the node backend
+	server.MustStart()
+
+	testChainID := server.GetReactor().GetNetworks()[0]
+	testExtChainID, err := mx.NewExtendedChainIDFromLegacy(testChainID)
+	require.NoError(t, err)
+
+	err = server.AddTransactions(
+		testExtChainID.GetUserAddress(),
+		client.Transaction{
+			Data:        []byte{1, 2, 3},
+			Fingerprint: testExtChainID.GetFingerprint(),
+		},
+	)
+	require.NoError(t, err)
+
+	// Act - Removes a transaction from running mempool
+	actualErr := server.RemoveTransactions(
+		testExtChainID.GetUserAddress(),
+		client.Transaction{
+			Data:        []byte{1, 2, 3},
+			Fingerprint: testExtChainID.GetFingerprint(),
+		},
+	)
+	assert.NoError(t, actualErr, "should remove transaction from mempool")
+}
+
+func TestMultiplexBackendRoutinesNodeRelayDialer(t *testing.T) {
 
 }
 
-func TestMultiplexBackendAddTransaction(t *testing.T) {
+func TestMultiplexBackendRoutinesNodeReplRequest(t *testing.T) {
 
 }
 
-func TestMultiplexBackendRemoveTransaction(t *testing.T) {
+func TestMultiplexBackendRoutinesNetworksCreator(t *testing.T) {
+
+}
+
+func TestMultiplexBackendRoutinesRelaysBroadcast(t *testing.T) {
+
+}
+
+func TestMultiplexBackendRoutinesCancelBroadcast(t *testing.T) {
 
 }
 
@@ -371,6 +717,7 @@ func ResetTestMultiplexBackend(
 // CAUTION: This helper uses a random multiplex config.
 func ResetTestMultiplexBackendTwoInParallel(
 	tb testing.TB,
+	numChains int,
 	customLoggerRelay1 cmtlog.Logger,
 	customLoggerRelay2 cmtlog.Logger,
 ) ([]string, []*mx.MultiplexBackend) {
@@ -380,7 +727,7 @@ func ResetTestMultiplexBackendTwoInParallel(
 	rootDirRelay1,
 		globalCfgRelay1 := ResetTestMultiplexNodeWithRootDirAndPorts(
 		tb,
-		0, // 0 networks
+		numChains,
 		tb.Name()+"-1",
 		10001,
 		20001,
@@ -391,7 +738,7 @@ func ResetTestMultiplexBackendTwoInParallel(
 	rootDirRelay2,
 		globalCfgRelay2 := ResetTestMultiplexNodeWithRootDirAndPorts(
 		tb,
-		0, // 0 networks
+		numChains,
 		tb.Name()+"-2",
 		30001,
 		40001,
@@ -416,4 +763,66 @@ func ResetTestMultiplexBackendTwoInParallel(
 		serverRelay1,
 		serverRelay2,
 	}
+}
+
+// CAUTION: This helper uses a random multiplex config on multiple relays.
+func ResetTestMultiplexBackendCompatibleRelays(
+	tb testing.TB,
+	numChains int,
+	numRelays int,
+	customLoggers ...cmtlog.Logger,
+) ([]string, []*mx.MultiplexBackend) {
+	tb.Helper()
+
+	require.Len(tb, customLoggers, numRelays)
+
+	rootDirs := make([]string, numRelays)
+	backends := make([]*mx.MultiplexBackend, numRelays)
+
+	// The first relay is configured with a RANDOM multiplex config.
+	rootDirRelay1,
+		globalCfgRelay1 := ResetTestMultiplexNodeWithRootDirAndPorts(
+		tb,
+		numChains,
+		tb.Name()+"-1", // rootDir
+		10001,
+		20001,
+		50001,
+	)
+
+	serverRelay1, err := mx.NewServer(
+		&client.DefaultAcceptor{},
+		globalCfgRelay1,
+		customLoggers[0],
+	)
+	require.NoError(tb, err, "should create first server instance")
+
+	rootDirs[0] = rootDirRelay1
+	backends[0] = serverRelay1
+
+	for r := 1; r < numRelays; r++ {
+		// Uses config.TestConfig() and empty MultiplexConfig
+		rootDirRelayX,
+			globalCfgRelayX := ResetTestMultiplexNodeWithConfigAndPorts(
+			tb,
+			tb.Name()+"-"+strconv.Itoa(r+1), // rootDir
+			"_"+strconv.Itoa(r+1),           // metricsSuffix
+			globalCfgRelay1.MultiplexConfig,
+			uint16(10001+(r*100)), // 10101, 10201, 10301, 10401
+			uint16(20001+(r*100)), // 20101, 20201, 20301, 20401
+			uint16(50001+(r*100)), // 50101, 50201, 50301, 50401
+		)
+
+		serverRelayX, err := mx.NewServer(
+			&client.DefaultAcceptor{},
+			globalCfgRelayX,
+			customLoggers[r],
+		)
+		require.NoError(tb, err, "should create another server instance with cursor at "+strconv.Itoa(r))
+
+		rootDirs[r] = rootDirRelayX
+		backends[r] = serverRelayX
+	}
+
+	return rootDirs, backends
 }

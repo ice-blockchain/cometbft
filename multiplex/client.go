@@ -167,10 +167,7 @@ func (c MultiplexClient) BroadcastTx(
 
 	// Determine port numbers and correct listen addresses per network.
 	// Note that this also checks for the relays to be up and running.
-	chainRelays, errorRelays := c.GetBackend().FetchRelayAddresses(
-		requiredNetworks,
-		relays,
-	)
+	chainRelays, errorRelays := c.GetBackend().FetchRelayAddresses(relays)
 	numHealthyRelays := len(relays) - len(errorRelays)
 
 	// We must have at least 50%+1 healthy relays, otherwise discard the batch.
@@ -197,25 +194,39 @@ func (c MultiplexClient) BroadcastTx(
 
 	// As some relays may not know of all networks, we must ask
 	// to replicate required networks if they did not report some.
+	catchupRelays := map[string][]string{}
 	for chainID, relaysByChain := range chainRelays {
 		// Did all relays report to know this ChainID?
 		if len(relaysByChain) == len(relays) {
+			catchupRelays[chainID] = nil
 			continue
 		}
 
 		// Find out which relays are missing for this chain.
 		// Those are relays that need to catchup with the chain.
-		catchupRelays := []string{}
 		for _, relay := range relays {
 			if !slices.Contains(relaysByChain, relay) {
-				catchupRelays = append(catchupRelays, relay)
+				catchupRelays[chainID] = append(catchupRelays[chainID], relay)
 			}
 		}
+	}
 
+	// Handling case when chainRelays is empty (0 networks on remote relays).
+	for _, chainID := range requiredNetworks {
+		if _, has := catchupRelays[chainID]; !has {
+			catchupRelays[chainID] = append(catchupRelays[chainID], relays...)
+		}
+	}
+
+	// Ask the relays to catch-up with the chain by replicating it.
+	for chainID, chainCatchupRelays := range catchupRelays {
+		if len(chainCatchupRelays) == 0 {
+			continue
+		}
 		// Ask the relays to catch-up with the chain by replicating it.
 		routineNodeReplRequest := c.GetBackend().GetRoutines().NodeReplRequest
 		go routineNodeReplRequest(ctx,
-			catchupRelays,
+			chainCatchupRelays,
 			chainID,
 			c.notifier,
 		)
@@ -342,7 +353,7 @@ func (c MultiplexClient) BroadcastTx(
 			c.backend.GetLogger().Info("Relays accepted transaction", "hash", acceptedTxHash)
 
 			// Will be added to BroadcastStatus.TxHashes in case of success.
-			copy(acceptedTxHashes[i], txHashBytes)
+			acceptedTxHashes = append(acceptedTxHashes, txHashBytes)
 
 		// Handle potential expiration of context and consider as an error.
 		case <-ctx.Done():

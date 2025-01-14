@@ -467,3 +467,13 @@ func MultiNetworkNodeInfoFromProto(pb *mxp2p.MultiNetworkNodeInfo) (MultiNetwork
 
 	return dni, nil
 }
+
+// WithListenAddress defines an option helper to customize the ListenAddr
+// of a MultiNetworkNodeInfo instance.
+func WithListenAddress(
+	listenAddr *p2p.NetAddress,
+) func(*MultiNetworkNodeInfo) {
+	return func(nodeInfo *MultiNetworkNodeInfo) {
+		nodeInfo.ListenAddr = listenAddr.DialString()
+	}
+}

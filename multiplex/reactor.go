@@ -508,22 +508,35 @@ func (r *Reactor) RemovePeer(peer p2p.Peer, _ any) {}
 func (r *Reactor) Receive(e p2p.Envelope) {
 	r.Logger.Debug("Receive", "src", e.Src, "chId", e.ChannelID)
 
-	switch msg := e.Message.(type) {
-	case *mxp2p.ChainReplicationRequest:
-		r.logger.Debug("Now processing ChainReplicationRequest", "msg", msg)
+	switch extMsg := e.Message.(type) {
+	case *mxp2p.Message:
+		msg := extMsg.GetSum()
+		switch msg.(type) {
+		case *mxp2p.Message_ChainReplicationRequest:
+			r.logger.Debug("Now processing ChainReplicationRequest", "msg", msg)
 
-		if err := r.handleChainReplicationRequest(msg); err != nil {
+			replRequest := extMsg.GetChainReplicationRequest()
+			if err := r.handleChainReplicationRequest(replRequest); err != nil {
+				r.logger.Error(
+					"CONSENSUS PANIC! Error with ChainReplicationRequest",
+					"chain_id", replRequest.ChainID,
+					"err", err,
+				)
+				return
+			}
+
+			r.logger.Debug("This relay now replicates new chain", "chain_id", replRequest.ChainID)
+			// Done.
+
+		default:
 			r.logger.Error(
-				"CONSENSUS PANIC! Error with ChainReplicationRequest",
-				"chain_id", msg.ChainID,
-				"err", err,
+				"Unknown internal message type",
+				"src", e.Src,
+				"chId", e.ChannelID,
+				"msg", e.Message,
 			)
 			return
 		}
-
-		r.logger.Debug("This relay now replicates new chain", "chain_id", msg.ChainID)
-		// Done.
-
 	default:
 		r.logger.Error(
 			"Unknown message type",

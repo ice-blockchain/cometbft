@@ -54,7 +54,6 @@ type Adapter interface {
 	// map (ChainID) to their respective listen addresses, and it returns a
 	// slice of relays that produced errors, e.g. network error.
 	FetchRelayAddresses(
-		networks []string,
 		relays []string,
 	) (map[string][]string, []string)
 
@@ -284,16 +283,8 @@ func (b *MultiplexBackend) Close() error {
 	)
 
 	if b.eventSwitch != nil && b.eventSwitch.IsRunning() {
-		b.logger.Debug("Shutting down P2P switch",
-			"id", b.reactor.nodeKey.ID(),
-		)
-
 		// Must stop listening for P2P messages on broadcast port
 		if ts := b.eventSwitch.Transport(); ts != nil {
-			b.logger.Debug("Closing P2P transport",
-				"id", b.reactor.nodeKey.ID(),
-			)
-
 			ts.Close()
 		}
 
@@ -303,10 +294,6 @@ func (b *MultiplexBackend) Close() error {
 	}
 
 	if b.reactor != nil {
-		b.logger.Debug("Shutting down multiplex reactor",
-			"id", b.reactor.nodeKey.ID(),
-		)
-
 		// Must stop the node backend (switch is not yet running)
 		b.reactor.Stop()
 		b.reactor.Reset()
@@ -470,11 +457,11 @@ func (b *MultiplexBackend) EventSwitch() *p2p.Switch {
 		return b.eventSwitch
 	}
 
-	localNodeInfo := NewMultiNetworkNodeInfo(
-		b.reactor.nodeConfig,
-		b.reactor.nodeKey,
-		b.broadcastAddr,
-	)
+	// In-place mutation of the lsiten address so that it always uses
+	// the configured broadcast address.
+	laddrModifier := WithListenAddress(b.broadcastAddr)
+	laddrModifier(b.reactor.nodeInfo)
+	localNodeInfo := b.reactor.nodeInfo
 
 	mConnConfig := p2p.MConnConfig(b.reactor.nodeConfig.P2P)
 	localTransport := p2p.NewMultiplexTransportWithCustomHandshake(
@@ -536,9 +523,14 @@ func (b *MultiplexBackend) GetLocalNetworkHeights(
 // FetchRelayAddresses uses DiscoverRelayNetworks once for each relay to find
 // the supported networks and their respective listen addresses.
 //
+// IMPORTANT:
+// This method applies a port-overwrite convention whereby the *broadcast port*
+// starts at 50001 for relay 1 and is increased by 100 for each relay. The port
+// for relay 2 is 50101, for relay 50201, etc.
+// This requires that the broadcast port be overwritten in [MultiplexConfig].
+//
 // FetchRelayAddresses implements [Adapter].
 func (b *MultiplexBackend) FetchRelayAddresses(
-	networks []string,
 	relays []string,
 ) (
 	chainRelays map[string][]string,
@@ -552,17 +544,25 @@ func (b *MultiplexBackend) FetchRelayAddresses(
 	// Discover supported networks for all relays and build list of
 	// P2P listen addresses by ChainID.
 	chainRelays = map[string][]string{}
-	for _, relay := range relays {
+	for i, relay := range relays {
+		// IMPORTANT:
+		// Applied convention: relay_1=50001 [self], relay_2=50101, relay_3=50201
+		relayBroadcastPort := uint16(50101 + (i * 100))
+
 		// This will dial each relay once to find out their list of networks.
-		networks, laddrs, err := b.DiscoverRelayNetworks(localP2PSwitch, relay, 0) // 0 uses config.BroadcastPort
+		networks, laddrs, err := b.DiscoverRelayNetworks(localP2PSwitch, relay, relayBroadcastPort)
 		if err != nil {
+			b.logger.Error("Error discovering relay networks",
+				"relay", relay,
+				"err", err,
+			)
 			relaysWithFailure[relay] = true
 			continue
 		}
 
 		b.logger.Debug("Retrieved networks information from relay",
 			"relay", relay,
-			"len", len(networks),
+			"networks", networks,
 		)
 
 		// We now have `id@host:port`, i.e. a p2p.NetAddress.
@@ -596,9 +596,6 @@ func (b *MultiplexBackend) DiscoverRelayNetworks(
 	listenAddrs []string,
 	err error,
 ) {
-	networks = []string{}
-	listenAddrs = []string{}
-
 	// If no broadcast port overwrite is provided, use config
 	if withBroadcastPort == 0 {
 		withBroadcastPort = b.reactor.nodeConfig.BroadcastPort
@@ -624,19 +621,28 @@ func (b *MultiplexBackend) DiscoverRelayNetworks(
 	)
 
 	// Dial the relay to find out all networks it supports
-	peer, err := localSwitch.Transport().Dial(*relayAddr, localSwitch.GetPeerConfig())
+	// Using the switch here affects the internal AddrBook.
+	err = localSwitch.DialPeerWithAddress(relayAddr)
 	if err != nil {
 		return []string{}, []string{}, fmt.Errorf(
 			"could not dial relay %s: %w", relayAndPort, err)
 	}
 
 	// Retrieves the multi network information
+	peer := localSwitch.Peers().Get(relayAddr.ID)
+	if peer == nil {
+		return []string{}, []string{}, fmt.Errorf(
+			"could not establish connection to peer %s", relayAndPort)
+	}
+
 	mnni := peer.NodeInfo().(MultiNetworkNodeInfo)
 
 	// Copy supported networks to output slice
+	networks = make([]string, len(mnni.Networks))
 	copy(networks, mnni.Networks)
 
 	// Copy the ChainListenAddr content
+	listenAddrs = make([]string, len(mnni.ListenAddrs))
 	for i, chainladdr := range mnni.ListenAddrs {
 		listenAddrs[i] = chainladdr.ListenAddr
 	}
@@ -740,6 +746,7 @@ func (b *MultiplexBackend) DefaultNodeRelayDialerRoutine() NodeRelayDialerFn {
 			eventsSwitch := switchProvider(chainID).(*p2p.Switch)
 
 			// The address book is updated in p2p.Switch#dialPeersAsync.
+			// Here we dial the ChainID's port, not the broadcast port.
 			if err := eventsSwitch.DialPeersAsync(chainRelays); err != nil {
 				// Error happened dialing one of the relays P2P address
 				notifierImpl.Error(err)
@@ -761,6 +768,11 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() NodeReplRequestFn {
 		chainID string,
 		notifierImpl ClientNotifier,
 	) {
+		knownPeers := make([]string, len(relays))
+		for i, relayWithIdAndPort := range relays {
+			knownPeers[i] = strings.Split(relayWithIdAndPort, "@")[0]
+		}
+
 		// Retrieve the p2p.Switch and GenesisDoc for this chain
 		switchProvider := b.reactor.GetInstanceProvider(InstanceKeyP2PSwitch)
 		genDocProvider := b.reactor.GetGenesisProvider()
@@ -777,17 +789,21 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() NodeReplRequestFn {
 
 		// Broadcast the ChainReplicationRequest.
 		eventsSwitch.Peers().ForEach(func(peer p2p.Peer) {
-			// Send only to relays we are interesting in.
-			relayAddr := peer.SocketAddr().String()
-			if !slices.Contains(relays, relayAddr) {
+			// Send only to relays we are interested in.
+			peerID := string(peer.ID())
+			if !slices.Contains(knownPeers, peerID) {
 				return
 			}
 
 			peer.Send(p2p.Envelope{
 				ChannelID: ReplicationChannel,
-				Message: &mxp2p.ChainReplicationRequest{
-					ChainID:     chainID,
-					ChainParams: chainParams,
+				Message: &mxp2p.Message{
+					Sum: &mxp2p.Message_ChainReplicationRequest{
+						ChainReplicationRequest: &mxp2p.ChainReplicationRequest{
+							ChainID:     chainID,
+							ChainParams: chainParams,
+						},
+					},
 				},
 			})
 		})

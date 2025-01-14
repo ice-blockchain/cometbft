@@ -307,6 +307,66 @@ func TestMultiplexNodeNewNodesMultiplexProduceBlocks(t *testing.T) {
 // ----------------------------------------------------------------------------
 // Helpers
 
+func ResetTestMultiplexNodeWithConfigAndPorts(
+	tb testing.TB,
+	rootDir string,
+	metricsSuffix string,
+	mxConfig config.MultiplexConfig,
+	p2pStartPort uint16,
+	rpcStartPort uint16,
+	broadcastPort uint16,
+) (string, *config.Config) {
+	tb.Helper()
+
+	rootDir, err := os.MkdirTemp("", rootDir)
+	require.NoError(tb, err)
+
+	nodeCfg := config.TestConfig()
+	nodeCfg.SetRoot(rootDir)
+	nodeCfg.MultiplexConfig = mxConfig
+	nodeCfg.P2PStartPort = p2pStartPort
+	nodeCfg.RPCStartPort = rpcStartPort
+	nodeCfg.BroadcastPort = broadcastPort
+	nodeCfg.Instrumentation.Namespace += metricsSuffix
+
+	// Make sure we have /data and /config
+	_, err = mx.NewMultiplexFS(nodeCfg)
+	require.NoError(tb, err, "should create filesystem structure for multiplex")
+
+	// Make sure we have a *multi-doc* genesis file (GenesisDocSet)
+	genesisFilePath := filepath.Join(rootDir, nodeCfg.Genesis)
+
+	// IMPORTANT:
+	// If there is a genesis file at the configured path, we will read it and expect it
+	// to contain a genesis doc set ; otherwise create it with testOneScopedGenesisFmt.
+
+	if !cmtos.FileExists(genesisFilePath) {
+		testGenesis := `[`
+		for userAddress, chainIds := range nodeCfg.UserChains {
+			for _, chainID := range chainIds {
+				// Creates one genesis doc per pair of user address and chainId
+				chainTestGenesis := fmt.Sprintf(testGenesisDocWithValidatorsFmt, chainID, testDefaultGenesisValidator)
+				testGenesis += chainTestGenesis + ","
+
+				// resets priv validators to default state/key (as present in genesis)
+				// useDefaultPrivValidator=true
+				ResetMultiplexPrivValidator(nodeCfg.BaseConfig, userAddress, chainID, nil, true)
+			}
+		}
+
+		if 0 == len(nodeCfg.UserChains) {
+			testGenesis = testGenesis + `]`
+		} else {
+			// Removes last comma and closes json array
+			testGenesis = testGenesis[:len(testGenesis)-1] + `]`
+		}
+
+		cmtos.MustWriteFile(genesisFilePath, []byte(testGenesis), 0o644)
+	}
+
+	return rootDir, nodeCfg
+}
+
 func ResetTestMultiplexNodeWithRootDirAndPorts(
 	tb testing.TB,
 	numChains int,
