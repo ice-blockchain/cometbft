@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"slices"
 
 	"github.com/ice-blockchain/cometbft/crypto/tmhash"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
@@ -33,13 +32,6 @@ type MultiplexClient struct {
 
 	// A client notifier implementation, e.g. [StatusNotifier].
 	notifier ClientNotifier
-
-	// This channel is used to wait when new networks must be created.
-	newChainReadyCh chan string
-
-	// This channel is used to communicate the tx hash of a transaction
-	// that has been accepted by our own mempool AND by the relays' mempools.
-	relayAcceptTxCh chan string
 }
 
 // Assert that our implementation satisfy the Client interface.
@@ -64,9 +56,6 @@ func NewClient(
 	options ...func(*MultiplexClient),
 ) *MultiplexClient {
 	cli := &MultiplexClient{
-		newChainReadyCh: make(chan string),
-		relayAcceptTxCh: make(chan string),
-
 		notifier: &StatusNotifier{},
 	}
 
@@ -180,58 +169,6 @@ func (c MultiplexClient) BroadcastTx(
 		return // STOP here
 	}
 
-	// TODO(midas): remove debug logs
-	c.backend.GetLogger().Debug("Starting to dial unknown relays",
-		"num_peers", len(chainRelays))
-
-	// Connect to any relays that we are not yet connected to.
-	// Note, the AddrBook is updated in p2p.Switch#dialPeersAsync.
-	routineNodeRelayDialer := c.GetBackend().GetRoutines().NodeRelayDialer
-	go routineNodeRelayDialer(ctx,
-		chainRelays,
-		c.notifier,
-	)
-
-	// As some relays may not know of all networks, we must ask
-	// to replicate required networks if they did not report some.
-	catchupRelays := map[string][]string{}
-	for chainID, relaysByChain := range chainRelays {
-		// Did all relays report to know this ChainID?
-		if len(relaysByChain) == len(relays) {
-			catchupRelays[chainID] = nil
-			continue
-		}
-
-		// Find out which relays are missing for this chain.
-		// Those are relays that need to catchup with the chain.
-		for _, relay := range relays {
-			if !slices.Contains(relaysByChain, relay) {
-				catchupRelays[chainID] = append(catchupRelays[chainID], relay)
-			}
-		}
-	}
-
-	// Handling case when chainRelays is empty (0 networks on remote relays).
-	for _, chainID := range requiredNetworks {
-		if _, has := catchupRelays[chainID]; !has {
-			catchupRelays[chainID] = append(catchupRelays[chainID], relays...)
-		}
-	}
-
-	// Ask the relays to catch-up with the chain by replicating it.
-	for chainID, chainCatchupRelays := range catchupRelays {
-		if len(chainCatchupRelays) == 0 {
-			continue
-		}
-		// Ask the relays to catch-up with the chain by replicating it.
-		routineNodeReplRequest := c.GetBackend().GetRoutines().NodeReplRequest
-		go routineNodeReplRequest(ctx,
-			chainCatchupRelays,
-			chainID,
-			c.notifier,
-		)
-	}
-
 	// ------------------------------------------------------------------------
 	// Step 2: New networks must be initialized explicitly
 
@@ -251,14 +188,46 @@ func (c MultiplexClient) BroadcastTx(
 			chainRelays,
 			mustCreateNetworks,
 			c.notifier,
-			c.newChainReadyCh,
+			c.backend.GetNewChainReadyCh(),
 		)
 	}
 
 	// ------------------------------------------------------------------------
-	// Step 3: Wait for networks to be ready before add to mempool
+	// Step 3: Ask relays to replicate chain if necessary
 
 	// Move status update to next step (step=3)
+	currentBroadcastStep++
+
+	// TODO(midas): remove debug logs
+	c.backend.GetLogger().Debug("Requesting chain replication from relays",
+		"num_peers", len(chainRelays))
+
+	// As some relays may not know of all networks, we must ask
+	// to replicate required networks if they did not report some.
+	catchupRelays := c.GetBackend().ApplyFilterReplRequestRelays(
+		requiredNetworks,
+		relays,
+		chainRelays,
+	)
+
+	// Ask the relays to catch-up with the chain by replicating it.
+	for chainID, chainCatchupRelays := range catchupRelays {
+		if len(chainCatchupRelays) == 0 {
+			continue
+		}
+
+		routineNodeReplRequest := c.GetBackend().GetRoutines().NodeReplRequest
+		go routineNodeReplRequest(ctx,
+			chainCatchupRelays,
+			chainID,
+			c.notifier,
+		)
+	}
+
+	// ------------------------------------------------------------------------
+	// Step 4: Wait for networks to be ready before add to mempool
+
+	// Move status update to next step (step=4)
 	currentBroadcastStep++
 
 	// TODO(midas): remove debug logs
@@ -272,18 +241,21 @@ func (c MultiplexClient) BroadcastTx(
 	for i := 0; i < len(mustCreateNetworks); i++ {
 		// The createNetworksRoutine communicates the ChainID on a channel
 		// to tell this broadcaster about the readiness of a network state.
-		chainID := <-c.newChainReadyCh
+		chainID,
+			waitErr := c.GetBackend().WaitForNextAvailableNetwork(ctx)
+		if waitErr != nil {
+			c.notifier.Error(waitErr)
+			return // STOP here
+		}
 
 		// Inform about the readiness of this chain
 		c.backend.GetLogger().Info("Network is now available", "chain_id", chainID)
-
-		// TODO(midas): Network can now be connected to by other relays.
 	}
 
 	// ------------------------------------------------------------------------
-	// Step 4: Add transactions to mempool, trigger broadcast to relays
+	// Step 5: Add transactions to mempool, trigger broadcast to relays
 
-	// Move status update to next step (step=4)
+	// Move status update to next step (step=5)
 	currentBroadcastStep++
 
 	// TODO(midas): remove debug logs
@@ -316,13 +288,13 @@ func (c MultiplexClient) BroadcastTx(
 		userAddress,
 		transactions,
 		c.notifier,
-		c.relayAcceptTxCh,
+		c.backend.GetRelayAcceptTxCh(),
 	)
 
 	// ------------------------------------------------------------------------
-	// Step 5: Wait for remote (other relays) transaction acceptance
+	// Step 6: Wait for remote (other relays) transaction acceptance
 
-	// Move status update to next step (step=5)
+	// Move status update to next step (step=6)
 	currentBroadcastStep++
 
 	// TODO(midas): remove debug logs
@@ -333,52 +305,38 @@ func (c MultiplexClient) BroadcastTx(
 	// the relayAcceptTxCh channel. This loop forbids excess transactions.
 	//
 	// Waits for broadcastTransactionRoutine to push on relayAcceptTxCh.
-	var acceptErr error
 	for i := 0; i < len(transactions); i++ {
-		select {
 		// The broadcastTransactionRoutine communicates the tx hash on a
 		// channel to tell this broadcaster about the acceptance of the
-		// transaction by our own mempool AND by the relays' mempools.
-		case acceptedTxHash := <-c.relayAcceptTxCh:
-			// Decode to bytes slice makes sure we have a transaction hash
-			txHashBytes, err := hex.DecodeString(acceptedTxHash)
-			if err != nil || len(txHashBytes) != tmhash.Size {
-				acceptErr = fmt.Errorf(
-					"invalid transaction hash %s: %w", acceptedTxHash, err)
-				c.backend.GetLogger().Error(acceptErr.Error())
-				break
-			}
-
-			// Inform about the readiness of transaction acceptance
-			c.backend.GetLogger().Info("Relays accepted transaction", "hash", acceptedTxHash)
-
-			// Will be added to BroadcastStatus.TxHashes in case of success.
-			acceptedTxHashes = append(acceptedTxHashes, txHashBytes)
-
-		// Handle potential expiration of context and consider as an error.
-		case <-ctx.Done():
-			acceptErr = fmt.Errorf(
-				"context expired for BroadcastTx at step %d", currentBroadcastStep)
-			c.backend.GetLogger().Error(acceptErr.Error())
+		// transaction by our own mempool AND by a relays' mempool.
+		acceptedTxHash,
+			acceptErr := c.GetBackend().WaitForRelayTxAcceptance(ctx)
+		if acceptErr != nil {
+			c.notifier.Error(acceptErr)
+			return // STOP here
 		}
 
-		// Stop waiting if we have encountered errors
-		if acceptErr != nil {
+		// Decode to bytes slice makes sure we have a transaction hash
+		txHashBytes, err := hex.DecodeString(acceptedTxHash)
+		if err != nil || len(txHashBytes) != tmhash.Size {
+			acceptErr = fmt.Errorf(
+				"invalid transaction hash %s: %w", acceptedTxHash, err)
+			c.backend.GetLogger().Error(acceptErr.Error())
 			break
 		}
-	}
 
-	// If we found at least one error, we shall reject the transactions batch.
-	if acceptErr != nil {
-		c.notifier.Error(acceptErr)
-		return // STOP here
+		// Inform about the readiness of transaction acceptance
+		c.backend.GetLogger().Info("Relays accepted transaction", "hash", acceptedTxHash)
+
+		// Will be added to BroadcastStatus.TxHashes in case of success.
+		acceptedTxHashes = append(acceptedTxHashes, txHashBytes)
 	}
 
 	// ------------------------------------------------------------------------
-	// Step 6: Transactions are now broadcast and accepted by all relays,
+	// Step 7: Transactions are now broadcast and accepted by all relays,
 	// i.e. consensus succeeded.
 
-	// Move status update to next step (step=6)
+	// Move status update to next step (step=7)
 	currentBroadcastStep++
 
 	// TODO(midas): remove debug logs
@@ -387,10 +345,6 @@ func (c MultiplexClient) BroadcastTx(
 
 	// Done, notify about succeeded broadcast (nil error)
 	c.notifier.Success(acceptedTxHashes)
-
-	// We may cleanup, CometBFT will proceed to create proposal.
-	close(c.newChainReadyCh)
-	close(c.relayAcceptTxCh)
 }
 
 // BroadcastTxRemoval sends an error to a notifier if any of the removal

@@ -1,6 +1,7 @@
 package multiplex_test
 
 import (
+	"context"
 	"os"
 	"strconv"
 	"testing"
@@ -220,7 +221,7 @@ func TestMultiplexBackendDiscoverRelayNetworksWithUnreachableRelay(t *testing.T)
 	testSwitch := server.EventSwitch()
 
 	randomPrivKey := ed25519.GenPrivKey()
-	testRelayAddr := randomPrivKey.PubKey().Address().String() + "@0.0.0.0"
+	testRelayAddr := randomPrivKey.PubKey().Address().String() + "@0.0.0.0:1234"
 
 	// Act (1) - Test that unknown relays return error
 	actualNetworks,
@@ -228,7 +229,6 @@ func TestMultiplexBackendDiscoverRelayNetworksWithUnreachableRelay(t *testing.T)
 		discoverErr := server.DiscoverRelayNetworks(
 		testSwitch,
 		testRelayAddr,
-		0, // 0 means to read broadcast port from config
 	)
 
 	// Must error and return empty
@@ -259,13 +259,12 @@ func TestMultiplexBackendDiscoverRelayNetworksWithOnlySelfRelay(t *testing.T) {
 	testSwitch := server.EventSwitch()
 
 	// Act (2) - Test that functional relays return network info
-	testRelayAddr := string(testReactor.GetNodeKey().ID()) + "@127.0.0.1"
+	testRelayAddr := string(testReactor.GetNodeKey().ID()) + "@127.0.0.1:50001"
 	actualNetworks,
 		actualListenAddrs,
 		discoverErr := server.DiscoverRelayNetworks(
 		testSwitch,
 		testRelayAddr,
-		0, // 0 means to read broadcast port from config
 	)
 
 	assert.NoError(t, discoverErr) // NO error!
@@ -314,18 +313,18 @@ func TestMultiplexBackendDiscoverRelayNetworksWithTwoRelays(t *testing.T) {
 	sourceReactor := servers[0].GetReactor()
 	recipientSwitch := servers[1].EventSwitch()
 	recipientReactor := servers[1].GetReactor()
+	recipientNodeID := string(recipientReactor.GetNodeKey().ID())
 
 	sourceSwitch.AddUnconditionalPeerIDs([]string{string(recipientReactor.GetNodeKey().ID())})
 	recipientSwitch.AddUnconditionalPeerIDs([]string{string(sourceReactor.GetNodeKey().ID())})
 
 	// Act - Relay 1 communicates with Relay 2
-	testRelayAddr := string(recipientReactor.GetNodeKey().ID()) + "@127.0.0.1"
+	testRelayAddr := recipientNodeID + "@127.0.0.1:50002"
 	actualNetworks,
 		actualListenAddrs,
 		discoverErr := servers[0].DiscoverRelayNetworks(
 		sourceSwitch,
 		testRelayAddr,
-		50002, // second relay uses broadcast port 50002
 	)
 
 	assert.NoError(t, discoverErr) // NO error!
@@ -376,18 +375,18 @@ func TestMultiplexBackendDiscoverRelayNetworksIncompatibleRelays(t *testing.T) {
 	sourceReactor := servers[0].GetReactor()
 	recipientSwitch := servers[1].EventSwitch()
 	recipientReactor := servers[1].GetReactor()
+	recipientNodeID := string(recipientReactor.GetNodeKey().ID())
 
 	sourceSwitch.AddUnconditionalPeerIDs([]string{string(recipientReactor.GetNodeKey().ID())})
 	recipientSwitch.AddUnconditionalPeerIDs([]string{string(sourceReactor.GetNodeKey().ID())})
 
 	// Act - Relay 1 communicates with Relay 2
-	testRelayAddr := string(recipientReactor.GetNodeKey().ID()) + "@127.0.0.1"
+	testRelayAddr := recipientNodeID + "@127.0.0.1:50002"
 	actualNetworks,
 		actualListenAddrs,
 		discoverErr := servers[0].DiscoverRelayNetworks(
 		sourceSwitch,
 		testRelayAddr,
-		50002, // second relay uses broadcast port 50002
 	)
 
 	assert.Error(t, discoverErr, "incompatible: peer does not have at least one replicated chain in common")
@@ -437,18 +436,19 @@ func TestMultiplexBackendDiscoverRelayNetworksCompatibleRelays(t *testing.T) {
 	sourceReactor := servers[0].GetReactor()
 	recipientSwitch := servers[1].EventSwitch()
 	recipientReactor := servers[1].GetReactor()
+	recipientNodeID := string(recipientReactor.GetNodeKey().ID())
 
 	sourceSwitch.AddUnconditionalPeerIDs([]string{string(recipientReactor.GetNodeKey().ID())})
 	recipientSwitch.AddUnconditionalPeerIDs([]string{string(sourceReactor.GetNodeKey().ID())})
 
 	// Act - Relay 1 communicates with Relay 2
-	testRelayAddr := string(recipientReactor.GetNodeKey().ID()) + "@127.0.0.1"
+	testBroadcastPort := strconv.Itoa(50001 + (1 * 100)) // 50101 (second relay)
+	testRelayAddr := recipientNodeID + "@127.0.0.1:" + testBroadcastPort
 	actualNetworks,
 		actualListenAddrs,
 		discoverErr := servers[0].DiscoverRelayNetworks(
 		sourceSwitch,
 		testRelayAddr,
-		50101, // second relay uses broadcast port 50101
 	)
 
 	assert.NoError(t, discoverErr) // NO error!
@@ -517,13 +517,13 @@ func TestMultiplexBackendDiscoverRelayNetworksSevenCompatibleRelays(t *testing.T
 		recipientSwitch.AddUnconditionalPeerIDs([]string{sourceRelayID})
 
 		// Act - Relay 1 communicates with Relay X
-		testRelayAddr := recipientRelayID + "@127.0.0.1"
+		testBroadcastPort := strconv.Itoa(50001 + (i * 100)) // 50101, 50201, etc.
+		testRelayAddr := recipientRelayID + "@127.0.0.1:" + testBroadcastPort
 		actualNetworks,
 			actualListenAddrs,
 			discoverErr := servers[0].DiscoverRelayNetworks(
 			sourceSwitch,
 			testRelayAddr,
-			uint16(50001+(i*100)), // see ResetTestMultiplexBackendCompatibleRelays
 		)
 
 		assert.NoError(t, discoverErr) // NO error!
@@ -575,12 +575,14 @@ func TestMultiplexBackendFetchRelayAddresses(t *testing.T) {
 	sourceReactor := servers[0].GetReactor()
 	recipientSwitch := servers[1].EventSwitch()
 	recipientReactor := servers[1].GetReactor()
+	recipientNodeID := string(recipientReactor.GetNodeKey().ID())
 
 	sourceSwitch.AddUnconditionalPeerIDs([]string{string(recipientReactor.GetNodeKey().ID())})
 	recipientSwitch.AddUnconditionalPeerIDs([]string{string(sourceReactor.GetNodeKey().ID())})
 
 	// Act - Relay 1 fetches addresses of Relay 2
-	testRelayAddr := string(recipientReactor.GetNodeKey().ID()) + "@127.0.0.1"
+	testBroadcastPort := strconv.Itoa(50001 + (1 * 100)) // 50101 (second relay)
+	testRelayAddr := recipientNodeID + "@127.0.0.1:" + testBroadcastPort
 	chainRelays, errorRelays := servers[0].FetchRelayAddresses([]string{
 		testRelayAddr,
 	})
@@ -669,12 +671,75 @@ func TestMultiplexBackendRemoveTransactions(t *testing.T) {
 	assert.NoError(t, actualErr, "should remove transaction from mempool")
 }
 
-func TestMultiplexBackendRoutinesNodeRelayDialer(t *testing.T) {
-
-}
-
 func TestMultiplexBackendRoutinesNodeReplRequest(t *testing.T) {
+	numChains := 3
+	numRelays := 3
 
+	// For debug, change the loggers to cmtlog.TestingLogger()
+	loggerRelay1 := cmtlog.NewNopLogger() //cmtlog.TestingLogger().With("process", "relay-1")
+	loggerRelay2 := cmtlog.NewNopLogger() //cmtlog.TestingLogger().With("process", "relay-2")
+	loggerRelay3 := cmtlog.NewNopLogger() //cmtlog.TestingLogger().With("process", "relay-3")
+
+	// Uses config.TestConfig() and random MultiplexConfig
+	rootDirs,
+		servers := ResetTestMultiplexBackendCompatibleRelays(
+		t,
+		numChains,
+		numRelays,
+		loggerRelay1,
+		loggerRelay2,
+		loggerRelay3,
+	)
+	require.NotEmpty(t, servers)
+	require.Len(t, rootDirs, numRelays)
+	require.Len(t, servers, numRelays)
+
+	defer func() {
+		for i := 0; i < len(servers); i++ {
+			defer os.RemoveAll(rootDirs[i])
+
+			if servers[i] != nil {
+				err := servers[i].Close()
+				assert.NoError(t, err, "should shutdown server at index: "+strconv.Itoa(i))
+			}
+		}
+	}()
+
+	// Start the node backends
+	for i := 0; i < len(servers); i++ {
+		servers[i].MustStart()
+	}
+
+	testRelayAddrs := []string{}
+	for i := 1; i < len(servers); i++ {
+		testReactor := servers[i].GetReactor()
+		testNodeID := string(testReactor.GetNodeKey().ID())
+		testBroadcastPort := strconv.Itoa(50001 + (i * 100)) // 50101, 50201, etc.
+
+		testRelayAddr := testNodeID + "@127.0.0.1:" + testBroadcastPort
+		testRelayAddrs = append(testRelayAddrs, testRelayAddr)
+	}
+
+	chainRelays,
+		errorRelays := servers[0].FetchRelayAddresses(testRelayAddrs)
+	require.Len(t, errorRelays, 0) // NO error!
+	require.Len(t, chainRelays, numChains)
+
+	useChainID := servers[0].GetReactor().GetNetworks()[0]
+	require.Contains(t, chainRelays, useChainID)
+
+	// Act - Relay 1 asks Relay 2 AND Relay 3 to replicate chain x
+	nodeReplRequestFn := servers[0].DefaultNodeReplRequestRoutine()
+	nodeReplRequestFn(context.TODO(),
+		chainRelays[useChainID],
+		useChainID,
+		&mx.StatusNotifier{},
+	)
+
+	// Test that ChainReplicationRequest was sent to relay 2
+	actualRequestsSent := servers[0].GetReplRequestPeers(useChainID)
+	assert.NotEmpty(t, actualRequestsSent)
+	assert.Len(t, actualRequestsSent, len(chainRelays[useChainID]))
 }
 
 func TestMultiplexBackendRoutinesNetworksCreator(t *testing.T) {
@@ -688,6 +753,8 @@ func TestMultiplexBackendRoutinesRelaysBroadcast(t *testing.T) {
 func TestMultiplexBackendRoutinesCancelBroadcast(t *testing.T) {
 
 }
+
+// TODO(midas): add test for 0-network compatible relays
 
 // ----------------------------------------------------------------------------
 // Helpers

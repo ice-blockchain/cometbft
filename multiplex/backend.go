@@ -3,9 +3,10 @@ package multiplex
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -42,6 +43,24 @@ type Adapter interface {
 	// GetRoutines should return an implementation of [BroadcastJobs] methods.
 	GetRoutines() *BroadcastJobs
 
+	// GetNewChainReadyCh should return a read-only string channel.
+	GetNewChainReadyCh() chan<- string
+
+	// GetRelayAcceptTxCh should return a read-only string channel.
+	GetRelayAcceptTxCh() chan<- string
+
+	// WaitForNextAvailableNetwork should wait for a chain replication and
+	// it should return a ChainID.
+	WaitForNextAvailableNetwork(
+		ctx context.Context,
+	) (string, error)
+
+	// WaitForRelayTxAcceptance should wait for a relay transaction acceptance
+	// and it should return a transaction hash.
+	WaitForRelayTxAcceptance(
+		ctx context.Context,
+	) (string, error)
+
 	// GetLocalNetworkHeights should query the last block height and determine
 	// a list of required networks. Iff the last block height is 1, the network
 	// is considered unknown and may need to be explicitely created.
@@ -62,8 +81,16 @@ type Adapter interface {
 	DiscoverRelayNetworks(
 		localSwitch *p2p.Switch,
 		relay string,
-		withBroadcastPort uint16,
 	) ([]string, []string, error)
+
+	// ApplyFilterReplRequestRelays should filter relays and return a map of
+	// relays by ChainID with only relays that need to catchup, i.e. it should
+	// return relays that will receive a chain replication request.
+	ApplyFilterReplRequestRelays(
+		requiredNetworks []string,
+		relays []string,
+		chainRelays map[string][]string,
+	) map[string][]string
 
 	// AddTransactions should execute the CheckTx call to add individual
 	// transactions to the mempool by ChainID.
@@ -88,22 +115,11 @@ type Adapter interface {
 // and the adapter instance injects the default implementation if necessary.
 type BroadcastJobs struct {
 	// Routine extensions/overwrites may be provided here.
-	NodeRelayDialer NodeRelayDialerFn
 	NodeReplRequest NodeReplRequestFn
 	NetworksCreator NetworksCreatorFn
 	RelaysBroadcast RelaysBroadcastFn
 	CancelBroadcast CancelBroadcastFn
 }
-
-// NodeRelayDialerFn describes a function that may be run on a separate
-// goroutine and which should open connections to relays if necessary.
-//
-// A [StatusNotifier] instance contains a channel used to transmit errors.
-type NodeRelayDialerFn func(
-	context.Context,
-	map[string][]string,
-	ClientNotifier,
-)
 
 // NodeReplRequestFn describes a function that may be run on a separate
 // goroutine and which should open connections to relays if necessary.
@@ -218,6 +234,16 @@ type MultiplexBackend struct {
 	// Routines may be extended directly using the [BroadcastJobs] struct.
 	routines *BroadcastJobs
 
+	// Stores the node IDs of relays to whom we sent a ChainReplicationRequest.
+	replRequestsSent map[string][]string
+
+	// This channel is used to wait when new networks must be created.
+	newChainReadyCh chan string
+
+	// This channel is used to communicate the tx hash of a transaction
+	// that has been accepted by our own mempool AND by a relays' mempool.
+	relayAcceptTxCh chan string
+
 	// Internals
 	logger   cmtlog.Logger
 	errorsCh <-chan error
@@ -299,6 +325,15 @@ func (b *MultiplexBackend) Close() error {
 		b.reactor.Reset()
 	}
 
+	// We may close channels now.
+	if b.newChainReadyCh != nil {
+		close(b.newChainReadyCh)
+	}
+
+	if b.relayAcceptTxCh != nil {
+		close(b.relayAcceptTxCh)
+	}
+
 	return nil
 }
 
@@ -323,6 +358,27 @@ func (b *MultiplexBackend) GetReactor() *Reactor {
 	return b.reactor
 }
 
+// GetNewChainReadyCh returns a channel used to communicate ChainID values.
+func (b *MultiplexBackend) GetNewChainReadyCh() chan<- string {
+	return b.newChainReadyCh
+}
+
+// GetRelayAcceptTxCh returns a channel used to communicate transaction hashes.
+func (b *MultiplexBackend) GetRelayAcceptTxCh() chan<- string {
+	return b.relayAcceptTxCh
+}
+
+// GetReplRequestPeers returns a list of node IDs to whom we have previously
+// sent a ChainReplicationRequest.
+// See also: [DefaultNodeReplRequestRoutine]
+func (b *MultiplexBackend) GetReplRequestPeers(chainID string) []string {
+	if peers, ok := b.replRequestsSent[chainID]; ok {
+		return peers
+	}
+
+	return []string{}
+}
+
 // MustStart starts a replication backend basically selecting void
 // and running forever.
 //
@@ -345,6 +401,11 @@ func (b *MultiplexBackend) MustStart() {
 	// we lock the mutex to ensure that initialization completes.
 	b.relayMtx.Lock()
 	defer b.relayMtx.Unlock() // happens after wg.Wait()
+
+	// Starting a node backend starts internal channels
+	b.newChainReadyCh = make(chan string)
+	b.relayAcceptTxCh = make(chan string)
+	b.replRequestsSent = map[string][]string{}
 
 	// Here we should wait forever, until the internal Reactor instance
 	// is told to replicate a new chain using the ReplicationChannel.
@@ -429,6 +490,36 @@ func (b *MultiplexBackend) MustStart() {
 	wg.Wait()
 }
 
+// WaitForNextAvailableNetwork waits for a chain replication using
+// the internal newChainReadyCh channel and returns a ChainID
+func (b *MultiplexBackend) WaitForNextAvailableNetwork(
+	ctx context.Context,
+) (string, error) {
+	select {
+	case chainID := <-b.newChainReadyCh:
+		return chainID, nil
+
+	case <-ctx.Done():
+		return "", errors.New(
+			"process timed out waiting for network availability")
+	}
+}
+
+// WaitForRelayTxAcceptance waits for a relay transaction acceptance using
+// the internal relayAcceptTxCh channel and returns a transaction hash.
+func (b *MultiplexBackend) WaitForRelayTxAcceptance(
+	ctx context.Context,
+) (string, error) {
+	select {
+	case txHash := <-b.relayAcceptTxCh:
+		return txHash, nil
+
+	case <-ctx.Done():
+		return "", errors.New(
+			"process timed out waiting for relay acceptance")
+	}
+}
+
 // GetRoutines returns an injected implementation of [BroadcastJobs] methods
 // or the default implementations as defined with MultiplexBackend.
 //
@@ -437,7 +528,6 @@ func (b *MultiplexBackend) MustStart() {
 func (b *MultiplexBackend) GetRoutines() *BroadcastJobs {
 	if b.routines == nil {
 		b.routines = &BroadcastJobs{
-			NodeRelayDialer: b.DefaultNodeRelayDialerRoutine(),
 			NodeReplRequest: b.DefaultNodeReplRequestRoutine(),
 			NetworksCreator: b.DefaultNetworksCreatorRoutine(),
 			RelaysBroadcast: b.DefaultRelaysBroadcastRoutine(),
@@ -524,10 +614,9 @@ func (b *MultiplexBackend) GetLocalNetworkHeights(
 // the supported networks and their respective listen addresses.
 //
 // IMPORTANT:
-// This method applies a port-overwrite convention whereby the *broadcast port*
-// starts at 50001 for relay 1 and is increased by 100 for each relay. The port
-// for relay 2 is 50101, for relay 50201, etc.
-// This requires that the broadcast port be overwritten in [MultiplexConfig].
+// This method expects the relay addresses to be complete and to include a
+// cometbft node ID, as well as a broadcast port.
+// The broadcast port of one relay can be changed with [MultiplexConfig].
 //
 // FetchRelayAddresses implements [Adapter].
 func (b *MultiplexBackend) FetchRelayAddresses(
@@ -544,24 +633,30 @@ func (b *MultiplexBackend) FetchRelayAddresses(
 	// Discover supported networks for all relays and build list of
 	// P2P listen addresses by ChainID.
 	chainRelays = map[string][]string{}
-	for i, relay := range relays {
-		// IMPORTANT:
-		// Applied convention: relay_1=50001 [self], relay_2=50101, relay_3=50201
-		relayBroadcastPort := uint16(50101 + (i * 100))
+	for _, relayWithIdAndPort := range relays {
+		// Ensure presence of node ID and broadcast port
+		re := regexp.MustCompile(`(.*)@(.*)(\:\d+)(.*)`)
+		matches := re.FindStringSubmatch(relayWithIdAndPort)
+
+		// Extract the node ID from relay address
+		relayNetworkNodeID := matches[1]
 
 		// This will dial each relay once to find out their list of networks.
-		networks, laddrs, err := b.DiscoverRelayNetworks(localP2PSwitch, relay, relayBroadcastPort)
+		networks, laddrs, err := b.DiscoverRelayNetworks(
+			localP2PSwitch,
+			relayWithIdAndPort,
+		)
 		if err != nil {
 			b.logger.Error("Error discovering relay networks",
-				"relay", relay,
+				"relay", relayWithIdAndPort,
 				"err", err,
 			)
-			relaysWithFailure[relay] = true
+			relaysWithFailure[relayWithIdAndPort] = true
 			continue
 		}
 
 		b.logger.Debug("Retrieved networks information from relay",
-			"relay", relay,
+			"relay", relayWithIdAndPort,
 			"networks", networks,
 		)
 
@@ -572,6 +667,8 @@ func (b *MultiplexBackend) FetchRelayAddresses(
 			}
 
 			laddr := laddrs[i]
+			laddr = relayNetworkNodeID + "@" + laddr
+
 			chainRelays[chainID] = append(chainRelays[chainID], laddr)
 		}
 	}
@@ -589,26 +686,17 @@ func (b *MultiplexBackend) FetchRelayAddresses(
 // DiscoverRelayNetworks implements [Adapter].
 func (b *MultiplexBackend) DiscoverRelayNetworks(
 	localSwitch *p2p.Switch,
-	relay string,
-	withBroadcastPort uint16,
+	relayWithIdAndPort string,
 ) (
 	networks []string,
 	listenAddrs []string,
 	err error,
 ) {
-	// If no broadcast port overwrite is provided, use config
-	if withBroadcastPort == 0 {
-		withBroadcastPort = b.reactor.nodeConfig.BroadcastPort
-	}
-
-	// Use the BroadcastPort to fetch MultiNetworkNodeInfo.
-	relayAndPort := relay + ":" + strconv.Itoa(int(withBroadcastPort))
-
-	// Find out if relayAndPort is valid at all?
-	relayAddr, err := p2p.NewNetAddressString(relayAndPort)
+	// Find out if relayWithIdAndPort is valid at all?
+	relayAddr, err := p2p.NewNetAddressString(relayWithIdAndPort)
 	if err != nil {
 		return []string{}, []string{}, fmt.Errorf(
-			"error with relay %s: %w", relayAndPort, err)
+			"error with relay %s: %w", relayWithIdAndPort, err)
 	}
 
 	// If this is the relay itself, return empty.
@@ -617,7 +705,7 @@ func (b *MultiplexBackend) DiscoverRelayNetworks(
 	}
 
 	b.logger.Debug("Process now querying networks information",
-		"relay", relayAndPort,
+		"relay", relayWithIdAndPort,
 	)
 
 	// Dial the relay to find out all networks it supports
@@ -625,14 +713,14 @@ func (b *MultiplexBackend) DiscoverRelayNetworks(
 	err = localSwitch.DialPeerWithAddress(relayAddr)
 	if err != nil {
 		return []string{}, []string{}, fmt.Errorf(
-			"could not dial relay %s: %w", relayAndPort, err)
+			"could not dial relay %s: %w", relayWithIdAndPort, err)
 	}
 
 	// Retrieves the multi network information
 	peer := localSwitch.Peers().Get(relayAddr.ID)
 	if peer == nil {
 		return []string{}, []string{}, fmt.Errorf(
-			"could not establish connection to peer %s", relayAndPort)
+			"could not establish connection to peer %s", relayWithIdAndPort)
 	}
 
 	mnni := peer.NodeInfo().(MultiNetworkNodeInfo)
@@ -660,6 +748,44 @@ func (b *MultiplexBackend) DiscoverRelayNetworks(
 	}
 
 	return networks, listenAddrs, nil
+}
+
+// ApplyFilterReplRequestRelays filters relays and returns a map of relays
+// by ChainID which contains only relays that need to catchup, i.e. it returns
+// relays that will receive a chain replication request.
+func (b *MultiplexBackend) ApplyFilterReplRequestRelays(
+	requiredNetworks []string,
+	relays []string,
+	chainRelays map[string][]string,
+) map[string][]string {
+	catchupRelays := map[string][]string{}
+	for chainID, relaysByChain := range chainRelays {
+		// Did all relays report to know this ChainID?
+		if len(relaysByChain) == len(relays) {
+			catchupRelays[chainID] = nil
+			continue
+		}
+
+		// Find out which relays are missing for this chain.
+		// Those are relays that need to catchup with the chain.
+		for _, relay := range relays {
+			if !slices.Contains(relaysByChain, relay) {
+				catchupRelays[chainID] = append(catchupRelays[chainID], relay)
+			}
+		}
+	}
+
+	// Handling case when chainRelays is empty (0 networks on remote relays).
+	for _, chainID := range requiredNetworks {
+		if _, has := catchupRelays[chainID]; !has {
+			catchupRelays[chainID] = append(catchupRelays[chainID], relays...)
+		}
+	}
+
+	// Also reset the sent requests cache
+	b.replRequestsSent = map[string][]string{}
+
+	return catchupRelays
 }
 
 // AddTransactions executes the CheckTx call to add individual
@@ -726,36 +852,6 @@ func (b *MultiplexBackend) RemoveTransactions(
 // ----------------------------------------------------------------------------
 // Default routines implementation for a MultiplexBackend
 
-// DefaultNodeRelayDialerRoutine opens new connections to relays if necessary.
-// In case an error happens while trying to connect to relays, an error will
-// be pushed on a pre-allocated notifier.
-//
-// This method will use the local events switch to open a single connection
-// with each relays. This conn is used to retrieve a [MultiNetworkNodeInfo].
-func (b *MultiplexBackend) DefaultNodeRelayDialerRoutine() NodeRelayDialerFn {
-	return func(
-		_ context.Context,
-		relaysByChain map[string][]string,
-		notifierImpl ClientNotifier,
-	) {
-		// Uses one p2p.Switch instance per network
-		switchProvider := b.reactor.GetInstanceProvider(InstanceKeyP2PSwitch)
-
-		// Open connection to all relays for all networks.
-		for chainID, chainRelays := range relaysByChain {
-			eventsSwitch := switchProvider(chainID).(*p2p.Switch)
-
-			// The address book is updated in p2p.Switch#dialPeersAsync.
-			// Here we dial the ChainID's port, not the broadcast port.
-			if err := eventsSwitch.DialPeersAsync(chainRelays); err != nil {
-				// Error happened dialing one of the relays P2P address
-				notifierImpl.Error(err)
-				return // terminates the process
-			}
-		}
-	}
-}
-
 // DefaultNodeReplRequestRoutine asks relays to replicate a network by
 // attaching the corresponding ChainParams.
 //
@@ -768,16 +864,14 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() NodeReplRequestFn {
 		chainID string,
 		notifierImpl ClientNotifier,
 	) {
+		replRequestPeers := []string{}
 		knownPeers := make([]string, len(relays))
 		for i, relayWithIdAndPort := range relays {
 			knownPeers[i] = strings.Split(relayWithIdAndPort, "@")[0]
 		}
 
-		// Retrieve the p2p.Switch and GenesisDoc for this chain
-		switchProvider := b.reactor.GetInstanceProvider(InstanceKeyP2PSwitch)
+		// Retrieve the GenesisDoc for this chain
 		genDocProvider := b.reactor.GetGenesisProvider()
-
-		eventsSwitch := switchProvider(chainID).(*p2p.Switch)
 		genesisDoc := genDocProvider(chainID)
 
 		// Build a transportable ChainParams protobuf message
@@ -788,6 +882,7 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() NodeReplRequestFn {
 		}
 
 		// Broadcast the ChainReplicationRequest.
+		eventsSwitch := b.EventSwitch()
 		eventsSwitch.Peers().ForEach(func(peer p2p.Peer) {
 			// Send only to relays we are interested in.
 			peerID := string(peer.ID())
@@ -806,7 +901,13 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() NodeReplRequestFn {
 					},
 				},
 			})
+
+			replRequestPeers = append(replRequestPeers, peerID)
+
+			// TODO(midas): wait for replication ACK with b.reactor.nodeReplResponseCh
 		})
+
+		b.replRequestsSent[chainID] = replRequestPeers
 	}
 }
 
