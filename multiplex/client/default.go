@@ -11,7 +11,6 @@ type (
 var (
 	_ Acceptor = (*DefaultAcceptor)(nil)
 	_ Client   = (*DefaultClient)(nil)
-	_ Server   = (*DefaultServer)(nil)
 )
 
 // AcceptBroadcastTx returns an error if any of the transactions

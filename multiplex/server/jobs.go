@@ -1,0 +1,72 @@
+package server
+
+import (
+	"context"
+
+	"github.com/ice-blockchain/cometbft/multiplex/client"
+)
+
+// ----------------------------------------------------------------------------
+// Jobs defines a multiplex background jobs implementation
+//
+// Jobs provides routines implementation for the broadcast process.
+// This structure encapsulates routines implementation for further extension
+// and the adapter instance injects the default implementation if necessary.
+type Jobs struct {
+	// Routine extensions/overwrites may be provided here.
+	NodeReplRequest NodeReplRequestFn
+	NetworksCreator NetworksCreatorFn
+	RelaysBroadcast RelaysBroadcastFn
+	CancelBroadcast CancelBroadcastFn
+}
+
+// NodeReplRequestFn describes a function that may be run on a separate
+// goroutine and which should open connections to relays if necessary.
+//
+// A [StatusNotifier] instance contains a channel used to transmit errors.
+type NodeReplRequestFn func(
+	context.Context,
+	[]string,
+	string,
+	client.Notifier,
+)
+
+// NetworksCreatorFn describes a function that may be run on a separate
+// goroutine and which should communicate with relays about missing networks.
+//
+// A [StatusNotifier] instance contains a channel used to transmit errors.
+// Also a string channel instance is accepted as newChainReadyCh where ChainIDs
+// are pushed when a new network is ready (or is now known through relay).
+type NetworksCreatorFn func(
+	context.Context,
+	map[string][]string,
+	[]string,
+	client.Notifier,
+	chan<- string, // newChainReadyCh
+)
+
+// RelaysBroadcastFn describes a function that may be run on a separate
+// goroutine and which should broadcast all transactions to relays.
+//
+// A [StatusNotifier] instance contains a channel used to transmit errors.
+// Also a string channel instance is accepted as relayAcceptTxCh where
+// transaction hashes are pushed when a transaction has been accepted by at
+// least 50%+1 of the healthy (currently active) relays.
+type RelaysBroadcastFn func(
+	context.Context,
+	map[string][]string,
+	string,
+	[]client.Transaction,
+	client.Notifier,
+	chan<- string, // relayAcceptTxCh
+)
+
+// CancelBroadcastFn describes a function that may be run on a separate
+// goroutine and which should broadcast a rollback message to healthy relays.
+//
+// The method ignores error from the mempool as transaction are not found.
+type CancelBroadcastFn func(
+	context.Context,
+	string,
+	[]client.Transaction,
+)

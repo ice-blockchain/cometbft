@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"io"
 )
 
 // ContextKey defines a string-based context value key.
@@ -29,6 +28,17 @@ type Transaction struct {
 type BroadcastStatus struct {
 	Error    error
 	TxHashes [][]byte
+}
+
+// Notifier defines the contract for client status notifiers as they
+// are used during broadcast operations to asynchronously notify the caller
+// about exact broadcast status updates and errors.
+type Notifier interface {
+	SetChannel(ch chan<- BroadcastStatus)
+	GetChannel() chan<- BroadcastStatus
+
+	Error(err error)
+	Success(txHashes [][]byte)
 }
 
 // Acceptor defines the contract for client-side transactions verification.
@@ -130,18 +140,4 @@ type Client interface {
 		notifier chan<- BroadcastStatus,
 		transactions ...Transaction,
 	)
-}
-
-// Server defines the contract for replication backend implementations.
-//
-// A server instance must be started before replication can happen and
-// before broadcast operations can be forwarded to the [Client].
-type Server interface {
-	io.Closer
-
-	// GetAcceptor returns the injected [Acceptor] implementation.
-	GetAcceptor() Acceptor
-
-	// MustStart executes a replication backend.
-	MustStart()
 }

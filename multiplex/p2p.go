@@ -59,7 +59,7 @@ func (reactor *Reactor) CreateTransportSwitch(
 		p2p.WithMetrics(p2pMetricsProvider),
 	)
 	eventSwitch.SetLogger(reactor.logger.With("module", "p2p"))
-	eventSwitch.SetNodeInfo(withNodeInfo.GetNodeInfo(chainID))
+	eventSwitch.SetNodeInfo(withNodeInfo)
 	eventSwitch.SetNodeKey(reactor.nodeKey)
 
 	reactor.RegisterInstance(InstanceKeyP2PTransport, chainID, chainTransport)
@@ -151,7 +151,7 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 			p2p.WithMetrics(p2pMetricsProvider),
 		)
 		eventSwitch.SetLogger(p2pLogger)
-		eventSwitch.SetNodeInfo(reactor.nodeInfo.GetNodeInfo(chainID))
+		eventSwitch.SetNodeInfo(reactor.nodeInfo)
 		eventSwitch.SetNodeKey(reactor.nodeKey)
 
 		// 3) Feed reactors from [CreateConsensusInstanceReactors]

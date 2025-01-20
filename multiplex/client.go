@@ -7,19 +7,10 @@ import (
 	"fmt"
 
 	"github.com/ice-blockchain/cometbft/crypto/tmhash"
+
 	"github.com/ice-blockchain/cometbft/multiplex/client"
+	"github.com/ice-blockchain/cometbft/multiplex/server"
 )
-
-// ClientNotifier defines the contract for client status notifiers as they
-// are used during broadcast operations to asynchronously notify the caller
-// about exact broadcast status updates and errors.
-type ClientNotifier interface {
-	SetChannel(ch chan<- client.BroadcastStatus)
-	GetChannel() chan<- client.BroadcastStatus
-
-	Error(err error)
-	Success(txHashes [][]byte)
-}
 
 // MultiplexClient implements a multiplex client by providing an implementation
 // for methods as defined in [client.Client].
@@ -28,24 +19,24 @@ type ClientNotifier interface {
 type MultiplexClient struct {
 	// A backend adapter instance is used to delegate communication
 	// with other relays and to execute local operations, e.g. persist data.
-	backend Adapter
+	backend server.Backend
 
 	// A client notifier implementation, e.g. [StatusNotifier].
-	notifier ClientNotifier
+	notifier client.Notifier
 }
 
 // Assert that our implementation satisfy the Client interface.
 var _ client.Client = (*MultiplexClient)(nil)
 
 // WithBackend is an option helper to overwrite the default adapter instance.
-func WithBackend(a Adapter) func(*MultiplexClient) {
+func WithBackend(a server.Backend) func(*MultiplexClient) {
 	return func(c *MultiplexClient) {
 		c.backend = a
 	}
 }
 
 // WithNotifier is an option helper to overwrite the default client notifier.
-func WithNotifier(n ClientNotifier) func(*MultiplexClient) {
+func WithNotifier(n client.Notifier) func(*MultiplexClient) {
 	return func(c *MultiplexClient) {
 		c.notifier = n
 	}
@@ -56,7 +47,7 @@ func NewClient(
 	options ...func(*MultiplexClient),
 ) *MultiplexClient {
 	cli := &MultiplexClient{
-		notifier: &StatusNotifier{},
+		notifier: &client.StatusNotifier{},
 	}
 
 	// Enable overwrite of optional properties
@@ -67,13 +58,13 @@ func NewClient(
 	return cli
 }
 
-// GetBackend returns the backend [Adapter] implementation.
-func (c MultiplexClient) GetBackend() Adapter {
+// GetBackend returns the backend [server.Backend] implementation.
+func (c MultiplexClient) GetBackend() server.Backend {
 	return c.backend
 }
 
-// SetBackend overwrite the backend [Adapter] instance.
-func (c MultiplexClient) SetBackend(a Adapter) {
+// SetBackend overwrite the backend [server.Backend] instance.
+func (c MultiplexClient) SetBackend(a server.Backend) {
 	c.backend = a
 }
 
@@ -88,9 +79,10 @@ func (c MultiplexClient) SetBackend(a Adapter) {
 //
 // The following steps define a complete broadcast process, in this order:
 //
-// - Basic verifications and opening relay connections.
+// - Basic verifications and opening relay discovery connections.
 // - New networks must be initialized explicitly.
 // - Wait for networks to be ready before adding to mempool.
+// - Send replication requests for new chains to other relays.
 // - Add transactions to mempool, trigger broadcast to relays.
 // - Wait for remote (other relays) transaction acceptance.
 // - Transactions are now broadcast and accepted by all relays,
@@ -100,12 +92,12 @@ func (c MultiplexClient) BroadcastTx(
 	ctx context.Context,
 	userAddress string,
 	relays []string,
-	notifier chan<- client.BroadcastStatus,
+	notifyCh chan<- client.BroadcastStatus,
 	transactions ...client.Transaction,
 ) {
 	// Can't broadcast without a multiplex backend
 	if c.GetBackend() == nil {
-		notifier <- client.BroadcastStatus{
+		notifyCh <- client.BroadcastStatus{
 			Error: errors.New(
 				"could not find a running multiplex backend"),
 		}
@@ -126,7 +118,7 @@ func (c MultiplexClient) BroadcastTx(
 		"num_txes", len(transactions),
 	)
 
-	c.notifier.SetChannel(notifier)
+	c.notifier.SetChannel(notifyCh)
 
 	// ------------------------------------------------------------------------
 	// Step 1: Basic verifications and opening relay connections
@@ -193,9 +185,37 @@ func (c MultiplexClient) BroadcastTx(
 	}
 
 	// ------------------------------------------------------------------------
-	// Step 3: Ask relays to replicate chain if necessary
+	// Step 3: Wait for networks to be ready before add to mempool
 
 	// Move status update to next step (step=3)
+	currentBroadcastStep++
+
+	// TODO(midas): remove debug logs
+	c.backend.GetLogger().Debug("Waiting for networks to be fully created",
+		"num_networks", len(mustCreateNetworks))
+
+	// Select a limited number of listeners message updates from
+	// the newChainReadyCh channel. This loop forbids excess networks.
+	//
+	// Waits for createNetworksRoutine to push on newChainReadyCh.
+	for i := 0; i < len(mustCreateNetworks); i++ {
+		// The createNetworksRoutine communicates the ChainID on a channel
+		// to tell this broadcaster about the readiness of a network state.
+		chainID,
+			waitErr := c.GetBackend().WaitForNextAvailableNetwork(ctx)
+		if waitErr != nil {
+			c.notifier.Error(waitErr)
+			return // STOP here
+		}
+
+		// Inform about the readiness of this chain
+		c.backend.GetLogger().Info("Network is now available", "chain_id", chainID)
+	}
+
+	// ------------------------------------------------------------------------
+	// Step 4: Ask relays to replicate chain if necessary
+
+	// Move status update to next step (step=4)
 	currentBroadcastStep++
 
 	// TODO(midas): remove debug logs
@@ -222,34 +242,6 @@ func (c MultiplexClient) BroadcastTx(
 			chainID,
 			c.notifier,
 		)
-	}
-
-	// ------------------------------------------------------------------------
-	// Step 4: Wait for networks to be ready before add to mempool
-
-	// Move status update to next step (step=4)
-	currentBroadcastStep++
-
-	// TODO(midas): remove debug logs
-	c.backend.GetLogger().Debug("Waiting for networks to be fully created",
-		"num_networks", len(mustCreateNetworks))
-
-	// Select a limited number of listeners message updates from
-	// the newChainReadyCh channel. This loop forbids excess networks.
-	//
-	// Waits for createNetworksRoutine to push on newChainReadyCh.
-	for i := 0; i < len(mustCreateNetworks); i++ {
-		// The createNetworksRoutine communicates the ChainID on a channel
-		// to tell this broadcaster about the readiness of a network state.
-		chainID,
-			waitErr := c.GetBackend().WaitForNextAvailableNetwork(ctx)
-		if waitErr != nil {
-			c.notifier.Error(waitErr)
-			return // STOP here
-		}
-
-		// Inform about the readiness of this chain
-		c.backend.GetLogger().Info("Network is now available", "chain_id", chainID)
 	}
 
 	// ------------------------------------------------------------------------
