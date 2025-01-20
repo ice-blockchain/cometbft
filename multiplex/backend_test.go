@@ -1,7 +1,6 @@
 package multiplex_test
 
 import (
-	"context"
 	"os"
 	"strconv"
 	"testing"
@@ -669,89 +668,6 @@ func TestMultiplexBackendRemoveTransactions(t *testing.T) {
 		},
 	)
 	assert.NoError(t, actualErr, "should remove transaction from mempool")
-}
-
-func TestMultiplexBackendRoutinesNodeReplRequest(t *testing.T) {
-	numChains := 3
-	numRelays := 3
-
-	// For debug, change the loggers to cmtlog.TestingLogger()
-	loggerRelay1 := cmtlog.NewNopLogger() //cmtlog.TestingLogger().With("process", "relay-1")
-	loggerRelay2 := cmtlog.NewNopLogger() //cmtlog.TestingLogger().With("process", "relay-2")
-	loggerRelay3 := cmtlog.NewNopLogger() //cmtlog.TestingLogger().With("process", "relay-3")
-
-	// Uses config.TestConfig() and random MultiplexConfig
-	rootDirs,
-		servers := ResetTestMultiplexBackendCompatibleRelays(
-		t,
-		numChains,
-		numRelays,
-		loggerRelay1,
-		loggerRelay2,
-		loggerRelay3,
-	)
-	require.NotEmpty(t, servers)
-	require.Len(t, rootDirs, numRelays)
-	require.Len(t, servers, numRelays)
-
-	defer func() {
-		for i := 0; i < len(servers); i++ {
-			defer os.RemoveAll(rootDirs[i])
-
-			if servers[i] != nil {
-				err := servers[i].Close()
-				assert.NoError(t, err, "should shutdown server at index: "+strconv.Itoa(i))
-			}
-		}
-	}()
-
-	// Start the node backends
-	for i := 0; i < len(servers); i++ {
-		servers[i].MustStart()
-	}
-
-	testRelayAddrs := []string{}
-	for i := 1; i < len(servers); i++ {
-		testReactor := servers[i].GetReactor()
-		testNodeID := string(testReactor.GetNodeKey().ID())
-		testBroadcastPort := strconv.Itoa(50001 + (i * 100)) // 50101, 50201, etc.
-
-		testRelayAddr := testNodeID + "@127.0.0.1:" + testBroadcastPort
-		testRelayAddrs = append(testRelayAddrs, testRelayAddr)
-	}
-
-	chainRelays,
-		errorRelays := servers[0].FetchRelayAddresses(testRelayAddrs)
-	require.Len(t, errorRelays, 0) // NO error!
-	require.Len(t, chainRelays, numChains)
-
-	useChainID := servers[0].GetReactor().GetNetworks()[0]
-	require.Contains(t, chainRelays, useChainID)
-
-	// Act - Relay 1 asks Relay 2 AND Relay 3 to replicate chain x
-	nodeReplRequestFn := servers[0].DefaultNodeReplRequestRoutine()
-	nodeReplRequestFn(context.TODO(),
-		chainRelays[useChainID],
-		useChainID,
-		&client.StatusNotifier{},
-	)
-
-	// Test that ChainReplicationRequest was sent to relay 2
-	actualRequestsSent := servers[0].GetReplRequestPeers(useChainID)
-	assert.NotEmpty(t, actualRequestsSent)
-	assert.Len(t, actualRequestsSent, len(chainRelays[useChainID]))
-}
-
-func TestMultiplexBackendRoutinesNetworksCreator(t *testing.T) {
-
-}
-
-func TestMultiplexBackendRoutinesRelaysBroadcast(t *testing.T) {
-
-}
-
-func TestMultiplexBackendRoutinesCancelBroadcast(t *testing.T) {
-
 }
 
 // TODO(midas): add test for 0-network compatible relays

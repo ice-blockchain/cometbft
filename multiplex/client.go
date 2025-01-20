@@ -244,6 +244,8 @@ func (c MultiplexClient) BroadcastTx(
 		)
 	}
 
+	// XXX relayID, waitErr := c.GetBackend().WaitForRelayReplResponse(ctx)
+
 	// ------------------------------------------------------------------------
 	// Step 5: Add transactions to mempool, trigger broadcast to relays
 
@@ -296,11 +298,11 @@ func (c MultiplexClient) BroadcastTx(
 	// Select a limited number of listeners message updates from
 	// the relayAcceptTxCh channel. This loop forbids excess transactions.
 	//
-	// Waits for broadcastTransactionRoutine to push on relayAcceptTxCh.
+	// Waits for RelaysBroadcast routine to push on relayAcceptTxCh.
 	for i := 0; i < len(transactions); i++ {
-		// The broadcastTransactionRoutine communicates the tx hash on a
+		// The RelaysBroadcast routine communicates the tx hash on a
 		// channel to tell this broadcaster about the acceptance of the
-		// transaction by our own mempool AND by a relays' mempool.
+		// transaction by our own mempool.
 		acceptedTxHash,
 			acceptErr := c.GetBackend().WaitForRelayTxAcceptance(ctx)
 		if acceptErr != nil {

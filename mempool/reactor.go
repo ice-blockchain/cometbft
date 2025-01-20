@@ -10,9 +10,11 @@ import (
 	"golang.org/x/sync/semaphore"
 
 	protomem "github.com/ice-blockchain/cometbft/api/cometbft/mempool/v1"
+	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
 	cfg "github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
+	"github.com/ice-blockchain/cometbft/multiplex/server"
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/types"
 )
@@ -258,6 +260,16 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 				}
 			}
 		}
+
+		// Uses the multiplex server.ReplicationChannel to send an acknowledgment
+		// message, or receipt, to describe that the transaction has been checked.
+		if err := memR.sendAckTransactionBroadcast(e.Src, protoTxs); err != nil {
+			memR.Logger.Debug("Error with AckTransactionBroadcast",
+				"err", err,
+			)
+			return
+		}
+
 	default:
 		memR.Logger.Error("Unknown message type", "src", e.Src, "chId", e.ChannelID, "msg", e.Message)
 		memR.Switch.StopPeerForError(e.Src, fmt.Errorf("mempool cannot handle message of type: %T", e.Message))
@@ -389,4 +401,31 @@ func (memR *Reactor) broadcastTxRoutine(peer p2p.Peer) {
 			}
 		}
 	}
+}
+
+// sendAckTransactionBroadcast sends a AckTransactionBroadcast message.
+// This object may be used to determine that a relay acknowledges
+// the receipt (and will process acceptance) of a transaction broadcast.
+func (r *Reactor) sendAckTransactionBroadcast(
+	peer p2p.Peer,
+	protoTxs [][]byte,
+) error {
+	txHashes := [][]byte{}
+	for _, rawTx := range protoTxs {
+		memTx := types.Tx(rawTx)
+		txHashes = append(txHashes, memTx.Hash())
+	}
+
+	peer.Send(p2p.Envelope{
+		ChannelID: server.ReplicationChannel,
+		Message: &mxp2p.Message{
+			Sum: &mxp2p.Message_AckTransactionBroadcast{
+				AckTransactionBroadcast: &mxp2p.AckTransactionBroadcast{
+					TxHashes: txHashes,
+				},
+			},
+		},
+	})
+
+	return nil
 }

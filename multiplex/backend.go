@@ -280,7 +280,7 @@ func (b *MultiplexBackend) MustStart() {
 	b.replRequestsSent = map[string][]string{}
 
 	// Here we should wait forever, until the internal Reactor instance
-	// is told to replicate a new chain using the ReplicationChannel.
+	// is told to replicate a new chain using the server.ReplicationChannel.
 	go func() {
 		// CAUTION:
 		// We open a discovery port which is required such that the relay may
@@ -347,6 +347,40 @@ func (b *MultiplexBackend) WaitForNextAvailableNetwork(
 		return "", errors.New(
 			"process timed out waiting for network availability")
 	}
+}
+
+// WaitForRelayReplResponse waits for a relay replication response using
+// the internal ackReplResCh channel and returns a relay ID.
+func (b *MultiplexBackend) WaitForRelayReplResponse(
+	ctx context.Context,
+) (string, error) {
+	select {
+	case res := <-b.reactor.ackReplResCh:
+		return res.NodeId, nil
+
+	case <-ctx.Done():
+		return "", errors.New(
+			"process timed out waiting for relay replication")
+	}
+}
+
+// WaitForRelayAckTransaction waits for a relay to acknowledge a transaction.
+func (b *MultiplexBackend) WaitForRelayAckTransaction(
+	ctx context.Context,
+) error {
+	// Blocks until a AckTransactionBroadcast was received.
+	select {
+	case ackResponse := <-b.reactor.ackTxAcceptCh:
+		for _, txHash := range ackResponse.TxHashes {
+			b.relayAcceptTxCh <- fmt.Sprintf("%x", txHash)
+		}
+
+	case <-ctx.Done():
+		return errors.New(
+			"process timed out waiting for relay replication")
+	}
+
+	return nil
 }
 
 // WaitForRelayTxAcceptance waits for a relay transaction acceptance using

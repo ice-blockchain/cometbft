@@ -76,7 +76,7 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 			}
 
 			peer.Send(p2p.Envelope{
-				ChannelID: ReplicationChannel,
+				ChannelID: server.ReplicationChannel,
 				Message: &mxp2p.Message{
 					Sum: &mxp2p.Message_ChainReplicationRequest{
 						ChainReplicationRequest: &mxp2p.ChainReplicationRequest{
@@ -233,20 +233,23 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 					return
 				}
 
+				// Send transaction to relay mempool, after checks the mempool
+				// reactor shall send a AckTransactionBroadcast back to us which
+				// sends a AckTransactionBroadcast object on ackTxAcceptCh
 				if success := peer.Send(p2p.Envelope{
 					ChannelID: mempl.MempoolChannel,
 					Message:   &memp2p.Txs{Txs: [][]byte{rawTx}},
 				}); success {
 					relaysAccepted++
-
-					// TODO(midas): mempl reactor Receive() must send TransactionAcceptResponse
 				}
 
 				poolRequestPeers = append(poolRequestPeers, peerID)
 			})
 
-			// TODO(midas): add acceptTxRequestsSent
 			b.poolRequestsSent[chainID] = poolRequestPeers
+
+			// TODO(midas): update flow here to WaitForRelayAckTransaction() for each relay
+			// TODO(midas): relayID, waitErr := c.GetBackend().WaitForRelayAckTransaction(ctx)
 
 			// We require healthy relays to accept this broadcast.
 			if relaysAccepted >= minHealthyRelays {
@@ -278,7 +281,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 	}
 }
 
-// broadcastRollbacksRoutine broadcasts a rollback message to healthy relays
+// DefaultCancelBroadcastRoutine broadcasts a rollback message to healthy relays
 // in case any of the relays has already included the transactions in their
 // mempool. The mempool should call [Acceptor#RollbackTx] upon receiving this
 // message.

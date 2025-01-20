@@ -17,6 +17,7 @@ import (
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	cmtlibs "github.com/ice-blockchain/cometbft/libs/service"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
+	"github.com/ice-blockchain/cometbft/multiplex/server"
 	"github.com/ice-blockchain/cometbft/multiplex/snapsapp"
 	"github.com/ice-blockchain/cometbft/node"
 	"github.com/ice-blockchain/cometbft/p2p"
@@ -34,9 +35,6 @@ import (
 )
 
 const (
-	// ReplicationChannel is used to send replicated chain updates.
-	ReplicationChannel = byte(0x90)
-
 	// Instance types.
 	InstanceKeyConfig           = "config"
 	InstanceKeyStorage          = "storage"
@@ -133,8 +131,10 @@ type Reactor struct {
 
 	// Internal
 	logger          cmtlog.Logger
-	chainReadyCh    chan string
 	filesystemMutex sync.Mutex
+	chainReadyCh    chan string
+	ackReplResCh    chan *mxp2p.ChainReplicationResponse
+	ackTxAcceptCh   chan *mxp2p.AckTransactionBroadcast
 }
 
 // Type assertion to make sure this structure is compatible with snapsapp.
@@ -178,8 +178,10 @@ func NewReactor(
 		configsPaths:      MultiplexFS{},
 
 		// Internals
-		logger:       logger,
-		chainReadyCh: make(chan string),
+		logger:        logger,
+		chainReadyCh:  make(chan string),
+		ackReplResCh:  make(chan *mxp2p.ChainReplicationResponse),
+		ackTxAcceptCh: make(chan *mxp2p.AckTransactionBroadcast),
 	}
 
 	// Enable overwrite of some optional properties.
@@ -490,7 +492,7 @@ func (reactor *Reactor) RegisterNetwork(
 func (*Reactor) GetChannels() []*p2p.ChannelDescriptor {
 	return []*p2p.ChannelDescriptor{
 		{
-			ID: ReplicationChannel,
+			ID: server.ReplicationChannel,
 			// Lower priority than blocksync, evidence, mempool & consensus
 			Priority:    3,
 			MessageType: &mxp2p.Message{},
@@ -512,10 +514,25 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 	case *mxp2p.Message:
 		msg := extMsg.GetSum()
 		switch msg.(type) {
+
+		// ChainReplicationRequest
+		// Received a request to replication a (new) chain.
 		case *mxp2p.Message_ChainReplicationRequest:
 			r.logger.Debug("Now processing ChainReplicationRequest", "msg", msg)
-
 			replRequest := extMsg.GetChainReplicationRequest()
+
+			// Instantly respond with a [ChainReplicationResponse].
+			// This serves as a receipt for a chain replication request.
+			if err := r.sendChainReplicationResponse(e.Src, replRequest.ChainID); err != nil {
+				r.logger.Error(
+					"CONSENSUS PANIC! Error with ChainReplicationResponse",
+					"chain_id", replRequest.ChainID,
+					"err", err,
+				)
+				return
+			}
+
+			// After having acknowledged the chain replication, process it.
 			if err := r.handleChainReplicationRequest(replRequest); err != nil {
 				r.logger.Error(
 					"CONSENSUS PANIC! Error with ChainReplicationRequest",
@@ -525,8 +542,36 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 				return
 			}
 
-			r.logger.Debug("This relay now replicates new chain", "chain_id", replRequest.ChainID)
 			// Done.
+			r.logger.Debug("This relay now replicates a new chain", "chain_id", replRequest.ChainID)
+			return
+
+		// ChainReplicationResponse
+		// Received a receipt of replication from one of the relays.
+		case *mxp2p.Message_ChainReplicationResponse:
+			r.logger.Debug("Now processing ChainReplicationResponse", "msg", msg)
+			replResponse := extMsg.GetChainReplicationResponse()
+
+			r.ackReplResCh <- replResponse
+			r.logger.Debug("[ACK] Relay received replication request",
+				"chain_id", replResponse.ChainID,
+				"relay_id", replResponse.NodeId,
+			)
+			// Done.
+			return
+
+		// AckTransactionBroadcast
+		// Received a receipt of relay mempool inclusion for a transaction hash.
+		case *mxp2p.Message_AckTransactionBroadcast:
+			r.logger.Debug("Now processing AckTransactionBroadcast", "msg", msg)
+			ackTxBroadcast := extMsg.GetAckTransactionBroadcast()
+
+			r.ackTxAcceptCh <- ackTxBroadcast
+			r.logger.Debug("[ACK] Relay received the transaction batch",
+				"tx_hashes", ackTxBroadcast.TxHashes,
+			)
+			// Done.
+			return
 
 		default:
 			r.logger.Error(
@@ -997,6 +1042,29 @@ func (reactor *Reactor) startNodeListeners(chainID string) error {
 	reactor.RegisterService(ServiceKeyEventBus, chainID, eventBus)
 	reactor.RegisterService(ServiceKeyIndexers, chainID, indexerService)
 	reactor.RegisterService(ServiceKeyPruner, chainID, pruner)
+	return nil
+}
+
+// sendChainReplicationResponse sends a ChainReplicationResponse.
+// This response object may be used to determine that a relay acknowledges
+// the replication of a chain it doesn't know yet.
+func (r *Reactor) sendChainReplicationResponse(
+	peer p2p.Peer,
+	chainID string,
+) error {
+	myPeerID := r.nodeKey.ID()
+	peer.Send(p2p.Envelope{
+		ChannelID: server.ReplicationChannel,
+		Message: &mxp2p.Message{
+			Sum: &mxp2p.Message_ChainReplicationResponse{
+				ChainReplicationResponse: &mxp2p.ChainReplicationResponse{
+					ChainID: chainID,
+					NodeId:  string(myPeerID),
+				},
+			},
+		},
+	})
+
 	return nil
 }
 

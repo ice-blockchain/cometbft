@@ -63,6 +63,12 @@ type Backend interface {
 		ctx context.Context,
 	) (string, error)
 
+	// WaitForRelayReplResponse shoulde wait for a relay replication response
+	// and it should return a relay ID.
+	WaitForRelayReplResponse(
+		ctx context.Context,
+	) (string, error)
+
 	// WaitForRelayTxAcceptance should wait for a relay transaction acceptance
 	// and it should return a transaction hash.
 	WaitForRelayTxAcceptance(

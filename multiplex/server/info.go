@@ -4,6 +4,12 @@ import (
 	rpctypes "github.com/ice-blockchain/cometbft/rpc/jsonrpc/types"
 )
 
+const (
+	// ReplicationChannel is used to send replicated chain updates and
+	// transaction broadcast receipts.
+	ReplicationChannel = byte(0x90)
+)
+
 // RelayInfo defines a server that is responsible of enabling
 // RPC discovery for a multiplex backend.
 //

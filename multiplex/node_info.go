@@ -16,6 +16,7 @@ import (
 	cmtstrings "github.com/ice-blockchain/cometbft/internal/strings"
 	cmtbytes "github.com/ice-blockchain/cometbft/libs/bytes"
 	mempl "github.com/ice-blockchain/cometbft/mempool"
+	"github.com/ice-blockchain/cometbft/multiplex/server"
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/p2p/pex"
 	"github.com/ice-blockchain/cometbft/statesync"
@@ -107,7 +108,7 @@ func NewMultiNetworkNodeInfo(
 		Version:          nodeCfg.Version,
 		Moniker:          nodeCfg.Moniker,
 		ListenAddr:       listenAddr.DialString(),
-		Channels:         []byte{ReplicationChannel},
+		Channels:         []byte{server.ReplicationChannel},
 		Other: p2p.DefaultNodeInfoOther{
 			TxIndex:    "off",
 			RPCAddress: "",
@@ -163,7 +164,7 @@ func (info MultiNetworkNodeInfo) GetNodeInfo(chainID string) p2p.DefaultNodeInfo
 			evidence.EvidenceChannel,
 			statesync.SnapshotChannel, statesync.ChunkChannel,
 			pex.PexChannel,
-			ReplicationChannel,
+			server.ReplicationChannel,
 		},
 		Moniker: info.Moniker,
 		Other:   info.Other,

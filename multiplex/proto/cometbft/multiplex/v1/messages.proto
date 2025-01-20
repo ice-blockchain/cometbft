@@ -22,13 +22,26 @@ message ChainParams {
 // ChainReplicationRequest requests to replicate a new chain with replication details.
 message ChainReplicationRequest {
   string      chain_id     = 1 [(gogoproto.customname) = "ChainID"];
-  ChainParams chain_params = 4;
+  ChainParams chain_params = 2;
+}
+
+// ChainReplicationResponse acknowledges the replication of a new chain.
+message ChainReplicationResponse {
+  string chain_id = 1 [(gogoproto.customname) = "ChainID"];
+  string node_id  = 2;
+}
+
+// AckTransactionBroadcast acknowledges the broadcast of a transaction batch.
+message AckTransactionBroadcast {
+  repeated bytes tx_hashes = 1;
 }
 
 // Message is an abstract multiplex message.
 message Message {
   // Sum of all possible messages.
   oneof sum {
-    ChainReplicationRequest  chain_replication_request  = 1;
+    ChainReplicationRequest   chain_replication_request   = 1;
+    ChainReplicationResponse  chain_replication_response  = 2;
+    AckTransactionBroadcast   ack_transaction_broadcast   = 3;
   }
 }
