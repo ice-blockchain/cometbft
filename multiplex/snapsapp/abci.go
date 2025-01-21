@@ -223,12 +223,14 @@ func (app *SnapsApp) FinalizeBlock(
 ) (*abcitypes.FinalizeBlockResponse, error) {
 	// Retrieve ChainID from context
 	chainID := ctx.Value(client.KeyChainID).(string)
+	userAddress := client.GetUserAddress(chainID)
 
 	resp := &abcitypes.FinalizeBlockResponse{TxResults: []*abcitypes.ExecTxResult{}}
 
 	// Make sure we handle only relevant snapshotting routines
 	if !app.reactor.HasNetwork(chainID) {
-		return resp, fmt.Errorf("invalid chain-id on FinalizeBlock: %s is not replicated", chainID)
+		return resp, fmt.Errorf(
+			"invalid chain-id on FinalizeBlock: %s is not replicated", chainID)
 	}
 
 	// Prepare the contract for FinalizeBlock
@@ -253,9 +255,30 @@ func (app *SnapsApp) FinalizeBlock(
 		}}
 	}
 
+	// Forward the transaction batch to an Acceptor if any is available. This
+	// is required when blocks are *replayed*, e.g. through blocksync.
+	if app.txAcceptor != nil {
+		// Note that the transaction batch won't always match the batch that
+		// is being broadcast because more than one may be included in a block.
+		batch := []client.Transaction{}
+		for _, rawTx := range processedTxs {
+			batch = append(batch, client.RawTxToTransaction(rawTx))
+		}
+
+		if err := app.txAcceptor.AcceptBroadcastTx(
+			ctx,
+			userAddress,
+			batch...,
+		); err != nil {
+			return nil, fmt.Errorf(
+				"acceptor rejected transaction batch for %s in FinalizeBlock: %w", chainID, err)
+		}
+	}
+
 	// We can now safely store the finalized block height
 	if err := app.setFinalizeBlockHeight(chainID, req.Height); err != nil {
-		return nil, fmt.Errorf("could not update block height for %s from FinalizeBlock: %w", chainID, err)
+		return nil, fmt.Errorf(
+			"could not update block height for %s from FinalizeBlock: %w", chainID, err)
 	}
 
 	return &abcitypes.FinalizeBlockResponse{

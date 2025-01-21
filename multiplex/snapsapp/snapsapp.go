@@ -5,6 +5,8 @@ import (
 
 	abcitypes "github.com/ice-blockchain/cometbft/abci/types"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
+
+	"github.com/ice-blockchain/cometbft/multiplex/client"
 )
 
 const (
@@ -35,6 +37,9 @@ type SnapsApp struct {
 
 	// A multiplex reactor as described with [Reactor].
 	reactor Reactor
+
+	// Inject custom transaction verification with an acceptor implementation.
+	txAcceptor client.Acceptor
 
 	// The current heights being worked on for replicated chains.
 	chMutex        *sync.RWMutex
@@ -90,6 +95,21 @@ func NewSnapsApplication(
 	app.fbMutex.Unlock()
 
 	return app
+}
+
+// WithAcceptor is an option helper to inject a custom acceptor implementation
+// which accepts an acceptor implementation.
+func WithAcceptor(
+	acceptor client.Acceptor,
+) func(*SnapsApp) {
+	return func(a *SnapsApp) {
+		a.txAcceptor = acceptor
+	}
+}
+
+// GetAcceptor returns the attached acceptor implementation.
+func (app *SnapsApp) GetAcceptor() client.Acceptor {
+	return app.txAcceptor
 }
 
 // InitialHeight returns the initial block height for a chainID.

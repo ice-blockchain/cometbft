@@ -11,6 +11,7 @@ import (
 	abci "github.com/ice-blockchain/cometbft/api/cometbft/abci/v1"
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
+	"github.com/ice-blockchain/cometbft/multiplex/snapsapp"
 	sm "github.com/ice-blockchain/cometbft/state"
 	"github.com/ice-blockchain/cometbft/types"
 	cmttime "github.com/ice-blockchain/cometbft/types/time"
@@ -259,6 +260,67 @@ func TestABCI_FinalizeBlock_WithInitialHeight(t *testing.T) {
 	res, err := suite.snapsApp.FinalizeBlock(ctx, &abci.FinalizeBlockRequest{Height: 4})
 	assert.NoError(t, err)
 	assert.NotNil(t, res)
+}
+
+func TestABCI_FinalizeBlock_WithAcceptor(t *testing.T) {
+	suite := NewSnapsAppSuite(t, snapsapp.WithAcceptor(
+		client.NewMockAcceptorImpl(),
+	))
+	defer func() {
+		defer os.RemoveAll(suite.rootDir)
+		suite.reactor.Stop() //nolint:errcheck
+	}()
+
+	// We test using the "first network"
+	testChainID := suite.reactor.GetNetworks()[0]
+	testAddress := client.GetUserAddress(testChainID)
+	testFingerprint := testChainID[len(testChainID)-16:]
+	require.NotEmpty(t, testAddress)
+
+	testTransactions := [][]byte{
+		client.TransactionToRawTx(client.Transaction{
+			Data:        []byte{1, 2, 3},
+			Fingerprint: testFingerprint,
+		}),
+		client.TransactionToRawTx(client.Transaction{
+			Data:        []byte{4, 5, 6},
+			Fingerprint: testFingerprint,
+		}),
+	}
+
+	// Check that we have a correct state store
+	chainStore := suite.reactor.GetStateStore(testChainID)
+	require.NotNil(t, chainStore)
+
+	// Attach an Initial Height
+	_, err := suite.snapsApp.InitChain(context.TODO(), &abci.InitChainRequest{
+		InitialHeight: 3,
+		AppStateBytes: []byte("{}"),
+		ChainId:       testChainID, // must have valid JSON genesis file, even if empty
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(3), suite.snapsApp.LastBlockHeight(testChainID))
+
+	ctx := context.TODO()
+	ctx = context.WithValue(ctx, client.KeyChainID, testChainID)
+
+	// Act
+	res, err := suite.snapsApp.FinalizeBlock(ctx, &abci.FinalizeBlockRequest{
+		Height: 4,
+		Txs:    testTransactions,
+	})
+	assert.NoError(t, err)
+	assert.NotNil(t, res)
+
+	actualAcceptor := suite.snapsApp.GetAcceptor()
+	assert.NotNil(t, actualAcceptor)
+	testAcceptor := actualAcceptor.(*client.MockAcceptorImpl)
+
+	assert.NotNil(t, testAcceptor.TxAcceptCallsByAddress)
+	assert.Contains(t, testAcceptor.TxAcceptCallsByAddress, testAddress)
+
+	expectedNumCalls := 1
+	assert.Equal(t, expectedNumCalls, testAcceptor.TxAcceptCallsByAddress[testAddress])
 }
 
 func TestABCI_Proposal_HappyPath(t *testing.T) {
