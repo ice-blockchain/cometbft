@@ -453,7 +453,7 @@ func (b *MultiplexBackend) DiscoverRelayID(
 		relayWithProtocol = "tcp://" + relayWithProtocol
 	}
 
-	c, connectErr := rpcclient.New(relayWithoutId)
+	c, connectErr := rpcclient.New(relayWithProtocol)
 	if connectErr != nil {
 		return "", connectErr
 	}

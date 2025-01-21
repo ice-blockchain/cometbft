@@ -533,7 +533,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			}
 
 			// After having acknowledged the chain replication, process it.
-			if err := r.handleChainReplicationRequest(replRequest); err != nil {
+			if err := r.handleChainReplicationRequest(e.Src, replRequest); err != nil {
 				r.logger.Error(
 					"CONSENSUS PANIC! Error with ChainReplicationRequest",
 					"chain_id", replRequest.ChainID,
@@ -1073,7 +1073,11 @@ func (r *Reactor) sendChainReplicationResponse(
 // consists of running a complete node runtime. It will inject the parameters
 // necessary for blocks production and it will spawn a parallel goroutine with
 // a call to [node.Node#Start].
+//
+// Note that the source peer will be dialed to accelerate the activation
+// of the block-sync process with this peer.
 func (r *Reactor) handleChainReplicationRequest(
+	peer p2p.Peer,
 	req *mxp2p.ChainReplicationRequest,
 ) error {
 	// Build the ExtendedChainID to retrieve user address from ChainID.
@@ -1132,6 +1136,16 @@ func (r *Reactor) handleChainReplicationRequest(
 	if err = r.InjectNewRuntime(context.Background(), req.ChainID); err != nil {
 		return fmt.Errorf(
 			"could not spawn node runtime: %w", err)
+	}
+
+	// IMPORTANT:
+	// And dial the relay to permit block-sync to start instantly.
+	switchProvider := r.GetInstanceProvider(InstanceKeyP2PSwitch)
+	eventSwitch := switchProvider(req.ChainID).(*p2p.Switch)
+	peerAddress := peer.SocketAddr()
+	if err := eventSwitch.DialPeerWithAddress(peerAddress); err != nil {
+		return fmt.Errorf(
+			"could not dial relay %s: %w", peerAddress.DialString(), err)
 	}
 
 	return nil
