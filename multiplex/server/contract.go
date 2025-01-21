@@ -10,11 +10,6 @@ import (
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 )
 
-// RPCResultRelayInfo describes relay information.
-type RPCResultRelayInfo struct {
-	DefaultNodeID p2p.ID `json:"id"` // authenticated identifier
-}
-
 // Server defines the contract for replication backend implementations.
 //
 // A server instance must be started before replication can happen and

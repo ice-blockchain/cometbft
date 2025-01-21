@@ -532,13 +532,113 @@ func TestMultiplexBackendDiscoverRelayNetworksSevenCompatibleRelays(t *testing.T
 	}
 }
 
+func TestMultiplexBackendDiscoverRelayID(t *testing.T) {
+	numChains := 3
+	numRelays := 2
+
+	// For debug, change the loggers to cmtlog.TestingLogger()
+	loggerRelay1 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
+	loggerRelay2 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-2")
+
+	// Uses config.TestConfig() and random MultiplexConfig
+	rootDirs,
+		servers := ResetTestMultiplexBackendCompatibleRelays(
+		t,
+		numChains,
+		numRelays,
+		loggerRelay1,
+		loggerRelay2,
+	)
+	require.NotEmpty(t, servers)
+	require.Len(t, rootDirs, numRelays)
+	require.Len(t, servers, numRelays)
+
+	defer func() {
+		for i := 0; i < len(servers); i++ {
+			defer os.RemoveAll(rootDirs[i])
+
+			if servers[i] != nil {
+				err := servers[i].Close()
+				assert.NoError(t, err, "should shutdown server at index: "+strconv.Itoa(i))
+			}
+		}
+	}()
+
+	// Start the node backends
+	for i := 0; i < len(servers); i++ {
+		servers[i].MustStart()
+	}
+
+	// Act - Relay 1 discovers ID of Relay 2
+	testBroadcastPort := strconv.Itoa(50001 + (1 * 100) - 1) // 50100 (second relay RPC)
+	testRelayAddr := "tcp://127.0.0.1:" + testBroadcastPort  // NO ID!
+	actualRelayID,
+		actualError := servers[0].DiscoverRelayID(testRelayAddr)
+
+	assert.NoError(t, actualError)
+	assert.Equal(t, servers[1].GetRelayID(), actualRelayID)
+}
+
+func TestMultiplexBackendDiscoverRelayIDWithFourRelays(t *testing.T) {
+	numChains := 3
+	numRelays := 4
+
+	// For debug, change the loggers to cmtlog.TestingLogger()
+	loggerRelay1 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
+	loggerRelay2 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-2")
+	loggerRelay3 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-3")
+	loggerRelay4 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-4")
+
+	// Uses config.TestConfig() and random MultiplexConfig
+	rootDirs,
+		servers := ResetTestMultiplexBackendCompatibleRelays(
+		t,
+		numChains,
+		numRelays,
+		loggerRelay1,
+		loggerRelay2,
+		loggerRelay3,
+		loggerRelay4,
+	)
+	require.NotEmpty(t, servers)
+	require.Len(t, rootDirs, numRelays)
+	require.Len(t, servers, numRelays)
+
+	defer func() {
+		for i := 0; i < len(servers); i++ {
+			defer os.RemoveAll(rootDirs[i])
+
+			if servers[i] != nil {
+				err := servers[i].Close()
+				assert.NoError(t, err, "should shutdown server at index: "+strconv.Itoa(i))
+			}
+		}
+	}()
+
+	// Start the node backends
+	for i := 0; i < len(servers); i++ {
+		servers[i].MustStart()
+	}
+
+	// Act - Relay 1 discovers ID of Relay X
+	for i := 1; i < len(servers); i++ {
+		testBroadcastPort := strconv.Itoa(50001 + (i * 100) - 1) // 50100, 50200, etc. (RPC discovery port)
+		testRelayAddr := "tcp://127.0.0.1:" + testBroadcastPort  // NO ID!
+		actualRelayID,
+			actualError := servers[0].DiscoverRelayID(testRelayAddr)
+
+		assert.NoError(t, actualError)
+		assert.Equal(t, servers[i].GetRelayID(), actualRelayID)
+	}
+}
+
 func TestMultiplexBackendFetchRelayAddresses(t *testing.T) {
 	numChains := 3
 	numRelays := 2
 
 	// For debug, change the loggers to cmtlog.TestingLogger()
-	loggerRelay1 := cmtlog.NewNopLogger() //cmtlog.TestingLogger().With("process", "relay-1")
-	loggerRelay2 := cmtlog.NewNopLogger() //cmtlog.TestingLogger().With("process", "relay-2")
+	loggerRelay1 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
+	loggerRelay2 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-2")
 
 	// Uses config.TestConfig() and random MultiplexConfig
 	rootDirs,

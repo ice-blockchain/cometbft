@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"regexp"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/ice-blockchain/cometbft/config"
@@ -15,6 +17,7 @@ import (
 	mempl "github.com/ice-blockchain/cometbft/mempool"
 	"github.com/ice-blockchain/cometbft/node"
 	"github.com/ice-blockchain/cometbft/p2p"
+	rpcclient "github.com/ice-blockchain/cometbft/rpc/jsonrpc/client"
 	rpcserver "github.com/ice-blockchain/cometbft/rpc/jsonrpc/server"
 	sm "github.com/ice-blockchain/cometbft/state"
 	cmttime "github.com/ice-blockchain/cometbft/types/time"
@@ -46,6 +49,7 @@ type MultiplexBackend struct {
 	eventSwitch   *p2p.Switch
 	broadcastAddr *p2p.NetAddress // P2P Discovery
 	discoveryAddr *p2p.NetAddress // RPC Discovery
+	rpcListener   net.Listener
 
 	// An acceptor implementation to which transactions will be forwarded.
 	acceptor client.Acceptor
@@ -137,6 +141,11 @@ func (b *MultiplexBackend) Close() error {
 		// Must stop reactors and listener channels
 		b.eventSwitch.Stop()
 		b.eventSwitch = nil
+	}
+
+	if b.rpcListener != nil {
+		// Must stop listening for RPC discovery messages
+		b.rpcListener.Close()
 	}
 
 	if b.reactor != nil {
@@ -434,6 +443,31 @@ func (b *MultiplexBackend) GetLocalNetworkHeights(
 	return requiredNetworks, mustCreateNetworks
 }
 
+// DiscoverRelayID connects to relayWithoutId using a JSONRPC client,
+// and calls the GetRelayInfo remote procedure to retrieve the Relay ID.
+func (b *MultiplexBackend) DiscoverRelayID(
+	relayWithoutId string,
+) (p2p.ID, error) {
+	relayWithProtocol := relayWithoutId
+	if !strings.HasPrefix(relayWithProtocol, "tcp://") {
+		relayWithProtocol = "tcp://" + relayWithProtocol
+	}
+
+	c, connectErr := rpcclient.New(relayWithoutId)
+	if connectErr != nil {
+		return "", connectErr
+	}
+
+	result := &server.RPCResultRelayInfo{}
+	params := map[string]any{}
+	_, callErr := c.Call(context.TODO(), "info", params, result)
+	if callErr != nil {
+		return "", callErr
+	}
+
+	return result.DefaultNodeID, nil
+}
+
 // FetchRelayAddresses uses DiscoverRelayNetworks once for each relay to find
 // the supported networks and their respective listen addresses.
 //
@@ -454,10 +488,34 @@ func (b *MultiplexBackend) FetchRelayAddresses(
 	// Uses a server-local event switch to determine channels
 	localP2PSwitch := b.EventSwitch()
 
+	// Connect to all other relays using RPC (discovery server) to find
+	// out their relay ID (CometBFT Node ID) before we can connect with P2P.
+	regExpRelays := regexp.MustCompile(`(.*)@(.*)(\:\d+)(.*)`)
+	relaysWithId := []string{}
+	for _, relayWithoutId := range relays {
+		if regExpRelays.MatchString(relayWithoutId) {
+			relaysWithId = append(relaysWithId, relayWithoutId)
+			continue
+		}
+
+		relayID, err := b.DiscoverRelayID(relayWithoutId)
+		if err != nil {
+			b.logger.Error("Error discovering relay information",
+				"relay", relayWithoutId,
+				"err", err,
+			)
+		}
+
+		relayWithId := string(relayID) + "@" + relayWithoutId
+		relaysWithId = append(relaysWithId, relayWithId)
+	}
+
+	// TODO(midas): localP2PSwitch.AddUnconditionalPeerIDs([]string{relayId})
+
 	// Discover supported networks for all relays and build list of
 	// P2P listen addresses by ChainID.
 	chainRelays = map[string][]string{}
-	for _, relayWithIdAndPort := range relays {
+	for _, relayWithIdAndPort := range relaysWithId {
 		// Ensure presence of node ID and broadcast port
 		re := regexp.MustCompile(`(.*)@(.*)(\:\d+)(.*)`)
 		matches := re.FindStringSubmatch(relayWithIdAndPort)
@@ -773,12 +831,12 @@ func (b *MultiplexBackend) startRPCServer(
 	mux := http.NewServeMux()
 	rpcLogger := b.reactor.logger.With("module", "rpc-server")
 
-	infoImpl := server.NewRelayInfo(b)
+	infoImpl := server.NewRelayInfoServer(b)
 	rpcserver.RegisterRPCFuncs(mux, map[string]*rpcserver.RPCFunc{
 		"info": rpcserver.NewRPCFunc(infoImpl.GetRelayInfo, ""),
 	}, rpcLogger)
 
-	listener, err := rpcserver.Listen(
+	b.rpcListener, err = rpcserver.Listen(
 		rpcListenAddr,
 		config.MaxOpenConnections,
 	)
@@ -789,7 +847,7 @@ func (b *MultiplexBackend) startRPCServer(
 	var rootHandler http.Handler = mux
 	go func() {
 		if err := rpcserver.Serve(
-			listener,
+			b.rpcListener,
 			rootHandler,
 			rpcLogger,
 			config,

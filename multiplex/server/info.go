@@ -1,6 +1,7 @@
 package server
 
 import (
+	"github.com/ice-blockchain/cometbft/p2p"
 	rpctypes "github.com/ice-blockchain/cometbft/rpc/jsonrpc/types"
 )
 
@@ -10,17 +11,22 @@ const (
 	ReplicationChannel = byte(0x90)
 )
 
-// RelayInfo defines a server that is responsible of enabling
+// RPCResultRelayInfo describes relay information.
+type RPCResultRelayInfo struct {
+	DefaultNodeID p2p.ID `json:"id"` // authenticated identifier
+}
+
+// RelayInfoServer defines a server that is responsible of enabling
 // RPC discovery for a multiplex backend.
 //
 // i.e. RPC discovery may be used to determine a relay's ID.
-type RelayInfo struct {
+type RelayInfoServer struct {
 	backend Backend
 }
 
-// NewRelayInfo creates a new discovery server instance.
-func NewRelayInfo(b Backend) *RelayInfo {
-	return &RelayInfo{
+// NewRelayInfoServer creates a new discovery server instance.
+func NewRelayInfoServer(b Backend) *RelayInfoServer {
+	return &RelayInfoServer{
 		backend: b,
 	}
 }
@@ -28,7 +34,7 @@ func NewRelayInfo(b Backend) *RelayInfo {
 // GetRelayInfo may be used as a [rpctypes.RPCFunc] and returns a particular
 // relay's information, including its' relay ID that must be used when creating
 // TLS secret connections with handshakes, e.g. transport of P2P requests.
-func (s *RelayInfo) GetRelayInfo(*rpctypes.Context) (*RPCResultRelayInfo, error) {
+func (s *RelayInfoServer) GetRelayInfo(*rpctypes.Context) (*RPCResultRelayInfo, error) {
 	result := &RPCResultRelayInfo{
 		DefaultNodeID: s.backend.GetRelayID(),
 	}
