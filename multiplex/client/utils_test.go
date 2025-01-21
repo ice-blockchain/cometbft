@@ -8,6 +8,9 @@ import (
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 )
 
+// ----------------------------------------------------------------------------
+// Unit Tests
+
 func TestMultiplexClientUtilsTransactionToRawTx(t *testing.T) {
 	testRawTxBytes := []byte{1, 2, 3}
 	expectedLength := len(testRawTxBytes) + 16 // 8-bytes fingerprint

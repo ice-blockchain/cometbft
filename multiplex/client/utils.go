@@ -2,6 +2,7 @@ package client
 
 import (
 	"encoding/hex"
+	"regexp"
 	"strings"
 
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
@@ -21,6 +22,18 @@ func GetFingerprint(plaintext string) string {
 	return strings.ToUpper(hex.EncodeToString(
 		tmhash.Sum([]byte(plaintext))[:8], // 8-bytes
 	))
+}
+
+// GetUserAddress extracts the user address part of a ChainID.
+func GetUserAddress(chainID string) string {
+	// Extract using regexp
+	extractor := regexp.MustCompile(`(.*)\-([A-F0-9]+)\-([A-F0-9]+)`)
+	if !extractor.MatchString(chainID) {
+		return ""
+	}
+
+	matches := extractor.FindStringSubmatch(chainID)
+	return matches[2]
 }
 
 // GetChainID returns ChainID from a user address and fingerprint.
