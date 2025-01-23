@@ -73,9 +73,9 @@ func (c MultiplexClient) SetBackend(a server.Backend) {
 // for the broadcast operation from healthy relays.
 //
 // IMPORTANT:
-// It accepts a slice of relays which should be in the format `id@host`.
-// The relays should not contain port numbers as the port number shall be
-// discovered upon confirming that the relay is up and running.
+// It accepts a slice of relays which should be in the format `host:port`.
+// The relays should contain the port associated with the P2P discovery.
+// i.e. with MultiplexConfig.BroadcastPort=1000, it should contain `:1000`.
 //
 // The following steps define a complete broadcast process, in this order:
 //
@@ -102,6 +102,21 @@ func (c MultiplexClient) BroadcastTx(
 				"could not find a running multiplex backend"),
 		}
 		return // STOP here
+	}
+
+	// Format/parse relay addresses to validate each and permit
+	// working with the static multi-port convention for multiplex.
+	//
+	// IMPORTANT: addresses contains the port associated with P2P discovery.
+	addresses := make([]server.RelayAddress, len(relays))
+	for i, relay := range relays {
+		relayAddr, err := server.NewRelayAddress(relay)
+		if err != nil {
+			notifyCh <- client.BroadcastStatus{Error: err}
+			return // STOP here
+		}
+
+		addresses[i] = *relayAddr
 	}
 
 	currentBroadcastStep := uint16(1)
@@ -148,7 +163,9 @@ func (c MultiplexClient) BroadcastTx(
 
 	// Determine port numbers and correct listen addresses per network.
 	// Note that this also checks for the relays to be up and running.
-	chainRelays, errorRelays := c.GetBackend().FetchRelayAddresses(relays)
+	//
+	// IMPORTANT: chainRelays contains the P2P port associated with each network.
+	chainRelays, errorRelays := c.GetBackend().FetchRelayAddresses(addresses)
 	numHealthyRelays := len(relays) - len(errorRelays)
 
 	// We must have at least 50%+1 healthy relays, otherwise discard the batch.
@@ -226,7 +243,7 @@ func (c MultiplexClient) BroadcastTx(
 	// to replicate required networks if they did not report some.
 	catchupRelays := c.GetBackend().ApplyFilterReplRequestRelays(
 		requiredNetworks,
-		relays,
+		addresses,
 		chainRelays,
 	)
 
@@ -245,6 +262,7 @@ func (c MultiplexClient) BroadcastTx(
 	}
 
 	// XXX relayID, waitErr := c.GetBackend().WaitForRelayReplResponse(ctx)
+	//     => should be waiting for c.backend.reactor.ackReplResCh
 
 	// ------------------------------------------------------------------------
 	// Step 5: Add transactions to mempool, trigger broadcast to relays

@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"regexp"
 	"slices"
-	"strings"
 	"sync"
 
 	"github.com/ice-blockchain/cometbft/config"
@@ -446,14 +444,9 @@ func (b *MultiplexBackend) GetLocalNetworkHeights(
 // DiscoverRelayID connects to relayWithoutId using a JSONRPC client,
 // and calls the GetRelayInfo remote procedure to retrieve the Relay ID.
 func (b *MultiplexBackend) DiscoverRelayID(
-	relayWithoutId string,
+	relayAddress server.RelayAddress,
 ) (p2p.ID, error) {
-	relayWithProtocol := relayWithoutId
-	if !strings.HasPrefix(relayWithProtocol, "tcp://") {
-		relayWithProtocol = "tcp://" + relayWithProtocol
-	}
-
-	c, connectErr := rpcclient.New(relayWithProtocol)
+	c, connectErr := rpcclient.New(relayAddress.AddressForRelayInfo())
 	if connectErr != nil {
 		return "", connectErr
 	}
@@ -471,16 +464,11 @@ func (b *MultiplexBackend) DiscoverRelayID(
 // FetchRelayAddresses uses DiscoverRelayNetworks once for each relay to find
 // the supported networks and their respective listen addresses.
 //
-// IMPORTANT:
-// This method expects the relay addresses to be complete and to include a
-// cometbft node ID, as well as a broadcast port.
-// The broadcast port of one relay can be changed with [MultiplexConfig].
-//
 // FetchRelayAddresses implements [Adapter].
 func (b *MultiplexBackend) FetchRelayAddresses(
-	relays []string,
+	relayAddresses []server.RelayAddress,
 ) (
-	chainRelays map[string][]string,
+	chainRelays map[string][]server.RelayAddress,
 	errorRelays []string,
 ) {
 	relaysWithFailure := map[string]bool{}
@@ -490,68 +478,65 @@ func (b *MultiplexBackend) FetchRelayAddresses(
 
 	// Connect to all other relays using RPC (discovery server) to find
 	// out their relay ID (CometBFT Node ID) before we can connect with P2P.
-	regExpRelays := regexp.MustCompile(`(.*)@(.*)(\:\d+)(.*)`)
-	relaysWithId := []string{}
-	for _, relayWithoutId := range relays {
-		if regExpRelays.MatchString(relayWithoutId) {
-			relaysWithId = append(relaysWithId, relayWithoutId)
+	relaysWithId := []server.RelayAddress{}
+	for _, relayAddr := range relayAddresses {
+		if relayAddr.HasID() {
+			// We have this relay's ID already, move to next.
+			relaysWithId = append(relaysWithId, relayAddr)
 			continue
 		}
 
-		relayID, err := b.DiscoverRelayID(relayWithoutId)
+		// Discover this relay's ID (CometBFT Node ID).
+		// This executes a RPC request for RelayInfo.
+		relayID, err := b.DiscoverRelayID(relayAddr)
 		if err != nil {
 			b.logger.Error("Error discovering relay information",
-				"relay", relayWithoutId,
+				"relay", relayAddr,
 				"err", err,
 			)
+			continue
 		}
 
-		relayWithId := string(relayID) + "@" + relayWithoutId
-		relaysWithId = append(relaysWithId, relayWithId)
+		relayAddr.SetID(relayID)
+		relaysWithId = append(relaysWithId, relayAddr)
 	}
 
 	// TODO(midas): localP2PSwitch.AddUnconditionalPeerIDs([]string{relayId})
 
 	// Discover supported networks for all relays and build list of
 	// P2P listen addresses by ChainID.
-	chainRelays = map[string][]string{}
-	for _, relayWithIdAndPort := range relaysWithId {
-		// Ensure presence of node ID and broadcast port
-		re := regexp.MustCompile(`(.*)@(.*)(\:\d+)(.*)`)
-		matches := re.FindStringSubmatch(relayWithIdAndPort)
-
-		// Extract the node ID from relay address
-		relayNetworkNodeID := matches[1]
-
+	chainRelays = map[string][]server.RelayAddress{}
+	for _, relayAddr := range relaysWithId {
 		// This will dial each relay once to find out their list of networks.
 		networks, laddrs, err := b.DiscoverRelayNetworks(
 			localP2PSwitch,
-			relayWithIdAndPort,
+			relayAddr,
 		)
 		if err != nil {
 			b.logger.Error("Error discovering relay networks",
-				"relay", relayWithIdAndPort,
+				"relay", relayAddr.String(),
 				"err", err,
 			)
-			relaysWithFailure[relayWithIdAndPort] = true
+			relaysWithFailure[relayAddr.String()] = true
 			continue
 		}
 
 		b.logger.Debug("Retrieved networks information from relay",
-			"relay", relayWithIdAndPort,
+			"relay", relayAddr.String(),
 			"networks", networks,
 		)
 
 		// We now have `id@host:port`, i.e. a p2p.NetAddress.
 		for i, chainID := range networks {
 			if _, ok := chainRelays[chainID]; !ok {
-				chainRelays[chainID] = []string{}
+				chainRelays[chainID] = []server.RelayAddress{}
 			}
 
 			laddr := laddrs[i]
-			laddr = relayNetworkNodeID + "@" + laddr
+			laddr = string(relayAddr.ID()) + "@" + laddr
 
-			chainRelays[chainID] = append(chainRelays[chainID], laddr)
+			relay, _ := server.NewRelayAddress(laddr)
+			chainRelays[chainID] = append(chainRelays[chainID], *relay)
 		}
 	}
 
@@ -568,41 +553,40 @@ func (b *MultiplexBackend) FetchRelayAddresses(
 // DiscoverRelayNetworks implements [Adapter].
 func (b *MultiplexBackend) DiscoverRelayNetworks(
 	localSwitch *p2p.Switch,
-	relayWithIdAndPort string,
+	relayAddr server.RelayAddress,
 ) (
 	networks []string,
 	listenAddrs []string,
 	err error,
 ) {
-	// Find out if relayWithIdAndPort is valid at all?
-	relayAddr, err := p2p.NewNetAddressString(relayWithIdAndPort)
-	if err != nil {
-		return []string{}, []string{}, fmt.Errorf(
-			"error with relay %s: %w", relayWithIdAndPort, err)
-	}
-
 	// If this is the relay itself, return empty.
-	if relayAddr.ID == b.reactor.nodeKey.ID() {
+	if relayAddr.ID() == b.reactor.nodeKey.ID() {
 		return []string{}, []string{}, err
 	}
 
 	b.logger.Debug("Process now querying networks information",
-		"relay", relayWithIdAndPort,
+		"relay", relayAddr.String(),
 	)
+
+	relayNetAddr, err := relayAddr.NetAddress()
+	if err != nil {
+		return networks, listenAddrs, fmt.Errorf(
+			"invalid relay address %s: %w", relayAddr.String(), err)
+	}
 
 	// Dial the relay to find out all networks it supports
 	// Using the switch here affects the internal AddrBook.
-	err = localSwitch.DialPeerWithAddress(relayAddr)
+	err = localSwitch.DialPeerWithAddress(relayNetAddr)
 	if err != nil {
 		return []string{}, []string{}, fmt.Errorf(
-			"could not dial relay %s: %w", relayWithIdAndPort, err)
+			"could not dial relay %s: %w", relayAddr.String(), err)
 	}
 
 	// Retrieves the multi network information
-	peer := localSwitch.Peers().Get(relayAddr.ID)
+	peer := localSwitch.Peers().Get(relayAddr.ID())
 	if peer == nil {
 		return []string{}, []string{}, fmt.Errorf(
-			"could not establish connection to peer %s", relayWithIdAndPort)
+			"could not establish connection to peer %s", relayAddr.String())
 	}
 
 	mnni := peer.NodeInfo().(MultiNetworkNodeInfo)
@@ -637,10 +621,10 @@ func (b *MultiplexBackend) DiscoverRelayNetworks(
 // relays that will receive a chain replication request.
 func (b *MultiplexBackend) ApplyFilterReplRequestRelays(
 	requiredNetworks []string,
-	relays []string,
-	chainRelays map[string][]string,
-) map[string][]string {
-	catchupRelays := map[string][]string{}
+	relays []server.RelayAddress,
+	chainRelays map[string][]server.RelayAddress,
+) map[string][]server.RelayAddress {
+	catchupRelays := map[string][]server.RelayAddress{}
 	for chainID, relaysByChain := range chainRelays {
 		// Did all relays report to know this ChainID?
 		if len(relaysByChain) == len(relays) {
@@ -648,11 +632,17 @@ func (b *MultiplexBackend) ApplyFilterReplRequestRelays(
 			continue
 		}
 
+		// Build a (searchable) slice of relay IDs
+		relayIdsByChain := []string{}
+		for _, relayAddr := range relaysByChain {
+			relayIdsByChain = append(relayIdsByChain, string(relayAddr.ID()))
+		}
+
 		// Find out which relays are missing for this chain.
 		// Those are relays that need to catchup with the chain.
-		for _, relay := range relays {
-			if !slices.Contains(relaysByChain, relay) {
-				catchupRelays[chainID] = append(catchupRelays[chainID], relay)
+		for _, relayAddr := range relays {
+			if !slices.Contains(relayIdsByChain, string(relayAddr.ID())) {
+				catchupRelays[chainID] = append(catchupRelays[chainID], relayAddr)
 			}
 		}
 	}
@@ -748,23 +738,25 @@ func (b *MultiplexBackend) startP2PServer(
 		int(nodeCfg.BroadcastPort),
 	)
 
-	b.logger.Debug("Process is now setting up P2P discovery",
-		"id", nodeKey.ID(),
-		"p2p", p2pListenAddr,
-	)
-
-	addr, err := p2p.NewNetAddressString(p2p.IDAddressString(
-		nodeKey.ID(),
-		p2pListenAddr,
-	))
+	relayAddr, err := server.NewRelayAddress(p2pListenAddr)
 	if err != nil {
+		return nil, fmt.Errorf(
+			"could not create relay address for P2P: %w", err)
+	}
+
+	relayAddr.SetID(nodeKey.ID())
+	if b.broadcastAddr, err = relayAddr.NetAddress(); err != nil {
 		return nil, fmt.Errorf(
 			"could not create p2p listen address: %w", err)
 	}
 
+	b.logger.Debug("Process is now setting up P2P discovery",
+		"id", nodeKey.ID(),
+		"p2p", relayAddr.String(),
+	)
+
 	// Initializes the local p2p.Switch
 	// Creates a global P2P switch to respond even without chain info.
-	b.broadcastAddr = addr
 	b.eventSwitch = b.EventSwitch()
 
 	// And start the switch (the P2P server).
@@ -774,20 +766,20 @@ func (b *MultiplexBackend) startP2PServer(
 			"could not start p2p switch: %w", err)
 	}
 
-	// "Open" the broadcast port for listening continuously
-	if b.eventSwitch.Transport() != nil {
-		listenTransport := b.eventSwitch.Transport()
-		if err := listenTransport.Listen(*addr); err != nil {
+	// Open the broadcast port for listening continuously
+	if listenTransport := b.eventSwitch.Transport(); listenTransport != nil {
+		netAddress := b.broadcastAddr
+		if err := listenTransport.Listen(*netAddress); err != nil {
 			return nil, fmt.Errorf(
-				"could not start listening for %s: %w", addr.DialString(), err)
+				"could not start listening on %s: %w", netAddress.DialString(), err)
 		}
 
 		b.logger.Info("Process is now listening on broadcast port",
-			"addr", addr.DialString(),
+			"addr", netAddress.DialString(),
 		)
 	}
 
-	return addr, nil
+	return b.broadcastAddr, nil
 }
 
 // startRPCServer starts a RPC server with a global [Status] function that
@@ -799,28 +791,31 @@ func (b *MultiplexBackend) startRPCServer(
 	*p2p.NetAddress, // P2P
 	error,
 ) {
+	// RPC Discovery Port is always: `default_port - 1`
+	// See also: [server.RelayAddress#Ports]
 	rpcListenAddr := overwriteListenPort(
 		nodeCfg.RPC.ListenAddress,
 		int(nodeCfg.BroadcastPort-1), // always BroadcastPort - 1
 	)
 
-	b.logger.Debug("Process is now setting up RPC discovery",
-		"id", nodeKey.ID(),
-		"rpc", rpcListenAddr,
-	)
-
-	addr, err := p2p.NewNetAddressString(p2p.IDAddressString(
-		nodeKey.ID(),
-		rpcListenAddr,
-	))
+	relayAddr, err := server.NewRelayAddress(rpcListenAddr)
 	if err != nil {
+		return nil, fmt.Errorf(
+			"could not create relay address for RPC: %w", err)
+	}
+
+	relayAddr.SetID(nodeKey.ID())
+	if b.discoveryAddr, err = relayAddr.NetAddress(); err != nil {
 		return nil, fmt.Errorf(
 			"could not create rpc listen address: %w", err)
 	}
 
-	// Initializes a local RPC server
-	b.discoveryAddr = addr
+	b.logger.Debug("Process is now setting up RPC discovery",
+		"id", nodeKey.ID(),
+		"rpc", relayAddr.StringWithoutId(),
+	)
 
+	// Initializes a local RPC server
 	rpcCfg := b.reactor.nodeConfig.RPC
 	config := rpcserver.DefaultConfig()
 	config.MaxRequestBatchSize = rpcCfg.MaxRequestBatchSize
@@ -837,7 +832,7 @@ func (b *MultiplexBackend) startRPCServer(
 	}, rpcLogger)
 
 	b.rpcListener, err = rpcserver.Listen(
-		rpcListenAddr,
+		relayAddr.StringWithoutId(),
 		config.MaxOpenConnections,
 	)
 	if err != nil {
@@ -856,7 +851,7 @@ func (b *MultiplexBackend) startRPCServer(
 		}
 	}()
 
-	return addr, nil
+	return b.discoveryAddr, nil
 }
 
 // startNodeInstances calls the Start method of [node.Node] instances that

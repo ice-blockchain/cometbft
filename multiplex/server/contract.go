@@ -82,14 +82,14 @@ type Backend interface {
 	// map (ChainID) to their respective listen addresses, and it returns a
 	// slice of relays that produced errors, e.g. network error.
 	FetchRelayAddresses(
-		relays []string,
-	) (map[string][]string, []string)
+		relays []RelayAddress,
+	) (map[string][]RelayAddress, []string)
 
 	// DiscoverRelayNetworks should dials all other relays and perform
 	// handshakes to retrieve a [MultiNetworkNodeInfo] from each of the relays.
 	DiscoverRelayNetworks(
 		localSwitch *p2p.Switch,
-		relay string,
+		relay RelayAddress,
 	) ([]string, []string, error)
 
 	// ApplyFilterReplRequestRelays should filter relays and return a map of
@@ -97,9 +97,9 @@ type Backend interface {
 	// return relays that will receive a chain replication request.
 	ApplyFilterReplRequestRelays(
 		requiredNetworks []string,
-		relays []string,
-		chainRelays map[string][]string,
-	) map[string][]string
+		relays []RelayAddress,
+		chainRelays map[string][]RelayAddress,
+	) map[string][]RelayAddress
 
 	// AddTransactions should execute the CheckTx call to add individual
 	// transactions to the mempool by ChainID.

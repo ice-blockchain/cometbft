@@ -11,6 +11,7 @@ import (
 
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
+	"github.com/ice-blockchain/cometbft/multiplex/server"
 )
 
 func TestMultiplexBackendRoutinesNodeReplRequest(t *testing.T) {
@@ -18,9 +19,9 @@ func TestMultiplexBackendRoutinesNodeReplRequest(t *testing.T) {
 	numRelays := 3
 
 	// For debug, change the loggers to cmtlog.TestingLogger()
-	loggerRelay1 := cmtlog.NewNopLogger() //cmtlog.TestingLogger().With("process", "relay-1")
-	loggerRelay2 := cmtlog.NewNopLogger() //cmtlog.TestingLogger().With("process", "relay-2")
-	loggerRelay3 := cmtlog.NewNopLogger() //cmtlog.TestingLogger().With("process", "relay-3")
+	loggerRelay1 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
+	loggerRelay2 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-2")
+	loggerRelay3 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-3")
 
 	// Uses config.TestConfig() and random MultiplexConfig
 	rootDirs,
@@ -52,14 +53,16 @@ func TestMultiplexBackendRoutinesNodeReplRequest(t *testing.T) {
 		servers[i].MustStart()
 	}
 
-	testRelayAddrs := []string{}
+	testRelayAddrs := []server.RelayAddress{}
 	for i := 1; i < len(servers); i++ {
 		testReactor := servers[i].GetReactor()
 		testNodeID := string(testReactor.GetNodeKey().ID())
 		testBroadcastPort := strconv.Itoa(50001 + (i * 100)) // 50101, 50201, etc.
 
-		testRelayAddr := testNodeID + "@127.0.0.1:" + testBroadcastPort
-		testRelayAddrs = append(testRelayAddrs, testRelayAddr)
+		testRelayAddr, err := server.NewRelayAddress(testNodeID + "@127.0.0.1:" + testBroadcastPort)
+		require.NoError(t, err)
+
+		testRelayAddrs = append(testRelayAddrs, *testRelayAddr)
 	}
 
 	chainRelays,

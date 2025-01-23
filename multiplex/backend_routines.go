@@ -45,14 +45,16 @@ func (b *MultiplexBackend) GetRoutines() *server.Jobs {
 func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplRequestFn {
 	return func(
 		_ context.Context,
-		relays []string,
+		relays []server.RelayAddress,
 		chainID string,
 		notifierImpl client.Notifier,
 	) {
 		replRequestPeers := []string{}
-		knownPeers := make([]string, len(relays))
-		for i, relayWithIdAndPort := range relays {
-			knownPeers[i] = strings.Split(relayWithIdAndPort, "@")[0]
+		knownPeers := []string{}
+		for _, relayAddr := range relays {
+			if relayAddr.HasID() {
+				knownPeers = append(knownPeers, string(relayAddr.ID()))
+			}
 		}
 
 		// Retrieve the GenesisDoc for this chain
@@ -89,7 +91,7 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 
 			replRequestPeers = append(replRequestPeers, peerID)
 
-			// TODO(midas): wait for replication ACK with b.reactor.nodeReplResponseCh
+			// TODO(midas): wait for replication ACK with b.reactor.ackReplResCh
 		})
 
 		// Keep track of node IDs
@@ -106,7 +108,7 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 func (b *MultiplexBackend) DefaultNetworksCreatorRoutine() server.NetworksCreatorFn {
 	return func(
 		ctx context.Context,
-		relaysByChain map[string][]string,
+		relaysByChain map[string][]server.RelayAddress,
 		missingChains []string,
 		notifierImpl client.Notifier,
 		newChainReadyCh chan<- string,
@@ -187,7 +189,7 @@ func (b *MultiplexBackend) DefaultNetworksCreatorRoutine() server.NetworksCreato
 func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcastFn {
 	return func(
 		ctx context.Context,
-		relaysByChain map[string][]string,
+		relaysByChain map[string][]server.RelayAddress,
 		userAddress string,
 		transactions []client.Transaction,
 		notifierImpl client.Notifier,
@@ -219,8 +221,8 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 			relaysAccepted := 0
 			minHealthyRelays := len(relaysByChain[chainID])
 			chainHealthyPeers := make([]string, len(relaysByChain[chainID]))
-			for i, relayWithIdAndPort := range relaysByChain[chainID] {
-				chainHealthyPeers[i] = strings.Split(relayWithIdAndPort, "@")[0]
+			for i, relayAddr := range relaysByChain[chainID] {
+				chainHealthyPeers[i] = string(relayAddr.ID())
 			}
 
 			// Broadcast the transaction to all healthy relays.
