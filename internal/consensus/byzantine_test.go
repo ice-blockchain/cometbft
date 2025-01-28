@@ -130,7 +130,7 @@ func TestByzantinePrevoteEquivocation(t *testing.T) {
 	}
 	// make connected switches and start all reactors
 	p2p.MakeConnectedSwitches(config.P2P, nValidators, func(i int, s *p2p.Switch) *p2p.Switch {
-		s.AddReactor("CONSENSUS", reactors[i])
+		s.AddReactor("", "CONSENSUS", reactors[i])
 		s.SetLogger(reactors[i].conS.Logger.With("module", "p2p"))
 		return s
 	}, p2p.Connect2Switches)
@@ -380,7 +380,7 @@ func TestByzantineConflictingProposalsWithPartition(t *testing.T) {
 
 	p2p.MakeConnectedSwitches(config.P2P, n, func(i int, _ *p2p.Switch) *p2p.Switch {
 		// ignore new switch s, we already made ours
-		switches[i].AddReactor("CONSENSUS", reactors[i])
+		switches[i].AddReactor("", "CONSENSUS", reactors[i])
 		return switches[i]
 	}, func(sws []*p2p.Switch, i, j int) {
 		// the network starts partitioned with globally active adversary

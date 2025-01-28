@@ -145,9 +145,11 @@ func NewReactor(b AddrBook, config *ReactorConfig) *Reactor {
 
 // OnStart implements BaseService.
 func (r *Reactor) OnStart() error {
-	err := r.book.Start()
-	if err != nil && err != service.ErrAlreadyStarted {
-		return err
+	if !r.book.IsRunning() {
+		err := r.book.Start()
+		if err != nil && err != service.ErrAlreadyStarted {
+			return err
+		}
 	}
 
 	numOnline, seedAddrs, err := r.checkSeeds()

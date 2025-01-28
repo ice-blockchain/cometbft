@@ -26,6 +26,8 @@ import (
 	cmtpubsub "github.com/ice-blockchain/cometbft/libs/pubsub"
 	p2pmock "github.com/ice-blockchain/cometbft/p2p/mock"
 	"github.com/ice-blockchain/cometbft/types"
+
+	"github.com/ice-blockchain/cometbft/multiplex/client"
 )
 
 /*
@@ -2168,7 +2170,7 @@ func TestExtendVoteCalledWhenEnabled(t *testing.T) {
 			ensurePrecommit(voteCh, height, round)
 
 			if testCase.enabled {
-				m.AssertCalled(t, "ExtendVote", context.TODO(), &abci.ExtendVoteRequest{
+				m.AssertCalled(t, "ExtendVote", context.WithValue(context.TODO(), client.KeyChainID, chainID), &abci.ExtendVoteRequest{
 					Height:             height,
 					Hash:               blockID.Hash,
 					Time:               rs.ProposalBlock.Time,
@@ -2246,7 +2248,7 @@ func TestVerifyVoteExtensionNotCalledOnAbsentPrecommit(t *testing.T) {
 
 	ensurePrecommit(voteCh, height, round)
 
-	m.AssertCalled(t, "ExtendVote", context.TODO(), &abci.ExtendVoteRequest{
+	m.AssertCalled(t, "ExtendVote", context.WithValue(context.TODO(), client.KeyChainID, chainID), &abci.ExtendVoteRequest{
 		Height:             height,
 		Hash:               blockID.Hash,
 		Time:               rs.ProposalBlock.Time,
@@ -2448,7 +2450,7 @@ func TestFinalizeBlockCalled(t *testing.T) {
 			if !testCase.expectCalled {
 				m.AssertNotCalled(t, "FinalizeBlock", context.TODO(), mock.Anything)
 			} else {
-				m.AssertCalled(t, "FinalizeBlock", context.TODO(), mock.Anything)
+				m.AssertCalled(t, "FinalizeBlock", context.WithValue(context.TODO(), client.KeyChainID, chainID), mock.Anything)
 			}
 		})
 	}

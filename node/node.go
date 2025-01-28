@@ -55,12 +55,15 @@ type Node struct {
 	privValidator types.PrivValidator // local node's validator key
 
 	// network
-	transport   *p2p.MultiplexTransport
-	sw          *p2p.Switch  // p2p connections
-	addrBook    pex.AddrBook // known peers
-	nodeInfo    p2p.NodeInfo
-	nodeKey     *p2p.NodeKey // our node privkey
-	isListening bool
+	transport *p2p.MultiplexTransport
+	sw        *p2p.Switch  // p2p connections
+	addrBook  pex.AddrBook // known peers
+	nodeInfo  p2p.NodeInfo
+	nodeKey   *p2p.NodeKey // our node privkey
+
+	isListening    bool
+	shouldStartRPC bool
+	shouldStartP2P bool
 
 	// services
 	eventBus          *types.EventBus // pub/sub for services
@@ -110,13 +113,14 @@ type Option func(*Node)
 //   - STATESYNC
 func CustomReactors(reactors map[string]p2p.Reactor) Option {
 	return func(n *Node) {
+		chainID := n.genesisDoc.ChainID
 		for name, reactor := range reactors {
-			if existingReactor := n.sw.Reactor(name); existingReactor != nil {
+			if existingReactor := n.sw.Reactor(chainID, name); existingReactor != nil {
 				n.sw.Logger.Info("Replacing existing reactor with a custom one",
 					"name", name, "existing", existingReactor, "custom", reactor)
-				n.sw.RemoveReactor(name, existingReactor)
+				n.sw.RemoveReactor(chainID, name, existingReactor)
 			}
-			n.sw.AddReactor(name, reactor)
+			n.sw.AddReactor(chainID, name, reactor)
 			// register the new channels to the nodeInfo
 			// NOTE: This is a bit messy now with the type casting but is
 			// cleaned up in the following version when NodeInfo is changed from
@@ -547,6 +551,10 @@ func NewNodeWithCliParams(ctx context.Context,
 		nodeInfo:  nodeInfo,
 		nodeKey:   nodeKey,
 
+		isListening:    false,
+		shouldStartRPC: true,
+		shouldStartP2P: true,
+
 		stateStore:       stateStore,
 		blockStore:       blockStore,
 		pruner:           pruner,
@@ -616,6 +624,10 @@ func NewNodeWithServices(
 		nodeInfo:      nodeInfo,
 		transport:     transport,
 
+		isListening:    false,
+		shouldStartRPC: false,
+		shouldStartP2P: false,
+
 		addrBook:     addrBook,
 		sw:           sw,
 		eventBus:     eventBus,
@@ -633,10 +645,10 @@ func NewNodeWithServices(
 		txIndexer:        indexerService.GetTxIndexer(),
 		blockIndexer:     indexerService.GetBlockIndexer(),
 
-		bcReactor:        sw.Reactor("BLOCKSYNC"),
-		mempoolReactor:   sw.Reactor("MEMPOOL").(*mempl.Reactor),
-		consensusReactor: sw.Reactor("CONSENSUS").(*cs.Reactor),
-		pexReactor:       sw.Reactor("PEX").(*pex.Reactor),
+		bcReactor:        sw.Reactor(genDoc.ChainID, "BLOCKSYNC"),
+		mempoolReactor:   sw.Reactor(genDoc.ChainID, "MEMPOOL").(*mempl.Reactor),
+		consensusReactor: sw.Reactor(genDoc.ChainID, "CONSENSUS").(*cs.Reactor),
+		pexReactor:       sw.Reactor(genDoc.ChainID, "PEX").(*pex.Reactor),
 	}
 }
 
@@ -661,35 +673,19 @@ func (n *Node) OnStart() error {
 
 	// Start the RPC server before the P2P server
 	// so we can eg. receive txs for the first block
-	if n.config.RPC.ListenAddress != "" {
-		listeners, err := n.startRPC()
+	if n.shouldStartRPC && n.config.RPC.ListenAddress != "" {
+		listeners, err := n.StartRPC()
 		if err != nil {
 			return err
 		}
 		n.rpcListeners = listeners
 	}
 
-	// Start the transport.
-	addr, err := p2p.NewNetAddressString(p2p.IDAddressString(n.nodeKey.ID(), n.config.P2P.ListenAddress))
-	if err != nil {
-		return err
-	}
-	if err := n.transport.Listen(*addr); err != nil {
-		return err
-	}
-
-	n.isListening = true
-
-	// Start the switch (the P2P server).
-	err = n.sw.Start()
-	if err != nil {
-		return err
-	}
-
-	// Always connect to persistent peers
-	err = n.sw.DialPeersAsync(splitAndTrimEmpty(n.config.P2P.PersistentPeers, ",", " "))
-	if err != nil {
-		return fmt.Errorf("could not dial peers from persistent_peers field: %w", err)
+	if n.shouldStartP2P {
+		if _, err := n.StartP2P(); err != nil {
+			return err
+		}
+		n.isListening = true
 	}
 
 	// Run state sync
@@ -823,13 +819,52 @@ func (n *Node) ConfigureRPC() (*rpccore.Environment, error) {
 	return &rpcCoreEnv, nil
 }
 
-func (n *Node) startRPC() ([]net.Listener, error) {
+func (n *Node) StartP2P() (*p2p.NetAddress, error) {
+	// P2P CometBFT Port is always: `discovery_port+1`
+	p2pListenAddr := overwriteListenPort(
+		n.config.P2P.ListenAddress,
+		int(n.config.DiscoveryPort+1), // always DiscoveryPort+1
+	)
+
+	// Start the transport.
+	addr, err := p2p.NewNetAddressString(p2p.IDAddressString(n.nodeKey.ID(), p2pListenAddr))
+	if err != nil {
+		return nil, err
+	}
+	if err := n.transport.Listen(*addr); err != nil {
+		return nil, err
+	}
+
+	n.isListening = true
+
+	// Start the switch (the P2P server).
+	err = n.sw.Start()
+	if err != nil {
+		return nil, err
+	}
+
+	// Always connect to persistent peers
+	err = n.sw.DialPeersAsync(splitAndTrimEmpty(n.config.P2P.PersistentPeers, ",", " "))
+	if err != nil {
+		return nil, fmt.Errorf("could not dial peers from persistent_peers field: %w", err)
+	}
+
+	return addr, nil
+}
+
+func (n *Node) StartRPC() ([]net.Listener, error) {
 	env, err := n.ConfigureRPC()
 	if err != nil {
 		return nil, err
 	}
 
-	listenAddrs := splitAndTrimEmpty(n.config.RPC.ListenAddress, ",", " ")
+	// RPC CometBFT Port is always: `discovery_port+2`
+	rpcListenAddr := overwriteListenPort(
+		n.config.RPC.ListenAddress,
+		int(n.config.DiscoveryPort+2), // always DiscoveryPort+2
+	)
+
+	listenAddrs := splitAndTrimEmpty(rpcListenAddr, ",", " ")
 	routes := env.GetRoutes()
 
 	if n.config.RPC.Unsafe {
@@ -849,7 +884,7 @@ func (n *Node) startRPC() ([]net.Listener, error) {
 	}
 
 	// we may expose the rpc over both a unix and tcp socket
-	listeners := make([]net.Listener, 0, len(listenAddrs))
+	n.rpcListeners = []net.Listener{}
 	for _, listenAddr := range listenAddrs {
 		mux := http.NewServeMux()
 		rpcLogger := n.Logger.With("module", "rpc-server")
@@ -911,7 +946,7 @@ func (n *Node) startRPC() ([]net.Listener, error) {
 			}()
 		}
 
-		listeners = append(listeners, listener)
+		n.rpcListeners = append(n.rpcListeners, listener)
 	}
 
 	if n.config.GRPC.ListenAddress != "" {
@@ -936,7 +971,7 @@ func (n *Node) startRPC() ([]net.Listener, error) {
 				n.Logger.Error("Error starting gRPC server", "err", err)
 			}
 		}()
-		listeners = append(listeners, listener)
+		n.rpcListeners = append(n.rpcListeners, listener)
 	}
 
 	if n.config.GRPC.Privileged.ListenAddress != "" {
@@ -955,10 +990,10 @@ func (n *Node) startRPC() ([]net.Listener, error) {
 				n.Logger.Error("Error starting privileged gRPC server", "err", err)
 			}
 		}()
-		listeners = append(listeners, listener)
+		n.rpcListeners = append(n.rpcListeners, listener)
 	}
 
-	return listeners, nil
+	return n.rpcListeners, nil
 }
 
 // startPrometheusServer starts a Prometheus HTTP server, listening for metrics
@@ -1213,4 +1248,30 @@ func initCompanionRetainHeights(stateStore sm.Store, initBlockRH, initBlockResul
 		}
 	}
 	return nil
+}
+
+// NodeWithStartRPC is an option helper to overwrite the shouldStartRPC
+// property on Node instances. Note that only one running instance of
+// RPC/P2P servers is authorized, use this option helper with caution.
+//
+// If set to true, the CometBFT RPC server will be started by
+// the node's [OnStart] method.
+// If set to false, the RPC server must be started separately.
+func NodeWithStartRPC(f bool) Option {
+	return func(n *Node) {
+		n.shouldStartRPC = f
+	}
+}
+
+// NodeWithStartP2P is an option helper to overwrite the shouldStartP2P
+// property on Node instances. Note that only one running instance of
+// RPC/P2P servers is authorized, use this option helper with caution.
+//
+// If set to true, the CometBFT RPC server will be started by
+// the node's [OnStart] method.
+// If set to false, the RPC server must be started separately.
+func NodeWithStartP2P(f bool) Option {
+	return func(n *Node) {
+		n.shouldStartP2P = f
+	}
 }

@@ -90,7 +90,7 @@ func TestPEXReactorRunning(t *testing.T) {
 			r := NewReactor(books[i], &ReactorConfig{})
 			r.SetLogger(logger.With("pex", i))
 			r.SetEnsurePeersPeriod(250 * time.Millisecond)
-			sw.AddReactor("pex", r)
+			sw.AddReactor("", "pex", r)
 
 			return sw
 		})
@@ -454,7 +454,7 @@ func TestPEXReactorSeedModeFlushStop(t *testing.T) {
 			r := NewReactor(books[i], config)
 			r.SetLogger(logger.With("pex", i))
 			r.SetEnsurePeersPeriod(250 * time.Millisecond)
-			sw.AddReactor("pex", r)
+			sw.AddReactor("", "pex", r)
 
 			return sw
 		})
@@ -465,7 +465,7 @@ func TestPEXReactorSeedModeFlushStop(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	reactor := switches[0].Reactors()["pex"].(*Reactor)
+	reactor := switches[0].Reactors("")["pex"].(*Reactor)
 	peerID := switches[1].NodeInfo().ID()
 
 	err = switches[1].DialPeerWithAddress(switches[0].NetAddress())
@@ -619,7 +619,7 @@ func testCreatePeerWithConfig(dir string, id int, config *ReactorConfig) *p2p.Sw
 				config,
 			)
 			r.SetLogger(log.TestingLogger().With("pex", id))
-			sw.AddReactor("pex", r)
+			sw.AddReactor("", "pex", r)
 			return sw
 		},
 	)
@@ -650,7 +650,7 @@ func testCreateSeed(dir string, id int, knownAddrs, srcAddrs []*p2p.NetAddress) 
 
 			r := NewReactor(book, &ReactorConfig{})
 			r.SetLogger(log.TestingLogger())
-			sw.AddReactor("pex", r)
+			sw.AddReactor("", "pex", r)
 			return sw
 		},
 	)

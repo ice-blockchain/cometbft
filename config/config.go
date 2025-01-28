@@ -305,7 +305,6 @@ func DefaultBaseConfig() BaseConfig {
 //
 // CAUTION: Using this function will *enable* multiplex features.
 func MultiplexBaseConfig(
-	syncConfig map[string]*StateSyncConfig,
 	chainSeeds map[string]string,
 	userChains map[string][]string,
 	multiplexOptions ...func(*MultiplexConfig),
@@ -314,12 +313,9 @@ func MultiplexBaseConfig(
 	config := DefaultBaseConfig()
 	config.MultiplexConfig = MultiplexConfig{
 		Strategy:      NewReplicationStrategy("Network"),
-		SyncConfig:    syncConfig,
 		ChainSeeds:    chainSeeds,
 		UserChains:    userChains,
-		P2PStartPort:  uint16(30001),
-		RPCStartPort:  uint16(40001),
-		BroadcastPort: uint16(50001),
+		DiscoveryPort: uint16(30001),
 	}
 
 	// permits overwriting default multiplex config, e.g. `mx.WithStrategy()`.
@@ -341,11 +337,10 @@ func TestBaseConfig() BaseConfig {
 // MultiplexTestBaseConfig returns a base configuration for testing a multiplex
 // enabled CometBFT node.
 func MultiplexTestBaseConfig(
-	syncConfig map[string]*StateSyncConfig,
 	chainSeeds map[string]string,
 	userChains map[string][]string,
 ) BaseConfig {
-	cfg := MultiplexBaseConfig(syncConfig, chainSeeds, userChains)
+	cfg := MultiplexBaseConfig(chainSeeds, userChains)
 	cfg.ProxyApp = "kvstore"
 	cfg.DBBackend = "memdb"
 	return cfg
@@ -355,12 +350,10 @@ func MultiplexTestBaseConfig(
 // Note: the multiplex features are *disabled* using this configuration object.
 func EmptyMultiplexConfig() MultiplexConfig {
 	return MultiplexConfig{
-		Strategy:     DefaultReplicationStrategy(),
-		SyncConfig:   map[string]*StateSyncConfig{},
-		ChainSeeds:   map[string]string{},   // empty seeds
-		UserChains:   map[string][]string{}, // empty chains
-		P2PStartPort: 30001,
-		RPCStartPort: 40001,
+		Strategy:      DefaultReplicationStrategy(),
+		ChainSeeds:    map[string]string{},   // empty seeds
+		UserChains:    map[string][]string{}, // empty chains
+		DiscoveryPort: 30001,
 	}
 }
 
@@ -1731,15 +1724,6 @@ type MultiplexConfig struct {
 	// More details about available values can be found in [ReplicationStrategy].
 	Strategy ReplicationStrategy `mapstructure:"replication"`
 
-	// SyncConfig contains *trust options* as required by state-sync, this
-	// includes a trusted app hash and trusted height which are mapped to
-	// a ChainID.
-	// If the trust period is left empty, it will use the default trust period
-	// of 168 hours (7 days).
-	//
-	// IMPORTANT: Both trusted values are required for state-sync.
-	SyncConfig map[string]*StateSyncConfig `mapstructure:"sync_config"`
-
 	// ChainSeeds contains comma-separeted seed nodes mapped to ChainIDs
 	// such that these seed nodes are used when connecting to a network,
 	// and permit to provide trusted values necessary to start state-sync.
@@ -1757,29 +1741,8 @@ type MultiplexConfig struct {
 	// and consensus instances run concurrently on the node.
 	UserChains map[string][]string `mapstructure:"user_chains"`
 
-	// P2PStartPort contains a network port number which defaults to 30001
-	// and which is used as the first node's P2P listen address port in the
-	// multiplex. Other nodes in the multiplex *increment* this value by their
-	// respective *index* in a slice of ChainIDs sorted lexicographically.
-	P2PStartPort uint16 `mapstructure:"p2p_listen_port"`
-
-	// RPCStartPort contains a network port number which defaults to 40001
-	// and which is used as the first node's RPC listen address port in the
-	// multiplex. Other nodes in the multiplex *increment* this value by their
-	// respective *index* in a slice of ChainIDs sorted lexicographically.
-	RPCStartPort uint16 `mapstructure:"p2p_listen_port"`
-
-	// BroadcastPort contains a network port number which defaults to 50001
-	// and which is used to communicate with relays that do not yet host
-	// any replicated chains. The listener is created in [MultiplexBackend].
-	BroadcastPort uint16 `mapstructure:"broadcast_port"`
-
-	// SnapshotOptions contains the configuration for state-sync snapshots
-	// including the currently tracked *format*, blocks *interval* and the
-	// *keep recent* option.
-	//
-	// This property maps snapshot options to a [ReplicationStrategy], thus
-	// permitting to have different configuration for the *historical data*
-	// snapshots and for the *network data* snapshots.
-	SnapshotOptions map[ReplicationStrategy]SnapshotOptions `mapstructure:"snapshot_options"`
+	// DiscoveryPort contains a network port number which defaults to 30001
+	// and which is used to communicate with authenticated relays with P2P.
+	// A listener for this port is created in [MultiplexBackend#MustStart].
+	DiscoveryPort uint16 `mapstructure:"discovery_port"`
 }

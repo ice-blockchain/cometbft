@@ -199,7 +199,7 @@ func TestNoBlockResponse(t *testing.T) {
 	reactorPairs[1] = newReactor(t, log.TestingLogger(), genDoc, privVals, 0)
 
 	p2p.MakeConnectedSwitches(config.P2P, 2, func(i int, s *p2p.Switch) *p2p.Switch {
-		s.AddReactor("BLOCKSYNC", reactorPairs[i].reactor)
+		s.AddReactor("", "BLOCKSYNC", reactorPairs[i].reactor)
 		return s
 	}, p2p.Connect2Switches)
 
@@ -273,7 +273,7 @@ func TestBadBlockStopsPeer(t *testing.T) {
 	reactorPairs[3] = newReactor(t, log.TestingLogger(), genDoc, privVals, 0)
 
 	switches := p2p.MakeConnectedSwitches(config.P2P, 4, func(i int, s *p2p.Switch) *p2p.Switch {
-		s.AddReactor("BLOCKSYNC", reactorPairs[i].reactor)
+		s.AddReactor("", "BLOCKSYNC", reactorPairs[i].reactor)
 		return s
 	}, p2p.Connect2Switches)
 
@@ -311,7 +311,7 @@ func TestBadBlockStopsPeer(t *testing.T) {
 	reactorPairs = append(reactorPairs, lastReactorPair) //nolint:makezero // when initializing with 0, the test breaks.
 
 	switches = append(switches, p2p.MakeConnectedSwitches(config.P2P, 1, func(_ int, s *p2p.Switch) *p2p.Switch {
-		s.AddReactor("BLOCKSYNC", reactorPairs[len(reactorPairs)-1].reactor)
+		s.AddReactor("", "BLOCKSYNC", reactorPairs[len(reactorPairs)-1].reactor)
 		return s
 	}, p2p.Connect2Switches)...)
 
@@ -355,7 +355,7 @@ func TestCheckSwitchToConsensusLastHeightZero(t *testing.T) {
 	var switches []*p2p.Switch
 	for _, r := range reactorPairs {
 		switches = append(switches, p2p.MakeConnectedSwitches(config.P2P, 1, func(_ int, s *p2p.Switch) *p2p.Switch {
-			s.AddReactor("BLOCKSYNC", r.reactor)
+			s.AddReactor("", "BLOCKSYNC", r.reactor)
 			return s
 		}, p2p.Connect2Switches)...)
 	}
@@ -421,7 +421,7 @@ func ExtendedCommitNetworkHelper(t *testing.T, maxBlockHeight int64, enableVoteE
 	var switches []*p2p.Switch
 	for _, r := range reactorPairs {
 		switches = append(switches, p2p.MakeConnectedSwitches(config.P2P, 1, func(_ int, s *p2p.Switch) *p2p.Switch {
-			s.AddReactor("BLOCKSYNC", r.reactor)
+			s.AddReactor("", "BLOCKSYNC", r.reactor)
 			return s
 		}, p2p.Connect2Switches)...)
 	}

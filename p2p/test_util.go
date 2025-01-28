@@ -261,7 +261,7 @@ func MakeSwitch(
 	sw.SetNodeKey(&nodeKey)
 
 	ni := nodeInfo.(DefaultNodeInfo)
-	for ch := range sw.reactorsByCh {
+	for ch := range sw.reactorsByCh[""] {
 		ni.Channels = append(ni.Channels, ch)
 	}
 	nodeInfo = ni

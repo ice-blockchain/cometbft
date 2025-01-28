@@ -102,11 +102,11 @@ func initSwitchFunc(_ int, sw *Switch) *Switch {
 	})
 
 	// Make two reactors of two channels each
-	sw.AddReactor("foo", NewTestReactor([]*conn.ChannelDescriptor{
+	sw.AddReactor("", "foo", NewTestReactor([]*conn.ChannelDescriptor{
 		{ID: byte(0x00), Priority: 10, MessageType: &p2pproto.Message{}},
 		{ID: byte(0x01), Priority: 10, MessageType: &p2pproto.Message{}},
 	}, true))
-	sw.AddReactor("bar", NewTestReactor([]*conn.ChannelDescriptor{
+	sw.AddReactor("", "bar", NewTestReactor([]*conn.ChannelDescriptor{
 		{ID: byte(0x02), Priority: 10, MessageType: &p2pproto.Message{}},
 		{ID: byte(0x03), Priority: 10, MessageType: &p2pproto.Message{}},
 	}, true))
@@ -162,15 +162,15 @@ func TestSwitches(t *testing.T) {
 	assertMsgReceivedWithTimeout(t,
 		ch0Msg,
 		byte(0x00),
-		s2.Reactor("foo").(*TestReactor), 200*time.Millisecond, 5*time.Second)
+		s2.Reactor("", "foo").(*TestReactor), 200*time.Millisecond, 5*time.Second)
 	assertMsgReceivedWithTimeout(t,
 		ch1Msg,
 		byte(0x01),
-		s2.Reactor("foo").(*TestReactor), 200*time.Millisecond, 5*time.Second)
+		s2.Reactor("", "foo").(*TestReactor), 200*time.Millisecond, 5*time.Second)
 	assertMsgReceivedWithTimeout(t,
 		ch2Msg,
 		byte(0x02),
-		s2.Reactor("bar").(*TestReactor), 200*time.Millisecond, 5*time.Second)
+		s2.Reactor("", "bar").(*TestReactor), 200*time.Millisecond, 5*time.Second)
 }
 
 func assertMsgReceivedWithTimeout(
@@ -773,7 +773,7 @@ func TestSwitchInitPeerIsNotCalledBeforeRemovePeer(t *testing.T) {
 
 	// make switch
 	sw := MakeSwitch(cfg, 1, func(_ int, sw *Switch) *Switch {
-		sw.AddReactor("mock", reactor)
+		sw.AddReactor("", "mock", reactor)
 		return sw
 	})
 	err := sw.Start()

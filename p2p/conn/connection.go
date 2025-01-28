@@ -48,7 +48,7 @@ const (
 )
 
 type (
-	receiveCbFunc func(chID byte, msgBytes []byte)
+	receiveCbFunc func(chainID string, chID byte, msgBytes []byte)
 	errorCbFunc   func(any)
 )
 
@@ -157,7 +157,7 @@ func DefaultMConnConfig() MConnConfig {
 // NewMConnection wraps net.Conn and creates multiplex connection.
 func NewMConnection(
 	conn net.Conn,
-	chDescs []*ChannelDescriptor,
+	chDescs map[string][]*ChannelDescriptor,
 	onReceive receiveCbFunc,
 	onError errorCbFunc,
 ) *MConnection {
@@ -172,7 +172,7 @@ func NewMConnection(
 // NewMConnectionWithConfig wraps net.Conn and creates multiplex connection with a config.
 func NewMConnectionWithConfig(
 	conn net.Conn,
-	chDescs []*ChannelDescriptor,
+	chDescs map[string][]*ChannelDescriptor,
 	onReceive receiveCbFunc,
 	onError errorCbFunc,
 	config MConnConfig,
@@ -199,10 +199,12 @@ func NewMConnectionWithConfig(
 	channelsIdx := map[byte]*Channel{}
 	channels := []*Channel{}
 
-	for _, desc := range chDescs {
-		channel := newChannel(mconn, *desc)
-		channelsIdx[channel.desc.ID] = channel
-		channels = append(channels, channel)
+	for _, chByChain := range chDescs {
+		for _, desc := range chByChain {
+			channel := newChannel(mconn, *desc)
+			channelsIdx[channel.desc.ID] = channel
+			channels = append(channels, channel)
+		}
 	}
 	mconn.channels = channels
 	mconn.channelsIdx = channelsIdx
@@ -655,6 +657,7 @@ FOR_LOOP:
 				// never block
 			}
 		case *tmp2p.Packet_PacketMsg:
+			chainID := pkt.PacketMsg.ChainID
 			channelID := byte(pkt.PacketMsg.ChannelID)
 			channel, ok := c.channelsIdx[channelID]
 			if pkt.PacketMsg.ChannelID < 0 || pkt.PacketMsg.ChannelID > math.MaxUint8 || !ok || channel == nil {
@@ -673,9 +676,9 @@ FOR_LOOP:
 				break FOR_LOOP
 			}
 			if msgBytes != nil {
-				c.Logger.Debug("Received bytes", "chID", channelID, "msgBytes", msgBytes)
+				c.Logger.Debug("Received bytes", "ChainId", chainID, "chID", channelID, "msgBytes", msgBytes)
 				// NOTE: This means the reactor.Receive runs in the same thread as the p2p recv routine
-				c.onReceive(channelID, msgBytes)
+				c.onReceive(chainID, channelID, msgBytes)
 			}
 		default:
 			err := fmt.Errorf("unknown message type %v", reflect.TypeOf(packet))
@@ -771,6 +774,8 @@ func (chDesc ChannelDescriptor) FillDefaults() (filled ChannelDescriptor) {
 // TODO: lowercase.
 // NOTE: not goroutine-safe.
 type Channel struct {
+	ChainID string
+
 	conn          *MConnection
 	desc          ChannelDescriptor
 	sendQueue     chan []byte

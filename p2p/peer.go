@@ -135,9 +135,9 @@ func newPeer(
 	pc peerConn,
 	mConfig cmtconn.MConnConfig,
 	nodeInfo NodeInfo,
-	reactorsByCh map[byte]Reactor,
-	msgTypeByChID map[byte]proto.Message,
-	chDescs []*cmtconn.ChannelDescriptor,
+	reactorsByCh map[string]map[byte]Reactor,
+	msgTypeByChID map[string]map[byte]proto.Message,
+	chDescs map[string][]*cmtconn.ChannelDescriptor,
 	onPeerError func(Peer, any),
 	options ...PeerOption,
 ) *peer {
@@ -402,20 +402,20 @@ func (p *peer) metricsReporter() {
 func createMConnection(
 	conn net.Conn,
 	p *peer,
-	reactorsByCh map[byte]Reactor,
-	msgTypeByChID map[byte]proto.Message,
-	chDescs []*cmtconn.ChannelDescriptor,
+	reactorsByCh map[string]map[byte]Reactor,
+	msgTypeByChID map[string]map[byte]proto.Message,
+	chDescs map[string][]*cmtconn.ChannelDescriptor,
 	onPeerError func(Peer, any),
 	config cmtconn.MConnConfig,
 ) *cmtconn.MConnection {
-	onReceive := func(chID byte, msgBytes []byte) {
-		reactor := reactorsByCh[chID]
+	onReceive := func(chainID string, chID byte, msgBytes []byte) {
+		reactor := reactorsByCh[chainID][chID]
 		if reactor == nil {
 			// Note that its ok to panic here as it's caught in the conn._recover,
 			// which does onPeerError.
 			panic(fmt.Sprintf("Unknown channel %X", chID))
 		}
-		mt := msgTypeByChID[chID]
+		mt := msgTypeByChID[chainID][chID]
 		msg := proto.Clone(mt)
 		err := proto.Unmarshal(msgBytes, msg)
 		if err != nil {

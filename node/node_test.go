@@ -494,10 +494,10 @@ func TestNodeNewNodeCustomReactors(t *testing.T) {
 	defer n.Stop() //nolint:errcheck // ignore for tests
 
 	assert.True(t, cr.IsRunning())
-	assert.Equal(t, cr, n.Switch().Reactor("FOO"))
+	assert.Equal(t, cr, n.Switch().Reactor(n.genesisDoc.ChainID, "FOO"))
 
 	assert.True(t, customBlocksyncReactor.IsRunning())
-	assert.Equal(t, customBlocksyncReactor, n.Switch().Reactor("BLOCKSYNC"))
+	assert.Equal(t, customBlocksyncReactor, n.Switch().Reactor(n.genesisDoc.ChainID, "BLOCKSYNC"))
 
 	channels := n.NodeInfo().(p2p.DefaultNodeInfo).Channels
 	assert.Contains(t, channels, mempl.MempoolChannel)

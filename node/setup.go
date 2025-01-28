@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -506,12 +508,12 @@ func createSwitch(config *cfg.Config,
 	)
 	sw.SetLogger(p2pLogger)
 	if config.Mempool.Type != cfg.MempoolTypeNop {
-		sw.AddReactor("MEMPOOL", mempoolReactor)
+		sw.AddReactor("", "MEMPOOL", mempoolReactor)
 	}
-	sw.AddReactor("BLOCKSYNC", bcReactor)
-	sw.AddReactor("CONSENSUS", consensusReactor)
-	sw.AddReactor("EVIDENCE", evidenceReactor)
-	sw.AddReactor("STATESYNC", stateSyncReactor)
+	sw.AddReactor("", "BLOCKSYNC", bcReactor)
+	sw.AddReactor("", "CONSENSUS", consensusReactor)
+	sw.AddReactor("", "EVIDENCE", evidenceReactor)
+	sw.AddReactor("", "STATESYNC", stateSyncReactor)
 
 	sw.SetNodeInfo(nodeInfo)
 	sw.SetNodeKey(nodeKey)
@@ -564,7 +566,7 @@ func createPEXReactorAndAddToSwitch(addrBook pex.AddrBook, config *cfg.Config,
 			PersistentPeersMaxDialPeriod: config.P2P.PersistentPeersMaxDialPeriod,
 		})
 	pexReactor.SetLogger(logger.With("module", "pex"))
-	sw.AddReactor("PEX", pexReactor)
+	sw.AddReactor("", "PEX", pexReactor)
 	return pexReactor
 }
 
@@ -758,4 +760,11 @@ func splitAndTrimEmpty(s, sep, cutset string) []string {
 		}
 	}
 	return nonEmptyStrings
+}
+
+// overwriteListenPort replaces the port in a service listen address.
+func overwriteListenPort(laddr string, port int) string {
+	re := regexp.MustCompile(`(.*)(\:\d+)(.*)`)
+	newPort := ":" + strconv.Itoa(port)
+	return re.ReplaceAllString(laddr, `$1`+newPort+`$3`)
 }

@@ -423,10 +423,10 @@ FOR_LOOP:
 				if err := bcR.pool.Stop(); err != nil {
 					bcR.Logger.Error("Error stopping pool", "err", err)
 				}
-				if memR, ok := bcR.Switch.Reactor("MEMPOOL").(mempoolReactor); ok {
+				if memR, ok := bcR.Switch.Reactor(chainID, "MEMPOOL").(mempoolReactor); ok {
 					memR.EnableInOutTxs()
 				}
-				if conR, ok := bcR.Switch.Reactor("CONSENSUS").(consensusReactor); ok {
+				if conR, ok := bcR.Switch.Reactor(chainID, "CONSENSUS").(consensusReactor); ok {
 					conR.SwitchToConsensus(state, blocksSynced > 0 || stateSynced)
 				}
 				// else {

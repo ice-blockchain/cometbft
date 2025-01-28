@@ -20,7 +20,7 @@ import (
 const maxPingPongPacketSize = 1024 // bytes
 
 func createTestMConnection(conn net.Conn) *MConnection {
-	onReceive := func(_ byte, _ []byte) {
+	onReceive := func(_ string, _ byte, _ []byte) {
 	}
 	onError := func(_ any) {
 	}
@@ -31,7 +31,7 @@ func createTestMConnection(conn net.Conn) *MConnection {
 
 func createMConnectionWithCallbacks(
 	conn net.Conn,
-	onReceive func(chID byte, msgBytes []byte),
+	onReceive func(chainID string, chID byte, msgBytes []byte),
 	onError func(r any),
 ) *MConnection {
 	cfg := DefaultMConnConfig()
@@ -119,7 +119,7 @@ func TestMConnectionReceive(t *testing.T) {
 
 	receivedCh := make(chan []byte)
 	errorsCh := make(chan any)
-	onReceive := func(_ byte, msgBytes []byte) {
+	onReceive := func(_ string, _ byte, msgBytes []byte) {
 		receivedCh <- msgBytes
 	}
 	onError := func(r any) {
@@ -170,7 +170,7 @@ func TestMConnectionPongTimeoutResultsInError(t *testing.T) {
 
 	receivedCh := make(chan []byte)
 	errorsCh := make(chan any)
-	onReceive := func(_ byte, msgBytes []byte) {
+	onReceive := func(_ string, _ byte, msgBytes []byte) {
 		receivedCh <- msgBytes
 	}
 	onError := func(r any) {
@@ -209,7 +209,7 @@ func TestMConnectionMultiplePongsInTheBeginning(t *testing.T) {
 
 	receivedCh := make(chan []byte)
 	errorsCh := make(chan any)
-	onReceive := func(_ byte, msgBytes []byte) {
+	onReceive := func(_ string, _ byte, msgBytes []byte) {
 		receivedCh <- msgBytes
 	}
 	onError := func(r any) {
@@ -264,7 +264,7 @@ func TestMConnectionMultiplePings(t *testing.T) {
 
 	receivedCh := make(chan []byte)
 	errorsCh := make(chan any)
-	onReceive := func(_ byte, msgBytes []byte) {
+	onReceive := func(_ string, _ byte, msgBytes []byte) {
 		receivedCh <- msgBytes
 	}
 	onError := func(r any) {
@@ -313,7 +313,7 @@ func TestMConnectionPingPongs(t *testing.T) {
 
 	receivedCh := make(chan []byte)
 	errorsCh := make(chan any)
-	onReceive := func(_ byte, msgBytes []byte) {
+	onReceive := func(_ string, _ byte, msgBytes []byte) {
 		receivedCh <- msgBytes
 	}
 	onError := func(r any) {
@@ -371,7 +371,7 @@ func TestMConnectionStopsAndReturnsError(t *testing.T) {
 
 	receivedCh := make(chan []byte)
 	errorsCh := make(chan any)
-	onReceive := func(_ byte, msgBytes []byte) {
+	onReceive := func(_ string, _ byte, msgBytes []byte) {
 		receivedCh <- msgBytes
 	}
 	onError := func(r any) {
@@ -401,7 +401,7 @@ func newClientAndServerConnsForReadErrors(t *testing.T, chOnErr chan struct{}) (
 	t.Helper()
 	server, client := NetPipe()
 
-	onReceive := func(_ byte, _ []byte) {}
+	onReceive := func(_ string, _ byte, _ []byte) {}
 	onError := func(_ any) {}
 
 	// create client conn with two channels
@@ -496,7 +496,7 @@ func TestMConnectionReadErrorLongMessage(t *testing.T) {
 	defer mconnClient.Stop() //nolint:errcheck // ignore for tests
 	defer mconnServer.Stop() //nolint:errcheck // ignore for tests
 
-	mconnServer.onReceive = func(_ byte, _ []byte) {
+	mconnServer.onReceive = func(_ string, _ byte, _ []byte) {
 		chOnRcv <- struct{}{}
 	}
 
@@ -505,6 +505,7 @@ func TestMConnectionReadErrorLongMessage(t *testing.T) {
 
 	// send msg that's just right
 	packet := tmp2p.PacketMsg{
+		ChainID:   "test-chain",
 		ChannelID: 0x01,
 		EOF:       true,
 		Data:      make([]byte, mconnClient.config.MaxPacketMsgPayloadSize),
@@ -516,6 +517,7 @@ func TestMConnectionReadErrorLongMessage(t *testing.T) {
 
 	// send msg that's too long
 	packet = tmp2p.PacketMsg{
+		ChainID:   "test-chain",
 		ChannelID: 0x01,
 		EOF:       true,
 		Data:      make([]byte, mconnClient.config.MaxPacketMsgPayloadSize+100),
@@ -574,7 +576,7 @@ func TestConnVectors(t *testing.T) {
 	}{
 		{"PacketPing", &tmp2p.PacketPing{}, "0a00"},
 		{"PacketPong", &tmp2p.PacketPong{}, "1200"},
-		{"PacketMsg", &tmp2p.PacketMsg{ChannelID: 1, EOF: false, Data: []byte("data transmitted over the wire")}, "1a2208011a1e64617461207472616e736d6974746564206f766572207468652077697265"},
+		{"PacketMsg", &tmp2p.PacketMsg{ChainID: "test-chain", ChannelID: 1, EOF: false, Data: []byte("data transmitted over the wire")}, "1a2208011a1e64617461207472616e736d6974746564206f766572207468652077697265"},
 	}
 
 	for _, tc := range testCases {
@@ -593,7 +595,7 @@ func TestMConnectionChannelOverflow(t *testing.T) {
 	mconnClient, mconnServer := newClientAndServerConnsForReadErrors(t, chOnErr)
 	t.Cleanup(stopAll(t, mconnClient, mconnServer))
 
-	mconnServer.onReceive = func(_ byte, _ []byte) {
+	mconnServer.onReceive = func(_ string, _ byte, _ []byte) {
 		chOnRcv <- struct{}{}
 	}
 
@@ -601,6 +603,7 @@ func TestMConnectionChannelOverflow(t *testing.T) {
 	protoWriter := protoio.NewDelimitedWriter(client)
 
 	packet := tmp2p.PacketMsg{
+		ChainID:   "test-chain",
 		ChannelID: 0x01,
 		EOF:       true,
 		Data:      []byte(`42`),

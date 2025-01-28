@@ -15,9 +15,10 @@ message PacketPong {}
 // PacketMsg contains data for the specified channel ID. EOF means the message
 // is fully received.
 message PacketMsg {
-  int32 channel_id = 1 [(gogoproto.customname) = "ChannelID"];
-  bool  eof        = 2 [(gogoproto.customname) = "EOF"];
-  bytes data       = 3;
+  string chain_id = 1 [(gogoproto.customname) = "ChainID"];
+  int32 channel_id = 2 [(gogoproto.customname) = "ChannelID"];
+  bool  eof        = 3 [(gogoproto.customname) = "EOF"];
+  bytes data       = 4;
 }
 
 // Packet is an abstract p2p message.

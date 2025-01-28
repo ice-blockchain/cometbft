@@ -80,12 +80,17 @@ func createOutboundPeerAndPerformHandshake(
 	config *config.P2PConfig,
 	mConfig cmtconn.MConnConfig,
 ) (*peer, error) {
-	chDescs := []*cmtconn.ChannelDescriptor{
-		{ID: testCh, Priority: 1},
+	chDescs := map[string][]*cmtconn.ChannelDescriptor{
+		"": []*cmtconn.ChannelDescriptor{{
+			ID:       testCh,
+			Priority: 1,
+		}},
 	}
-	reactorsByCh := map[byte]Reactor{testCh: NewTestReactor(chDescs, true)}
-	msgTypeByChID := map[byte]proto.Message{
-		testCh: &p2p.Message{},
+	reactorsByCh := map[string]map[byte]Reactor{
+		"": {testCh: NewTestReactor(chDescs[""], true)},
+	}
+	msgTypeByChID := map[string]map[byte]proto.Message{
+		"": {testCh: &p2p.Message{}},
 	}
 	pk := ed25519.GenPrivKey()
 	pc, err := testOutboundPeerConn(addr, config, false, pk)

@@ -73,10 +73,10 @@ type Switch struct {
 	service.BaseService
 
 	config        *config.P2PConfig
-	reactors      map[string]Reactor
-	chDescs       []*conn.ChannelDescriptor
-	reactorsByCh  map[byte]Reactor
-	msgTypeByChID map[byte]proto.Message
+	reactors      map[string]map[string]Reactor
+	chDescs       map[string][]*conn.ChannelDescriptor
+	reactorsByCh  map[string]map[byte]Reactor
+	msgTypeByChID map[string]map[byte]proto.Message
 	peers         *PeerSet
 	dialing       *cmap.CMap
 	reconnecting  *cmap.CMap
@@ -114,10 +114,10 @@ func NewSwitch(
 ) *Switch {
 	sw := &Switch{
 		config:               cfg,
-		reactors:             make(map[string]Reactor),
-		chDescs:              make([]*conn.ChannelDescriptor, 0),
-		reactorsByCh:         make(map[byte]Reactor),
-		msgTypeByChID:        make(map[byte]proto.Message),
+		reactors:             make(map[string]map[string]Reactor),
+		chDescs:              make(map[string][]*conn.ChannelDescriptor),
+		reactorsByCh:         make(map[string]map[byte]Reactor),
+		msgTypeByChID:        make(map[string]map[byte]proto.Message),
 		peers:                NewPeerSet(),
 		dialing:              cmap.NewCMap(),
 		reconnecting:         cmap.NewCMap(),
@@ -127,6 +127,11 @@ func NewSwitch(
 		persistentPeersAddrs: make([]*NetAddress, 0),
 		unconditionalPeerIDs: make(map[ID]struct{}),
 	}
+
+	sw.reactors[""] = make(map[string]Reactor)
+	sw.chDescs[""] = make([]*conn.ChannelDescriptor, 0)
+	sw.reactorsByCh[""] = make(map[byte]Reactor)
+	sw.msgTypeByChID[""] = make(map[byte]proto.Message)
 
 	// Ensure we have a completely undeterministic PRNG.
 	sw.rng = rand.NewRand()
@@ -160,35 +165,52 @@ func WithMetrics(metrics *Metrics) SwitchOption {
 
 // AddReactor adds the given reactor to the switch.
 // NOTE: Not goroutine safe.
-func (sw *Switch) AddReactor(name string, reactor Reactor) Reactor {
+func (sw *Switch) AddReactor(chainID string, name string, reactor Reactor) Reactor {
+	if _, ok := sw.reactors[chainID]; !ok {
+		sw.reactors[chainID] = make(map[string]Reactor)
+	}
+	if _, ok := sw.chDescs[chainID]; !ok {
+		sw.chDescs[chainID] = make([]*conn.ChannelDescriptor, 0)
+	}
+	if _, ok := sw.reactorsByCh[chainID]; !ok {
+		sw.reactorsByCh[chainID] = make(map[byte]Reactor)
+	}
+	if _, ok := sw.msgTypeByChID[chainID]; !ok {
+		sw.msgTypeByChID[chainID] = make(map[byte]proto.Message)
+	}
+
 	for _, chDesc := range reactor.GetChannels() {
 		chID := chDesc.ID
 		// No two reactors can share the same channel.
-		if sw.reactorsByCh[chID] != nil {
-			panic(fmt.Sprintf("Channel %X has multiple reactors %v & %v", chID, sw.reactorsByCh[chID], reactor))
+		if sw.reactorsByCh[chainID][chID] != nil {
+			panic(fmt.Sprintf("Channel %X for ChainID %s has multiple reactors %v & %v",
+				chID, chainID,
+				sw.reactorsByCh[chainID][chID], reactor,
+			))
 		}
-		sw.chDescs = append(sw.chDescs, chDesc)
-		sw.reactorsByCh[chID] = reactor
-		sw.msgTypeByChID[chID] = chDesc.MessageType
+
+		sw.chDescs[chainID] = append(sw.chDescs[chainID], chDesc)
+		sw.reactorsByCh[chainID][chID] = reactor
+		sw.msgTypeByChID[chainID][chID] = chDesc.MessageType
 	}
-	sw.reactors[name] = reactor
+	sw.reactors[chainID][name] = reactor
 	reactor.SetSwitch(sw)
 	return reactor
 }
 
 // RemoveReactor removes the given Reactor from the Switch.
 // NOTE: Not goroutine safe.
-func (sw *Switch) RemoveReactor(name string, reactor Reactor) {
+func (sw *Switch) RemoveReactor(chainID string, name string, reactor Reactor) {
 	for _, chDesc := range reactor.GetChannels() {
 		// remove channel description
-		for i := 0; i < len(sw.chDescs); i++ {
-			if chDesc.ID == sw.chDescs[i].ID {
-				sw.chDescs = append(sw.chDescs[:i], sw.chDescs[i+1:]...)
+		for i := 0; i < len(sw.chDescs[chainID]); i++ {
+			if chDesc.ID == sw.chDescs[chainID][i].ID {
+				sw.chDescs[chainID] = append(sw.chDescs[chainID][:i], sw.chDescs[chainID][i+1:]...)
 				break
 			}
 		}
-		delete(sw.reactorsByCh, chDesc.ID)
-		delete(sw.msgTypeByChID, chDesc.ID)
+		delete(sw.reactorsByCh[chainID], chDesc.ID)
+		delete(sw.msgTypeByChID[chainID], chDesc.ID)
 	}
 	delete(sw.reactors, name)
 	reactor.SetSwitch(nil)
@@ -196,14 +218,14 @@ func (sw *Switch) RemoveReactor(name string, reactor Reactor) {
 
 // Reactors returns a map of reactors registered on the switch.
 // NOTE: Not goroutine safe.
-func (sw *Switch) Reactors() map[string]Reactor {
-	return sw.reactors
+func (sw *Switch) Reactors(chainID string) map[string]Reactor {
+	return sw.reactors[chainID]
 }
 
 // Reactor returns the reactor with the given name.
 // NOTE: Not goroutine safe.
-func (sw *Switch) Reactor(name string) Reactor {
-	return sw.reactors[name]
+func (sw *Switch) Reactor(chainID string, name string) Reactor {
+	return sw.reactors[chainID][name]
 }
 
 // SetNodeInfo sets the switch's NodeInfo for checking compatibility and handshaking with other nodes.
@@ -251,10 +273,12 @@ func (sw *Switch) Transport() *MultiplexTransport {
 // OnStart implements BaseService. It starts all the reactors and peers.
 func (sw *Switch) OnStart() error {
 	// Start reactors
-	for _, reactor := range sw.reactors {
-		if !reactor.IsRunning() {
-			if err := reactor.Start(); err != nil {
-				return fmt.Errorf("failed to start %v: %w", reactor, err)
+	for _, reactors := range sw.reactors {
+		for _, reactor := range reactors {
+			if !reactor.IsRunning() {
+				if err := reactor.Start(); err != nil {
+					return fmt.Errorf("failed to start %v: %w", reactor, err)
+				}
 			}
 		}
 	}
@@ -274,9 +298,11 @@ func (sw *Switch) OnStop() {
 
 	// Stop reactors
 	sw.Logger.Debug("Switch: Stopping reactors")
-	for _, reactor := range sw.reactors {
-		if err := reactor.Stop(); err != nil {
-			sw.Logger.Error("error while stopped reactor", "reactor", reactor, "err", err)
+	for _, reactors := range sw.reactors {
+		for _, reactor := range reactors {
+			if err := reactor.Stop(); err != nil {
+				sw.Logger.Error("error while stopped reactor", "reactor", reactor, "err", err)
+			}
 		}
 	}
 }
@@ -382,8 +408,10 @@ func (sw *Switch) stopAndRemovePeer(peer Peer, reason any) {
 	}
 
 	sw.transport.Cleanup(peer)
-	for _, reactor := range sw.reactors {
-		reactor.RemovePeer(peer, reason)
+	for _, reactors := range sw.reactors {
+		for _, reactor := range reactors {
+			reactor.RemovePeer(peer, reason)
+		}
 	}
 
 	// Removing a peer should go last to avoid a situation where a peer
@@ -839,8 +867,10 @@ func (sw *Switch) addPeer(p Peer) error {
 	}
 
 	// Add some data to the peer, which is required by reactors.
-	for _, reactor := range sw.reactors {
-		p = reactor.InitPeer(p)
+	for _, reactors := range sw.reactors {
+		for _, reactor := range reactors {
+			p = reactor.InitPeer(p)
+		}
 	}
 
 	// Start the peer's send/recv routines.
@@ -867,8 +897,10 @@ func (sw *Switch) addPeer(p Peer) error {
 	sw.metrics.Peers.Add(float64(1))
 
 	// Start all the reactor protocols on the peer.
-	for _, reactor := range sw.reactors {
-		reactor.AddPeer(p)
+	for _, reactors := range sw.reactors {
+		for _, reactor := range reactors {
+			reactor.AddPeer(p)
+		}
 	}
 
 	sw.Logger.Debug("Added peer", "peer", p)
