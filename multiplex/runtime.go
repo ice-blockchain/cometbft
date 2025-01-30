@@ -552,11 +552,7 @@ func (reactor *Reactor) MakeNetworkConfigOverwrite(
 	chainID ExtendedChainID,
 ) (*config.Config, error) {
 	// The network is new, so we open ports after all running networks.
-	nextNodeIdx := len(reactor.networks)
-
-	// We shall start the network node using next available port
-	nodeP2PPort := int(reactor.nodeConfig.P2PStartPort) + nextNodeIdx
-	nodeRPCPort := int(reactor.nodeConfig.RPCStartPort) + nextNodeIdx
+	// nextNodeIdx := len(reactor.networks)
 
 	// Create a config overwrite without using the ChainRegistry
 	// We only update the ChainRegistry after initializing the network.
@@ -565,8 +561,7 @@ func (reactor *Reactor) MakeNetworkConfigOverwrite(
 		chainID.String(),
 		"", // empty seed nodes (new network)
 		config.DefaultStateSyncConfig(),
-		nodeP2PPort,
-		nodeRPCPort,
+		int(reactor.nodeConfig.DiscoveryPort),
 	)
 	if err != nil {
 		return nil, err

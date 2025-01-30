@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strconv"
 	"testing"
 
 	dbm "github.com/cometbft/cometbft-db"
@@ -244,13 +243,8 @@ func TestMultiplexRuntimeMakeNetworkConfigOverwrite(t *testing.T) {
 	assert.NoError(t, err, "should create network config overwrite")
 	assert.NotNil(t, actualCfgOverwrite)
 
-	assert.NotEqual(t, testConfig.P2P.ListenAddress, actualCfgOverwrite.P2P.ListenAddress)
-	assert.NotEqual(t, testConfig.RPC.ListenAddress, actualCfgOverwrite.RPC.ListenAddress)
-
-	expectedP2PPort := ":" + strconv.Itoa(int(testConfig.P2PStartPort)+numChains)
-	expectedRPCPort := ":" + strconv.Itoa(int(testConfig.RPCStartPort)+numChains)
-	assert.Contains(t, actualCfgOverwrite.P2P.ListenAddress, expectedP2PPort)
-	assert.Contains(t, actualCfgOverwrite.RPC.ListenAddress, expectedRPCPort)
+	assert.Equal(t, testConfig.P2P.ListenAddress, actualCfgOverwrite.P2P.ListenAddress)
+	assert.Equal(t, testConfig.RPC.ListenAddress, actualCfgOverwrite.RPC.ListenAddress)
 
 	perUserFolder := "/" + testAddress + "/"
 	assert.Contains(t, actualCfgOverwrite.Consensus.WalPath, perUserFolder)
@@ -389,7 +383,7 @@ func TestMultiplexRuntimeInjectNewNetwork(t *testing.T) {
 	// Initialize and START the nodes multiplex
 	// For debug, change the logger to cmtlog.TestingLogger()
 	globalCfg, _,
-		testReactor := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger())
+		testReactor := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), false) // startServers=false
 
 	// Shutdown routine
 	defer func() {
@@ -422,7 +416,7 @@ func TestMultiplexRuntimeInjectNewNetworkCallsAllocateNetwork(t *testing.T) {
 	// Initialize and START the nodes multiplex
 	// For debug, change the logger to cmtlog.TestingLogger()
 	globalCfg, _,
-		testReactor := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger())
+		testReactor := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), false) // startServers=false
 
 	// Shutdown routine
 	defer func() {
@@ -486,7 +480,7 @@ func TestMultiplexRuntimeInjectNewNetworkCallsInjectStateMachine(t *testing.T) {
 	// Initialize and START the nodes multiplex
 	// For debug, change the logger to cmtlog.TestingLogger()
 	globalCfg, _,
-		testReactor := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger())
+		testReactor := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), false) // startServers=false
 
 	// Shutdown routine
 	defer func() {
@@ -531,7 +525,7 @@ func TestMultiplexRuntimeInjectNewNetworkCallsRegisterNetwork(t *testing.T) {
 	// Initialize and START the nodes multiplex
 	// For debug, change the logger to cmtlog.TestingLogger()
 	globalCfg, _,
-		testReactor := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger())
+		testReactor := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), false) // startServers=false
 
 	// Shutdown routine
 	defer func() {
@@ -563,7 +557,7 @@ func TestMultiplexRuntimeInjectNewRuntime(t *testing.T) {
 	// Initialize and START the nodes multiplex
 	// For debug, change the logger to cmtlog.TestingLogger()
 	globalCfg, _,
-		testReactor := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger())
+		testReactor := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), false) // startServers=false
 
 	// Shutdown routine
 	defer func() {
@@ -596,7 +590,7 @@ func ResetTestMultiplexRuntime(tb testing.TB, numChains int) (string, *config.Co
 
 	nodeCfg := config.TestConfig()
 	nodeCfg.SetRoot(rootDir)
-	nodeCfg.MultiplexConfig = makeRandomMultiplexConfig(tb, numChains)
+	nodeCfg.MultiplexConfig = makeRandomMultiplexConfig(tb, numChains, 30001)
 
 	// Create a test reactor
 	testReactor := makeTestReactor(tb, nodeCfg)

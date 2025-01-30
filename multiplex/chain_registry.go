@@ -90,7 +90,7 @@ func (r *singletonChainRegistry) AddChain(
 	// Append to list of available ChainID
 	r.ReplicatedChains = append(r.ReplicatedChains, chainID)
 	r.ChainSeeds[chainID] = ""
-	r.SyncConfig[chainID] = config.DefaultStateSyncConfig()
+	// r.SyncConfig[chainID] = config.DefaultStateSyncConfig()
 
 	// Also append to user mapped ChainID
 	if _, ok := r.userChains[userAddress]; !ok {
@@ -124,13 +124,14 @@ func (r *singletonChainRegistry) GetStateSyncConfig(
 	chainID string,
 ) (*config.StateSyncConfig, error) {
 	// Contains the default minimal state-sync config
-	conf := config.DefaultStateSyncConfig()
+	// conf := config.DefaultStateSyncConfig()
 
-	if _, ok := r.SyncConfig[chainID]; !ok {
-		return conf, fmt.Errorf("could not find state-sync config for ChainID %s", chainID)
-	}
+	// if _, ok := r.SyncConfig[chainID]; !ok {
+	// 	return conf, fmt.Errorf("could not find state-sync config for ChainID %s", chainID)
+	// }
 
-	return r.SyncConfig[chainID], nil
+	// return r.SyncConfig[chainID], nil
+	return config.DefaultStateSyncConfig(), nil
 }
 
 // GetSeeds returns a comma-separated list of seed nodes using the format `id@host:port`
@@ -221,7 +222,6 @@ func NewChainRegistry(conf *config.MultiplexConfig, options ...func(ChainRegistr
 	// of parsing the [config.MultiplexConfig] configuration object.
 	cacheableChainRegistry := sync.OnceValue(func() returnInstanceWithError {
 		registry := &singletonChainRegistry{}
-		registry.SyncConfig = map[string]*config.StateSyncConfig{}
 		registry.ChainSeeds = map[string]string{}
 		registry.userChains = map[string][]string{}
 		registry.ReplicatedChains = []string{}
@@ -234,11 +234,6 @@ func NewChainRegistry(conf *config.MultiplexConfig, options ...func(ChainRegistr
 		// Copy seed nodes and map to ChainID
 		for chainID, seedNodes := range conf.ChainSeeds {
 			registry.ChainSeeds[chainID] = seedNodes
-		}
-
-		// Copy state-sync config and map to ChainID
-		for chainID, syncConfig := range conf.SyncConfig {
-			registry.SyncConfig[chainID] = syncConfig
 		}
 
 		// Copy user addresses and ChainIDs

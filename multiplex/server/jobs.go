@@ -26,7 +26,7 @@ type Jobs struct {
 // A [StatusNotifier] instance contains a channel used to transmit errors.
 type NodeReplRequestFn func(
 	context.Context,
-	[]RelayAddress,
+	[]*RelayAddress,
 	string,
 	client.Notifier,
 )
@@ -39,7 +39,7 @@ type NodeReplRequestFn func(
 // are pushed when a new network is ready (or is now known through relay).
 type NetworksCreatorFn func(
 	context.Context,
-	map[string][]RelayAddress,
+	map[string][]*RelayAddress,
 	[]string,
 	client.Notifier,
 	chan<- string, // newChainReadyCh
@@ -54,7 +54,7 @@ type NetworksCreatorFn func(
 // least 50%+1 of the healthy (currently active) relays.
 type RelaysBroadcastFn func(
 	context.Context,
-	map[string][]RelayAddress,
+	map[string][]*RelayAddress,
 	string,
 	[]client.Transaction,
 	client.Notifier,

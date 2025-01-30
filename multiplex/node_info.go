@@ -70,8 +70,6 @@ type MultiNetworkNodeInfo struct {
 	// Replication configuration
 	Networks         []string               `json:"networks"` // contains ChainIDs
 	ProtocolVersions []ChainProtocolVersion `json:"protocol_versions"`
-	ListenAddrs      []ChainListenAddr      `json:"listen_addrs"` // accepting incoming
-	RPCAddresses     []ChainListenAddr      `json:"rpc_addrs"`    // accepting RPC
 
 	// Authenticate
 	// TODO: replace with NetAddress
@@ -102,8 +100,6 @@ func NewMultiNetworkNodeInfo(
 	return &MultiNetworkNodeInfo{
 		Networks:         []string{},
 		ProtocolVersions: []ChainProtocolVersion{},
-		ListenAddrs:      []ChainListenAddr{},
-		RPCAddresses:     []ChainListenAddr{},
 		DefaultNodeID:    nodeKey.ID(),
 		Version:          nodeCfg.Version,
 		Moniker:          nodeCfg.Moniker,
@@ -136,17 +132,12 @@ func (info MultiNetworkNodeInfo) GetNodeInfo(chainID string) p2p.DefaultNodeInfo
 		return n == chainID
 	})
 
-	laddrPos := slices.IndexFunc(info.ListenAddrs, func(a ChainListenAddr) bool {
-		return a.ChainID == chainID
-	})
-
 	// Not finding a protocol version, network or listen address should never happen
-	if versionPos < 0 || networkPos < 0 || laddrPos < 0 {
-		panic(fmt.Sprintf("could not determine version and listen address for ChainID %s", chainID)) //nolint:perfsprint
+	if versionPos < 0 || networkPos < 0 {
+		panic(fmt.Sprintf("could not determine version for ChainID %s", chainID)) //nolint:perfsprint
 	}
 
 	protocolVersion := info.ProtocolVersions[versionPos]
-	laddr := info.ListenAddrs[laddrPos]
 
 	nodeInfo := p2p.DefaultNodeInfo{
 		ProtocolVersion: p2p.NewProtocolVersion(
@@ -170,7 +161,7 @@ func (info MultiNetworkNodeInfo) GetNodeInfo(chainID string) p2p.DefaultNodeInfo
 		Other:   info.Other,
 	}
 
-	nodeInfo.ListenAddr = laddr.ListenAddr
+	nodeInfo.ListenAddr = info.ListenAddr
 	err := nodeInfo.Validate()
 	if err != nil {
 		panic(fmt.Errorf("could not validate p2p node info: %w", err))
@@ -186,16 +177,10 @@ func (info MultiNetworkNodeInfo) GetNodeInfo(chainID string) p2p.DefaultNodeInfo
 func (info MultiNetworkNodeInfo) Validate() error {
 	// ID is already validated.
 
-	// Validate all P2P listen addresses
+	// Validate P2P listen address
 	if len(info.ListenAddr) > 0 && info.ListenAddr != p2p.EmptyNetAddress {
 		if _, err := p2p.NewNetAddressString(p2p.IDAddressString(info.ID(), info.ListenAddr)); err != nil {
 			return err
-		}
-		for _, laddr := range info.ListenAddrs {
-			_, err := p2p.NewNetAddressString(p2p.IDAddressString(info.ID(), laddr.ListenAddr))
-			if err != nil {
-				return err
-			}
 		}
 	}
 
@@ -238,14 +223,6 @@ func (info MultiNetworkNodeInfo) Validate() error {
 	rpcAddr := info.Other.RPCAddress
 	if len(rpcAddr) > 0 && (!cmtstrings.IsASCIIText(rpcAddr) || cmtstrings.ASCIITrim(rpcAddr) == "") {
 		return fmt.Errorf("info.Other.RPCAddress=%v must be valid ASCII text without tabs", rpcAddr)
-	}
-	for _, chainRPC := range info.RPCAddresses {
-		rpcAddr = chainRPC.ListenAddr
-
-		// TODO: Should we be more strict about address formats?
-		if len(rpcAddr) > 0 && (!cmtstrings.IsASCIIText(rpcAddr) || cmtstrings.ASCIITrim(rpcAddr) == "") {
-			return fmt.Errorf("info.Other.RPCAddress=%v must be valid ASCII text without tabs", rpcAddr)
-		}
 	}
 
 	return nil
@@ -351,8 +328,6 @@ func (info MultiNetworkNodeInfo) ToProto() *mxp2p.MultiNetworkNodeInfo {
 	dni := new(mxp2p.MultiNetworkNodeInfo)
 	dni.Networks = make([]string, numReplicatedChains)
 	dni.ProtocolVersions = make([]*mxp2p.ChainProtocolVersion, numReplicatedChains)
-	dni.ListenAddrs = make([]*mxp2p.ChainListenAddr, numReplicatedChains)
-	dni.RPCAddresses = make([]*mxp2p.ChainListenAddr, numReplicatedChains)
 
 	for i, userChainID := range info.Networks {
 		versionPos := slices.IndexFunc(info.ProtocolVersions, func(v ChainProtocolVersion) bool {
@@ -363,22 +338,12 @@ func (info MultiNetworkNodeInfo) ToProto() *mxp2p.MultiNetworkNodeInfo {
 			return n == userChainID
 		})
 
-		laddrPos := slices.IndexFunc(info.ListenAddrs, func(a ChainListenAddr) bool {
-			return a.ChainID == userChainID
-		})
-
-		rpcAddrPos := slices.IndexFunc(info.RPCAddresses, func(a ChainListenAddr) bool {
-			return a.ChainID == userChainID
-		})
-
 		// Not being able to find a protocol version or network should never happen
-		if versionPos < 0 || networkPos < 0 || laddrPos < 0 {
-			panic(fmt.Sprintf("could not determine version and listen address for ChainID %s", userChainID)) //nolint:perfsprint
+		if versionPos < 0 || networkPos < 0 {
+			panic(fmt.Sprintf("could not determine version for ChainID %s", userChainID)) //nolint:perfsprint
 		}
 
 		protocolVersion := info.ProtocolVersions[versionPos]
-		laddr := info.ListenAddrs[laddrPos]
-		rpcAddr := info.RPCAddresses[rpcAddrPos]
 
 		dni.Networks[i] = userChainID
 
@@ -389,16 +354,6 @@ func (info MultiNetworkNodeInfo) ToProto() *mxp2p.MultiNetworkNodeInfo {
 				Block: protocolVersion.Block,
 				App:   protocolVersion.App,
 			},
-		}
-
-		dni.ListenAddrs[i] = &mxp2p.ChainListenAddr{
-			ChainID:    userChainID,
-			ListenAddr: laddr.ListenAddr,
-		}
-
-		dni.RPCAddresses[i] = &mxp2p.ChainListenAddr{
-			ChainID:    userChainID,
-			ListenAddr: rpcAddr.ListenAddr,
 		}
 	}
 
@@ -422,8 +377,6 @@ func MultiNetworkNodeInfoFromProto(pb *mxp2p.MultiNetworkNodeInfo) (MultiNetwork
 
 	networks := make([]string, len(pb.Networks))
 	protocolVersions := make([]ChainProtocolVersion, len(pb.ProtocolVersions))
-	listenAddrs := make([]ChainListenAddr, len(pb.ListenAddrs))
-	rpcAddresses := make([]ChainListenAddr, len(pb.RPCAddresses))
 
 	copy(networks, pb.Networks)
 
@@ -436,25 +389,9 @@ func MultiNetworkNodeInfoFromProto(pb *mxp2p.MultiNetworkNodeInfo) (MultiNetwork
 		}
 	}
 
-	for i, laddr := range pb.ListenAddrs {
-		listenAddrs[i] = ChainListenAddr{
-			ChainID:    laddr.ChainID,
-			ListenAddr: laddr.ListenAddr,
-		}
-	}
-
-	for i, raddr := range pb.RPCAddresses {
-		rpcAddresses[i] = ChainListenAddr{
-			ChainID:    raddr.ChainID,
-			ListenAddr: raddr.ListenAddr,
-		}
-	}
-
 	dni := MultiNetworkNodeInfo{
 		Networks:         networks,
 		ProtocolVersions: protocolVersions,
-		ListenAddrs:      listenAddrs,
-		RPCAddresses:     rpcAddresses,
 		DefaultNodeID:    p2p.ID(pb.DefaultNodeID),
 		ListenAddr:       pb.ListenAddr,
 		Version:          pb.Version,

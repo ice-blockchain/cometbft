@@ -9,7 +9,6 @@ import (
 	"github.com/ice-blockchain/cometbft/libs/service"
 	mempl "github.com/ice-blockchain/cometbft/mempool"
 	"github.com/ice-blockchain/cometbft/node"
-	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/p2p/pex"
 	sm "github.com/ice-blockchain/cometbft/state"
 	"github.com/ice-blockchain/cometbft/state/txindex"
@@ -42,13 +41,15 @@ func (reactor *Reactor) createMultiplexNodesWithServices(
 	configProvider := reactor.GetInstanceProvider(InstanceKeyConfig)
 	statesProvider := reactor.GetInstanceProvider(InstanceKeyState)
 	privvalProvider := reactor.GetInstanceProvider(InstanceKeyPrivValidator)
-	switchProvider := reactor.GetInstanceProvider(InstanceKeyP2PSwitch)
-	transportProvider := reactor.GetInstanceProvider(InstanceKeyP2PTransport)
+	// switchProvider := reactor.GetInstanceProvider(InstanceKeyP2PSwitch)
+	// transportProvider := reactor.GetInstanceProvider(InstanceKeyP2PTransport)
 	stateStoreProvider := reactor.GetInstanceProvider(InstanceKeyStateStore)
 	blockStoreProvider := reactor.GetInstanceProvider(InstanceKeyBlockStore)
 
 	// Allocate return objects
 	nodesMultiplex := MultiplexMap[*node.Node]{}
+	eventSwitch := reactor.eventSwitch
+	p2pTransport := reactor.transport
 
 	// We iterate through an ordered list of known networks to create
 	// one instance of [node.Node] for each replicated chain.
@@ -61,8 +62,8 @@ func (reactor *Reactor) createMultiplexNodesWithServices(
 		privValidator := privvalProvider(chainID).(types.PrivValidator)
 
 		// P2P
-		eventSwitch := switchProvider(chainID).(*p2p.Switch)
-		p2pTransport := transportProvider(chainID).(*p2p.MultiplexTransport)
+		// eventSwitch := switchProvider(chainID).(*p2p.Switch)
+		// p2pTransport := transportProvider(chainID).(*p2p.MultiplexTransport)
 		pexAddrBook := eventSwitch.GetAddrBook().(pex.AddrBook)
 
 		// Consensus

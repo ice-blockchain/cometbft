@@ -15,9 +15,9 @@ of an individual consensus instance.
 The state store structure, that is retrieved from the reactor, using
 the [GetStateStore] method, is expected to satisfy the [state.Store] interface.
 
-The SnapsApp application enables consensus events mapping for the client
-implementation by running specific hooks at different stages of the consensus
-instance, including: `CheckTx`, `PrepareProposal` and `Commit`, amongst others.
+Note that given a non-nil [client.Acceptor] instance on the app, transaction
+batches will be forwarded to the acceptor's `AcceptTx()` method. We do this
+to ensure that blocks replay and block-sync always persist all batches.
 
 # ABCI
 

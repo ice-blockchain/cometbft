@@ -53,7 +53,7 @@ func TestMultiplexBackendRoutinesNodeReplRequest(t *testing.T) {
 		servers[i].MustStart()
 	}
 
-	testRelayAddrs := []server.RelayAddress{}
+	testRelayAddrs := []*server.RelayAddress{}
 	for i := 1; i < len(servers); i++ {
 		testReactor := servers[i].GetReactor()
 		testNodeID := string(testReactor.GetNodeKey().ID())
@@ -62,16 +62,41 @@ func TestMultiplexBackendRoutinesNodeReplRequest(t *testing.T) {
 		testRelayAddr, err := server.NewRelayAddress(testNodeID + "@127.0.0.1:" + testBroadcastPort)
 		require.NoError(t, err)
 
-		testRelayAddrs = append(testRelayAddrs, *testRelayAddr)
+		testRelayAddrs = append(testRelayAddrs, testRelayAddr)
 	}
 
+	// ReplRequest preparations (must dial)
 	chainRelays,
-		errorRelays := servers[0].FetchRelayAddresses(testRelayAddrs)
+		errorRelays := servers[0].GetRelaysByNetwork(testRelayAddrs)
 	require.Len(t, errorRelays, 0) // NO error!
 	require.Len(t, chainRelays, numChains)
 
 	useChainID := servers[0].GetReactor().GetNetworks()[0]
 	require.Contains(t, chainRelays, useChainID)
+
+	sourceSwitch := servers[0].EventSwitch()
+	sourceReactor := servers[0].GetReactor()
+	sourceRelayID := string(sourceReactor.GetNodeKey().ID())
+	for i := 1; i < len(servers); i++ {
+		recipientSwitch := servers[i].EventSwitch()
+		recipientReactor := servers[i].GetReactor()
+		recipientRelayID := string(recipientReactor.GetNodeKey().ID())
+
+		sourceSwitch.AddUnconditionalPeerIDs([]string{recipientRelayID})
+		recipientSwitch.AddUnconditionalPeerIDs([]string{sourceRelayID})
+
+		// Relay 1 communicates with Relay X
+		testBroadcastPort := strconv.Itoa(50001 + (i * 100)) // 50101, 50201, etc.
+		testRelayAddr, err := server.NewRelayAddress(
+			recipientRelayID + "@127.0.0.1:" + testBroadcastPort,
+		)
+		require.NoError(t, err)
+
+		discoverErr := servers[0].CheckDialCompatibleRelay(
+			testRelayAddr,
+		)
+		require.NoError(t, discoverErr) // NO error!
+	}
 
 	// Act - Relay 1 asks Relay 2 AND Relay 3 to replicate chain x
 	nodeReplRequestFn := servers[0].DefaultNodeReplRequestRoutine()

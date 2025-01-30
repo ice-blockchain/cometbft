@@ -102,7 +102,6 @@ func prepareMultiplexReactor(t *testing.T) (
 
 	conf := config.TestConfig()
 	conf.BaseConfig = config.MultiplexTestBaseConfig(
-		map[string]*config.StateSyncConfig{},
 		map[string]string{},
 		map[string][]string{"CC8E6555A3F401FF61DA098F94D325E7041BC43A": {
 			testChainID,

@@ -105,9 +105,11 @@ type Reactor struct {
 	configsPaths MultiplexFS
 	acceptorImpl client.Acceptor
 
-	// Networks information
-	networks []string
-	nodeInfo *MultiNetworkNodeInfo
+	// Networking layer
+	networks    []string
+	nodeInfo    *MultiNetworkNodeInfo
+	eventSwitch *p2p.Switch
+	transport   *p2p.MultiplexTransport
 
 	// Services registry is a multiplex map which is searchable by service name
 	// and which contains other multiplex maps where keys are ChainID values.
@@ -153,6 +155,24 @@ func NewReactor(
 	genesisDocsProvider node.GenesisDocProvider,
 	options ...func(*Reactor),
 ) *Reactor {
+	// CometBFT servers share ports amongst networks
+	p2pListenAddr := overwriteListenPort(
+		nodeCfg.P2P.ListenAddress,
+		int(nodeCfg.DiscoveryPort+1), // defaults to 30002
+	)
+	rpcListenAddr := overwriteListenPort(
+		nodeCfg.RPC.ListenAddress,
+		int(nodeCfg.DiscoveryPort+2), // defaults to 30003
+	)
+
+	// Make sure we always refer to the correct listen addresses:
+	// - P2P Discovery Port: discovery_port
+	// - RPC Discovery Port: discovery_port-1
+	// - P2P CometBFT Port:  discovery_port+1
+	// - RPC CometBFT Port:  discovery_port+2
+	nodeCfg.P2P.ListenAddress = p2pListenAddr
+	nodeCfg.RPC.ListenAddress = rpcListenAddr
+
 	reactor := &Reactor{
 		// Provides the ChainRegistry interface
 		chainRegistry: chainRegistry,
@@ -254,6 +274,16 @@ func (reactor *Reactor) GetMultiNetworkNodeInfo() *MultiNetworkNodeInfo {
 // GetNodeKey returns the [p2p.NodeKey] instance.
 func (reactor *Reactor) GetNodeKey() *p2p.NodeKey {
 	return reactor.nodeKey
+}
+
+// GetEventSwitch returns the [p2p.Switch] instance.
+func (reactor *Reactor) GetEventSwitch() *p2p.Switch {
+	return reactor.eventSwitch
+}
+
+// GetTransport returns the [p2p.MultiplexTransport] instance.
+func (reactor *Reactor) GetTransport() *p2p.MultiplexTransport {
+	return reactor.transport
 }
 
 // GetNetworks returns an ordered slice of ChainID values.
@@ -685,6 +715,15 @@ func (reactor *Reactor) OnStop() {
 			reactor.logger.Error(
 				"Error stopping the ABCI client", "err", err)
 		}
+	}
+
+	// Stop the P2P Discovery Server that is injected
+	if reactor.eventSwitch != nil && reactor.eventSwitch.IsRunning() {
+		if ts := reactor.eventSwitch.Transport(); ts != nil {
+			ts.Close()
+		}
+
+		reactor.eventSwitch.Stop()
 	}
 
 	// Shutdown all registered services atomically
@@ -1140,10 +1179,10 @@ func (r *Reactor) handleChainReplicationRequest(
 
 	// IMPORTANT:
 	// And dial the relay to permit block-sync to start instantly.
-	switchProvider := r.GetInstanceProvider(InstanceKeyP2PSwitch)
-	eventSwitch := switchProvider(req.ChainID).(*p2p.Switch)
+	// switchProvider := r.GetInstanceProvider(InstanceKeyP2PSwitch)
+	// eventSwitch := switchProvider(req.ChainID).(*p2p.Switch)
 	peerAddress := peer.SocketAddr()
-	if err := eventSwitch.DialPeerWithAddress(peerAddress); err != nil {
+	if err := r.eventSwitch.DialPeerWithAddress(peerAddress); err != nil {
 		return fmt.Errorf(
 			"could not dial relay %s: %w", peerAddress.DialString(), err)
 	}

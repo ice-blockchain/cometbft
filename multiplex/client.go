@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/ice-blockchain/cometbft/crypto/tmhash"
 
@@ -75,7 +76,7 @@ func (c MultiplexClient) SetBackend(a server.Backend) {
 // IMPORTANT:
 // It accepts a slice of relays which should be in the format `host:port`.
 // The relays should contain the port associated with the P2P discovery.
-// i.e. with MultiplexConfig.BroadcastPort=1000, it should contain `:1000`.
+// i.e. with MultiplexConfig.DiscoveryPort=1000, it should contain `:1000`.
 //
 // The following steps define a complete broadcast process, in this order:
 //
@@ -108,7 +109,7 @@ func (c MultiplexClient) BroadcastTx(
 	// working with the static multi-port convention for multiplex.
 	//
 	// IMPORTANT: addresses contains the port associated with P2P discovery.
-	addresses := make([]server.RelayAddress, len(relays))
+	addresses := make([]*server.RelayAddress, len(relays))
 	for i, relay := range relays {
 		relayAddr, err := server.NewRelayAddress(relay)
 		if err != nil {
@@ -116,7 +117,7 @@ func (c MultiplexClient) BroadcastTx(
 			return // STOP here
 		}
 
-		addresses[i] = *relayAddr
+		addresses[i] = relayAddr
 	}
 
 	currentBroadcastStep := uint16(1)
@@ -161,12 +162,23 @@ func (c MultiplexClient) BroadcastTx(
 	c.backend.GetLogger().Debug("Fetching exact relay addresses",
 		"num_relays", len(relays))
 
-	// Determine port numbers and correct listen addresses per network.
-	// Note that this also checks for the relays to be up and running.
-	//
-	// IMPORTANT: chainRelays contains the P2P port associated with each network.
-	chainRelays, errorRelays := c.GetBackend().FetchRelayAddresses(addresses)
+	// Determine relay IDs (CometBFT Node ID) and supported networks of each
+	// of the relays and identify potential unhealthy relays.
+	chainRelays, errorRelays := c.GetBackend().GetRelaysByNetwork(addresses)
 	numHealthyRelays := len(relays) - len(errorRelays)
+
+	// Next, we dial remote relays to find out about any incompatibility
+	// before counting the number of failing relays.
+	for _, relayAddr := range addresses {
+		if slices.Contains(errorRelays, string(relayAddr.ID())) {
+			continue
+		}
+
+		// Uses the local P2P switch to dial a remote peer.
+		if err := c.GetBackend().CheckDialCompatibleRelay(relayAddr); err != nil {
+			errorRelays = append(errorRelays, relayAddr.String())
+		}
+	}
 
 	// We must have at least 50%+1 healthy relays, otherwise discard the batch.
 	if len(errorRelays) > maxFailingRelays {
@@ -191,7 +203,6 @@ func (c MultiplexClient) BroadcastTx(
 	// Do we have any unknown networks?
 	if len(mustCreateNetworks) > 0 {
 		// Find networks or create new networks in background
-		// Uses the filtered list of relays (without self).
 		routineNetworksCreator := c.GetBackend().GetRoutines().NetworksCreator
 		go routineNetworksCreator(ctx,
 			chainRelays,
@@ -214,9 +225,9 @@ func (c MultiplexClient) BroadcastTx(
 	// Select a limited number of listeners message updates from
 	// the newChainReadyCh channel. This loop forbids excess networks.
 	//
-	// Waits for createNetworksRoutine to push on newChainReadyCh.
+	// Waits for routineNetworksCreator to push on newChainReadyCh.
 	for i := 0; i < len(mustCreateNetworks); i++ {
-		// The createNetworksRoutine communicates the ChainID on a channel
+		// The routineNetworksCreator communicates the ChainID on a channel
 		// to tell this broadcaster about the readiness of a network state.
 		chainID,
 			waitErr := c.GetBackend().WaitForNextAvailableNetwork(ctx)

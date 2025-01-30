@@ -24,7 +24,11 @@ func TestMultiplexReactorPrepareConsensusInstanceWithReactor(t *testing.T) {
 	rootDir, globalCfg, reactor := ResetTestMultiplexConsensus(t,
 		numChains,
 	)
-	defer os.RemoveAll(rootDir)
+	defer func() {
+		defer os.RemoveAll(rootDir)
+		err := reactor.Stop()
+		assert.NoError(t, err)
+	}()
 
 	// Start the reactor
 	err := reactor.Start()
@@ -59,7 +63,11 @@ func TestMultiplexReactorCreateConsensusInstanceReactors(t *testing.T) {
 	rootDir, globalCfg, reactor := ResetTestMultiplexConsensus(t,
 		numChains,
 	)
-	defer os.RemoveAll(rootDir)
+	defer func() {
+		defer os.RemoveAll(rootDir)
+		err := reactor.Stop()
+		assert.NoError(t, err)
+	}()
 
 	// Start the reactor
 	err := reactor.Start()
@@ -126,7 +134,7 @@ func ResetTestMultiplexConsensus(
 
 	nodeCfg := config.TestConfig()
 	nodeCfg.SetRoot(rootDir)
-	nodeCfg.MultiplexConfig = makeRandomMultiplexConfig(tb, numChains)
+	nodeCfg.MultiplexConfig = makeRandomMultiplexConfig(tb, numChains, 30001)
 	mockGenesisProvider := mockMultiplexGenesisDocProviderFunc(&nodeCfg.MultiplexConfig, numChains)
 
 	// Create a test reactor

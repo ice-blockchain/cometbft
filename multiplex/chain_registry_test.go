@@ -132,7 +132,6 @@ func TestMultiplexChainRegistryNewChainRegistry(t *testing.T) {
 
 	// Should not error given empty chains with "Network" strategy
 	misConf := config.MultiplexTestBaseConfig( // contains ReplicationStrategy("Network")
-		map[string]*config.StateSyncConfig{},
 		map[string]string{},
 		map[string][]string{},
 	)
@@ -140,7 +139,6 @@ func TestMultiplexChainRegistryNewChainRegistry(t *testing.T) {
 	assert.NoError(t, err, "should not error given empty replicated chains")
 
 	minimalConf := config.MultiplexTestBaseConfig(
-		map[string]*config.StateSyncConfig{},
 		map[string]string{},
 		map[string][]string{"CC8E6555A3F401FF61DA098F94D325E7041BC43A": {
 			"mx-chain-CC8E6555A3F401FF61DA098F94D325E7041BC43A-1A63C0E60122F9BB",
@@ -151,11 +149,6 @@ func TestMultiplexChainRegistryNewChainRegistry(t *testing.T) {
 	assert.Len(t, minimalRegistry.GetChains(), 1)
 
 	exampleConf := config.MultiplexTestBaseConfig(
-		map[string]*config.StateSyncConfig{
-			"mx-chain-CC8E6555A3F401FF61DA098F94D325E7041BC43A-1A63C0E60122F9BB": config.DefaultStateSyncConfig(),
-			"mx-chain-CC8E6555A3F401FF61DA098F94D325E7041BC43A-D1ED2B487F2E93CC": config.DefaultStateSyncConfig(),
-			"mx-chain-FF1410CEEB411E55487701C4FEE65AACE7115DC0-79F77E672C1DB0BC": config.DefaultStateSyncConfig(),
-		},
 		map[string]string{
 			"mx-chain-CC8E6555A3F401FF61DA098F94D325E7041BC43A-1A63C0E60122F9BB": "seed1@127.0.0.1:30001",
 			"mx-chain-CC8E6555A3F401FF61DA098F94D325E7041BC43A-D1ED2B487F2E93CC": "seed1@127.0.0.1:30002",
@@ -189,7 +182,7 @@ func TestMultiplexChainRegistryGetStateSyncConfig(t *testing.T) {
 
 	nodeCfg := config.TestConfig()
 	nodeCfg.SetRoot(rootDir)
-	nodeCfg.MultiplexConfig = makeRandomMultiplexConfig(t, 5) // 5 distinct networks
+	nodeCfg.MultiplexConfig = makeRandomMultiplexConfig(t, 5, 30001) // 5 distinct networks
 
 	testChainRegistry, err := mx.NewChainRegistry(&nodeCfg.MultiplexConfig)
 	require.NoError(t, err, "should create chain registry from random multiplex config")
@@ -222,7 +215,7 @@ func TestMultiplexChainRegistryGetSeeds(t *testing.T) {
 
 	nodeCfg := config.TestConfig()
 	nodeCfg.SetRoot(rootDir)
-	nodeCfg.MultiplexConfig = makeRandomMultiplexConfig(t, 5) // 5 distinct networks
+	nodeCfg.MultiplexConfig = makeRandomMultiplexConfig(t, 5, 30001) // 5 distinct networks
 
 	testChainRegistry, err := mx.NewChainRegistry(&nodeCfg.MultiplexConfig)
 	require.NoError(t, err, "should create chain registry from random multiplex config")
@@ -255,7 +248,7 @@ func TestMultiplexChainRegistryGetAddress(t *testing.T) {
 
 	nodeCfg := config.TestConfig()
 	nodeCfg.SetRoot(rootDir)
-	nodeCfg.MultiplexConfig = makeRandomMultiplexConfig(t, 5) // 5 distinct networks
+	nodeCfg.MultiplexConfig = makeRandomMultiplexConfig(t, 5, 30001) // 5 distinct networks
 
 	testChainRegistry, err := mx.NewChainRegistry(&nodeCfg.MultiplexConfig)
 	require.NoError(t, err, "should create chain registry from random multiplex config")
@@ -288,7 +281,7 @@ func TestMultiplexChainRegistryFindChain(t *testing.T) {
 
 	nodeCfg := config.TestConfig()
 	nodeCfg.SetRoot(rootDir)
-	nodeCfg.MultiplexConfig = makeRandomMultiplexConfig(t, 5) // 5 distinct networks
+	nodeCfg.MultiplexConfig = makeRandomMultiplexConfig(t, 5, 30001) // 5 distinct networks
 
 	testChainRegistry, err := mx.NewChainRegistry(&nodeCfg.MultiplexConfig)
 	require.NoError(t, err, "should create chain registry from random multiplex config")
@@ -323,12 +316,11 @@ func makeChainRegistryFromConfig(tb testing.TB, conf config.MultiplexConfig) mx.
 	return chainRegistry
 }
 
-func makeRandomMultiplexConfig(tb testing.TB, numChains int) config.MultiplexConfig {
+func makeRandomMultiplexConfig(tb testing.TB, numChains int, discoveryPort int) config.MultiplexConfig {
 	tb.Helper()
 
 	if numChains == 0 {
 		return config.MultiplexBaseConfig(
-			map[string]*config.StateSyncConfig{},
 			map[string]string{},
 			map[string][]string{},
 		).MultiplexConfig
@@ -337,7 +329,6 @@ func makeRandomMultiplexConfig(tb testing.TB, numChains int) config.MultiplexCon
 	randomChainIDs := make([]string, numChains)
 	randChainSeeds := make(map[string]string, numChains)
 	randUserChains := make(map[string][]string, numChains)
-	stateSyncConfs := make(map[string]*config.StateSyncConfig, numChains)
 
 	for i := 0; i < numChains; i++ {
 		userPubKey := ed25519.GenPrivKey().PubKey()
@@ -356,19 +347,12 @@ func makeRandomMultiplexConfig(tb testing.TB, numChains int) config.MultiplexCon
 
 		randomChainIDs[i] = chainID.String()
 		randChainSeeds[chainID.String()] = string(testSeedNodeID) + "@127.0.0.1:30001"
-		stateSyncConfs[chainID.String()] = config.DefaultStateSyncConfig()
 	}
 
 	return config.MultiplexConfig{
 		Strategy:      mx.NetworkReplicationStrategy(),
-		SyncConfig:    stateSyncConfs,
 		ChainSeeds:    randChainSeeds,
 		UserChains:    randUserChains,
-		P2PStartPort:  30001,
-		RPCStartPort:  40001,
-		BroadcastPort: 50001,
-		SnapshotOptions: map[config.ReplicationStrategy]config.SnapshotOptions{
-			mx.HistoryReplicationStrategy(): config.NewSnapshotOptions(1, 1, 1),
-		},
+		DiscoveryPort: uint16(discoveryPort),
 	}
 }

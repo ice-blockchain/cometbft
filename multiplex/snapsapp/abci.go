@@ -175,9 +175,6 @@ func (app *SnapsApp) PrepareProposal(
 // However, the application is also able to implement optimizations such as
 // executing the entire proposed block immediately.
 //
-// If a panic is detected during execution of an application's ProcessProposal
-// handler, it will be recovered and we will reject the proposal.
-//
 // ProcessProposal implements [abcitypes.Application].
 func (app *SnapsApp) ProcessProposal(
 	ctx context.Context,
@@ -213,8 +210,11 @@ func (app *SnapsApp) ProcessProposal(
 //
 // The finalizeBlockHeights is updated for the relevant chain such that the
 // subsequent Commit() ABCI with the same ChainID may know which *height* is
-// being finalized. This height is used to determine whether a snapshot must
-// be taken or not.
+// being finalized.
+//
+// Note that given a non-nil [client.Acceptor] instance on the app, transaction
+// batches will be forwarded to the acceptor's `AcceptTx()` method. We do this
+// to ensure that blocks replay and block-sync always persist all batches.
 //
 // FinalizeBlock implements [abcitypes.Application].
 func (app *SnapsApp) FinalizeBlock(

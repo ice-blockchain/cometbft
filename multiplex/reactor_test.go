@@ -51,7 +51,7 @@ func TestMultiplexReactorNewReactor(t *testing.T) {
 	nodeKey := makeRandomNodeKey()
 	nodeCfg := config.TestConfig()
 	nodeCfg.SetRoot(rootDir)
-	nodeCfg.MultiplexConfig = makeRandomMultiplexConfig(t, 5) // 5 distinct networks
+	nodeCfg.MultiplexConfig = makeRandomMultiplexConfig(t, 5, 30001) // 5 distinct networks
 
 	chainRegistry, err := mx.NewChainRegistry(&nodeCfg.MultiplexConfig)
 	require.NoError(t, err, "should create chain registry instance")
@@ -105,7 +105,7 @@ func TestMultiplexReactorRegisterService(t *testing.T) {
 
 	nodeCfg := config.TestConfig()
 	nodeCfg.SetRoot(rootDir)
-	nodeCfg.MultiplexConfig = makeRandomMultiplexConfig(t, 5) // 5 distinct networks
+	nodeCfg.MultiplexConfig = makeRandomMultiplexConfig(t, 5, 30001) // 5 distinct networks
 
 	// Create a test reactor
 	reactor := makeTestReactor(t, nodeCfg)
@@ -173,7 +173,7 @@ func TestMultiplexReactorRegisterInstance(t *testing.T) {
 
 	nodeCfg := config.TestConfig()
 	nodeCfg.SetRoot(rootDir)
-	nodeCfg.MultiplexConfig = makeRandomMultiplexConfig(t, 5) // 5 distinct networks
+	nodeCfg.MultiplexConfig = makeRandomMultiplexConfig(t, 5, 30001) // 5 distinct networks
 
 	// Create a test reactor
 	reactor := makeTestReactor(t, nodeCfg)
@@ -214,18 +214,12 @@ func TestMultiplexReactorRegisterInstance(t *testing.T) {
 	assert.NotNil(t, databaseProvider, "should return multiplex map of database instances")
 
 	// Using ORDERED networks because of ports overwrite content test
-	for index, chainID := range reactor.GetNetworks() {
+	for _, chainID := range reactor.GetNetworks() {
 		// 1. Type-assertion to cast back to actual instance
 		perChainCfg := configProvider(chainID).(*config.Config)
 
 		assert.NotNil(t, perChainCfg, "instance provider should return instance")
 		assert.IsType(t, &config.Config{}, perChainCfg)
-
-		// Test that the content is from the right config object
-		expectedP2PPort := int(nodeCfg.P2PStartPort) + index
-		expectedRPCPort := int(nodeCfg.RPCStartPort) + index
-		assert.Contains(t, perChainCfg.P2P.ListenAddress, strconv.Itoa(expectedP2PPort))
-		assert.Contains(t, perChainCfg.RPC.ListenAddress, strconv.Itoa(expectedRPCPort))
 
 		// 2. Also do some asserts about the DB instance stored
 		perChainDB := databaseProvider(chainID).(*mx.ChainDB)
@@ -282,18 +276,12 @@ func TestMultiplexReactorRegisterInstance(t *testing.T) {
 
 	otherDatabaseProvider := reactor.GetInstanceProvider(mx.InstanceKeyDatabaseState)
 	assert.NotNil(t, otherDatabaseProvider, "should return multiplex map of database instances")
-	for index, chainID := range otherReactor.GetNetworks() {
+	for _, chainID := range otherReactor.GetNetworks() {
 		// 1. Type-assertion to cast back to actual instance
 		perChainCfg := otherConfigProvider(chainID).(*config.Config)
 
 		assert.NotNil(t, perChainCfg, "instance provider should return instance")
 		assert.IsType(t, &config.Config{}, perChainCfg)
-
-		// Test that the content is from the right config object
-		expectedP2PPort := int(nodeCfg.P2PStartPort) + index
-		expectedRPCPort := int(nodeCfg.RPCStartPort) + index
-		assert.Contains(t, perChainCfg.P2P.ListenAddress, strconv.Itoa(expectedP2PPort))
-		assert.Contains(t, perChainCfg.RPC.ListenAddress, strconv.Itoa(expectedRPCPort))
 
 		// 2. Also do some asserts about the DB instance stored
 		perChainDB := otherDatabaseProvider(chainID).(*mx.ChainDB)
@@ -354,7 +342,7 @@ func ResetTestMultiplexReactorRuntimeWithInjection(
 	// Initialize and START the nodes multiplex
 	// For debug, change the logger to cmtlog.TestingLogger()
 	globalCfg, _,
-		testReactor := assertStartNodesMultiplex(tb, numChains, customLogger)
+		testReactor := assertStartNodesMultiplex(tb, numChains, customLogger, false) // startServers=false
 
 	// Shutdown routine
 	shutdownRoutine := func() {

@@ -17,53 +17,14 @@ import (
 	"github.com/ice-blockchain/cometbft/p2p/pex"
 )
 
-// CreateTransportSwitch creates a singular [p2p.Switch] attached
-// to a per-network [p2p.MultiplexTransport] instance and attaches
-// a relay's [MultiNetworkNodeInfo] to communicate with it.
-func (reactor *Reactor) CreateTransportSwitch(
-	chainID string,
-	withNodeInfo MultiNetworkNodeInfo,
+func (reactor *Reactor) UpdateNodeInfo(
+	newNodeInfo MultiNetworkNodeInfo,
 ) error {
-	// We just need to create one p2p.Switch per network
-	reactor.multiplexMutex.RLock()
-	defer reactor.multiplexMutex.RUnlock()
-	if _, ok := reactor.multiplexRegistry[InstanceKeyP2PSwitch][chainID]; ok {
-		return nil
+	if reactor.eventSwitch == nil {
+		return fmt.Errorf("invalid state, event switch not yet created")
 	}
 
-	// Prometheus does not allow hyphens in metrics names, it must match
-	// following regexp: [a-zA-Z_:][a-zA-Z0-9_:]*
-	// see also: https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels
-	p2pChainsMetricsId := strings.Join([]string{
-		reactor.nodeConfig.Instrumentation.Namespace,
-		string(reactor.nodeKey.ID()),
-		strings.ReplaceAll(chainID, "-", "_"),
-	}, "_")
-	p2pMetricsProvider := p2p.PrometheusMetrics(p2pChainsMetricsId,
-		"node_id", string(reactor.nodeKey.ID()),
-	)
-
-	// Create a p2p.MultiplexTransport instance with handshake
-	// around a MultiNetworkNodeInfo and using the local node key.
-	mConnConfig := p2p.MConnConfig(reactor.nodeConfig.P2P)
-	chainTransport := p2p.NewMultiplexTransportWithCustomHandshake(
-		reactor.nodeInfo, // local nodeInfo
-		*reactor.nodeKey,
-		mConnConfig,
-		MultiplexTransportHandshake,
-	)
-
-	eventSwitch := p2p.NewSwitch(
-		reactor.nodeConfig.P2P,
-		chainTransport,
-		p2p.WithMetrics(p2pMetricsProvider),
-	)
-	eventSwitch.SetLogger(reactor.logger.With("module", "p2p"))
-	eventSwitch.SetNodeInfo(withNodeInfo)
-	eventSwitch.SetNodeKey(reactor.nodeKey)
-
-	reactor.RegisterInstance(InstanceKeyP2PTransport, chainID, chainTransport)
-	reactor.RegisterInstance(InstanceKeyP2PSwitch, chainID, eventSwitch)
+	reactor.eventSwitch.SetNodeInfo(newNodeInfo)
 	return nil
 }
 
@@ -90,6 +51,34 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 	globalConfig := reactor.GetNodeConfig()
 	p2pLogger := reactor.logger.With("module", "p2p")
 
+	transport := reactor.transport
+	eventSwitch := reactor.eventSwitch
+	if eventSwitch == nil {
+		p2pMetricsId := strings.Join([]string{
+			globalConfig.Instrumentation.Namespace,
+			string(reactor.nodeKey.ID()),
+		}, "_")
+		p2pMetricsProvider := p2p.PrometheusMetrics(p2pMetricsId,
+			"node_id", string(reactor.nodeKey.ID()),
+		)
+
+		mConnConfig := p2p.MConnConfig(reactor.nodeConfig.P2P)
+		transport = p2p.NewMultiplexTransportWithCustomHandshake(
+			reactor.nodeInfo,
+			*reactor.nodeKey,
+			mConnConfig,
+			MultiplexTransportHandshake,
+		)
+		eventSwitch = p2p.NewSwitch(
+			reactor.nodeConfig.P2P,
+			transport,
+			p2p.WithMetrics(p2pMetricsProvider),
+		)
+		eventSwitch.SetLogger(p2pLogger)
+		eventSwitch.SetNodeInfo(reactor.nodeInfo)
+		eventSwitch.SetNodeKey(reactor.nodeKey)
+	}
+
 	// Used to retrieve configuration and state per chain.
 	serviceProvider := reactor.GetServicesProvider()
 	configProvider := reactor.GetInstanceProvider(InstanceKeyConfig)
@@ -103,30 +92,18 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 		// The config overwrite notably contains P2P.Seeds overwrite
 		cfgOverwrite := configProvider(chainID).(*config.Config)
 
-		// Prometheus does not allow hyphens in metrics names, it must match
-		// following regexp: [a-zA-Z_:][a-zA-Z0-9_:]*
-		// see also: https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels
-		p2pChainsMetricsId := strings.Join([]string{
-			globalConfig.Instrumentation.Namespace,
-			string(reactor.nodeKey.ID()),
-			strings.ReplaceAll(chainID, "-", "_"),
-		}, "_")
-		p2pMetricsProvider := p2p.PrometheusMetrics(p2pChainsMetricsId,
-			"node_id", string(reactor.nodeKey.ID()),
-		)
-
 		// 1) Create the p2p transport
 		//
 		// We use a legacy structure [p2p.MultiplexTransport], but inject
 		// a custom TLS handshake implementation with [MultiplexTransportHandshake].
 		var (
-			mConnConfig = p2p.MConnConfig(cfgOverwrite.P2P)
-			transport   = p2p.NewMultiplexTransportWithCustomHandshake(
-				reactor.nodeInfo,
-				*reactor.nodeKey,
-				mConnConfig,
-				MultiplexTransportHandshake,
-			)
+			// mConnConfig = p2p.MConnConfig(cfgOverwrite.P2P)
+			// transport   = p2p.NewMultiplexTransportWithCustomHandshake(
+			// 	reactor.nodeInfo,
+			// 	*reactor.nodeKey,
+			// 	mConnConfig,
+			// 	MultiplexTransportHandshake,
+			// )
 			connFilters        = []p2p.ConnFilterFunc{}
 			persistentPeers    = splitAndTrimEmpty(cfgOverwrite.P2P.PersistentPeers, ",", " ")
 			unconditionalPeers = splitAndTrimEmpty(cfgOverwrite.P2P.UnconditionalPeerIDs, ",", " ")
@@ -136,34 +113,34 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 			connFilters = append(connFilters, p2p.ConnDuplicateIPFilter())
 		}
 
-		p2p.MultiplexTransportConnFilters(connFilters...)(transport)
+		//p2p.MultiplexTransportConnFilters(connFilters...)(transport)
 
 		// Limit the number of incoming connections.
-		max := cfgOverwrite.P2P.MaxNumInboundPeers + len(unconditionalPeers)
-		p2p.MultiplexTransportMaxIncomingConnections(max)(transport)
+		// max := cfgOverwrite.P2P.MaxNumInboundPeers + len(unconditionalPeers)
+		// p2p.MultiplexTransportMaxIncomingConnections(max)(transport)
 
 		// 2) Create the event switch
 		//
 		// Sets the per-network node info and global node key.
-		eventSwitch := p2p.NewSwitch(
-			cfgOverwrite.P2P,
-			transport,
-			p2p.WithMetrics(p2pMetricsProvider),
-		)
-		eventSwitch.SetLogger(p2pLogger)
-		eventSwitch.SetNodeInfo(reactor.nodeInfo)
-		eventSwitch.SetNodeKey(reactor.nodeKey)
+		// eventSwitch := p2p.NewSwitch(
+		// 	cfgOverwrite.P2P,
+		// 	transport,
+		// 	p2p.WithMetrics(p2pMetricsProvider),
+		// )
+		// eventSwitch.SetLogger(p2pLogger)
+		// eventSwitch.SetNodeInfo(reactor.nodeInfo)
+		// eventSwitch.SetNodeKey(reactor.nodeKey)
 
 		// 3) Feed reactors from [CreateConsensusInstanceReactors]
 		//
 		// The event switch contains a pointer to internal module reactors.
-		eventSwitch.AddReactor("MEMPOOL",
+		eventSwitch.AddReactor(chainID, "MEMPOOL",
 			serviceProvider(ServiceKeyMempoolReactor, chainID).(*mempl.Reactor))
-		eventSwitch.AddReactor("BLOCKSYNC",
+		eventSwitch.AddReactor(chainID, "BLOCKSYNC",
 			serviceProvider(ServiceKeyBlockSyncReactor, chainID).(*blocksync.Reactor))
-		eventSwitch.AddReactor("CONSENSUS",
+		eventSwitch.AddReactor(chainID, "CONSENSUS",
 			serviceProvider(ServiceKeyConsensusReactor, chainID).(*cs.Reactor))
-		eventSwitch.AddReactor("EVIDENCE",
+		eventSwitch.AddReactor(chainID, "EVIDENCE",
 			serviceProvider(ServiceKeyEvidenceReactor, chainID).(*evidence.Reactor))
 
 		if len(persistentPeers) > 0 {
@@ -179,9 +156,12 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 		}
 
 		// Prepare registerable instances mapped to ChainID
-		reactor.RegisterInstance(InstanceKeyP2PTransport, chainID, transport)
-		reactor.RegisterInstance(InstanceKeyP2PSwitch, chainID, eventSwitch)
+		// reactor.RegisterInstance(InstanceKeyP2PTransport, chainID, transport)
+		// reactor.RegisterInstance(InstanceKeyP2PSwitch, chainID, eventSwitch)
 	}
+
+	reactor.eventSwitch = eventSwitch
+	reactor.transport = transport
 
 	p2pLogger.Info("P2P Node ID",
 		"ID", reactor.nodeKey.ID(),
@@ -208,37 +188,46 @@ func (reactor *Reactor) CreateAddressBooks(
 
 	// We shall iterate through all known networks and create separate
 	// multiplex transports and event switches for each replicated chain.
-	chainRegistry := reactor.GetChainRegistry()
+	// chainRegistry := reactor.GetChainRegistry()
 
 	// Used to retrieve configuration and state per chain.
 	configProvider := reactor.GetInstanceProvider(InstanceKeyConfig)
-	switchProvider := reactor.GetInstanceProvider(InstanceKeyP2PSwitch)
+	// switchProvider := reactor.GetInstanceProvider(InstanceKeyP2PSwitch)
+
+	addressBookPath := filepath.Join(reactor.nodeConfig.RootDir, config.DefaultConfigDir)
+	addrBookFile := filepath.Join(addressBookPath, config.DefaultAddrBookName)
+	if _, err := os.Stat(addressBookPath); err != nil {
+		return fmt.Errorf("could not open address book file %s: %w", addrBookFile, err)
+	}
+
+	addrBook := pex.NewAddrBook(addrBookFile, reactor.nodeConfig.P2P.AddrBookStrict)
+	addrBook.SetLogger(p2pLogger.With("book", addrBookFile))
 
 	for _, chainID := range networks {
 		// The config overwrite notably contains P2P.Seeds overwrite
 		cfgOverwrite := configProvider(chainID).(*config.Config)
-		eventSwitch := switchProvider(chainID).(*p2p.Switch)
+		// eventSwitch := switchProvider(chainID).(*p2p.Switch)
 
 		chainSeedNodes := splitAndTrimEmpty(cfgOverwrite.P2P.Seeds, ",", " ")
 
 		// We can safely ignore the error as we know an address is available.
 		// Builds a custom address book path: %rootDir%/config/%address%/%chain%/
-		userAddress, _ := chainRegistry.GetAddress(chainID)
-		userConfDir := filepath.Join(cfgOverwrite.RootDir, config.DefaultConfigDir, userAddress)
-		addressBookPath := filepath.Join(userConfDir, chainID)
+		// userAddress, _ := chainRegistry.GetAddress(chainID)
+		// userConfDir := filepath.Join(cfgOverwrite.RootDir, config.DefaultConfigDir, userAddress)
+		// addressBookPath := filepath.Join(userConfDir, chainID)
 
-		// Uses default address book file name: addrbook.json
-		addrBookFile := filepath.Join(addressBookPath, config.DefaultAddrBookName)
-		if _, err := os.Stat(addressBookPath); err != nil {
-			return fmt.Errorf("could not open address book file %s: %w", addrBookFile, err)
-		}
+		// // Uses default address book file name: addrbook.json
+		// addrBookFile := filepath.Join(addressBookPath, config.DefaultAddrBookName)
+		// if _, err := os.Stat(addressBookPath); err != nil {
+		// 	return fmt.Errorf("could not open address book file %s: %w", addrBookFile, err)
+		// }
 
 		// 1) Create an address book
 		//
 		// We shall also add our external/local addresses to it to prevent
 		// dialing ourselves out of mistake.
-		addrBook := pex.NewAddrBook(addrBookFile, cfgOverwrite.P2P.AddrBookStrict)
-		addrBook.SetLogger(p2pLogger.With("book", addrBookFile))
+		// addrBook := pex.NewAddrBook(addrBookFile, cfgOverwrite.P2P.AddrBookStrict)
+		// addrBook.SetLogger(p2pLogger.With("book", addrBookFile))
 
 		// Add ourselves to addrbook to prevent dialing ourselves
 		if cfgOverwrite.P2P.ExternalAddress != "" {
@@ -274,9 +263,9 @@ func (reactor *Reactor) CreateAddressBooks(
 		pexReactor.SetLogger(pexLogger)
 
 		// Set address book and PEX reactor on Switch
-		eventSwitch.SetAddrBook(addrBook)
-		eventSwitch.AddReactor("PEX", pexReactor)
+		reactor.eventSwitch.AddReactor(chainID, "PEX", pexReactor)
 	}
 
+	reactor.eventSwitch.SetAddrBook(addrBook)
 	return nil
 }

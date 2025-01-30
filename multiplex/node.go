@@ -422,15 +422,12 @@ func makeNodeInfo(
 
 	// Fill ProtocolVersions and Networks fields
 	protocolVersions := make([]ChainProtocolVersion, countNetworks)
-	p2pListenAddrs := make([]ChainListenAddr, countNetworks)
-	rpcListenAddrs := make([]ChainListenAddr, countNetworks)
 	for i, chainID := range knownNetworks {
 		// Fill only for *fully* supported networks (available now).
 		if nil == configProvider(chainID) || nil == statesProvider(chainID) {
 			continue
 		}
 
-		cfgOverwrite := configProvider(chainID).(*config.Config)
 		stateMachine := statesProvider(chainID).(sm.State)
 
 		protocolVersions[i] = NewChainProtocolVersion(chainID, p2p.NewProtocolVersion(
@@ -438,31 +435,16 @@ func makeNodeInfo(
 			stateMachine.Version.Consensus.Block,
 			stateMachine.Version.Consensus.App,
 		))
-
-		p2pListenAddrs[i] = NewChainListenAddr(chainID, cfgOverwrite.P2P.ListenAddress)
-		rpcListenAddrs[i] = NewChainListenAddr(chainID, cfgOverwrite.RPC.ListenAddress)
 	}
 
-	// If no replicated chains are available,
-	// the listen address must use BroadcastPort
-	baseListenAddr := reactor.nodeConfig.P2P.ListenAddress
-	broadcastPort := int(reactor.nodeConfig.BroadcastPort)
-
-	// With no networks, we have only P2P to communicate
-	p2pListenAddr := overwriteListenPort(baseListenAddr, broadcastPort)
-	rpcListenAddr := ""
-	if len(knownNetworks) > 0 {
-		p2pListenAddr = p2pListenAddrs[0].ListenAddr
-		rpcListenAddr = rpcListenAddrs[0].ListenAddr
-	}
+	p2pListenAddr := reactor.nodeConfig.P2P.ListenAddress
+	rpcListenAddr := reactor.nodeConfig.RPC.ListenAddress
 
 	txIndexerStatus := "on"
 	nodeInfo := &MultiNetworkNodeInfo{
 		DefaultNodeID:    nodeKey.ID(),
 		Networks:         knownNetworks,
 		ProtocolVersions: protocolVersions,
-		ListenAddrs:      p2pListenAddrs,
-		RPCAddresses:     rpcListenAddrs,
 		ListenAddr:       p2pListenAddr,
 		Version:          version.CMTSemVer,
 		Channels: []byte{

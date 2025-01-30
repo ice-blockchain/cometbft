@@ -207,7 +207,7 @@ func ResetTestMultiplexState(tb testing.TB, numChains int, dbInstanceKey string)
 
 	nodeCfg := config.TestConfig()
 	nodeCfg.SetRoot(rootDir)
-	nodeCfg.MultiplexConfig = makeRandomMultiplexConfig(tb, numChains)
+	nodeCfg.MultiplexConfig = makeRandomMultiplexConfig(tb, numChains, 30001)
 	mockGenesisProvider := mockMultiplexGenesisDocProviderFunc(&nodeCfg.MultiplexConfig, numChains)
 
 	// Create a test reactor

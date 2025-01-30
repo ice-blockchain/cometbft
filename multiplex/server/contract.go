@@ -37,9 +37,6 @@ type Backend interface {
 	// Embeds MustStart() and Close()
 	Server
 
-	// GetRelayID should return a [p2p.ID] instance that identifies a relay.
-	GetRelayID() p2p.ID
-
 	// GetLogger should return a [cmtlog.Logger] instance.
 	GetLogger() cmtlog.Logger
 
@@ -52,23 +49,33 @@ type Backend interface {
 	// GetRelayAcceptTxCh should return a read-only string channel.
 	GetRelayAcceptTxCh() chan<- string
 
-	// WaitForNextAvailableNetwork should wait for a chain replication and
-	// it should return a ChainID.
-	WaitForNextAvailableNetwork(
-		ctx context.Context,
-	) (string, error)
+	// GetRelayID should return a [p2p.ID] instance that identifies a relay.
+	GetRelayID() p2p.ID
 
-	// WaitForRelayReplResponse shoulde wait for a relay replication response
-	// and it should return a relay ID.
-	WaitForRelayReplResponse(
-		ctx context.Context,
-	) (string, error)
+	// GetListenAddress should return the relay's listen address.
+	GetListenAddress() string
 
-	// WaitForRelayTxAcceptance should wait for a relay transaction acceptance
-	// and it should return a transaction hash.
-	WaitForRelayTxAcceptance(
-		ctx context.Context,
-	) (string, error)
+	// GetNetworks should return a slice of supported ChainID values.
+	GetNetworks() []string
+
+	// WaitForNextAvailableNetwork should wait for a *local* chain replication
+	// and it should return a ChainID.
+	WaitForNextAvailableNetwork(ctx context.Context) (string, error)
+
+	// WaitForRelayReplResponse should wait for a *remote* relay's replication
+	// response and it should return a relay ID.
+	WaitForRelayReplResponse(ctx context.Context) (string, error)
+
+	// WaitForRelayAckTransaction should wait for a *remote* relay to acknowledge
+	// a transaction broadcast operation and it should then send a message using
+	// the channel [GetRelayAcceptTxCh].
+	// Use this method to wait for a transaction to be accepted *remotely*.
+	WaitForRelayAckTransaction(ctx context.Context) error
+
+	// WaitForRelayTxAcceptance should wait for *remote* relays transaction
+	// acceptance and it should return the transaction hash.
+	// Use this method to wait for a transaction to be accepted *locally*.
+	WaitForRelayTxAcceptance(ctx context.Context) (string, error)
 
 	// GetLocalNetworkHeights should query the last block height and determine
 	// a list of required networks. Iff the last block height is 1, the network
@@ -78,28 +85,31 @@ type Backend interface {
 		transactions ...client.Transaction,
 	) (map[string]int64, []string)
 
-	// FetchRelayAddresses should find the supported networks which it should
-	// map (ChainID) to their respective listen addresses, and it returns a
-	// slice of relays that produced errors, e.g. network error.
-	FetchRelayAddresses(
-		relays []RelayAddress,
-	) (map[string][]RelayAddress, []string)
+	// GetRemoteRelayInfo should request a relay information object which contains
+	// a CometBFT Node ID, the supported networks and the node's listen address.
+	GetRemoteRelayInfo(
+		relayAddress *RelayAddress,
+	) (*RPCResultRelayInfo, error)
 
-	// DiscoverRelayNetworks should dials all other relays and perform
-	// handshakes to retrieve a [MultiNetworkNodeInfo] from each of the relays.
-	DiscoverRelayNetworks(
-		localSwitch *p2p.Switch,
-		relay RelayAddress,
-	) ([]string, []string, error)
+	// GetRelaysByNetwork should find the supported networks, then map each
+	// to a slice of relay addresses, and it also returns a slice of relays
+	// that produced errors, e.g. network error.
+	GetRelaysByNetwork(
+		relays []*RelayAddress,
+	) (map[string][]*RelayAddress, []string)
+
+	// CheckDialCompatibleRelay should dial a relay, executing a P2P handshake
+	// and thereby defining whether a relay is compatible for dialing.
+	CheckDialCompatibleRelay(relayAddress *RelayAddress) error
 
 	// ApplyFilterReplRequestRelays should filter relays and return a map of
 	// relays by ChainID with only relays that need to catchup, i.e. it should
 	// return relays that will receive a chain replication request.
 	ApplyFilterReplRequestRelays(
 		requiredNetworks []string,
-		relays []RelayAddress,
-		chainRelays map[string][]RelayAddress,
-	) map[string][]RelayAddress
+		relays []*RelayAddress,
+		chainRelays map[string][]*RelayAddress,
+	) map[string][]*RelayAddress
 
 	// AddTransactions should execute the CheckTx call to add individual
 	// transactions to the mempool by ChainID.

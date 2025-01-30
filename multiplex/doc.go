@@ -1,29 +1,44 @@
 /*
 The [multiplex] package provides with an implementation of [CometBFT] that
-allows for running concurrent consensus instances, on many different chains
+allows for running concurrent and on-demand consensus instances, using many
+different chains that run in parallel.
+
+# Packages
+
+The `multiplex` package implements a multiplex node backend compatible with
+[CometBFT] networks, which is capable of running many separate networks
 in parallel.
-
-# Implementation
-
-A [ChainRegistry] interface is used for the initial configuration of seed
-nodes, for connecting to existing chains, and for custom state-sync, which
-is currently disabled.
-Importantly, when multiplex is enabled, we expect the `genesis.json` file
-to contain a [GenesisDocSet] JSON.
 
 The `snapsapp` package implements a multi-network ABCI application
 that enables consensus events mapping for the client implementation with
-extension interfaces for several stages of a consensus instance:
-
-- `CheckTx`: Define auditing/reporting units for transactions ;
-- `PrepareProposal`: Define pre-processing units for transactions data ;
-- `ProcessProposal`: Define post-processing units for transactions data ;
-- `FinalizeBlock`: Define processing units for blocks data ;
-- `Commit`: Define auditing/reporting units for committed blocks.
+extension interfaces for several stages of a consensus instance.
 
 The `client` package implements a *default* client integration for multiplex
 features that may be used to *inject custom configuration* and to mutate
 or otherwise use state machines as they are replicated on the networks.
+
+The `server` package defines a server contract for the multiplex library and
+may be used to interface with a multiplex node backend, e.g. to communicate
+about the replication of new chains, or to dispatch events to the multiplex
+CometBFT nodes that are actively running on a relay.
+
+# RelayInfo API
+
+A node multiplex backend serves two public APIs which may be used to request
+relay information such as the Relay ID (CometBFT Node ID) or the networks
+that are supported.
+
+- P2P Server: Port `30001` - i.e. always uses `DiscoveryPort`
+- RPC Server: Port `30000` - i.e. always uses `DiscoveryPort-1`
+
+# CometBFT API
+
+A node multiplex backend also serves two CometBFT APIs which may be used to
+interact with underlying replication chains, e.g. to communicate with a node
+about transactions.
+
+- P2P Server: Port `30002` - i.e. always uses `DiscoveryPort+1`
+- RPC Server: Port `30003` - i.e. always uses `DiscoveryPort+2`
 
 ## Source code conventions
 
@@ -42,45 +57,31 @@ standardized implementation.
 
 # Configuration
 
-A `config.MultiplexConfig` structure defines the multiplex state replication
+A [config.MultiplexConfig] structure defines the multiplex state replication
 configuration for a CometBFT node connecting to one or many networks.
-
-The `MultiplexConfig#UserChains` option is necessary for creating new
-replicated chains, while `MultiplexConfig#ChainSeeds` is necessary for
-connecting to existing ones.
 
 Individual fields documentation can be found in [config.MultiplexConfig].
 
 ## Options helpers:
 
-- [WithStrategy]
-- [WithSyncConfig]
-- [WithChainSeeds]
-- [WithUserChains]
-- [WithP2PStartPort]
-- [WithRPCStartPort]
-- [WithBroadcastPort]
+- [multiplex.WithStrategy]
+- [multiplex.WithChainSeeds]
+- [multiplex.WithUserChains]
+- [multiplex.WithDiscoveryPort]
 
 ## NewConfigOverwrite
 
 To begin with, [NewConfigOverwrite] updates a node configuration in-place to
 overwrite the services listen addresses such that there is one P2P- and one RPC
-port per replicated chain. Following ports overwrite apply:
-
-- P2P: legacy `26656`, multiplex `30001`...`3000x` with x the index of nodes
-- RPC: legacy `26657`, multiplex `40001`...`4000x` with x the index of nodes
-
-The *index of a node* generally represents the index of the ChainID as per
-the [ChainRegistry#GetChains] return value, e.g. given ChainIDs ['A','B','C'],
-the index of a node for the chain 'B', is 1 and the index for the chain 'A',
-is 0.
+port per running node instance - i.e. to communicate with a node multiplex, you
+must always use the same port and must not use different ports per network.
 
 This method also overwrites the `P2P.Seeds` configuration option such that
-each replicated chain *uses its own seed nodes*, and the `WAL` file is changed
-so that each replicated chain *writes to a separate WAL-file*.
+each replicated chain *uses its own seed nodes*, if necessary, and the `WAL`
+file is changed so that each replicated chain *writes to a separate WAL-file*.
 
-Also, state-sync is forcefully **disabled** because the preferred method of
-synchronization with individual replicated chains is to use **block-sync**.
+Also, state-sync is forcefully **disabled** because the method used for
+synchronization with individual replicated chains is **block-sync**.
 
 ## ReplicationStrategy
 
@@ -100,7 +101,7 @@ cometbft blockchain networks which are not compatible with nodes multiplexes.
 
 ## GenesisDocSet
 
-The [GenesisDocSet] consists of a slice of `types.GenesisDoc` objects which
+The [multiplex.GenesisDocSet] consists of a slice of `types.GenesisDoc` objects which
 define the initial conditions for a CometBFT node multiplex, in particular
 their validator set, consensus parameters and ChainID.
 
@@ -109,50 +110,18 @@ interface to enable compatibility with legacy nodes that use only a singular
 `types.GenesisDoc` instance to connect to only one network without multiplex.
 
 Importantly, when multiplex is enabled, we expect the `genesis.json` file
-to contain a [GenesisDocSet] JSON with one or many replicated chains.
+to contain a [multiplex.GenesisDocSet] JSON with one or many replicated chains.
 
-# Client interface
+# Implementation
 
-## Extensions
-
-We define the rules for *configuration extensions*, *consensus extensions* and
-also for *data extensions*, which may be used to overwrite configuration objects
-and to process- or mutate data using a *custom client business logic*,
-e.g. which involves calls to remote servers, or which stores data in a separate
-database, etc.
-
-### Interfaces
-
-  - [SyncConfigExtensionFn]: Provides custom state-sync configuration values.
-  - [SeedConfigExtensionFn]: Provides custom seed nodes configuration values.
-  - [ValidatorUpdateExtensionFn]: Provides custom auditing/reporting units for validator updates.
-  - [ConsensusUpdateExtensionFn]: Provides custom auditing/reporting units for consensus parameter updates.
-  - [CheckTxExtensionFn]: Provides custom auditing/reporting units for transactions.
-  - [PrepareProposalExtensionFn]: Provides custom pre-processing units for transactions data.
-  - [ProcessProposalExtensionFn]: Provides custom post-processing units for transactions data.
-  - [FinalizeBlockExtensionFn]: Provides custom processing units for blocks data.
-  - [CommitExtensionFn]: Provides custom auditing/reporting units for committed blocks.
-  - [CheckMutationResultExtensionFn]: Provides custom auditing units for state mutation results.
-
-We provide several example implementations that basically just *deep-copy* the
-input. Obviously, if you are developing a custom extension, you would do more
-than just deep-copy input objects.
-
-An example for [SyncConfigExtensionFn] is: [DefaultSyncConfigExtension]
-An example for [SeedConfigExtensionFn] is: [DefaultSeedConfigExtension]
-An example for [ValidatorUpdateExtensionFn] is: [DefaultValidatorUpdateExtension]
-An example for [ConsensusUpdateExtensionFn] is: [DefaultConsensusUpdateExtension]
-An example for [CheckTxExtensionFn] is: [DefaultCheckTxExtension]
-An example for [PrepareProposalExtensionFn] is: [DefaultPrepareProposalExtension]
-An example for [ProcessProposalExtensionFn] is: [DefaultProcessProposalExtension]
-An example for [FinalizeBlockExtensionFn] is: [DefaultFinalizeBlockExtension]
-An example for [CommitExtensionFn] is: [DefaultCommitExtension]
-An example for [CheckMutationResultExtensionFn] is: [DefaultCheckMutationResultExtension]
+The [multiplex] package provides with an implementation of [CometBFT] that
+allows for running concurrent and on-demand consensus instances, using many
+different chains that run in parallel.
 
 ## ChainRegistry
 
-A [ChainRegistry] interface is used for the initial configuration of seed
-nodes, for connecting to existing chains.
+A [multiplex.ChainRegistry] interface is used for the initial configuration of seed
+nodes and known networks.
 
 This structure defines a registry pattern contract which should be searchable
 by ChainID and by user address.
@@ -178,7 +147,7 @@ under-the-hood by [NewChainRegistry].
 
 ## Reactor
 
-The [Reactor] implementation takes care of configuring node instances for the
+The [multiplex.Reactor] implementation takes care of configuring node instances for the
 correct replicated blockchain networks. The reactor starts multiple listeners
 in parallel and sends messages on a channel to report about successful launch.
 
@@ -187,14 +156,8 @@ its channel `chainReadyCh` which contains a ChainID of the chain that is
 being replicated. After this happened, the node is able to start syncing state
 and/or blocks, as well as starting indexers, mempool, and other services.
 
-This structure is responsible for handling incoming messages on one or more
-`Channel` instances whereby the following contract applies:
-
-- The `OnStart()` must be called to setup replicated chain node listeners.
-- The `p2p.Switch` calls `GetChannels()` when a new reactor is added to it.
-- When a new peer joins our node, `InitPeer()` and `AddPeer()` are called.
-- When a peer is stopped, obviously, `RemovePeer()` is called.
-- When receiving messages on channels of a reactor, `Receive()` is called.
+This reactor is responsible for handling messages on `client.ReplicationChannel`
+which is notably used to instruct a multiplex to replicate a new chain.
 
 ## proxy.ChainConns
 
@@ -214,9 +177,6 @@ Return types of methods defined by this interface are compatible with
 SnapsApp defines a multi-network ABCI application that enables consensus
 events mapping for the client implementation.
 
-This application creates snapshots of full state machines, without filtering
-any of the included properties: ChainID, ConsensusParams, Validators, etc.
-
 Read-write mutexes are created to track initial heights on concurrent threads,
 as well as for the currently working height in the process of finalizing and
 committing blocks. Extensions can be implemented to hook into the processes
@@ -225,6 +185,70 @@ with a committed block.
 
 Note that *only one instance* of the SnapsApp application must be created
 for node multiplexes.
+
+Also, note that given a non-nil [client.Acceptor] instance on the app, transaction
+batches will be forwarded to the acceptor's `AcceptTx()` method. We do this
+to ensure that blocks replay and block-sync always persist all batches.
+
+# Client
+
+A [client.Client] instance may be used to spawn on-demand consensus instances
+using a list of active relays running one or many cometbft network.
+Transactions that are broadcast will be first broadcast to other relays,
+then verified and/or persisted, before they are committed to a network.
+
+## Interfaces
+
+  - [client.Transaction]: A transaction consists of an object with Data and Fingerprint.
+  - [client.Acceptor]: Defines the contract for client-side transactions verification.
+  - [client.Client]: Defines the contract for multiplex client implementations.
+
+## BroadcastTx
+
+1. It is expected that any transaction batch forwarded to [client.Client#BroadcastTx]
+must have been previously accepted locally using [Acceptor#AcceptBroadcastTx].
+
+2. Transaction batches may concern one or more than one network, which must all
+exist by the time the transaction gets full acceptance of the relays.
+
+3. A broadcast operation is built around a list of predefined relays- of which
+a majority must be healthy-, a user address and a transactions batch.
+
+4. A complete consensus instance must succeed before a transaction batch may
+be committed, such that all relays effectively agree to persist the batch.
+
+# Server
+
+A [server.Server] instance may be used to instruct the multiplex about the replication
+of new chains, and to dispatch events to the multiplex CometBFT nodes that
+are actively running on a relay.
+
+## Interfaces
+
+  - [server.Server]: Describes a server implementation with Close() and MustStart().
+  - [server.Backend]: Describes a multiplex node backend and implements Server.
+  - [server.Jobs]: Describes a suite of extensible background routines for a backend.
+  - [server.RelayAddress]: Defines a wrapper for relay communication addresses.
+
+# MultiplexBackend
+
+A [multiplex.MultiplexBackend] instance may be used to initialize one or many node
+runtimes and defines a multiplex backend adapter implementation which
+satisfies the [server.Server] interface.
+
+MultiplexBackend implements the [server.Backend] interface for a multiplex.
+This implementation makes use of an internal [multiplex.Reactor] instance to read
+local networks heights and uses instances of [p2p.Switch] to communicate
+with relays about chain replications and transaction broadcasts.
+
+Additionally, an internal [client.Acceptor] instance may be used to further
+extend the broadcast process, e.g. to call RollbackTx.
+
+## Methods
+
+  - `NewServer()`: Creates a MultiplexBackend instance.
+  - `MustStart()`: Spawns one or many node runtimes, i.e. one per network.
+  - `Close()`: Closes the adapter and stops all node runtimes.
 
 # Protobuf
 
@@ -270,6 +294,7 @@ run one of these full unit test suites with the following commands:
 	# running the full unit test suites
 	go test github.com/ice-blockchain/cometbft/multiplex -test.v
 	go test github.com/ice-blockchain/cometbft/multiplex/client -test.v
+	go test github.com/ice-blockchain/cometbft/multiplex/server -test.v
 	go test github.com/ice-blockchain/cometbft/multiplex/snapsapp -test.v
 
 Alternatively, you can also run individual unit tests or unit test suites
@@ -284,6 +309,7 @@ using one of the following commands:
 	go test github.com/ice-blockchain/cometbft/multiplex -run TestMultiplexReactor.* -test.v
 	go test github.com/ice-blockchain/cometbft/multiplex -run TestMultiplexP2P.* -test.v
 	go test github.com/ice-blockchain/cometbft/multiplex/client -run TestMultiplexClient.* -test.v
+	go test github.com/ice-blockchain/cometbft/multiplex/server -run TestMultiplexServer.* -test.v
 	go test github.com/ice-blockchain/cometbft/multiplex/snapsapp -run TestABCI.* -test.v
 
 # Linter
@@ -320,6 +346,7 @@ committed to the upstream branch as listed here: [cometbft-v1x].
 - Source code for `multiplex`: [multiplex]
 - Source code for `snapsapp`: [snapsapp]
 - Source code for `client`: [client]
+- Source code for `server`: [server]
 - Technical definition: [multiplex-notion]
 
 ## Other resources
@@ -331,6 +358,7 @@ committed to the upstream branch as listed here: [cometbft-v1x].
 [multiplex-notion]: https://www.notion.so/leftclick/Nodes-Multiplex-10d0a77b88c88050ac8bf75c012d1b00
 [snapsapp]: https://github.com/ice-blockchain/cometbft/tree/multiplex/multiplex/snapsapp/
 [client]: https://github.com/ice-blockchain/cometbft/tree/multiplex/multiplex/client/
+[server]: https://github.com/ice-blockchain/cometbft/tree/multiplex/multiplex/server/
 [CometBFT]: https://github.com/ice-blockchain/cometbft/tree/v1.x/README.md
 [cometbft-v1x]: https://github.com/ice-blockchain/cometbft/commits/v1.x/
 */

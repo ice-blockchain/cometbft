@@ -58,7 +58,7 @@ func TestMultiplexFSNewMultiplexFS(t *testing.T) {
 	}
 
 	for _, failCaseChainID := range failCases {
-		conf.BaseConfig = config.MultiplexTestBaseConfig(map[string]*config.StateSyncConfig{}, map[string]string{}, map[string][]string{
+		conf.BaseConfig = config.MultiplexTestBaseConfig(map[string]string{}, map[string][]string{
 			"CC8E6555A3F401FF61DA098F94D325E7041BC43A": {failCaseChainID},
 		})
 		conf.SetRoot(rootDir)
@@ -75,7 +75,7 @@ func TestMultiplexFSNewMultiplexFS(t *testing.T) {
 		"mx-chain-FF1410CEEB411E55487701C4FEE65AACE7115DC0-79F77E672C1DB0BC",
 	}
 
-	conf.BaseConfig = config.MultiplexTestBaseConfig(map[string]*config.StateSyncConfig{}, map[string]string{}, map[string][]string{
+	conf.BaseConfig = config.MultiplexTestBaseConfig(map[string]string{}, map[string][]string{
 		"CC8E6555A3F401FF61DA098F94D325E7041BC43A": {exampleChains[0], exampleChains[1]},
 		"FF1410CEEB411E55487701C4FEE65AACE7115DC0": {exampleChains[2]},
 	})

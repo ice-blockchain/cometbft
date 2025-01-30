@@ -148,13 +148,6 @@ func testNodeInfoWithNetwork(id p2p.ID, name, network string) p2p.NodeInfo {
 		ProtocolVersions: []mx.ChainProtocolVersion{
 			mx.NewChainProtocolVersion(network, mx.DefaultProtocolVersion),
 		},
-		ListenAddrs: []mx.ChainListenAddr{
-			mx.NewChainListenAddr(network, p2pListenAddr),
-		},
-		RPCAddresses: []mx.ChainListenAddr{
-			mx.NewChainListenAddr(network, rpcListenAddr),
-		},
-
 		DefaultNodeID: id,
 		ListenAddr:    p2pListenAddr,
 		Version:       "1.2.3-rc0-deadbeef",

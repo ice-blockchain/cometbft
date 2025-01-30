@@ -22,6 +22,7 @@ import (
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	mx "github.com/ice-blockchain/cometbft/multiplex"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
+	"github.com/ice-blockchain/cometbft/node"
 	cmtnode "github.com/ice-blockchain/cometbft/node"
 	"github.com/ice-blockchain/cometbft/privval"
 	"github.com/ice-blockchain/cometbft/proxy"
@@ -76,6 +77,8 @@ func TestMultiplexNodeLegacyNodeImplementation(t *testing.T) {
 	err = n.Start()
 	assert.NoError(t, err)
 
+	// TODO(midas): test that it uses the legacy test RPC listen address
+
 	defer func() {
 		err := n.Stop()
 		assert.NoError(t, err)
@@ -128,6 +131,8 @@ func TestMultiplexNodeNewLegacyNodeMultiplex(t *testing.T) {
 	err = legacyNode.Start()
 	require.NoError(t, err, "legacy node should start correctly")
 
+	// TODO(midas): test that it uses the legacy test RPC listen address
+
 	defer func() {
 		err := legacyNode.Stop()
 		require.NoError(t, err)
@@ -157,7 +162,7 @@ func TestMultiplexNodeNewNodesMultiplexFallback(t *testing.T) {
 	globalCfg.SetRoot(rootDir)
 
 	// Also generate a multiplex config *but* disable it using "disabled"
-	globalCfg.MultiplexConfig = makeRandomMultiplexConfig(t, 3)
+	globalCfg.MultiplexConfig = makeRandomMultiplexConfig(t, 3, 30001)
 	globalCfg.Strategy = mx.DisableReplicationStrategy()
 
 	// The multiplex configuration will be ignored due to disabled flag.
@@ -185,6 +190,8 @@ func TestMultiplexNodeNewNodesMultiplexFallback(t *testing.T) {
 	err = legacyNode.Start()
 	require.NoError(t, err, "legacy node should start correctly")
 
+	// TODO(midas): test that it uses the legacy test RPC listen address
+
 	defer func() {
 		err := legacyNode.Stop()
 		require.NoError(t, err)
@@ -208,6 +215,8 @@ func TestMultiplexNodeNewNodesMultiplex(t *testing.T) {
 		&client.DefaultAcceptor{},
 		globalCfg,
 		cmtlog.NewNopLogger(),
+		node.NodeWithStartRPC(false),
+		node.NodeWithStartP2P(false),
 	)
 	assert.NoError(t, err, "should create node instance")
 	assert.NotNil(t, testMultiplex, "should return a multiplex map with a node")
@@ -255,8 +264,32 @@ func TestMultiplexNodeNewNodesMultiplex(t *testing.T) {
 	// t.Logf("Waiting for %d nodes to be up and running.", len(testReactor.GetNetworks()))
 	wg.Wait()
 
+	// TODO(midas): test that it uses the multiplex RPC listen address
+
 	// Shutdown routine
 	defer func() {
+		// Uses waitgroup to ensure complete shutdown
+		wg := sync.WaitGroup{}
+		wg.Add(len(testReactor.GetNetworks()))
+
+		for _, chainID := range testReactor.GetNetworks() {
+			runningNode := testMultiplex[chainID].GetInstance().(*cmtnode.Node)
+
+			// Stop the running node instance and continue
+			go func(cn *cmtnode.Node) {
+				defer wg.Done()
+
+				if cn.IsRunning() {
+					err := cn.Stop()
+					require.NoError(t, err)
+				}
+			}(runningNode)
+		}
+
+		// Wait for all nodes to be shutdown
+		//t.Logf("Waiting for %d nodes to be stopped.", len(testReactor.GetNetworks()))
+		wg.Wait()
+
 		err := testReactor.Stop()
 		require.NoError(t, err)
 	}()
@@ -269,15 +302,50 @@ func TestMultiplexNodeNewNodesMultiplexSingleNetworkProduceBlocks(t *testing.T) 
 	// For debug, change the logger to cmtlog.TestingLogger()
 	globalCfg,
 		testMultiplex,
-		testReactor := assertStartNodesMultiplex(t, numNetworks, cmtlog.NewNopLogger()) // 1 NETWORK!
+		testReactor := assertStartNodesMultiplex(t, numNetworks, cmtlog.NewNopLogger(), false) // 1 NETWORK!
+	// CometBFT RPC and P2P servers started with above call,
+	// i.e. startServers=true
 
 	// Shutdown routine
 	defer func() {
 		defer os.RemoveAll(globalCfg.RootDir)
 
+		// Uses waitgroup to ensure complete shutdown
+		wg := sync.WaitGroup{}
+		wg.Add(len(testReactor.GetNetworks()))
+
+		for _, chainID := range testReactor.GetNetworks() {
+			runningNode := testMultiplex[chainID].GetInstance().(*cmtnode.Node)
+
+			// Stop the running node instance and continue
+			go func(cn *cmtnode.Node) {
+				defer wg.Done()
+
+				if cn.IsRunning() {
+					err := cn.Stop()
+					require.NoError(t, err)
+				}
+			}(runningNode)
+		}
+
+		// Wait for all nodes to be shutdown
+		//t.Logf("Waiting for %d nodes to be stopped.", len(testReactor.GetNetworks()))
+		wg.Wait()
+
 		err := testReactor.Stop()
 		require.NoError(t, err)
 	}()
+
+	// Must start CometBFT RPC and P2P servers exactly once
+	firstChainID := testReactor.GetNetworks()[0]
+	fstRunningNode := testMultiplex[firstChainID].GetInstance().(*node.Node)
+
+	var rpcErr error
+	_, rpcErr = fstRunningNode.StartRPC()
+	require.NoError(t, rpcErr, "should start CometBFT RPC server")
+
+	_, p2pErr := fstRunningNode.StartP2P()
+	require.NoError(t, p2pErr, "should start CometBFT P2P server")
 
 	expectedBlocks := 3
 	assertWaitForNodesMultiplexToProduceBlocks(t, testReactor, testMultiplex, expectedBlocks)
@@ -290,15 +358,49 @@ func TestMultiplexNodeNewNodesMultiplexProduceBlocks(t *testing.T) {
 	// For debug, change the logger to cmtlog.TestingLogger()
 	globalCfg,
 		testMultiplex,
-		testReactor := assertStartNodesMultiplex(t, numNetworks, cmtlog.NewNopLogger()) // 5 networks
+		testReactor := assertStartNodesMultiplex(t, numNetworks, cmtlog.NewNopLogger(), false) // 5 networks
+	// CometBFT RPC and P2P servers NOT STARTED with above call,
+	// i.e. startServers=false
 
 	// Shutdown routine
 	defer func() {
 		defer os.RemoveAll(globalCfg.RootDir)
 
+		// Uses waitgroup to ensure complete shutdown
+		wg := sync.WaitGroup{}
+		wg.Add(len(testReactor.GetNetworks()))
+
+		for _, chainID := range testReactor.GetNetworks() {
+			runningNode := testMultiplex[chainID].GetInstance().(*cmtnode.Node)
+
+			// Stop the running node instance and continue
+			go func(cn *cmtnode.Node) {
+				defer wg.Done()
+
+				if cn.IsRunning() {
+					err := cn.Stop()
+					require.NoError(t, err)
+				}
+			}(runningNode)
+		}
+
+		// Wait for all nodes to be shutdown
+		//t.Logf("Waiting for %d nodes to be stopped.", len(testReactor.GetNetworks()))
+		wg.Wait()
+
 		err := testReactor.Stop()
 		require.NoError(t, err)
 	}()
+
+	// Must start CometBFT RPC and P2P servers exactly once
+	firstChainID := testReactor.GetNetworks()[0]
+	fstRunningNode := testMultiplex[firstChainID].GetInstance().(*node.Node)
+
+	_, rpcErr := fstRunningNode.StartRPC()
+	require.NoError(t, rpcErr, "should start CometBFT RPC server")
+
+	_, p2pErr := fstRunningNode.StartP2P()
+	require.NoError(t, p2pErr, "should start CometBFT P2P server")
 
 	expectedBlocks := 2
 	assertWaitForNodesMultiplexToProduceBlocks(t, testReactor, testMultiplex, expectedBlocks)
@@ -312,9 +414,7 @@ func ResetTestMultiplexNodeWithConfigAndPorts(
 	rootDir string,
 	metricsSuffix string,
 	mxConfig config.MultiplexConfig,
-	p2pStartPort uint16,
-	rpcStartPort uint16,
-	broadcastPort uint16,
+	discoveryPort uint16,
 ) (string, *config.Config) {
 	tb.Helper()
 
@@ -324,9 +424,7 @@ func ResetTestMultiplexNodeWithConfigAndPorts(
 	nodeCfg := config.TestConfig()
 	nodeCfg.SetRoot(rootDir)
 	nodeCfg.MultiplexConfig = mxConfig
-	nodeCfg.P2PStartPort = p2pStartPort
-	nodeCfg.RPCStartPort = rpcStartPort
-	nodeCfg.BroadcastPort = broadcastPort
+	nodeCfg.DiscoveryPort = discoveryPort
 	nodeCfg.Instrumentation.Namespace += metricsSuffix
 
 	// Make sure we have /data and /config
@@ -371,9 +469,7 @@ func ResetTestMultiplexNodeWithRootDirAndPorts(
 	tb testing.TB,
 	numChains int,
 	rootDir string,
-	p2pStartPort uint16,
-	rpcStartPort uint16,
-	broadcastPort uint16,
+	discoveryPort uint16,
 ) (string, *config.Config) {
 	tb.Helper()
 
@@ -382,16 +478,8 @@ func ResetTestMultiplexNodeWithRootDirAndPorts(
 
 	globalCfg := config.TestConfig()
 	globalCfg.SetRoot(rootDir)
-	globalCfg.MultiplexConfig = makeRandomMultiplexConfig(tb, numChains)
-	globalCfg.P2PStartPort = p2pStartPort
-	globalCfg.RPCStartPort = rpcStartPort
-	globalCfg.BroadcastPort = broadcastPort
-
-	// We always *disable* state-sync for network nodes
-	for chainID := range globalCfg.SyncConfig {
-		// Forcefully disable state-sync
-		globalCfg.SyncConfig[chainID].Enable = false
-	}
+	globalCfg.MultiplexConfig = makeRandomMultiplexConfig(tb, numChains, int(discoveryPort))
+	globalCfg.DiscoveryPort = discoveryPort
 
 	// Make sure we have /data and /config
 	_, err = mx.NewMultiplexFS(globalCfg)
@@ -440,9 +528,7 @@ func ResetTestMultiplexNode(tb testing.TB, numChains int) (string, *config.Confi
 		tb,
 		numChains,
 		tb.Name(),
-		30001, // p2p
-		40001, // rpc
-		50001, // broadcast
+		30001, // discovery
 	)
 }
 
@@ -505,7 +591,7 @@ func useDefaultKeyGenFunc() func() (crypto.PrivKey, error) {
 
 // assertStartNodesMultiplex configures a nodes multiplex *randomly* and starts
 // individual nodes in a separate goroutine per network.
-func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog.Logger) (
+func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog.Logger, startServers bool) (
 	*config.Config,
 	mx.MultiplexMap[*cmtnode.Node],
 	*mx.Reactor,
@@ -535,6 +621,8 @@ func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog
 		&client.DefaultAcceptor{},
 		globalCfg,
 		customLogger,
+		node.NodeWithStartRPC(startServers),
+		node.NodeWithStartP2P(startServers),
 	)
 	require.NoError(tb, err, "should create node instance")
 	require.NotNil(tb, testMultiplex, "should return a multiplex map with a node")
@@ -669,7 +757,7 @@ func usePrivValidatorFromFiles(
 
 	n.SetPrivValidator(newPV)
 
-	consensusReactor := n.Switch().Reactor("CONSENSUS").(*cs.Reactor)
+	consensusReactor := n.Switch().Reactor(chainID, "CONSENSUS").(*cs.Reactor)
 	consensusReactor.SetPrivValidator(newPV)
 }
 

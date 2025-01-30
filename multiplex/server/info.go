@@ -11,9 +11,11 @@ const (
 	ReplicationChannel = byte(0x90)
 )
 
-// RPCResultRelayInfo describes relay information.
+// RPCResultRelayInfo describes relays information.
 type RPCResultRelayInfo struct {
-	DefaultNodeID p2p.ID `json:"id"` // authenticated identifier
+	DefaultNodeID p2p.ID   `json:"id"` // authenticated identifier
+	Networks      []string `json:"networks"`
+	ListenAddress string   `json:"listen_address"`
 }
 
 // RelayInfoServer defines a server that is responsible of enabling
@@ -37,6 +39,8 @@ func NewRelayInfoServer(b Backend) *RelayInfoServer {
 func (s *RelayInfoServer) GetRelayInfo(*rpctypes.Context) (*RPCResultRelayInfo, error) {
 	result := &RPCResultRelayInfo{
 		DefaultNodeID: s.backend.GetRelayID(),
+		Networks:      s.backend.GetNetworks(),
+		ListenAddress: s.backend.GetListenAddress(),
 	}
 
 	return result, nil

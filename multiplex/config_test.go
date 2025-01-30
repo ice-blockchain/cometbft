@@ -26,7 +26,6 @@ func TestMultiplexConfigDefaultLegacyFallback(t *testing.T) {
 func TestMultiplexConfigMultiplexBaseConfig(t *testing.T) {
 	// Must accept empty multiplex config
 	conf := config.MultiplexBaseConfig(
-		map[string]*config.StateSyncConfig{},
 		map[string]string{},
 		map[string][]string{},
 	)
@@ -34,7 +33,6 @@ func TestMultiplexConfigMultiplexBaseConfig(t *testing.T) {
 
 	// Must accept chainSeeds
 	conf = config.MultiplexBaseConfig(
-		map[string]*config.StateSyncConfig{},
 		map[string]string{
 			"mx-chain-CC8E6555A3F401FF61DA098F94D325E7041BC43A-1A63C0E60122F9BB": "id@host:port",
 		},
@@ -45,7 +43,6 @@ func TestMultiplexConfigMultiplexBaseConfig(t *testing.T) {
 
 	// Must accept userChains
 	conf = config.MultiplexBaseConfig(
-		map[string]*config.StateSyncConfig{},
 		map[string]string{},
 		map[string][]string{
 			"CC8E6555A3F401FF61DA098F94D325E7041BC43A": {
@@ -64,7 +61,7 @@ func TestMultiplexConfigNewConfigOverwrite(t *testing.T) {
 	defer os.RemoveAll(rootDir)
 
 	conf := config.TestConfig()
-	conf.MultiplexConfig = makeRandomMultiplexConfig(t, 3)
+	conf.MultiplexConfig = makeRandomMultiplexConfig(t, 3, 30001)
 	conf.SetRoot(rootDir)
 
 	chainRegistry := makeChainRegistryFromConfig(t, conf.MultiplexConfig)
@@ -76,8 +73,8 @@ func TestMultiplexConfigNewConfigOverwrite(t *testing.T) {
 	require.NoError(t, err)
 	cfgOverwrite1 := mx.NewConfigOverwrite(conf, chainRegistry, chainID1)
 	assert.NotEqual(t, conf.P2P.ListenAddress, cfgOverwrite1.P2P.ListenAddress)
-	assert.Contains(t, cfgOverwrite1.P2P.ListenAddress, strconv.Itoa(int(conf.P2PStartPort)))
-	assert.Contains(t, cfgOverwrite1.RPC.ListenAddress, strconv.Itoa(int(conf.RPCStartPort)))
+	assert.Contains(t, cfgOverwrite1.P2P.ListenAddress, strconv.Itoa(int(conf.DiscoveryPort)+1)) // :30002
+	assert.Contains(t, cfgOverwrite1.RPC.ListenAddress, strconv.Itoa(int(conf.DiscoveryPort)+2)) // :30003
 	assert.Equal(t, expectWal1, cfgOverwrite1.Consensus.WalFile())
 
 	// second ChainID has starts ports + 1
@@ -88,8 +85,10 @@ func TestMultiplexConfigNewConfigOverwrite(t *testing.T) {
 	expectWal2 := makeWalPath(rootDir, address2, chainID2)
 	cfgOverwrite2 := mx.NewConfigOverwrite(conf, chainRegistry, chainID2)
 	assert.NotEqual(t, conf.P2P.ListenAddress, cfgOverwrite2.P2P.ListenAddress)
-	assert.Contains(t, cfgOverwrite2.P2P.ListenAddress, strconv.Itoa(int(conf.P2PStartPort+1)))
-	assert.Contains(t, cfgOverwrite2.RPC.ListenAddress, strconv.Itoa(int(conf.RPCStartPort+1)))
+	assert.Equal(t, cfgOverwrite1.P2P.ListenAddress, cfgOverwrite2.P2P.ListenAddress)
+	assert.Equal(t, cfgOverwrite1.RPC.ListenAddress, cfgOverwrite2.RPC.ListenAddress)
+	assert.Contains(t, cfgOverwrite2.P2P.ListenAddress, strconv.Itoa(int(conf.DiscoveryPort)+1)) // :30002
+	assert.Contains(t, cfgOverwrite2.RPC.ListenAddress, strconv.Itoa(int(conf.DiscoveryPort)+2)) // :30003
 	assert.Equal(t, expectWal2, cfgOverwrite2.Consensus.WalFile())
 
 	// third ChainID has starts ports + 2
@@ -100,8 +99,10 @@ func TestMultiplexConfigNewConfigOverwrite(t *testing.T) {
 	expectWal3 := makeWalPath(rootDir, address3, chainID3)
 	cfgOverwrite3 := mx.NewConfigOverwrite(conf, chainRegistry, chainID3)
 	assert.NotEqual(t, conf.P2P.ListenAddress, cfgOverwrite3.P2P.ListenAddress)
-	assert.Contains(t, cfgOverwrite3.P2P.ListenAddress, strconv.Itoa(int(conf.P2PStartPort+2)))
-	assert.Contains(t, cfgOverwrite3.RPC.ListenAddress, strconv.Itoa(int(conf.RPCStartPort+2)))
+	assert.Equal(t, cfgOverwrite2.P2P.ListenAddress, cfgOverwrite3.P2P.ListenAddress)
+	assert.Equal(t, cfgOverwrite2.RPC.ListenAddress, cfgOverwrite3.RPC.ListenAddress)
+	assert.Contains(t, cfgOverwrite3.P2P.ListenAddress, strconv.Itoa(int(conf.DiscoveryPort)+1)) // :30002
+	assert.Contains(t, cfgOverwrite3.RPC.ListenAddress, strconv.Itoa(int(conf.DiscoveryPort)+2)) // :30003
 	assert.Equal(t, expectWal3, cfgOverwrite3.Consensus.WalFile())
 }
 

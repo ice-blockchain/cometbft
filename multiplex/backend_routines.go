@@ -45,7 +45,7 @@ func (b *MultiplexBackend) GetRoutines() *server.Jobs {
 func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplRequestFn {
 	return func(
 		_ context.Context,
-		relays []server.RelayAddress,
+		relays []*server.RelayAddress,
 		chainID string,
 		notifierImpl client.Notifier,
 	) {
@@ -56,6 +56,12 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 				knownPeers = append(knownPeers, string(relayAddr.ID()))
 			}
 		}
+
+		b.logger.Debug("preparing to send ChainReplicationRequest",
+			"chain_id", chainID,
+			"relays", relays,
+			"ids", knownPeers,
+		)
 
 		// Retrieve the GenesisDoc for this chain
 		genDocProvider := b.reactor.GetGenesisProvider()
@@ -76,6 +82,11 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 			if !slices.Contains(knownPeers, peerID) {
 				return
 			}
+
+			b.logger.Debug("now sending ChainReplicationRequest",
+				"chain_id", chainID,
+				"peer_id", peerID,
+			)
 
 			peer.Send(p2p.Envelope{
 				ChannelID: server.ReplicationChannel,
@@ -108,7 +119,7 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 func (b *MultiplexBackend) DefaultNetworksCreatorRoutine() server.NetworksCreatorFn {
 	return func(
 		ctx context.Context,
-		relaysByChain map[string][]server.RelayAddress,
+		relaysByChain map[string][]*server.RelayAddress,
 		missingChains []string,
 		notifierImpl client.Notifier,
 		newChainReadyCh chan<- string,
@@ -189,22 +200,23 @@ func (b *MultiplexBackend) DefaultNetworksCreatorRoutine() server.NetworksCreato
 func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcastFn {
 	return func(
 		ctx context.Context,
-		relaysByChain map[string][]server.RelayAddress,
+		relaysByChain map[string][]*server.RelayAddress,
 		userAddress string,
 		transactions []client.Transaction,
 		notifierImpl client.Notifier,
 		relayAcceptTxCh chan<- string,
 	) {
-		switchProvider := b.reactor.GetInstanceProvider(InstanceKeyP2PSwitch)
+		// switchProvider := b.reactor.GetInstanceProvider(InstanceKeyP2PSwitch)
 		broadcastTxHashes := make([][]byte, 0, len(transactions))
 
 		// Reset the sent requests cache
 		b.poolRequestsSent = map[string][]string{}
 
 		// Iterate through transaction and broadcast each of them to other relays
+		eventsSwitch := b.reactor.GetEventSwitch()
 		for i, transaction := range transactions {
 			chainID := client.GetChainID(userAddress, transaction.Fingerprint)
-			eventsSwitch := switchProvider(chainID).(*p2p.Switch)
+			// eventsSwitch := switchProvider(chainID).(*p2p.Switch)
 
 			// Encode and get transaction hash
 			rawTx := client.TransactionToRawTx(transaction)
@@ -293,13 +305,14 @@ func (b *MultiplexBackend) DefaultCancelBroadcastRoutine() server.CancelBroadcas
 		userAddress string,
 		transactions []client.Transaction,
 	) {
-		switchProvider := b.reactor.GetInstanceProvider(InstanceKeyP2PSwitch)
+		// switchProvider := b.reactor.GetInstanceProvider(InstanceKeyP2PSwitch)
+		eventsSwitch := b.reactor.GetEventSwitch()
 
 		// Iterate through transactions and broadcast rollback operations
 		// for each of them to all other relays.
 		for _, transaction := range transactions {
-			chainID := client.GetChainID(userAddress, transaction.Fingerprint)
-			eventsSwitch := switchProvider(chainID).(*p2p.Switch)
+			// chainID := client.GetChainID(userAddress, transaction.Fingerprint)
+			// eventsSwitch := switchProvider(chainID).(*p2p.Switch)
 
 			// Encode and get transaction hash
 			rawTx := client.TransactionToRawTx(transaction)

@@ -26,37 +26,31 @@ func mockNodeInfoWithNetworks(
 ) *mx.MultiNetworkNodeInfo {
 	numNetworks := len(networks)
 	protocolVersions := make([]mx.ChainProtocolVersion, numNetworks)
-	listenAddresses := make([]mx.ChainListenAddr, numNetworks)
-	rpcNodeAddresses := make([]mx.ChainListenAddr, numNetworks)
 
 	// Make sure ChainIDs are sorted
 	slices.Sort(networks)
 
+	p2pListenAddr := fmt.Sprintf("127.0.0.1:%d", getFreePort())
+	rpcListenAddr := fmt.Sprintf("127.0.0.1:%d", getFreePort())
+
 	// create versions and listen addresses per network
 	for i, chainID := range networks {
 		protocolVersion := mx.NewChainProtocolVersion(chainID, mx.DefaultProtocolVersion)
-		p2pListenAddr := fmt.Sprintf("127.0.0.1:%d", getFreePort())
-		rpcListenAddr := fmt.Sprintf("127.0.0.1:%d", getFreePort())
-
 		protocolVersions[i] = protocolVersion
-		listenAddresses[i] = mx.NewChainListenAddr(chainID, p2pListenAddr)
-		rpcNodeAddresses[i] = mx.NewChainListenAddr(chainID, rpcListenAddr)
 	}
 
 	return &mx.MultiNetworkNodeInfo{
 		Networks:         networks,
 		ProtocolVersions: protocolVersions,
-		ListenAddrs:      listenAddresses,
-		RPCAddresses:     rpcNodeAddresses,
 
 		DefaultNodeID: id,
-		ListenAddr:    listenAddresses[0].ListenAddr,
+		ListenAddr:    p2pListenAddr,
 		Version:       "1.2.3-rc0-deadbeef",
-		Channels:      []byte{testCh}, // define in handshaker_test
+		Channels:      []byte{testCh}, // defined in handshaker_test
 		Moniker:       name,
 		Other: p2p.DefaultNodeInfoOther{
 			TxIndex:    "on",
-			RPCAddress: rpcNodeAddresses[0].ListenAddr,
+			RPCAddress: rpcListenAddr,
 		},
 	}
 }
@@ -78,31 +72,36 @@ func TestMultiplexReactorCreateTransportSwitchesWithReactors(t *testing.T) {
 	err := reactor.CreateTransportSwitchesWithReactors(context.TODO(), reactor.GetNetworks())
 	assert.NoError(t, err, "should not error creating transports and switches")
 
-	transportsProvider := reactor.GetInstanceProvider(mx.InstanceKeyP2PTransport)
-	assert.NotNil(t, transportsProvider, "transport provider must not be nil")
+	// transportsProvider := reactor.GetInstanceProvider(mx.InstanceKeyP2PTransport)
+	// assert.NotNil(t, transportsProvider, "transport provider must not be nil")
 
-	switchesProvider := reactor.GetInstanceProvider(mx.InstanceKeyP2PSwitch)
-	assert.NotNil(t, switchesProvider, "event switch provider must not be nil")
+	// switchesProvider := reactor.GetInstanceProvider(mx.InstanceKeyP2PSwitch)
+	// assert.NotNil(t, switchesProvider, "event switch provider must not be nil")
+
+	assert.NotNil(t, reactor.GetEventSwitch())
+	assert.NotNil(t, reactor.GetTransport())
+
+	testSwitch := reactor.GetEventSwitch()
+	testTransport := reactor.GetTransport()
+	assert.NotNil(t, testTransport.NetAddress())
 
 	for _, chainID := range reactor.GetNetworks() {
-		testTransport := transportsProvider(chainID).(*p2p.MultiplexTransport)
-		assert.NotNil(t, testTransport)
-		assert.NotNil(t, testTransport.NetAddress())
+		// testTransport := transportsProvider(chainID).(*p2p.MultiplexTransport)
+		// assert.NotNil(t, testTransport)
 
-		testSwitch := switchesProvider(chainID).(*p2p.Switch)
-		assert.NotNil(t, testSwitch)
+		// testSwitch := switchesProvider(chainID).(*p2p.Switch)
 
-		testReactors := testSwitch.Reactors()
+		testReactors := testSwitch.Reactors(chainID)
 		assert.Len(t, testReactors, 4) // mempool, blocksync, consensus, evidence
 		assert.Contains(t, testReactors, "MEMPOOL")
 		assert.Contains(t, testReactors, "BLOCKSYNC")
 		assert.Contains(t, testReactors, "CONSENSUS")
 		assert.Contains(t, testReactors, "EVIDENCE")
 
-		assert.NotNil(t, testSwitch.Reactor("MEMPOOL"))
-		assert.NotNil(t, testSwitch.Reactor("BLOCKSYNC"))
-		assert.NotNil(t, testSwitch.Reactor("CONSENSUS"))
-		assert.NotNil(t, testSwitch.Reactor("EVIDENCE"))
+		assert.NotNil(t, testSwitch.Reactor(chainID, "MEMPOOL"))
+		assert.NotNil(t, testSwitch.Reactor(chainID, "BLOCKSYNC"))
+		assert.NotNil(t, testSwitch.Reactor(chainID, "CONSENSUS"))
+		assert.NotNil(t, testSwitch.Reactor(chainID, "EVIDENCE"))
 	}
 }
 
@@ -127,22 +126,20 @@ func TestMultiplexReactorCreateAddressBooks(t *testing.T) {
 	assert.NoError(t, err, "should not error creating pex address books")
 
 	// Should set the AddrBook on [p2p.Switch]
-	switchesProvider := reactor.GetInstanceProvider(mx.InstanceKeyP2PSwitch)
-	assert.NotNil(t, switchesProvider, "event switch provider must not be nil")
+	// switchesProvider := reactor.GetInstanceProvider(mx.InstanceKeyP2PSwitch)
+	// assert.NotNil(t, switchesProvider, "event switch provider must not be nil")
+
+	assert.NotNil(t, reactor.GetEventSwitch())
+	testSwitch := reactor.GetEventSwitch()
 
 	for _, chainID := range reactor.GetNetworks() {
-		// Must be tested in chain_registry_test.go
-		userAddress, err := reactor.GetChainRegistry().GetAddress(chainID)
-		require.NoError(t, err, "should not error given valid ChainID")
-		require.NotEmpty(t, userAddress)
-
-		eventSwitch := switchesProvider(chainID).(*p2p.Switch)
-		assert.NotNil(t, eventSwitch)
+		// eventSwitch := switchesProvider(chainID).(*p2p.Switch)
+		// assert.NotNil(t, eventSwitch)
 
 		// Do we have the PEX and AddrBook?
-		testReactors := eventSwitch.Reactors()
+		testReactors := testSwitch.Reactors(chainID)
 		assert.Contains(t, testReactors, "PEX")
-		assert.NotNil(t, eventSwitch.GetAddrBook())
+		assert.NotNil(t, testSwitch.GetAddrBook())
 	}
 }
 
@@ -156,7 +153,7 @@ func ResetTestMultiplexP2P(tb testing.TB, numChains int) (string, *config.Config
 
 	globalCfg := config.TestConfig()
 	globalCfg.SetRoot(rootDir)
-	globalCfg.MultiplexConfig = makeRandomMultiplexConfig(tb, numChains)
+	globalCfg.MultiplexConfig = makeRandomMultiplexConfig(tb, numChains, 30001)
 	mockGenesisProvider := mockMultiplexGenesisDocProviderFunc(&globalCfg.MultiplexConfig, numChains)
 
 	// Create a test reactor
