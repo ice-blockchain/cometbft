@@ -18,7 +18,7 @@ require (
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/orderedcode v0.0.1
 	github.com/gorilla/websocket v1.5.3
-	github.com/ice-blockchain/cometbft/api v1.0.0-mx.6
+	github.com/ice-blockchain/cometbft/api v1.0.0-mx.7
 	github.com/lib/pq v1.10.9
 	github.com/minio/highwayhash v1.0.3
 	github.com/ory/dockertest v3.3.5+incompatible
