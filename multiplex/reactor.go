@@ -1116,7 +1116,7 @@ func (r *Reactor) sendChainReplicationResponse(
 // Note that the source peer will be dialed to accelerate the activation
 // of the block-sync process with this peer.
 func (r *Reactor) handleChainReplicationRequest(
-	peer p2p.Peer,
+	source p2p.Peer,
 	req *mxp2p.ChainReplicationRequest,
 ) error {
 	// Build the ExtendedChainID to retrieve user address from ChainID.
@@ -1126,6 +1126,15 @@ func (r *Reactor) handleChainReplicationRequest(
 			"invalid ChainID %s: %w", req.ChainID, err)
 	}
 	userAddress := extChainID.GetUserAddress()
+
+	// Parse the remote relay address, i.e. the source of a replication
+	// request, because we dial their CometBFT P2P address for block-sync.
+	// Note that source.SocketAddr should contain the remote's DiscoveryPort.
+	sourceAddr, err := server.NewRelayAddress(source.SocketAddr().String())
+	if err != nil {
+		return fmt.Errorf(
+			"invalid source relay address %s: %w", source.SocketAddr(), err)
+	}
 
 	// Pre-allocates filesystem, database and priv validator.
 	if err := r.AllocateNetwork(req.ChainID); err != nil {
@@ -1178,13 +1187,20 @@ func (r *Reactor) handleChainReplicationRequest(
 	}
 
 	// IMPORTANT:
-	// And dial the relay to permit block-sync to start instantly.
-	// switchProvider := r.GetInstanceProvider(InstanceKeyP2PSwitch)
-	// eventSwitch := switchProvider(req.ChainID).(*p2p.Switch)
-	peerAddress := peer.SocketAddr()
-	if err := r.eventSwitch.DialPeerWithAddress(peerAddress); err != nil {
+	//
+	// Finally, dial the relay to permit block-sync to start instantly.
+	// Note that NetAddressForCometBFT should contain `DiscoveryPort+1`.
+
+	// We need DiscoveryPort+1 to interact with CometBFT.
+	peerAddr, err := sourceAddr.NetAddressForCometBFT()
+	if err != nil {
 		return fmt.Errorf(
-			"could not dial relay %s: %w", peerAddress.DialString(), err)
+			"invalid cometbft relay address %s: %w", source.SocketAddr(), err)
+	}
+
+	if err := r.eventSwitch.DialPeerWithAddress(peerAddr); err != nil {
+		return fmt.Errorf(
+			"could not dial relay %s: %w", peerAddr.DialString(), err)
 	}
 
 	return nil

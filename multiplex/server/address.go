@@ -114,7 +114,20 @@ func (a *RelayAddress) NetAddress() (*p2p.NetAddress, error) {
 	addr, err := p2p.NewNetAddressString(a.String())
 	if err != nil {
 		return nil, fmt.Errorf(
-			"error with relay address %s: %w", a.String(), err)
+			"error with default relay address %s: %w", a.String(), err)
+	}
+
+	return addr, nil
+}
+
+// NetAddressForCometBFT returns a [p2p.NetAddress] instance or an error.
+// Note that this method uses [RelayAddress#AddressForCometBFT].
+func (a *RelayAddress) NetAddressForCometBFT() (*p2p.NetAddress, error) {
+	addrForCometBFT := a.AddressForCometBFT()
+	addr, err := p2p.NewNetAddressString(addrForCometBFT)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"error with cometbft relay address %s: %w", a.String(), err)
 	}
 
 	return addr, nil
