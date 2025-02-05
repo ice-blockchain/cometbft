@@ -868,18 +868,46 @@ func (b *MultiplexBackend) StartRPCServerDiscovery(
 // This method sets the listen address in cometbftRPCAddr.
 func (b *MultiplexBackend) StartRPCServerCometBFT() error {
 	nodeCfg := b.reactor.nodeConfig
-	env := &rpccore.Environment{}
-	routes := env.GetRoutes()
-
-	if nodeCfg.RPC.Unsafe {
-		env.AddUnsafeRoutes(routes)
-	}
 
 	// RPC CometBFT Port is always: `discovery_port+2`
 	rpcListenAddr := overwriteListenPort(
 		nodeCfg.RPC.ListenAddress,
 		int(nodeCfg.DiscoveryPort+2), // always DiscoveryPort+2
 	)
+
+	// We configure one RPC environment per running network,
+	// i.e. contains reactors, stores and genesis.
+	nodesProvider := b.reactor.GetServicesProvider()
+	chainEnvs := map[string]*rpccore.Environment{}
+	chainRoutes := map[string]rpccore.RoutesMap{}
+	for _, chainID := range b.GetNetworks() {
+		nodeRuntime := nodesProvider(ServiceKeyNodeRuntime, chainID).(*node.Node)
+		env, err := nodeRuntime.ConfigureRPC()
+		if err != nil {
+			return fmt.Errorf(
+				"could not create RPC environment with ChainID %s: %w", chainID, err)
+		}
+
+		nodeRoutes := env.GetRoutes()
+		if nodeCfg.RPC.Unsafe {
+			env.AddUnsafeRoutes(nodeRoutes)
+		}
+
+		chainEnvs[chainID] = env
+		chainRoutes[chainID] = nodeRoutes
+	}
+
+	// CAUTION:
+	//
+	// Each network's ChainID is appended to the route name.
+	// i.e. `/broadcast_tx_commit/%CHAIN_ID%`.
+	routes := rpccore.RoutesMap{}
+	for chainID, nodeRoutes := range chainRoutes {
+		for route, rpcFunc := range nodeRoutes {
+			routeKey := route + "/" + chainID
+			routes[routeKey] = rpcFunc
+		}
+	}
 
 	relayAddr, err := server.NewRelayAddress(rpcListenAddr)
 	if err != nil {

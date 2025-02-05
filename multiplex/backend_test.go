@@ -728,7 +728,8 @@ func ResetTestMultiplexBackendCompatibleRelays(
 ) ([]string, []*mx.MultiplexBackend) {
 	tb.Helper()
 
-	require.Len(tb, customLoggers, numRelays)
+	require.Len(tb, customLoggers, numRelays,
+		"count of loggers passed should be equal numRelays")
 
 	rootDirs := make([]string, numRelays)
 	backends := make([]*mx.MultiplexBackend, numRelays)
