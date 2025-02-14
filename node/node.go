@@ -64,6 +64,7 @@ type Node struct {
 	isListening    bool
 	shouldStartRPC bool
 	shouldStartP2P bool
+	shouldStartMon bool
 
 	// services
 	eventBus          *types.EventBus // pub/sub for services
@@ -554,6 +555,7 @@ func NewNodeWithCliParams(ctx context.Context,
 		isListening:    false,
 		shouldStartRPC: true,
 		shouldStartP2P: true,
+		shouldStartMon: config.Instrumentation.Prometheus,
 
 		stateStore:       stateStore,
 		blockStore:       blockStore,
@@ -627,6 +629,7 @@ func NewNodeWithServices(
 		isListening:    false,
 		shouldStartRPC: false,
 		shouldStartP2P: false,
+		shouldStartMon: false,
 
 		addrBook:     addrBook,
 		sw:           sw,
@@ -667,8 +670,8 @@ func (n *Node) OnStart() error {
 	}
 
 	// begin prometheus metrics gathering if it is enabled
-	if n.config.Instrumentation.IsPrometheusEnabled() {
-		n.prometheusSrv = n.startPrometheusServer()
+	if n.shouldStartMon && n.config.Instrumentation.IsPrometheusEnabled() {
+		n.prometheusSrv = n.StartPrometheusServer()
 	}
 
 	// Start the RPC server before the P2P server
@@ -996,9 +999,9 @@ func (n *Node) StartRPC() ([]net.Listener, error) {
 	return n.rpcListeners, nil
 }
 
-// startPrometheusServer starts a Prometheus HTTP server, listening for metrics
+// StartPrometheusServer starts a Prometheus HTTP server, listening for metrics
 // collectors on addr.
-func (n *Node) startPrometheusServer() *http.Server {
+func (n *Node) StartPrometheusServer() *http.Server {
 	srv := &http.Server{
 		Addr: n.config.Instrumentation.PrometheusListenAddr,
 		Handler: promhttp.InstrumentMetricHandler(
@@ -1273,5 +1276,18 @@ func NodeWithStartRPC(f bool) Option {
 func NodeWithStartP2P(f bool) Option {
 	return func(n *Node) {
 		n.shouldStartP2P = f
+	}
+}
+
+// NodeWithStartMonitor is an option helper to overwrite the shouldStartMon
+// property on Node instances. Note that only one running instance of
+// prometheus servers is authorized, use this option helper with caution.
+//
+// If set to true, the Prometheus server will be started by
+// the node's [OnStart] method.
+// If set to false, the Prometheus server must be started separately.
+func NodeWithStartMonitor(f bool) Option {
+	return func(n *Node) {
+		n.shouldStartMon = f
 	}
 }

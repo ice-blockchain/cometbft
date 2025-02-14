@@ -217,6 +217,7 @@ func TestMultiplexNodeNewNodesMultiplex(t *testing.T) {
 		cmtlog.NewNopLogger(),
 		node.NodeWithStartRPC(false),
 		node.NodeWithStartP2P(false),
+		node.NodeWithStartMonitor(false),
 	)
 	assert.NoError(t, err, "should create node instance")
 	assert.NotNil(t, testMultiplex, "should return a multiplex map with a node")
@@ -623,6 +624,7 @@ func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog
 		customLogger,
 		node.NodeWithStartRPC(startServers),
 		node.NodeWithStartP2P(startServers),
+		node.NodeWithStartMonitor(startServers),
 	)
 	require.NoError(tb, err, "should create node instance")
 	require.NotNil(tb, testMultiplex, "should return a multiplex map with a node")

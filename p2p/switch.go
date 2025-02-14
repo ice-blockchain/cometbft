@@ -267,6 +267,11 @@ func (sw *Switch) Transport() *MultiplexTransport {
 	return nil
 }
 
+// Metrics returns the p2p metrics.
+func (sw *Switch) Metrics() *Metrics {
+	return sw.metrics
+}
+
 // ---------------------------------------------------------------------
 // Service start/stop
 

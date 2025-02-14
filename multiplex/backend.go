@@ -7,8 +7,12 @@ import (
 	"net"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/libs/log"
@@ -25,6 +29,15 @@ import (
 
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/server"
+)
+
+const (
+	// Collecting metrics every 10 seconds, this may need to be adapted
+	// to equal the Prometheus scrape interval (1s) for better granularity.
+	metricsTickerDuration = 10 * time.Second
+
+	// Prometheus timeout configuration
+	readHeaderTimeout = 10 * time.Second
 )
 
 // Assert that our implementation satisfies the [server.Backend] interface.
@@ -49,11 +62,13 @@ type MultiplexBackend struct {
 	reactor      *Reactor
 	eventSwitch  *p2p.Switch
 	rpcListeners []net.Listener
+	httpServers  []*http.Server
 
-	broadcastAddr   *p2p.NetAddress // P2P Discovery
-	discoveryAddr   *p2p.NetAddress // RPC Discovery
-	cometbftRPCAddr *p2p.NetAddress // CometBFT RPC
-	cometbftP2PAddr *p2p.NetAddress // CometBFT P2P
+	broadcastAddr   *p2p.NetAddress // P2P Discovery (:dp)
+	discoveryAddr   *p2p.NetAddress // RPC Discovery (:dp-1)
+	cometbftP2PAddr *p2p.NetAddress // CometBFT P2P (:dp+1)
+	cometbftRPCAddr *p2p.NetAddress // CometBFT RPC  (:dp+2)
+	prometheusAddr  *p2p.NetAddress // Prometheus (:dp+3)
 
 	// An acceptor implementation to which transactions will be forwarded.
 	acceptor client.Acceptor
@@ -75,12 +90,20 @@ type MultiplexBackend struct {
 	// Internals
 	logger   cmtlog.Logger
 	errorsCh chan error
+	metrics  *Metrics
 }
 
 // WithRoutines is an option helper to overwrite the [server.Jobs] instance.
 func WithRoutines(jobs *server.Jobs) func(*MultiplexBackend) {
 	return func(b *MultiplexBackend) {
 		b.routines = jobs
+	}
+}
+
+// WithMetrics is an option helper to overwrite the [Metrics] instance.
+func WithMetrics(metrics *Metrics) func(*MultiplexBackend) {
+	return func(b *MultiplexBackend) {
+		b.metrics = metrics
 	}
 }
 
@@ -99,13 +122,15 @@ func NewServer(
 	nodeLogger cmtlog.Logger,
 	options ...func(*MultiplexBackend),
 ) (*MultiplexBackend, error) {
+	initTime := time.Now()
 	_, reactor, err := NewNodesMultiplex(
 		context.Background(),
 		impl,
 		nodeConfig,
 		nodeLogger,
-		node.NodeWithStartRPC(false), // delegates to MustStart()
-		node.NodeWithStartP2P(false), // delegates to MustStart()
+		node.NodeWithStartRPC(false),     // delegates to MustStart()
+		node.NodeWithStartP2P(false),     // delegates to MustStart()
+		node.NodeWithStartMonitor(false), // delegates to MustStart()
 	)
 	if err != nil {
 		return nil, fmt.Errorf(
@@ -116,6 +141,7 @@ func NewServer(
 		reactor:      reactor,
 		acceptor:     impl,
 		rpcListeners: []net.Listener{},
+		httpServers:  []*http.Server{},
 
 		logger:   nodeLogger,
 		errorsCh: make(chan error),
@@ -124,6 +150,10 @@ func NewServer(
 	// Enable overwrite of optional properties
 	for _, option := range options {
 		option(server)
+	}
+
+	if server.metrics != nil {
+		defer addTimeSample(server.metrics.InitDurationSeconds, initTime)()
 	}
 
 	return server, nil
@@ -250,6 +280,12 @@ func (b *MultiplexBackend) EventSwitch() *p2p.Switch {
 //
 // MustStart implements [server.Server]
 func (b *MultiplexBackend) MustStart() {
+	startTime := time.Now()
+
+	if b.metrics != nil {
+		defer addTimeSample(b.metrics.StartDurationSeconds, startTime)()
+	}
+
 	b.logger.Debug("Process now starting a node backend",
 		"id", b.reactor.nodeKey.ID(),
 	)
@@ -269,6 +305,8 @@ func (b *MultiplexBackend) MustStart() {
 	b.relayAcceptTxCh = make(chan string)
 	b.replRequestsSent = map[string][]string{}
 
+	go b.metricsReporter()
+
 	// Here we should wait forever, until the internal Reactor instance
 	// is told to replicate a new chain using the server.ReplicationChannel.
 	go func() {
@@ -279,17 +317,27 @@ func (b *MultiplexBackend) MustStart() {
 		// Additionally, a RPC server is started which permits to read
 		// node information such as the node ID.
 
-		_, err := b.StartP2PServerDiscovery(b.reactor.nodeConfig, b.reactor.nodeKey)
-		if err != nil {
+		if _, err := b.StartP2PServerDiscovery(
+			b.reactor.nodeConfig,
+			b.reactor.nodeKey,
+		); err != nil {
 			wg.Done()
 			b.logger.Error("error with P2P server", "err", err)
 			return
 		}
 
-		_, err = b.StartRPCServerDiscovery(b.reactor.nodeConfig, b.reactor.nodeKey)
-		if err != nil {
+		if _, err := b.StartRPCServerDiscovery(
+			b.reactor.nodeConfig,
+			b.reactor.nodeKey,
+		); err != nil {
 			wg.Done()
 			b.logger.Error("error with RPC server", "err", err)
+			return
+		}
+
+		// Start the Prometheus server, if enabled.
+		if err := b.StartPrometheusServer(); err != nil {
+			b.logger.Error("error with Prometheus server", "err", err)
 			return
 		}
 
@@ -298,6 +346,7 @@ func (b *MultiplexBackend) MustStart() {
 			"id", b.reactor.nodeKey.ID(),
 			"p2p", b.broadcastAddr.DialString(),
 			"rpc", b.discoveryAddr.DialString(),
+			"mon", b.prometheusAddr.DialString(),
 		)
 
 		// Start the RPC server before the P2P server
@@ -328,6 +377,10 @@ func (b *MultiplexBackend) MustStart() {
 
 		// This relay can now be used to communicate P2P messages.
 		wg.Done()
+
+		if b.metrics != nil {
+			addTimeSample(b.metrics.StartDurationSeconds, startTime)()
+		}
 
 		for {
 			select {
@@ -370,6 +423,11 @@ func (b *MultiplexBackend) Close() error {
 	// Stop RelayInfo RPC and CometBFT RPC
 	for _, rpcListener := range b.rpcListeners {
 		rpcListener.Close()
+	}
+
+	// Stop any custom HTTP servers (e.g. prometheus)
+	for _, httpServer := range b.httpServers {
+		httpServer.Close()
 	}
 
 	// Stop any running node runtime
@@ -731,6 +789,7 @@ func (b *MultiplexBackend) RemoveTransactions(
 // StartP2PServerDiscovery creates a [p2p.Switch] instance that may be used
 // to transport [ChainReplicationRequest] messages to nodes that do not have
 // network ports open yet (due to not replicating any chain).
+// Creates a transport listening on DiscoveryPort.
 func (b *MultiplexBackend) StartP2PServerDiscovery(
 	nodeCfg *config.Config,
 	nodeKey *p2p.NodeKey,
@@ -789,6 +848,7 @@ func (b *MultiplexBackend) StartP2PServerDiscovery(
 // StartRPCServerDiscovery starts a RPC server with a RelayInfo function that
 // may be used to retrieve node information, including the node ID.
 // This method sets the listen address in discoveryAddr.
+// Creates a transport listening on DiscoveryPort-1.
 func (b *MultiplexBackend) StartRPCServerDiscovery(
 	nodeCfg *config.Config,
 	nodeKey *p2p.NodeKey,
@@ -862,9 +922,59 @@ func (b *MultiplexBackend) StartRPCServerDiscovery(
 	return b.discoveryAddr, nil
 }
 
+// StartP2PServerCometBFT creates the CometBFT P2P Server that may be used
+// to interact directly with a CometBFT node runtime, e.g to broadcast a
+// transaction.
+// Creates a transport listening on DiscoveryPort+1.
+// This method sets the listen address in cometbftP2PAddr.
+func (b *MultiplexBackend) StartP2PServerCometBFT() error {
+	// P2P CometBFT Port is always: `discovery_port+1`
+	p2pListenAddr := overwriteListenPort(
+		b.reactor.nodeConfig.P2P.ListenAddress,
+		int(b.reactor.nodeConfig.DiscoveryPort+1), // always DiscoveryPort+1
+	)
+
+	sw := b.reactor.eventSwitch // uses DiscoveryPort+1
+
+	// Start the transport.
+	addr, err := p2p.NewNetAddressString(p2p.IDAddressString(
+		b.reactor.nodeKey.ID(),
+		p2pListenAddr,
+	))
+	if err != nil {
+		return err
+	}
+	if err := sw.Transport().Listen(*addr); err != nil {
+		return err
+	}
+
+	// Start the switch (the P2P server).
+	err = sw.Start()
+	if err != nil {
+		return err
+	}
+
+	b.cometbftP2PAddr = addr
+
+	// Always connect to persistent peers
+	// err = sw.DialPeersAsync(splitAndTrimEmpty(n.config.P2P.PersistentPeers, ",", " "))
+	// if err != nil {
+	// 	return fmt.Errorf("could not dial peers from persistent_peers field: %w", err)
+	// }
+	return nil
+}
+
 // StartRPCServerCometBFT starts a CometBFT RPC server that may be used
 // to interact directly with a CometBFT node runtime, e.g to request the
 // status of a node.
+//
+// CAUTION:
+// Each network's ChainID is appended to RPC route names,
+// i.e. `/broadcast_tx_commit/%CHAIN_ID%`.
+// This permits us to use legacy RPC function implementation without
+// modification apart from the route paths.
+//
+// Creates a transport listening on DiscoveryPort+2.
 // This method sets the listen address in cometbftRPCAddr.
 func (b *MultiplexBackend) StartRPCServerCometBFT() error {
 	nodeCfg := b.reactor.nodeConfig
@@ -897,8 +1007,6 @@ func (b *MultiplexBackend) StartRPCServerCometBFT() error {
 		chainRoutes[chainID] = nodeRoutes
 	}
 
-	// CAUTION:
-	//
 	// Each network's ChainID is appended to the route name.
 	// i.e. `/broadcast_tx_commit/%CHAIN_ID%`.
 	routes := rpccore.RoutesMap{}
@@ -999,44 +1107,59 @@ func (b *MultiplexBackend) StartRPCServerCometBFT() error {
 	return nil
 }
 
-// StartP2PServerCometBFT creates the CometBFT P2P Server that may be used
-// to interact directly with a CometBFT node runtime, e.g to broadcast a
-// transaction.
-// This method sets the listen address in cometbftP2PAddr.
-func (b *MultiplexBackend) StartP2PServerCometBFT() error {
-	// P2P CometBFT Port is always: `discovery_port+1`
-	p2pListenAddr := overwriteListenPort(
-		b.reactor.nodeConfig.P2P.ListenAddress,
-		int(b.reactor.nodeConfig.DiscoveryPort+1), // always DiscoveryPort+1
+// StartPrometheusServer starts a Prometheus HTTP server, listening for metrics
+// collectors on addr.
+// Creates a transport listening on DiscoveryPort+3.
+// This method sets the listen address in prometheusAddr.
+func (b *MultiplexBackend) StartPrometheusServer() error {
+	nodeCfg := b.reactor.nodeConfig
+	prometheusCfg := nodeCfg.Instrumentation
+
+	// Allows disabling prometheus through legacy config.
+	if !prometheusCfg.Prometheus {
+		return nil
+	}
+
+	// RPC Discovery Port is always: `discovery_port+3`
+	monListenAddr := overwriteListenPort(
+		prometheusCfg.PrometheusListenAddr,
+		int(nodeCfg.DiscoveryPort+3), // always DiscoveryPort+3
 	)
 
-	sw := b.reactor.eventSwitch // uses DiscoveryPort+1
-
-	// Start the transport.
-	addr, err := p2p.NewNetAddressString(p2p.IDAddressString(
-		b.reactor.nodeKey.ID(),
-		p2pListenAddr,
-	))
+	relayAddr, err := server.NewRelayAddress(monListenAddr)
 	if err != nil {
-		return err
-	}
-	if err := sw.Transport().Listen(*addr); err != nil {
-		return err
+		return fmt.Errorf(
+			"could not create relay address for Prometheus: %w", err)
 	}
 
-	// Start the switch (the P2P server).
-	err = sw.Start()
-	if err != nil {
-		return err
+	relayAddr.SetID(b.reactor.nodeKey.ID())
+	if b.prometheusAddr, err = relayAddr.NetAddress(); err != nil {
+		return fmt.Errorf(
+			"could not create Prometheus listen address: %w", err)
 	}
 
-	b.cometbftP2PAddr = addr
+	b.logger.Info("Process is now setting up Prometheus HTTP",
+		"addr", relayAddr.StringHostname(),
+	)
 
-	// Always connect to persistent peers
-	// err = sw.DialPeersAsync(splitAndTrimEmpty(n.config.P2P.PersistentPeers, ",", " "))
-	// if err != nil {
-	// 	return fmt.Errorf("could not dial peers from persistent_peers field: %w", err)
-	// }
+	srv := &http.Server{
+		Addr: relayAddr.StringHostname(),
+		Handler: promhttp.InstrumentMetricHandler(
+			prometheus.DefaultRegisterer, promhttp.HandlerFor(
+				prometheus.DefaultGatherer,
+				promhttp.HandlerOpts{MaxRequestsInFlight: prometheusCfg.MaxOpenConnections},
+			),
+		),
+		ReadHeaderTimeout: readHeaderTimeout,
+	}
+	go func() {
+		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+			// Error starting or closing listener:
+			b.logger.Error("Error serving Prometheus HTTP server", "err", err)
+		}
+	}()
+
+	b.httpServers = append(b.httpServers, srv)
 	return nil
 }
 
@@ -1104,4 +1227,59 @@ func (b *MultiplexBackend) StopNodeInstances() error {
 	}
 
 	return nil
+}
+
+// metricsReporter runs a reporter every metricsTickerDuration until
+// the backend is stopped.
+//
+// - Report ProcessorUsage as the current CPU load percentage.
+// - Report MemoryUsage as the total allocated bytes across all networks.
+// - Report TotalNetworkBytes as the total of bytes received and sent across all networks.
+// - Report TotalBlocks as the total number of blocks across all networks.
+// - Report TotalTxs as the total number of transactions across all networks.
+// - Report Errors as the total number of failed transactions across all networks.
+// - Report TotalBlocksPerUser as the total number of blocks by each user.
+// - Report TotalTxsPerUser as the total number of transactions by each user.
+// - Report ErrorsPerUser as the total number of failed transactions by each user.
+func (b *MultiplexBackend) metricsReporter() {
+	metricsTicker := time.NewTicker(metricsTickerDuration)
+	defer metricsTicker.Stop()
+
+	for {
+		select {
+		case <-metricsTicker.C:
+			if b.metrics == nil {
+				return
+			}
+
+			prometheusCfg := b.reactor.GetNodeConfig().Instrumentation
+			relayMetricsPrefix := prometheusCfg.Namespace + "_" + string(b.reactor.nodeKey.ID())
+
+			// Resources sampling for CPU and RAM
+			collectSampleCPU(b.metrics.ProcessorUsage)()
+			collectSampleRAM(b.metrics.MemoryUsage)()
+
+			// Bandwidth usage sampling
+			collectSampleP2P(relayMetricsPrefix, b.metrics, []string{
+				"message_receive_bytes_total",
+				"message_send_bytes_total",
+			})()
+
+			// For each network, collect CometBFT metrics (blocks, txes)
+			for _, chainID := range b.GetNetworks() {
+				// See also: multiplex/consensus.go
+				chainMetricsPrefix := prometheusCfg.Namespace + "_" + strings.ReplaceAll(chainID, "-", "_")
+
+				collectSampleCometBFT(
+					// string(b.reactor.nodeKey.ID()),
+					// chainID,
+					chainMetricsPrefix,
+					b.metrics,
+				)()
+			}
+
+		case <-b.reactor.Quit():
+			return
+		}
+	}
 }

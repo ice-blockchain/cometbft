@@ -93,10 +93,6 @@ func (genDocSet GenesisDocSet) ValidatorHash() []byte {
 
 // ValidateAndComplete checks that all necessary fields are present.
 func (genDocSet GenesisDocSet) ValidateAndComplete() error {
-	if len(genDocSet) < 1 {
-		return errors.New("encountered empty GenesisDocSet")
-	}
-
 	chains := map[string]bool{}
 	for i, userGenDoc := range genDocSet {
 		chainID := userGenDoc.ChainID

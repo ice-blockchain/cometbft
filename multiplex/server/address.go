@@ -169,6 +169,20 @@ func (a *RelayAddress) StringWithoutId() string {
 	return a.String()
 }
 
+// StringWithoutId returns the relay address without the ID.
+func (a *RelayAddress) StringHostname() string {
+	bkid := a.id
+	bksc := a.scheme
+	a.id = p2p.ID("")
+	a.scheme = ""
+	defer func() {
+		a.id = bkid
+		a.scheme = bksc
+	}()
+
+	return a.String()
+}
+
 // Addresses returns an ordered slice of relay addresses.
 // Following ports are used:
 // - `DiscoveryPort`: P2P Discovery Server
