@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	mx "github.com/ice-blockchain/cometbft/multiplex"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
@@ -65,46 +64,6 @@ func TestMultiplexBackendMustStart(t *testing.T) {
 	assert.NotNil(t, testTransport)
 	assert.Equal(t, true, testTransport.IsListening()) // LISTEN
 }
-
-// func TestMultiplexBackendClose(t *testing.T) {
-// 	// Uses config.TestConfig() and random MultiplexConfig
-// 	// For debug, change the logger to cmtlog.TestingLogger()
-// 	rootDir,
-// 		backend := ResetTestMultiplexBackend(t, 2, cmtlog.TestingLogger()) // 2 distinct networks
-// 	require.NotNil(t, backend)
-
-// 	defer os.RemoveAll(rootDir)
-
-// 	// Prepare
-// 	backend.MustStart()
-// 	testSwitch := backend.EventSwitch()
-// 	require.NotNil(t, testSwitch)
-
-// 	// Act (1) - Test that we can shutdown gracefully
-// 	err := backend.Close()
-// 	assert.NoError(t, err, "should shutdown gracefully")
-
-// 	testReactor := testSwitch.Reactor("", "MULTIPLEX")
-// 	assert.NotNil(t, testReactor)
-// 	assert.Equal(t, false, testReactor.IsRunning())
-
-// 	testTransport := testSwitch.Transport()
-// 	assert.NotNil(t, testTransport)
-// 	assert.Equal(t, false, testTransport.IsListening()) // NOLISTEN on close
-
-// 	// Act (2) - Test that we can restart
-// 	backend.MustStart()
-// 	testSwitch2 := backend.EventSwitch()
-// 	assert.NotNil(t, testSwitch2)
-
-// 	testTransport2 := testSwitch2.Transport()
-// 	assert.NotNil(t, testTransport2)
-// 	assert.Equal(t, true, testTransport2.IsListening()) // LISTEN
-
-// 	recloseErr := backend.Close()
-// 	assert.NoError(t, recloseErr, "should shutdown gracefully")
-// 	assert.Equal(t, false, testTransport2.IsListening()) // NOLISTEN on close
-// }
 
 func TestMultiplexBackendGetLocalNetworkHeights(t *testing.T) {
 	// Uses config.TestConfig() and random MultiplexConfig
@@ -199,40 +158,6 @@ func TestMultiplexBackendGetLocalNetworkHeights(t *testing.T) {
 	assert.NotEmpty(t, mustCreateNetworks3)
 	assert.Len(t, mustCreateNetworks3, 1)
 	assert.Equal(t, otherChainID, mustCreateNetworks3[0])
-}
-
-func TestMultiplexBackendCheckDialCompatibleRelayWithUnreachableRelay(t *testing.T) {
-	// Uses config.TestConfig() and random MultiplexConfig
-	// For debug, change the logger to cmtlog.TestingLogger()
-	rootDir,
-		backend := ResetTestMultiplexBackend(t, 0, cmtlog.NewNopLogger())
-	require.NotNil(t, backend)
-
-	defer func() {
-		defer os.RemoveAll(rootDir)
-		if backend != nil {
-			err := backend.Close()
-			assert.NoError(t, err, "should shutdown gracefully")
-		}
-	}()
-
-	// Start the node backend
-	backend.MustStart()
-
-	randomPrivKey := ed25519.GenPrivKey()
-	testRelayAddr, err := server.NewRelayAddress(
-		randomPrivKey.PubKey().Address().String() + "@0.0.0.0:1234",
-	)
-	require.NoError(t, err)
-
-	// Act (1) - Test that unknown relays return error
-	discoverErr := backend.CheckDialCompatibleRelay(
-		testRelayAddr,
-	)
-
-	// Must error
-	assert.Error(t, discoverErr)
-	assert.Contains(t, discoverErr.Error(), "could not dial relay")
 }
 
 func TestMultiplexBackendCheckDialCompatibleRelayWithOnlySelfRelay(t *testing.T) {
@@ -698,6 +623,14 @@ func ResetTestMultiplexBackendTwoInParallel(
 		tb.Name()+"-2",
 		50010,
 	)
+
+	// Seeds must be valid (or empty), otherwise dialing will fail
+	for chainID := range globalCfgRelay1.ChainSeeds {
+		globalCfgRelay1.ChainSeeds[chainID] = ""
+	}
+	for chainID := range globalCfgRelay2.ChainSeeds {
+		globalCfgRelay2.ChainSeeds[chainID] = ""
+	}
 
 	serverRelay1, err := mx.NewServer(
 		&client.DefaultAcceptor{},

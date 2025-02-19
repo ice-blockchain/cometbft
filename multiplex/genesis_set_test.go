@@ -33,7 +33,6 @@ func TestMultiplexGenesisDocSetBad(t *testing.T) {
 		{},               // empty
 		{1},              // junk
 		[]byte(`{null}`), // invalid GenesisDocs
-		[]byte(`[]`),     // empty GenesisDocs
 		[]byte(`[{}]`),   // invalid GenesisDocs
 		[]byte(`[{"chain_id": "", "initial_height": "1", "consensus_params": null, "validators": null,"app_hash":"","app_state":{"account_owner":"Bob"}}]`),   // empty chain_id
 		[]byte(`[{"chain_id": null, "initial_height": "1", "consensus_params": null, "validators": null,"app_hash":"","app_state":{"account_owner":"Bob"}}]`), // nil chain_id
@@ -48,6 +47,10 @@ func TestMultiplexGenesisDocSetBad(t *testing.T) {
 
 		assert.Error(t, err, "expected error for invalid genDocSet json at "+strconv.Itoa(i))
 	}
+
+	emptyGenesisDocSet := []byte(`[]`)
+	_, actualErr := mx.GenesisDocSetFromJSON(emptyGenesisDocSet)
+	assert.NoError(t, actualErr, "should not error with empty genesis doc set")
 }
 
 func TestMultiplexGenesisDocSetGood(t *testing.T) {

@@ -293,6 +293,8 @@ func (reactor *Reactor) InjectNewRuntime(
 	// Waits until the reactor started the required node listeners
 	<-reactor.chainReadyCh
 
+	clogger := reactor.logger.With("chain_id", chainID)
+
 	// ------------------------------------------------------------------------
 	// Step 2: Execute consensus handshake
 
@@ -321,7 +323,7 @@ func (reactor *Reactor) InjectNewRuntime(
 	}
 
 	// Inform about the state machine block height
-	reactor.logger.Info(
+	clogger.Info(
 		"State machine loaded",
 		"chain_id", stateMachine.ChainID,
 		"height", stateMachine.LastBlockHeight,
@@ -332,19 +334,20 @@ func (reactor *Reactor) InjectNewRuntime(
 
 	// We may need to run block-sync for existing networks.
 	blockSync := true
-	logNodeStartupInfo(stateMachine.Copy(), privValPubKey, reactor.logger)
+	waitSyncd := true
+	logNodeStartupInfo(stateMachine.Copy(), privValPubKey, clogger)
 
 	// Start the actual consensus instance.
 	//
 	// Creates a mempool, evidence pool, block executor, blocksync
 	// and finally a consensus reactor.
-	if err := reactor.CreateConsensusInstanceReactors(ctx, chainID, blockSync); err != nil {
+	if err := reactor.CreateConsensusInstanceReactors(ctx, chainID, blockSync, waitSyncd); err != nil {
 		return fmt.Errorf(
 			"error starting consensus reactors: %w", err)
 	}
 
 	// Inform about the consensus readiness
-	reactor.logger.Info("Network is consensus ready", "chain_id", chainID)
+	clogger.Info("Network is consensus ready", "chain_id", chainID)
 
 	// ------------------------------------------------------------------------
 	// Step 4: Update transport protocol
@@ -362,7 +365,7 @@ func (reactor *Reactor) InjectNewRuntime(
 	}
 
 	// Inform about all replicated chains being configured
-	reactor.logger.Info("The new network is now configured",
+	clogger.Info("The new network is now configured",
 		"nodeId", string(reactor.nodeKey.ID()))
 
 	// ------------------------------------------------------------------------
@@ -384,8 +387,8 @@ func (reactor *Reactor) InjectNewRuntime(
 	// Calls the Start method on the node.Node instance.
 	// This goroutine produces a panic in case of errors.
 	go func(network string, n *node.Node) {
-		reactor.logger.Info("Starting new node", "chain_id", network)
-		reactor.logger.Info("Using custom listen addresses",
+		clogger.Info("Starting new node", "chain_id", network)
+		clogger.Info("Using custom listen addresses",
 			"p2p", n.Config().P2P.ListenAddress,
 			"rpc", n.Config().RPC.ListenAddress,
 		)
@@ -394,7 +397,7 @@ func (reactor *Reactor) InjectNewRuntime(
 			panic(fmt.Errorf("failed to start node: %w", err))
 		}
 
-		reactor.logger.Info("Started node",
+		clogger.Info("Started node",
 			"chain_id", network,
 			"nodeInfo", n.Switch().NodeInfo(),
 		)

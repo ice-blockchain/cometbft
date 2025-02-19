@@ -104,7 +104,7 @@ func (reactor *Reactor) createMultiplexNodesWithServices(
 		)
 
 		nodeInstance.BaseService = *service.NewBaseService(
-			reactor.logger,
+			reactor.logger.With("node_id", reactor.nodeKey.ID()),
 			"Node",
 			nodeInstance,
 		)

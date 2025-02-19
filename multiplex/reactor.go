@@ -724,6 +724,7 @@ func (reactor *Reactor) OnStop() {
 		}
 
 		reactor.eventSwitch.Stop()
+		reactor.eventSwitch = nil
 	}
 
 	// Shutdown all registered services atomically
@@ -743,12 +744,7 @@ func (reactor *Reactor) OnStop() {
 		for _, chainService := range servicesMultiplex {
 			service := chainService.GetInstance().(cmtlibs.Service)
 			if service.IsRunning() {
-				if err := service.Stop(); err != nil {
-					reactor.logger.Error("Error stopping service",
-						"service", serviceName,
-						"err", err,
-					)
-				}
+				service.Stop()
 			}
 		}
 	}
@@ -773,12 +769,7 @@ func (reactor *Reactor) OnStop() {
 			// Every database connection must be stopped
 			for _, chainInstance := range mx {
 				db := chainInstance.GetInstance().(dbm.DB)
-				if err := db.Close(); err != nil {
-					reactor.logger.Error("Error closing database connection",
-						"db", dbMultiplexKey,
-						"err", err,
-					)
-				}
+				db.Close()
 			}
 		}
 		reactor.multiplexMutex.RUnlock()
@@ -967,6 +958,8 @@ func (reactor *Reactor) loadMultiplexState() error {
 // - `eventBus`: the event bus for block events.
 // - `indexers`: the transaction- and block indexers service.
 func (reactor *Reactor) startNodeListeners(chainID string) error {
+	clogger := reactor.logger.With("chain_id", chainID)
+
 	// Retrieve the node's config overwrite object
 	configProvider := reactor.GetInstanceProvider(InstanceKeyConfig)
 	stateStoreProvider := reactor.GetInstanceProvider(InstanceKeyStateStore)
@@ -993,7 +986,7 @@ func (reactor *Reactor) startNodeListeners(chainID string) error {
 
 	// 1) Event Bus Service
 	eventBus := types.NewEventBus()
-	eventBus.SetLogger(reactor.logger.With("module", "events"))
+	eventBus.SetLogger(clogger.With("module", "events"))
 	if err := eventBus.Start(); err != nil {
 		return fmt.Errorf("error starting event bus: %w", err)
 	}
@@ -1047,7 +1040,7 @@ func (reactor *Reactor) startNodeListeners(chainID string) error {
 	}
 
 	indexerService := txindex.NewIndexerService(txIndexer, blockIndexer, eventBus, false) // stopOnError
-	indexerService.SetLogger(reactor.logger.With("module", "txindex"))
+	indexerService.SetLogger(clogger.With("module", "txindex"))
 	if err := indexerService.Start(); err != nil {
 		return fmt.Errorf("error starting indexers: %w", err)
 	}
@@ -1058,7 +1051,7 @@ func (reactor *Reactor) startNodeListeners(chainID string) error {
 	// due to the multiplex features disabling the data companion all along.
 	//
 	// More generally, the multiplex features *do not permit* pruning of blocks
-	// and the this implementation disables pruning by setting a retain height of 0.
+	// and this implementation disables pruning by setting a retain height of 0.
 	if err := stateStore.SaveApplicationRetainHeight(0); err != nil {
 		return fmt.Errorf("could not save application retain height: %w", err)
 	}
@@ -1072,7 +1065,7 @@ func (reactor *Reactor) startNodeListeners(chainID string) error {
 		blockStore,
 		blockIndexer,
 		txIndexer,
-		reactor.logger.With("module", "state"),
+		clogger.With("module", "state"),
 		prunerOpts...,
 	)
 
@@ -1087,11 +1080,11 @@ func (reactor *Reactor) startNodeListeners(chainID string) error {
 // sendChainReplicationResponse sends a ChainReplicationResponse.
 // This response object may be used to determine that a relay acknowledges
 // the replication of a chain it doesn't know yet.
-func (r *Reactor) sendChainReplicationResponse(
+func (reactor *Reactor) sendChainReplicationResponse(
 	peer p2p.Peer,
 	chainID string,
 ) error {
-	myPeerID := r.nodeKey.ID()
+	myPeerID := reactor.nodeKey.ID()
 	peer.Send(p2p.Envelope{
 		ChannelID: server.ReplicationChannel,
 		Message: &mxp2p.Message{
@@ -1115,7 +1108,7 @@ func (r *Reactor) sendChainReplicationResponse(
 //
 // Note that the source peer will be dialed to accelerate the activation
 // of the block-sync process with this peer.
-func (r *Reactor) handleChainReplicationRequest(
+func (reactor *Reactor) handleChainReplicationRequest(
 	source p2p.Peer,
 	req *mxp2p.ChainReplicationRequest,
 ) error {
@@ -1137,7 +1130,7 @@ func (r *Reactor) handleChainReplicationRequest(
 	}
 
 	// Pre-allocates filesystem, database and priv validator.
-	if err := r.AllocateNetwork(req.ChainID); err != nil {
+	if err := reactor.AllocateNetwork(req.ChainID); err != nil {
 		return fmt.Errorf(
 			"could not allocate network resources: %w", err)
 	}
@@ -1150,38 +1143,38 @@ func (r *Reactor) handleChainReplicationRequest(
 	}
 
 	// Config folder is created in AllocateNetwork
-	newConfDir := r.configsPaths[req.ChainID]
-	icsGenesisDocSet, err := r.InjectGenesisDoc(req.ChainID, newConfDir, genesisDoc)
+	newConfDir := reactor.configsPaths[req.ChainID]
+	icsGenesisDocSet, err := reactor.InjectGenesisDoc(req.ChainID, newConfDir, genesisDoc)
 	if err != nil {
 		return fmt.Errorf(
 			"could not inject genesis doc: %w", err)
 	}
 
 	// Initialize the state machine and block store
-	if err := r.InjectStateMachine(req.ChainID, icsGenesisDocSet); err != nil {
+	if err := reactor.InjectStateMachine(req.ChainID, icsGenesisDocSet); err != nil {
 		return fmt.Errorf(
 			"could not inject state machine: %w", err)
 	}
 
 	// Initialize custom configuration overwrites (ports, fs, etc.)
-	configOverwrite, err := r.MakeNetworkConfigOverwrite(extChainID)
+	configOverwrite, err := reactor.MakeNetworkConfigOverwrite(extChainID)
 	if err != nil {
 		return fmt.Errorf(
 			"could not create config overwrite: %w", err)
 	}
 
 	// Inject the new ChainID in the running reactor.
-	r.RegisterInstance(InstanceKeyConfig, req.ChainID, configOverwrite)
+	reactor.RegisterInstance(InstanceKeyConfig, req.ChainID, configOverwrite)
 
 	// This call updates the internal chainRegistry, nodeInfo and ABCI.
-	if err = r.RegisterNetwork(userAddress, req.ChainID); err != nil {
+	if err = reactor.RegisterNetwork(userAddress, req.ChainID); err != nil {
 		return fmt.Errorf(
 			"could not register new ChainID: %w", err)
 	}
 
 	// Inject a *running* node.Node for the new network.
 	// TODO(midas): currently not passing any node options.
-	if err = r.InjectNewRuntime(context.Background(), req.ChainID); err != nil {
+	if err = reactor.InjectNewRuntime(context.Background(), req.ChainID); err != nil {
 		return fmt.Errorf(
 			"could not spawn node runtime: %w", err)
 	}
@@ -1198,7 +1191,7 @@ func (r *Reactor) handleChainReplicationRequest(
 			"invalid cometbft relay address %s: %w", source.SocketAddr(), err)
 	}
 
-	if err := r.eventSwitch.DialPeerWithAddress(peerAddr); err != nil {
+	if err := reactor.eventSwitch.DialPeerWithAddress(peerAddr); err != nil {
 		return fmt.Errorf(
 			"could not dial relay %s: %w", peerAddr.DialString(), err)
 	}

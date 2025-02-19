@@ -32,7 +32,7 @@ func init() {
 	InitMxFilesCmd.Flags().StringVarP(&keyType, "key-type", "k", ed25519.KeyType, fmt.Sprintf("private key type (one of %s)", kt.SupportedKeyTypesStr()))
 	InitMxFilesCmd.Flags().StringVarP(&usersFile, "users-file", "", "", "path to a JSON file containing ChainID slices by user address.")
 	InitMxFilesCmd.Flags().StringVarP(&seedsFile, "seeds-file", "", "", "path to a JSON file containing seed nodes mapped by ChainID.")
-	InitMxFilesCmd.Flags().Uint16VarP(&discoveryPort, "relay-port", "", 50001, "a port number used as the multiplex backend p2p discovery port.")
+	InitMxFilesCmd.Flags().Uint16VarP(&discoveryPort, "relay-port", "", 30001, "a port number used as the multiplex backend p2p discovery port.")
 }
 
 // initFiles uses [initMultiplexFilesWithConfig] using the global
@@ -102,6 +102,7 @@ func initMultiplexFilesWithConfig(withCfg *config.Config) error {
 	withCfg.Strategy = mx.NetworkReplicationStrategy()
 	withCfg.UserChains = userChains
 	withCfg.DiscoveryPort = discoveryPort
+	withCfg.DBBackend = "goleveldb"
 
 	// Overwrite seed nodes to connect/synchronize with existing networks.
 	if len(chainSeeds) > 0 {

@@ -104,6 +104,7 @@ func TestMultiplexReactorCreateConsensusInstanceReactors(t *testing.T) {
 			context.TODO(),
 			chainID,
 			blockSync,
+			false, // waitSync
 		)
 		assert.NoError(t, err, "should not error creating consensus reactors")
 

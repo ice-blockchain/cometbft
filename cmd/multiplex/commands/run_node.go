@@ -106,6 +106,7 @@ func AddNodeFlags(cmd *cobra.Command) {
 
 	// multiplex optional --seeds-file config overwrite
 	cmd.Flags().StringVarP(&seedsFile, "seeds-file", "", "", "path to a JSON file containing seed nodes mapped by ChainID.")
+	cmd.Flags().Uint16VarP(&discoveryPort, "relay-port", "", 30001, "a port number used as the multiplex backend p2p discovery port.")
 }
 
 // NewRunMultiplexCmd returns the command that allows the CLI to start a nodes multiplex.
@@ -156,9 +157,11 @@ func NewRunMultiplexCmd(multiplexProvider mx.NodesMultiplexProvider) *cobra.Comm
 
 			// Overwrite the UserChains
 			nodeConfig.Strategy = mx.NetworkReplicationStrategy()
+			nodeConfig.DBBackend = "goleveldb"
 			nodeConfig.UserChains = userChains
+			nodeConfig.DiscoveryPort = discoveryPort
 			nodeConfig.Instrumentation.Prometheus = true
-			nodeConfig.Instrumentation.PrometheusListenAddr = "tcp://127.0.0.1:26660"
+			nodeConfig.Instrumentation.PrometheusListenAddr = "tcp://127.0.0.1:30004"
 
 			// Overwrite seed nodes to connect/synchronize with existing networks.
 			// This is a runtime overwrite that can be omitted and passed to init cmd.

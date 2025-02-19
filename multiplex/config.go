@@ -149,7 +149,7 @@ func NewConfigOverwriteWithParameters(
 
 	// ----------------------------
 	// P2P Configuration Overwrite
-	mxConfig.P2P.Seeds = seedNodes // CAUTION: always uses seeds!
+	mxConfig.P2P.Seeds = seedNodes // CAUTION: always connect to seeds
 	mxConfig.P2P.ListenAddress = overwriteListenPort(
 		baseConfig.P2P.ListenAddress,
 		discoveryPort+1, // defaults to 30002

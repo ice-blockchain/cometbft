@@ -187,9 +187,10 @@ func NewNodesMultiplex(
 		// The multiplex reactor communicates the ChainID on a channel
 		// to tell this bootstrapper about the readiness of a node config
 		chainID := <-reactor.chainReadyCh
+		clogger := logger.With("chain_id", chainID)
 
 		// Inform about the readiness of this chain
-		logger.Info("Network configuration done", "chain_id", chainID)
+		clogger.Info("Network configuration done", "chain_id", chainID)
 
 		// Used to retrieve configuration and state per chain.
 		statesProvider := reactor.GetInstanceProvider(InstanceKeyState)
@@ -216,7 +217,7 @@ func NewNodesMultiplex(
 		}
 
 		// Inform about the state machine block height
-		logger.Info(
+		clogger.Info(
 			"State machine loaded",
 			"chain_id", stateMachine.ChainID,
 			"height", stateMachine.LastBlockHeight,
@@ -226,20 +227,21 @@ func NewNodesMultiplex(
 		// the handshake, since the app may modify the validator set,
 		// e.g. specifying ourself as the only validator.
 		blockSync := !onlyValidatorIsUs(stateMachine.Copy(), privValPubKey)
+		waitSyncd := blockSync
 
-		logNodeStartupInfo(stateMachine.Copy(), privValPubKey, logger)
+		logNodeStartupInfo(stateMachine.Copy(), privValPubKey, clogger)
 
 		// Start the actual consensus instance.
 		//
 		// Creates a mempool, evidence pool, block executor, blocksync
 		// and finally a consensus reactor.
-		if err := reactor.CreateConsensusInstanceReactors(ctx, chainID, blockSync); err != nil {
+		if err := reactor.CreateConsensusInstanceReactors(ctx, chainID, blockSync, waitSyncd); err != nil {
 			return nil, nil, fmt.Errorf(
 				"error starting consensus reactors: %w", err)
 		}
 
 		// Inform about the consensus readiness
-		logger.Info("Network is consensus ready", "chain_id", chainID)
+		clogger.Info("Network is consensus ready", "chain_id", chainID)
 	}
 	// End of for loop, code following this is run *globally*
 	// Note that reaching this section means that *all replicated chains* are
@@ -437,8 +439,15 @@ func makeNodeInfo(
 		))
 	}
 
-	p2pListenAddr := reactor.nodeConfig.P2P.ListenAddress
-	rpcListenAddr := reactor.nodeConfig.RPC.ListenAddress
+	p2pListenAddr := overwriteListenPort(
+		reactor.nodeConfig.P2P.ListenAddress,
+		int(reactor.nodeConfig.DiscoveryPort)+1, // defaults to 30002
+	)
+
+	rpcListenAddr := overwriteListenPort(
+		reactor.nodeConfig.RPC.ListenAddress,
+		int(reactor.nodeConfig.DiscoveryPort)+2, // defaults to 30003
+	)
 
 	txIndexerStatus := "on"
 	nodeInfo := &MultiNetworkNodeInfo{

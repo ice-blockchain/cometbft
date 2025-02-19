@@ -33,6 +33,8 @@ func (reactor *Reactor) PrepareConsensusInstanceWithReactor(
 		return errors.New("missing ABCI client (proxyApp) for consensus handshake")
 	}
 
+	clogger := reactor.logger.With("chain_id", chainID)
+
 	// Get this network's app connections for consensus
 	proxyApp := reactor.abciClient.ToAppConns(chainID)
 
@@ -59,7 +61,7 @@ func (reactor *Reactor) PrepareConsensusInstanceWithReactor(
 		blockStore,
 		genesisDoc,
 	)
-	handshaker.SetLogger(reactor.logger.With("module", "consensus"))
+	handshaker.SetLogger(clogger.With("module", "consensus"))
 	handshaker.SetEventBus(eventBus)
 	if err := handshaker.Handshake(ctx, proxyApp); err != nil {
 		return fmt.Errorf("error during consensus handshake: %v", err)
@@ -104,6 +106,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	ctx context.Context,
 	chainID string,
 	blockSync bool,
+	waitSync bool,
 ) error {
 	// First make sure the ABCI is setup correctly
 	if reactor.abciClient == nil {
@@ -116,6 +119,8 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 		return fmt.Errorf(
 			"found incompatible multiplex ChainID %s: %w", chainID, err)
 	}
+
+	clogger := reactor.logger.With("chain_id", chainID)
 
 	// Used to retrieve configuration and state per chain.
 	configProvider := reactor.GetInstanceProvider(InstanceKeyConfig)
@@ -163,7 +168,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	// 1) Create the mempool / mempool reactor
 	//
 	// BREAKING: We do not permit using the NopMempool.
-	memplLogger := reactor.logger.With("module", "mempool")
+	memplLogger := clogger.With("module", "mempool")
 	mempool := mempl.NewCListMempool(
 		cfgOverwrite.Mempool,
 		reactor.abciClient.Mempool(chainID),
@@ -176,7 +181,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	mempoolReactor := mempl.NewReactor(
 		cfgOverwrite.Mempool,
 		mempool,
-		blockSync, // "waitSync"
+		waitSync, // "waitSync"
 		mempl.WithAcceptor(
 			extChainID.GetUserAddress(),
 			reactor.acceptorImpl,
@@ -192,7 +197,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	stateStore := stateStoreProvider(chainID).(sm.Store)
 	blockStore := blockStoreProvider(chainID).(*bs.BlockStore)
 
-	evidenceLogger := reactor.logger.With("module", "evidence")
+	evidenceLogger := clogger.With("module", "evidence")
 	evidencePool, err := evidence.NewPool(
 		evidenceDB,
 		stateStore,
@@ -211,7 +216,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	// blocks - the block execute logs on the state module.
 	blockExecutor := sm.NewBlockExecutor(
 		stateStore,
-		reactor.logger.With("module", "state"),
+		clogger.With("module", "state"),
 		reactor.abciClient.Consensus(chainID),
 		mempool,
 		evidencePool,
@@ -235,13 +240,13 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 		bsyncMetricsProvider,
 		offlineStateSyncHeight,
 	)
-	blockSyncReactor.SetLogger(reactor.logger.With("module", "blocksync"))
+	blockSyncReactor.SetLogger(clogger.With("module", "blocksync"))
 
 	// 5) Create consensus state / reactor
 	//
 	// Note that using the config overwrite, we use a separate WAL-file
 	// for every replicated chain.
-	consensusLogger := reactor.logger.With("module", "consensus")
+	consensusLogger := clogger.With("module", "consensus")
 	consensusState := cs.NewState(
 		cfgOverwrite.Consensus, // contains overwrite of WAL
 		stateMachine.Copy(),
@@ -258,7 +263,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	}
 	consensusReactor := cs.NewReactor(
 		consensusState,
-		blockSync, // "waitSync"
+		waitSync, // "waitSync"
 		cs.ReactorMetrics(consensusMetricsProvider),
 	)
 	consensusReactor.SetLogger(consensusLogger)

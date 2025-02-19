@@ -246,9 +246,11 @@ func (b *MultiplexBackend) EventSwitch() *p2p.Switch {
 
 	// In-place mutation of the listen address so that it always uses
 	// the configured broadcast address.
-	laddrModifier := NodeInfoWithListenAddress(b.broadcastAddr)
-	laddrModifier(b.reactor.nodeInfo)
-	localNodeInfo := b.reactor.nodeInfo
+	localNodeInfo := NewMultiNetworkNodeInfo(
+		b.reactor.nodeConfig,
+		b.reactor.nodeKey,
+		b.broadcastAddr,
+	)
 
 	mConnConfig := p2p.MConnConfig(b.reactor.nodeConfig.P2P)
 	localTransport := p2p.NewMultiplexTransportWithCustomHandshake(
@@ -347,6 +349,7 @@ func (b *MultiplexBackend) MustStart() {
 			"p2p", b.broadcastAddr.DialString(),
 			"rpc", b.discoveryAddr.DialString(),
 			"mon", b.prometheusAddr.DialString(),
+			"info", b.eventSwitch.NodeInfo(),
 		)
 
 		// Start the RPC server before the P2P server
@@ -367,6 +370,7 @@ func (b *MultiplexBackend) MustStart() {
 			"id", b.reactor.nodeKey.ID(),
 			"p2p", b.cometbftP2PAddr.DialString(),
 			"rpc", b.cometbftRPCAddr.DialString(),
+			"info", b.reactor.eventSwitch.NodeInfo(),
 		)
 
 		if len(b.reactor.GetNetworks()) > 0 {
@@ -409,6 +413,28 @@ func (b *MultiplexBackend) Close() error {
 		"id", b.reactor.nodeKey.ID(),
 	)
 
+	// Stop any running node runtime
+	if len(b.reactor.GetNetworks()) > 0 {
+		if err := b.StopNodeInstances(); err != nil {
+			return err
+		}
+	}
+
+	if b.reactor != nil {
+		// Must stop the node backend
+		b.reactor.Stop()
+		b.reactor.Reset()
+	}
+
+	// We may close channels now.
+	if b.newChainReadyCh != nil {
+		close(b.newChainReadyCh)
+	}
+
+	if b.relayAcceptTxCh != nil {
+		close(b.relayAcceptTxCh)
+	}
+
 	if b.eventSwitch != nil && b.eventSwitch.IsRunning() {
 		// Must stop listening for P2P messages on broadcast port
 		if ts := b.eventSwitch.Transport(); ts != nil {
@@ -428,32 +454,6 @@ func (b *MultiplexBackend) Close() error {
 	// Stop any custom HTTP servers (e.g. prometheus)
 	for _, httpServer := range b.httpServers {
 		httpServer.Close()
-	}
-
-	// Stop any running node runtime
-	if len(b.reactor.GetNetworks()) > 0 {
-		if err := b.StopNodeInstances(); err != nil {
-			return err
-		}
-	}
-
-	if b.reactor != nil {
-		if b.reactor.eventSwitch.IsRunning() {
-			b.reactor.eventSwitch.Stop()
-		}
-
-		// Must stop the node backend (switch is not yet running)
-		b.reactor.Stop()
-		b.reactor.Reset()
-	}
-
-	// We may close channels now.
-	if b.newChainReadyCh != nil {
-		close(b.newChainReadyCh)
-	}
-
-	if b.relayAcceptTxCh != nil {
-		close(b.relayAcceptTxCh)
 	}
 
 	return nil
@@ -735,8 +735,9 @@ func (b *MultiplexBackend) AddTransactions(
 ) error {
 	for _, transaction := range transactions {
 		chainID := client.GetChainID(userAddress, transaction.Fingerprint)
-		reactorsProvider := b.reactor.GetServicesProvider()
+		clogger := b.logger.With("chain_id", chainID)
 
+		reactorsProvider := b.reactor.GetServicesProvider()
 		memplReactor := reactorsProvider(ServiceKeyMempoolReactor, chainID).(*mempl.Reactor)
 		chainMempool := memplReactor.GetMempoolPtr()
 
@@ -749,7 +750,7 @@ func (b *MultiplexBackend) AddTransactions(
 		}
 
 		// Inform about local mempool addition result
-		b.logger.Info("Received CheckTx response", "res", checkTxRes)
+		clogger.Info("Received CheckTx response", "res", checkTxRes)
 	}
 
 	return nil
@@ -767,14 +768,15 @@ func (b *MultiplexBackend) RemoveTransactions(
 ) error {
 	for _, transaction := range transactions {
 		chainID := client.GetChainID(userAddress, transaction.Fingerprint)
-		reactorsProvider := b.reactor.GetServicesProvider()
+		clogger := b.logger.With("chain_id", chainID)
 
+		reactorsProvider := b.reactor.GetServicesProvider()
 		memplReactor := reactorsProvider(ServiceKeyMempoolReactor, chainID).(*mempl.Reactor)
 		chainMempool := memplReactor.GetMempoolPtr()
 
 		memTx := client.TransactionToRawTx(transaction)
 		if err := chainMempool.RemoveTxByKey(memTx.Key()); err != nil {
-			b.logger.Debug("Rollback transaction not in local mempool (not an error)",
+			clogger.Debug("Rollback transaction not in local mempool (not an error)",
 				"tx", log.NewLazySprintf("%X", memTx.Hash()),
 				"error", err.Error())
 		}
@@ -956,11 +958,14 @@ func (b *MultiplexBackend) StartP2PServerCometBFT() error {
 
 	b.cometbftP2PAddr = addr
 
-	// Always connect to persistent peers
-	// err = sw.DialPeersAsync(splitAndTrimEmpty(n.config.P2P.PersistentPeers, ",", " "))
-	// if err != nil {
-	// 	return fmt.Errorf("could not dial peers from persistent_peers field: %w", err)
+	// // Always connect to chain seed nodes, if any
+	// if len(b.reactor.nodeConfig.P2P.Seeds) > 0 {
+	// 	err = sw.DialPeersAsync(splitAndTrimEmpty(b.reactor.nodeConfig.P2P.Seeds, ",", " "))
+	// 	if err != nil {
+	// 		return fmt.Errorf("could not dial peers from seeds field: %w", err)
+	// 	}
 	// }
+
 	return nil
 }
 
@@ -1218,8 +1223,10 @@ func (b *MultiplexBackend) StopNodeInstances() error {
 		go func(network string, n *node.Node) {
 			b.reactor.logger.Info("Stopping node runtime", "chain_id", network)
 
-			if err := n.Stop(); err != nil {
-				panic(fmt.Errorf("failed to stop node: %w", err))
+			if n.IsRunning() {
+				if err := n.Stop(); err != nil {
+					panic(fmt.Errorf("failed to stop node: %w", err))
+				}
 			}
 
 			b.reactor.logger.Info("Stopped node runtime", "chain_id", network)

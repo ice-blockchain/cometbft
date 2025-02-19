@@ -308,9 +308,8 @@ using one of the following commands:
 	go test github.com/ice-blockchain/cometbft/multiplex -run TestMultiplexDB.* -test.v
 	go test github.com/ice-blockchain/cometbft/multiplex -run TestMultiplexFS.* -test.v
 	go test github.com/ice-blockchain/cometbft/multiplex -run TestMultiplexExtendedChainID.* -test.v
-	go test github.com/ice-blockchain/cometbft/multiplex -run TestMultiplexChainState.* -test.v
 	go test github.com/ice-blockchain/cometbft/multiplex -run TestMultiplexReactor.* -test.v
-	go test github.com/ice-blockchain/cometbft/multiplex -run TestMultiplexP2P.* -test.v
+	go test github.com/ice-blockchain/cometbft/multiplex -run TestMultiplexBackend.* -test.v
 	go test github.com/ice-blockchain/cometbft/multiplex/client -run TestMultiplexClient.* -test.v
 	go test github.com/ice-blockchain/cometbft/multiplex/server -run TestMultiplexServer.* -test.v
 	go test github.com/ice-blockchain/cometbft/multiplex/snapsapp -run TestABCI.* -test.v
@@ -338,12 +337,32 @@ document. This section merely lists the *commands* that have been modified
 or added as part of this implementation.
 
 ```bash
-	# configuring a nodes multiplex (requires users.json)
-	go run ./cmd/cometbft/main.go init --home /tmp/cometbftmx --multiplex
+	# configuring a nodes multiplex (may pass users.json)
+	go run ./cmd/multiplex/main.go init --home /tmp/cometbftmx [--users-file /path/to/users.json]
 
 	# starting the nodes multiplex (requires genesis.json)
-	go run ./cmd/cometbft/main.go multiplex --home /tmp/cometbftmx
+	go run ./cmd/start/main.go start --home /tmp/cometbftmx
 ```
+
+### Monitoring
+
+A *prometheus exporter* is run as a HTTP server that delivers metrics. To visualize
+this data, you will need a `grafana` installation and a prometheus server.
+
+- Edit the `prometheus.yml` of your server and update its `scrape_config` so
+that it collects metrics from the built-in prometheus exporter:
+
+```yaml
+scrape_configs:
+  - job_name: "prometheus"
+    metrics_path: "/"
+    static_configs:
+      - targets: ["localhost:30004"]
+```
+
+- Run the *prometheus server*, by default it runs at `http://localhost:9090`.
+- Run the grafana server and access it using `http://localhost:3000`.
+- Add a *data source* in grafana server and connect it to the *prometheus server*.
 
 ## References
 

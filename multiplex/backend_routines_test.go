@@ -14,7 +14,7 @@ import (
 	"github.com/ice-blockchain/cometbft/multiplex/server"
 )
 
-func TestMultiplexBackendRoutinesNodeReplRequest(t *testing.T) {
+func TestMultiplexRoutinesNodeReplRequest(t *testing.T) {
 	numChains := 3
 	numRelays := 3
 

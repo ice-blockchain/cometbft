@@ -51,9 +51,20 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 	globalConfig := reactor.GetNodeConfig()
 	p2pLogger := reactor.logger.With("module", "p2p")
 
-	transport := reactor.transport
-	eventSwitch := reactor.eventSwitch
-	if eventSwitch == nil {
+	cometbftConfig := deepCopyConfig(globalConfig)
+	cometbftConfig.P2P.ListenAddress = overwriteListenPort(
+		cometbftConfig.P2P.ListenAddress,
+		int(cometbftConfig.DiscoveryPort)+1, // defaults to 30002
+	)
+
+	var (
+		transport   *p2p.MultiplexTransport
+		eventSwitch *p2p.Switch
+	)
+	if reactor.eventSwitch != nil {
+		eventSwitch = reactor.eventSwitch
+		transport = reactor.transport
+	} else {
 		p2pMetricsId := strings.Join([]string{
 			globalConfig.Instrumentation.Namespace,
 			string(reactor.nodeKey.ID()),
@@ -62,7 +73,7 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 			"node_id", string(reactor.nodeKey.ID()),
 		)
 
-		mConnConfig := p2p.MConnConfig(reactor.nodeConfig.P2P)
+		mConnConfig := p2p.MConnConfig(cometbftConfig.P2P)
 		transport = p2p.NewMultiplexTransportWithCustomHandshake(
 			reactor.nodeInfo,
 			*reactor.nodeKey,
@@ -70,7 +81,7 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 			MultiplexTransportHandshake,
 		)
 		eventSwitch = p2p.NewSwitch(
-			reactor.nodeConfig.P2P,
+			cometbftConfig.P2P,
 			transport,
 			p2p.WithMetrics(p2pMetricsProvider),
 		)
@@ -97,13 +108,6 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 		// We use a legacy structure [p2p.MultiplexTransport], but inject
 		// a custom TLS handshake implementation with [MultiplexTransportHandshake].
 		var (
-			// mConnConfig = p2p.MConnConfig(cfgOverwrite.P2P)
-			// transport   = p2p.NewMultiplexTransportWithCustomHandshake(
-			// 	reactor.nodeInfo,
-			// 	*reactor.nodeKey,
-			// 	mConnConfig,
-			// 	MultiplexTransportHandshake,
-			// )
 			connFilters        = []p2p.ConnFilterFunc{}
 			persistentPeers    = splitAndTrimEmpty(cfgOverwrite.P2P.PersistentPeers, ",", " ")
 			unconditionalPeers = splitAndTrimEmpty(cfgOverwrite.P2P.UnconditionalPeerIDs, ",", " ")
@@ -113,25 +117,7 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 			connFilters = append(connFilters, p2p.ConnDuplicateIPFilter())
 		}
 
-		//p2p.MultiplexTransportConnFilters(connFilters...)(transport)
-
-		// Limit the number of incoming connections.
-		// max := cfgOverwrite.P2P.MaxNumInboundPeers + len(unconditionalPeers)
-		// p2p.MultiplexTransportMaxIncomingConnections(max)(transport)
-
-		// 2) Create the event switch
-		//
-		// Sets the per-network node info and global node key.
-		// eventSwitch := p2p.NewSwitch(
-		// 	cfgOverwrite.P2P,
-		// 	transport,
-		// 	p2p.WithMetrics(p2pMetricsProvider),
-		// )
-		// eventSwitch.SetLogger(p2pLogger)
-		// eventSwitch.SetNodeInfo(reactor.nodeInfo)
-		// eventSwitch.SetNodeKey(reactor.nodeKey)
-
-		// 3) Feed reactors from [CreateConsensusInstanceReactors]
+		// 2) Feed reactors from [CreateConsensusInstanceReactors]
 		//
 		// The event switch contains a pointer to internal module reactors.
 		eventSwitch.AddReactor(chainID, "MEMPOOL",
@@ -154,10 +140,6 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 				return fmt.Errorf("could not add peer ids from unconditional_peer_ids field: %w", err)
 			}
 		}
-
-		// Prepare registerable instances mapped to ChainID
-		// reactor.RegisterInstance(InstanceKeyP2PTransport, chainID, transport)
-		// reactor.RegisterInstance(InstanceKeyP2PSwitch, chainID, eventSwitch)
 	}
 
 	reactor.eventSwitch = eventSwitch
@@ -166,6 +148,7 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 	p2pLogger.Info("P2P Node ID",
 		"ID", reactor.nodeKey.ID(),
 		"file", globalConfig.NodeKeyFile(),
+		"info", reactor.nodeInfo,
 	)
 
 	return nil

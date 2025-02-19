@@ -189,6 +189,7 @@ func ResetTestMultiplexP2P(tb testing.TB, numChains int) (string, *config.Config
 			context.TODO(),
 			chainID,
 			blockSync,
+			false, // waitSync
 		)
 		require.NoError(tb, err, "should not error creating consensus reactors")
 	}
