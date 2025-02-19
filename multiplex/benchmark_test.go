@@ -17,7 +17,47 @@ import (
 	mx "github.com/ice-blockchain/cometbft/multiplex"
 )
 
-func BenchmarkMultiplexNodeTriggerConsensus(t *testing.B) {
+func benchmarkRawTxThroughput(
+	b *testing.B,
+	networks []string,
+	numChains,
+	numRelays,
+	numProcs int,
+) {
+	// We shall randomly pick a node index and values
+	randomizer := rand.New(rand.NewSource(time.Now().Unix()))
+	mtx := sync.Mutex{}
+
+	b.SetParallelism(numProcs)
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		// Every iteration should create a transaction with a random value
+		// and broadcast it using the second relay's rpc.
+		for pb.Next() {
+			mtx.Lock()
+			randomizeData := randomizer.Intn(999999999)
+			randomRelay := randomizer.Intn(numRelays) + 1
+			randomChain := randomizer.Intn(numChains)
+			mtx.Unlock()
+
+			randomVal := strconv.Itoa(randomizeData)
+			txData := "test=value" + randomVal
+
+			// Uses CometBFT RPC Port (DiscoveryPort + 2)
+			rpcPort := strconv.Itoa(50001 + (randomRelay * 100) + 2) // random relay RPC
+			chainID := networks[randomChain]
+
+			nodeRPC := "http://127.0.0.1:" + rpcPort
+			rpcPath := "/broadcast_tx_commit/" + chainID
+
+			// For debug, uncomment the following line
+			// b.Logf("Now broadcasting transaction: %s to %s", txData, nodeRPC)
+			http.Get(nodeRPC + rpcPath + "?tx=\"" + txData + "\"")
+		}
+	})
+}
+
+func BenchmarkMultiplexRelaysTriggerConsensus(b *testing.B) {
 	numChains := 1
 	numRelays := 2
 
@@ -26,46 +66,118 @@ func BenchmarkMultiplexNodeTriggerConsensus(t *testing.B) {
 	loggerRelay2 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-2")
 
 	servers, shutdownRoutineFn := ResetTestMultiplexBenchmark(
-		t,
+		b,
 		numChains,
 		numRelays,
 		loggerRelay1,
 		loggerRelay2,
 	)
-	require.NotEmpty(t, servers)
+	require.NotEmpty(b, servers)
 
 	// Shutdown routine
 	defer shutdownRoutineFn()
 
-	// We shall randomly pick a node index
-	randomizer := rand.New(rand.NewSource(time.Now().Unix()))
-	mtx := sync.Mutex{}
-
-	// Uses CometBFT RPC Port (DiscoveryPort + 2)
-	rpcPort := strconv.Itoa(50001 + (1 * 100) + 2) // 50103 (second relay RPC)
-	chainID := servers[0].GetNetworks()[0]
-
-	t.SetParallelism(100000)
-	t.ResetTimer()
-	t.RunParallel(func(pb *testing.PB) {
-		// Every iteration should create a transaction with a random value
-		// and broadcast it using the second relay's rpc.
-		for pb.Next() {
-			mtx.Lock()
-			randomizeData := randomizer.Intn(999999999)
-			mtx.Unlock()
-
-			randomVal := strconv.Itoa(randomizeData)
-			txData := "test=value" + randomVal
-
-			nodeRPC := "http://127.0.0.1:" + rpcPort
-			rpcPath := "/broadcast_tx_commit/" + chainID
-
-			t.Logf("Now broadcasting transaction: %s to %s", txData, nodeRPC)
-			http.Get(nodeRPC + rpcPath + "?tx=\"" + txData + "\"")
-		}
-	})
+	benchmarkRawTxThroughput(
+		b,
+		servers[0].GetNetworks(),
+		numChains,
+		numRelays,
+		100000, // SetParallelism()
+	)
 }
+
+func BenchmarkMultiplexRelaysWithThreeChainsAndThreeRelays(b *testing.B) {
+	numChains := 3
+	numRelays := 3
+
+	relayLoggers := make([]cmtlog.Logger, numRelays)
+	for i := 0; i < numRelays; i++ {
+		// For debug, change the loggers to cmtlog.TestingLogger()
+		relayLoggers[i] = cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-"+strconv.Itoa(i+1))
+	}
+
+	servers, shutdownRoutineFn := ResetTestMultiplexBenchmark(
+		b,
+		numChains,
+		numRelays,
+		relayLoggers...,
+	)
+	require.NotEmpty(b, servers)
+
+	// Shutdown routine
+	defer shutdownRoutineFn()
+
+	benchmarkRawTxThroughput(
+		b,
+		servers[0].GetNetworks(),
+		numChains,
+		numRelays,
+		100000, // SetParallelism()
+	)
+}
+
+func BenchmarkMultiplexRelaysWithTenChainsAndThreeRelays(b *testing.B) {
+	numChains := 10
+	numRelays := 3
+
+	relayLoggers := make([]cmtlog.Logger, numRelays)
+	for i := 0; i < numRelays; i++ {
+		// For debug, change the loggers to cmtlog.TestingLogger()
+		relayLoggers[i] = cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-"+strconv.Itoa(i+1))
+	}
+
+	servers, shutdownRoutineFn := ResetTestMultiplexBenchmark(
+		b,
+		numChains,
+		numRelays,
+		relayLoggers...,
+	)
+	require.NotEmpty(b, servers)
+
+	// Shutdown routine
+	defer shutdownRoutineFn()
+
+	benchmarkRawTxThroughput(
+		b,
+		servers[0].GetNetworks(),
+		numChains,
+		numRelays,
+		100000, // SetParallelism()
+	)
+}
+
+func BenchmarkMultiplexRelaysWithHundredChainsAndThreeRelays(b *testing.B) {
+	numChains := 100
+	numRelays := 3
+
+	relayLoggers := make([]cmtlog.Logger, numRelays)
+	for i := 0; i < numRelays; i++ {
+		// For debug, change the loggers to cmtlog.TestingLogger()
+		relayLoggers[i] = cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-"+strconv.Itoa(i+1))
+	}
+
+	servers, shutdownRoutineFn := ResetTestMultiplexBenchmark(
+		b,
+		numChains,
+		numRelays,
+		relayLoggers...,
+	)
+	require.NotEmpty(b, servers)
+
+	// Shutdown routine
+	defer shutdownRoutineFn()
+
+	benchmarkRawTxThroughput(
+		b,
+		servers[0].GetNetworks(),
+		numChains,
+		numRelays,
+		1000000, // SetParallelism()
+	)
+}
+
+// ----------------------------------------------------------------------------
+// Helpers
 
 func ResetTestMultiplexBenchmark(
 	tb testing.TB,

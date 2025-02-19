@@ -313,6 +313,9 @@ using one of the following commands:
 	go test github.com/ice-blockchain/cometbft/multiplex/client -run TestMultiplexClient.* -test.v
 	go test github.com/ice-blockchain/cometbft/multiplex/server -run TestMultiplexServer.* -test.v
 	go test github.com/ice-blockchain/cometbft/multiplex/snapsapp -run TestABCI.* -test.v
+
+	# running transactions throughput benchmarks
+	go test github.com/ice-blockchain/cometbft/multiplex -bench BenchmarkMultiplex.* -benchmem -benchtime=30s
 ```
 
 ## Linter
@@ -363,6 +366,45 @@ scrape_configs:
 - Run the *prometheus server*, by default it runs at `http://localhost:9090`.
 - Run the grafana server and access it using `http://localhost:3000`.
 - Add a *data source* in grafana server and connect it to the *prometheus server*.
+
+### Example relay deployment
+
+```bash
+# Configure a first nodes multiplex
+export RELAY_1=`go run cmd/multiplex/main.go init \
+--home /tmp/cometbftmx-relay1/ \
+--users-file networks/example.01.users.1net.json | grep -o 'id=[^ ]\+' | cut -d'=' -f2`
+
+go run cmd/multiplex/main.go start \
+--home /tmp/cometbftmx-relay1/ \
+--moniker "Relay1"
+
+# Copy genesis.json from relay 1 to relay 2
+mkdir -p /tmp/cometbftmx-relay2/config/
+cp /tmp/cometbftmx-relay1/config/genesis.json /tmp/cometbftmx-relay2/config/
+
+# IMPORTANT:
+# ----------
+# File networks/example.seeds.json must contain RELAY_1 (node id).
+# By default, the relay listens to 127.0.0.1:30002.
+
+# Configure a second nodes multiplex
+export RELAY_2=`go run cmd/multiplex/main.go init \
+--home /tmp/cometbftmx-relay2/ \
+--seeds-file networks/example.01.seeds.1net.json \
+--relay-port 40001 | grep -o 'id=[^ ]\+' | cut -d'=' -f2`
+
+go run cmd/multiplex/main.go start \
+--home /tmp/cometbftmx-relay2/ \
+--seeds-file networks/example.01.seeds.1net.json \
+--relay-port 40001 \
+--moniker "Relay2"
+
+# NOTES:
+# ----------
+# The first relay will be listening at 127.0.0.1:30002.
+# The second relay will be listening at 127.0.0.1:40002.
+```
 
 ## References
 
