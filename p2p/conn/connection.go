@@ -199,9 +199,9 @@ func NewMConnectionWithConfig(
 	channelsIdx := map[byte]*Channel{}
 	channels := []*Channel{}
 
-	for _, chByChain := range chDescs {
+	for chainID, chByChain := range chDescs {
 		for _, desc := range chByChain {
-			channel := newChannel(mconn, *desc)
+			channel := newChannel(chainID, mconn, *desc)
 			channelsIdx[channel.desc.ID] = channel
 			channels = append(channels, channel)
 		}
@@ -793,17 +793,21 @@ type Channel struct {
 	Logger log.Logger
 }
 
-func newChannel(conn *MConnection, desc ChannelDescriptor) *Channel {
+func newChannel(chainID string, conn *MConnection, desc ChannelDescriptor) *Channel {
 	desc = desc.FillDefaults()
 	if desc.Priority <= 0 {
 		panic("Channel default priority must be a positive integer")
 	}
 	return &Channel{
-		conn:                    conn,
-		desc:                    desc,
-		sendQueue:               make(chan []byte, desc.SendQueueCapacity),
-		recving:                 make([]byte, 0, desc.RecvBufferCapacity),
-		nextPacketMsg:           &tmp2p.PacketMsg{ChannelID: int32(desc.ID)},
+		ChainID:   chainID,
+		conn:      conn,
+		desc:      desc,
+		sendQueue: make(chan []byte, desc.SendQueueCapacity),
+		recving:   make([]byte, 0, desc.RecvBufferCapacity),
+		nextPacketMsg: &tmp2p.PacketMsg{
+			ChainID:   chainID,
+			ChannelID: int32(desc.ID),
+		},
 		nextP2pWrapperPacketMsg: &tmp2p.Packet_PacketMsg{},
 		nextPacket:              &tmp2p.Packet{},
 		maxPacketMsgPayloadSize: conn.config.MaxPacketMsgPayloadSize,

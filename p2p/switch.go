@@ -181,8 +181,9 @@ func (sw *Switch) AddReactor(chainID string, name string, reactor Reactor) React
 
 	for _, chDesc := range reactor.GetChannels() {
 		chID := chDesc.ID
+
 		// No two reactors can share the same channel.
-		if sw.reactorsByCh[chainID][chID] != nil {
+		if _, exists := sw.reactorsByCh[chainID][chID]; exists {
 			panic(fmt.Sprintf("Channel %X for ChainID %s has multiple reactors %v & %v",
 				chID, chainID,
 				sw.reactorsByCh[chainID][chID], reactor,
