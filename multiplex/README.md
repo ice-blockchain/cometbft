@@ -367,43 +367,42 @@ scrape_configs:
 - Run the grafana server and access it using `http://localhost:3000`.
 - Add a *data source* in grafana server and connect it to the *prometheus server*.
 
-### Example relay deployment
+### Example relays orchestration
 
 ```bash
-# Configure a first nodes multiplex
-export RELAY_1=`go run cmd/multiplex/main.go init \
---home /tmp/cometbftmx-relay1/ \
---users-file networks/example.01.users.1net.json | grep -o 'id=[^ ]\+' | cut -d'=' -f2`
+# RELAY 1:
+# ----------
 
-go run cmd/multiplex/main.go start \
---home /tmp/cometbftmx-relay1/ \
---moniker "Relay1"
+# Generate 1000 random ChainIDs across 100 user addresses, i.e. 10 unique ChainID per address.
+go run cmd/multiplex/main.go gen-users --file /tmp/users.1000.json --num-chains 1000 --num-users 100
 
-# Copy genesis.json from relay 1 to relay 2
+# Configure a first nodes multiplex with above ChainIDs.
+go run cmd/multiplex/main.go init --home /tmp/cometbftmx-relay1/ --users-file /tmp/users.1000.json --relay-port 10101
+
+# Generate a seeds.json file using a relay's config and hostname, i.e. uses CometBFT P2P port.
+go run cmd/multiplex/main.go gen-seeds --file /tmp/seeds.1000.json --with-seed /tmp/cometbftmx-relay1/ --with-host 127.0.0.1:10102
+export SEEDS="/tmp/seeds.1000.json"
+
+# CAUTION: Starts the nodes multiplex (and blockchains).
+go run cmd/multiplex/main.go start --home /tmp/cometbftmx-relay1/ --moniker "mxnet-relay-1" --relay-port 10101
+
+# OTHER RELAYS:
+# -------------
+
+# Copy genesis.json from relay 1 to other relays.
 mkdir -p /tmp/cometbftmx-relay2/config/
 cp /tmp/cometbftmx-relay1/config/genesis.json /tmp/cometbftmx-relay2/config/
 
-# IMPORTANT:
-# ----------
-# File networks/example.seeds.json must contain RELAY_1 (node id).
-# By default, the relay listens to 127.0.0.1:30002.
+# Configure a second nodes multiplex with above seeds.json.
+go run cmd/multiplex/main.go init --home /tmp/cometbftmx-relay2/ --seeds-file $SEEDS --relay-port 10201
 
-# Configure a second nodes multiplex
-export RELAY_2=`go run cmd/multiplex/main.go init \
---home /tmp/cometbftmx-relay2/ \
---seeds-file networks/example.01.seeds.1net.json \
---relay-port 40001 | grep -o 'id=[^ ]\+' | cut -d'=' -f2`
-
-go run cmd/multiplex/main.go start \
---home /tmp/cometbftmx-relay2/ \
---seeds-file networks/example.01.seeds.1net.json \
---relay-port 40001 \
---moniker "Relay2"
+# CAUTION: Starts the nodes multiplex (and connects to RELAY 1).
+go run cmd/multiplex/main.go start --home /tmp/cometbftmx-relay2/ --seeds-file $SEEDS --moniker "mxnet-relay-2" --relay-port 10201
 
 # NOTES:
 # ----------
-# The first relay will be listening at 127.0.0.1:30002.
-# The second relay will be listening at 127.0.0.1:40002.
+# The first relay will be listening at 127.0.0.1:10102.
+# The second relay will be listening at 127.0.0.1:10202.
 ```
 
 ## References

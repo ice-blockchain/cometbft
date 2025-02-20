@@ -14,6 +14,8 @@ func main() {
 	rootCmd := cmd.RootCmd
 	rootCmd.AddCommand(
 		cmd.InitMxFilesCmd,
+		cmd.GenUsersCmd,
+		cmd.GenSeedsCmd,
 		cli.NewCompletionCmd(rootCmd, true),
 	)
 
