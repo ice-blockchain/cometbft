@@ -914,7 +914,7 @@ func (b *MultiplexBackend) StartRPCServerDiscovery(
 			rootHandler,
 			rpcLogger,
 			rpcConf,
-		); err != nil {
+		); err != nil && !errors.Is(err, net.ErrClosed) {
 			b.logger.Error("Error serving RPC discovery server", "err", err)
 		}
 	}()
@@ -1091,7 +1091,7 @@ func (b *MultiplexBackend) StartRPCServerCometBFT() error {
 				nodeCfg.RPC.KeyFile(),
 				rpcLogger,
 				rpcConf,
-			); err != nil {
+			); err != nil && !errors.Is(err, net.ErrClosed) {
 				b.logger.Error("Error serving server with TLS", "err", err)
 			}
 		}()
@@ -1102,7 +1102,7 @@ func (b *MultiplexBackend) StartRPCServerCometBFT() error {
 				rootHandler,
 				rpcLogger,
 				rpcConf,
-			); err != nil {
+			); err != nil && !errors.Is(err, net.ErrClosed) {
 				b.logger.Error("Error serving server", "err", err)
 			}
 		}()
@@ -1210,11 +1210,15 @@ func (b *MultiplexBackend) StopNodeInstances() error {
 		return nil
 	}
 
+	var wg sync.WaitGroup
+	wg.Add(len(b.GetNetworks()))
+
 	servicesProvider := b.reactor.GetServicesProvider()
 	for _, chainID := range b.GetNetworks() {
 		// Type-assertion makes sure we have a [*node.Node]
 		runNode := servicesProvider(ServiceKeyNodeRuntime, chainID).(*node.Node)
 		if !runNode.IsRunning() {
+			wg.Done()
 			continue
 		}
 
@@ -1223,15 +1227,17 @@ func (b *MultiplexBackend) StopNodeInstances() error {
 		go func(network string, n *node.Node) {
 			b.reactor.logger.Info("Stopping node runtime", "chain_id", network)
 
-			if n.IsRunning() {
-				if err := n.Stop(); err != nil {
-					panic(fmt.Errorf("failed to stop node: %w", err))
-				}
+			if err := n.Stop(); err != nil {
+				panic(fmt.Errorf("failed to stop node: %w", err))
 			}
 
+			wg.Done()
 			b.reactor.logger.Info("Stopped node runtime", "chain_id", network)
 		}(chainID, runNode)
 	}
+
+	// Wait for all nodes to be stopped.
+	wg.Wait()
 
 	return nil
 }

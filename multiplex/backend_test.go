@@ -34,7 +34,8 @@ func TestMultiplexBackendNewServer(t *testing.T) {
 
 	defer func() {
 		if backend != nil {
-			backend.Close()
+			err := backend.Close()
+			assert.NoError(t, err, "should shutdown gracefully")
 		}
 	}()
 }
@@ -371,7 +372,7 @@ func TestMultiplexBackendGetRemoteRelayInfo(t *testing.T) {
 	actualRelayID,
 		actualError := servers[0].GetRemoteRelayInfo(testRelayAddr)
 
-	assert.NoError(t, actualError)
+	require.NoError(t, actualError)
 	assert.Equal(t, servers[1].GetRelayID(), actualRelayID.DefaultNodeID)
 }
 
@@ -425,7 +426,7 @@ func TestMultiplexBackendGetRemoteRelayInfoWithFourRelays(t *testing.T) {
 		actualRelayID,
 			actualError := servers[0].GetRemoteRelayInfo(testRelayAddr)
 
-		assert.NoError(t, actualError)
+		require.NoError(t, actualError)
 		assert.Equal(t, servers[i].GetRelayID(), actualRelayID.DefaultNodeID)
 	}
 }
