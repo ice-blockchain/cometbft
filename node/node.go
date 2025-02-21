@@ -719,27 +719,34 @@ func (n *Node) OnStop() {
 	n.Logger.Info("Stopping Node")
 
 	// first stop the non-reactor services
-	if err := n.pruner.Stop(); err != nil {
-		n.Logger.Error("Error stopping the pruning service", "err", err)
+	if n.pruner.IsRunning() {
+		if err := n.pruner.Stop(); err != nil {
+			n.Logger.Error("Error stopping the pruning service", "err", err)
+		}
 	}
-	if err := n.eventBus.Stop(); err != nil {
-		n.Logger.Error("Error closing eventBus", "err", err)
+	if n.eventBus.IsRunning() {
+		if err := n.eventBus.Stop(); err != nil {
+			n.Logger.Error("Error closing eventBus", "err", err)
+		}
 	}
-	if n.indexerService != nil {
+	if n.indexerService != nil && n.indexerService.IsRunning() {
 		if err := n.indexerService.Stop(); err != nil {
 			n.Logger.Error("Error closing indexerService", "err", err)
 		}
 	}
+
 	// now stop the reactors
-	if err := n.sw.Stop(); err != nil {
-		n.Logger.Error("Error closing switch", "err", err)
-	}
+	if n.sw.IsRunning() {
+		if err := n.sw.Stop(); err != nil {
+			n.Logger.Error("Error closing switch", "err", err)
+		}
 
-	if err := n.transport.Close(); err != nil {
-		n.Logger.Error("Error closing transport", "err", err)
-	}
+		if err := n.transport.Close(); err != nil {
+			n.Logger.Error("Error closing transport", "err", err)
+		}
 
-	n.isListening = false
+		n.isListening = false
+	}
 
 	// finally stop the listeners / external services
 	for _, l := range n.rpcListeners {

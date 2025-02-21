@@ -82,6 +82,9 @@ type Transport interface {
 
 	// Cleanup any resources associated with Peer.
 	Cleanup(peer Peer)
+
+	// Flags when transport is being closed.
+	IsClosing() bool
 }
 
 // transportLifecycle bundles the methods for callers to control start and stop
@@ -424,6 +427,20 @@ func (mt *MultiplexTransport) acceptPeers() {
 			}
 		}(c)
 	}
+}
+
+// IsClosing identifies when a transport is being closed.
+func (mt *MultiplexTransport) IsClosing() bool {
+	select {
+	case _, ok := <-mt.closec:
+		if !ok {
+			return true
+		}
+	default:
+		// Transport is not closed
+	}
+
+	return false
 }
 
 // Cleanup removes the given address from the connections set and

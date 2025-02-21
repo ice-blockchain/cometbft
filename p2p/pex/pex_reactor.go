@@ -177,7 +177,7 @@ func (r *Reactor) Stop() error {
 	if err := r.BaseReactor.Stop(); err != nil {
 		return err
 	}
-	if err := r.book.Stop(); err != nil {
+	if err := r.book.Stop(); err != nil && err != service.ErrAlreadyStopped {
 		return fmt.Errorf("can't stop address book: %w", err)
 	}
 	r.peersRoutineWg.Wait()

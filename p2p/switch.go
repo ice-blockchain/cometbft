@@ -306,8 +306,10 @@ func (sw *Switch) OnStop() {
 	sw.Logger.Debug("Switch: Stopping reactors")
 	for _, reactors := range sw.reactors {
 		for _, reactor := range reactors {
-			if err := reactor.Stop(); err != nil {
-				sw.Logger.Error("error while stopped reactor", "reactor", reactor, "err", err)
+			if reactor.IsRunning() {
+				if err := reactor.Stop(); err != nil && err != service.ErrAlreadyStopped {
+					sw.Logger.Error("error while stopped reactor", "reactor", reactor, "err", err)
+				}
 			}
 		}
 	}
@@ -693,6 +695,11 @@ func (sw *Switch) acceptRoutine() {
 			isPersistent:  sw.IsPeerPersistent,
 		})
 		if err != nil {
+			// If Close() was called, exit silently
+			if sw.transport.IsClosing() {
+				break
+			}
+
 			switch err := err.(type) {
 			case ErrRejected:
 				if err.IsSelf() {
