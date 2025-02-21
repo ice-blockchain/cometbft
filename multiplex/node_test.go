@@ -3,8 +3,11 @@ package multiplex_test
 import (
 	"context"
 	"fmt"
+	"math/rand"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -427,6 +430,7 @@ func ResetTestMultiplexNodeWithConfigAndPorts(
 	nodeCfg.MultiplexConfig = mxConfig
 	nodeCfg.DiscoveryPort = discoveryPort
 	nodeCfg.Instrumentation.Namespace += metricsSuffix
+	nodeCfg.Consensus.CreateEmptyBlocks = true // when using *Node
 
 	// Make sure we have /data and /config
 	_, err = mx.NewMultiplexFS(nodeCfg)
@@ -474,50 +478,13 @@ func ResetTestMultiplexNodeWithRootDirAndPorts(
 ) (string, *config.Config) {
 	tb.Helper()
 
-	rootDir, err := os.MkdirTemp("", rootDir)
-	require.NoError(tb, err)
-
-	globalCfg := config.TestConfig()
-	globalCfg.SetRoot(rootDir)
-	globalCfg.MultiplexConfig = makeRandomMultiplexConfig(tb, numChains, int(discoveryPort))
-	globalCfg.DiscoveryPort = discoveryPort
-
-	// Make sure we have /data and /config
-	_, err = mx.NewMultiplexFS(globalCfg)
-	require.NoError(tb, err, "should create filesystem structure for multiplex")
-
-	// Make sure we have a *multi-doc* genesis file (GenesisDocSet)
-	genesisFilePath := filepath.Join(rootDir, globalCfg.Genesis)
-
-	// IMPORTANT:
-	// If there is a genesis file at the configured path, we will read it and expect it
-	// to contain a genesis doc set ; otherwise create it with testOneScopedGenesisFmt.
-
-	if !cmtos.FileExists(genesisFilePath) {
-		testGenesis := `[`
-		for userAddress, chainIds := range globalCfg.UserChains {
-			for _, chainID := range chainIds {
-				// Creates one genesis doc per pair of user address and chainId
-				chainTestGenesis := fmt.Sprintf(testGenesisDocWithValidatorsFmt, chainID, testDefaultGenesisValidator)
-				testGenesis += chainTestGenesis + ","
-
-				// resets priv validators to default state/key (as present in genesis)
-				// useDefaultPrivValidator=true
-				ResetMultiplexPrivValidator(globalCfg.BaseConfig, userAddress, chainID, nil, true)
-			}
-		}
-
-		if 0 == len(globalCfg.UserChains) {
-			testGenesis = testGenesis + `]`
-		} else {
-			// Removes last comma and closes json array
-			testGenesis = testGenesis[:len(testGenesis)-1] + `]`
-		}
-
-		cmtos.MustWriteFile(genesisFilePath, []byte(testGenesis), 0o644)
-	}
-
-	return rootDir, globalCfg
+	return ResetTestMultiplexNodeWithConfigAndPorts(
+		tb,
+		rootDir,
+		"", // metricsSuffix
+		makeRandomMultiplexConfig(tb, numChains, int(discoveryPort)),
+		discoveryPort,
+	)
 }
 
 // CAUTION: this test method sets up a random multiplex with a valid GenesisDocSet.
@@ -605,6 +572,7 @@ func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog
 	globalCfg.Instrumentation.Namespace = "cometbft:" + tb.Name()
 	globalCfg.GRPC.ListenAddress = ""            // disabled GRPC
 	globalCfg.GRPC.Privileged.ListenAddress = "" // disabled GRPC
+	globalCfg.Consensus.CreateEmptyBlocks = true // when using *Node
 
 	// Seeds must be valid (or empty), otherwise dialing will fail
 	for chainID := range globalCfg.ChainSeeds {
@@ -689,6 +657,11 @@ func assertWaitForNodesMultiplexToProduceBlocks(
 		// Type-assertion to verify that we have a correct instance
 		nodeInstance := testMultiplex[testChainID].GetInstance().(*cmtnode.Node)
 
+		if !nodeInstance.Config().Consensus.CreateEmptyBlocks {
+			// Must broadcast transactions
+			go broadcastRawTx(tb, testChainID, 1) // 1 transaction
+		}
+
 		// Parallel goroutines with internal blocks loops
 		go func(the_chain string, the_node *cmtnode.Node, maxBlocks int) {
 			// Wait for the node to produce blocks
@@ -730,6 +703,31 @@ func assertWaitForNodesMultiplexToProduceBlocks(
 	for _, chainID := range testReactor.GetNetworks() {
 		assert.Contains(tb, actualNumBlocks, chainID)
 		assert.Equal(tb, expectedBlocks, actualNumBlocks[chainID])
+	}
+}
+
+func broadcastRawTx(tb testing.TB, chainID string, numTxes int) {
+	tb.Helper()
+
+	// We shall randomly pick values
+	randomizer := rand.New(rand.NewSource(time.Now().Unix()))
+	mtx := sync.Mutex{}
+
+	for i := 0; i < numTxes; i++ {
+		mtx.Lock()
+		randomizeData := randomizer.Intn(999999999)
+		mtx.Unlock()
+
+		randomVal := strconv.Itoa(randomizeData)
+		txData := "test=value" + randomVal
+
+		go func(rpcHost, network, txData string) {
+			rpcPath := "/broadcast_tx_commit/" + network
+
+			// For debug, uncomment the following line
+			tb.Logf("Now broadcasting transaction: %s to %s", txData, rpcHost)
+			http.Get(rpcHost + rpcPath + "?tx=\"" + txData + "\"")
+		}("http://127.0.0.1:30002", chainID, txData)
 	}
 }
 

@@ -122,6 +122,9 @@ func NewServer(
 	nodeLogger cmtlog.Logger,
 	options ...func(*MultiplexBackend),
 ) (*MultiplexBackend, error) {
+	// Force to create blocks only if there is transactions.
+	nodeConfig.Consensus.CreateEmptyBlocks = false
+
 	initTime := time.Now()
 	_, reactor, err := NewNodesMultiplex(
 		context.Background(),

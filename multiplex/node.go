@@ -3,7 +3,6 @@ package multiplex
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/crypto"
@@ -138,7 +137,7 @@ func NewNodesMultiplex(
 	logger.Info("WARNING - EXPERIMENTAL: Starting a nodes multiplex", "nodeId", string(nodeKey.ID()))
 
 	knownNetworks := chainRegistry.GetChains()
-	logger.Debug("WARNING - EXPERIMENTAL: Known networks", "networks", strings.Join(knownNetworks, ", "))
+	logger.Debug("WARNING - EXPERIMENTAL: Known networks", "len", len(knownNetworks))
 
 	// Start the multiplex reactor, this initializes the filesystem,
 	// then the databases and stores.

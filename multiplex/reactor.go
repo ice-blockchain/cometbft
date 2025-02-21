@@ -293,11 +293,16 @@ func (reactor *Reactor) GetNetworks() []string {
 	return reactor.networks
 }
 
-// HasNetwork returns true if the ChainID can be found
+// HasNetwork returns true if the ChainID can be found.
 //
 // HasNetwork implements [snapsapp.Reactor].
 func (reactor *Reactor) HasNetwork(chainID string) bool {
 	return slices.Contains(reactor.networks, chainID)
+}
+
+// DiscoveryPort returns the configured DiscoveryPort.
+func (reactor *Reactor) DiscoveryPort() uint16 {
+	return reactor.nodeConfig.DiscoveryPort
 }
 
 // GetChainRegistry returns a [ChainRegistry] instance.
