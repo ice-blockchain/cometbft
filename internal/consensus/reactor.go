@@ -322,7 +322,7 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 			if votes := ourVotes.ToProto(); votes != nil {
 				eMsg.Votes = *votes
 			}
-			e.Src.TrySend(p2p.Envelope{
+			e.Src.TrySend(conR.conS.state.ChainID, p2p.Envelope{
 				ChannelID: VoteSetBitsChannel,
 				Message:   eMsg,
 			})
@@ -469,7 +469,7 @@ func (conR *Reactor) unsubscribeFromBroadcastEvents() {
 func (conR *Reactor) broadcastNewRoundStepMessage(rs *cstypes.RoundState) {
 	nrsMsg := makeRoundStepMessage(rs)
 	go func() {
-		conR.Switch.Broadcast(p2p.Envelope{
+		conR.Switch.Broadcast(conR.conS.state.ChainID, p2p.Envelope{
 			ChannelID: StateChannel,
 			Message:   nrsMsg,
 		})
@@ -486,7 +486,7 @@ func (conR *Reactor) broadcastNewValidBlockMessage(rs *cstypes.RoundState) {
 		IsCommit:           rs.Step == cstypes.RoundStepCommit,
 	}
 	go func() {
-		conR.Switch.Broadcast(p2p.Envelope{
+		conR.Switch.Broadcast(conR.conS.state.ChainID, p2p.Envelope{
 			ChannelID: StateChannel,
 			Message:   csMsg,
 		})
@@ -503,7 +503,7 @@ func (conR *Reactor) broadcastHasVoteMessage(vote *types.Vote) {
 	}
 
 	go func() {
-		conR.Switch.TryBroadcast(p2p.Envelope{
+		conR.Switch.TryBroadcast(conR.conS.state.ChainID, p2p.Envelope{
 			ChannelID: StateChannel,
 			Message:   msg,
 		})
@@ -540,7 +540,7 @@ func (conR *Reactor) broadcastHasProposalBlockPartMessage(partMsg *BlockPartMess
 		Index:  int32(partMsg.Part.Index),
 	}
 	go func() {
-		conR.Switch.TryBroadcast(p2p.Envelope{
+		conR.Switch.TryBroadcast(conR.conS.state.ChainID, p2p.Envelope{
 			ChannelID: StateChannel,
 			Message:   msg,
 		})
@@ -561,7 +561,7 @@ func makeRoundStepMessage(rs *cstypes.RoundState) (nrsMsg *cmtcons.NewRoundStep)
 func (conR *Reactor) sendNewRoundStepMessage(peer p2p.Peer) {
 	rs := conR.getRoundState()
 	nrsMsg := makeRoundStepMessage(rs)
-	peer.Send(p2p.Envelope{
+	peer.Send(conR.conS.state.ChainID, p2p.Envelope{
 		ChannelID: StateChannel,
 		Message:   nrsMsg,
 	})
@@ -619,6 +619,7 @@ OUTER_LOOP:
 
 		rs := conR.getRoundState()
 		prs := ps.GetRoundState()
+		cid := conR.conS.state.ChainID
 
 		// --------------------
 		// Send block part?
@@ -628,7 +629,7 @@ OUTER_LOOP:
 		if part, continueLoop := pickPartToSend(logger, conR.conS.blockStore, rs, ps, prs, rng); part != nil {
 			// part is not nil: we either succeed in sending it,
 			// or we were instructed not to sleep (busy-waiting)
-			if ps.SendPartSetHasPart(part, prs) || continueLoop {
+			if ps.SendPartSetHasPart(cid, part, prs) || continueLoop {
 				continue OUTER_LOOP
 			}
 		} else if continueLoop {
@@ -645,7 +646,7 @@ OUTER_LOOP:
 		proposalToSend := rs.Proposal != nil && !prs.Proposal
 
 		if heightRoundMatch && proposalToSend {
-			ps.SendProposalSetHasProposal(logger, rs, prs)
+			ps.SendProposalSetHasProposal(logger, cid, rs, prs)
 			continue OUTER_LOOP
 		}
 
@@ -678,6 +679,7 @@ OUTER_LOOP:
 
 		rs := conR.getRoundState()
 		prs := ps.GetRoundState()
+		cid := conR.conS.state.ChainID
 
 		switch sleeping {
 		case 1: // First sleep
@@ -690,7 +692,7 @@ OUTER_LOOP:
 		// "prsHeight", prs.Height, "prsRound", prs.Round, "prsStep", prs.Step)
 
 		if vote := pickVoteToSend(logger, conR.conS, rs, ps, prs, rng); vote != nil {
-			if ps.sendVoteSetHasVote(vote) {
+			if ps.sendVoteSetHasVote(cid, vote) {
 				continue OUTER_LOOP
 			}
 			logger.Debug("Failed to send vote to peer",
@@ -730,7 +732,7 @@ OUTER_LOOP:
 			prs := ps.GetRoundState()
 			if rs.Height == prs.Height {
 				if maj23, ok := rs.Votes.Prevotes(prs.Round).TwoThirdsMajority(); ok {
-					peer.TrySend(p2p.Envelope{
+					peer.TrySend(conR.conS.state.ChainID, p2p.Envelope{
 						ChannelID: StateChannel,
 						Message: &cmtcons.VoteSetMaj23{
 							Height:  prs.Height,
@@ -750,7 +752,7 @@ OUTER_LOOP:
 			prs := ps.GetRoundState()
 			if rs.Height == prs.Height {
 				if maj23, ok := rs.Votes.Precommits(prs.Round).TwoThirdsMajority(); ok {
-					peer.TrySend(p2p.Envelope{
+					peer.TrySend(conR.conS.state.ChainID, p2p.Envelope{
 						ChannelID: StateChannel,
 						Message: &cmtcons.VoteSetMaj23{
 							Height:  prs.Height,
@@ -770,7 +772,7 @@ OUTER_LOOP:
 			prs := ps.GetRoundState()
 			if rs.Height == prs.Height && prs.ProposalPOLRound >= 0 {
 				if maj23, ok := rs.Votes.Prevotes(prs.ProposalPOLRound).TwoThirdsMajority(); ok {
-					peer.TrySend(p2p.Envelope{
+					peer.TrySend(conR.conS.state.ChainID, p2p.Envelope{
 						ChannelID: StateChannel,
 						Message: &cmtcons.VoteSetMaj23{
 							Height:  prs.Height,
@@ -793,7 +795,7 @@ OUTER_LOOP:
 			if prs.CatchupCommitRound != -1 && prs.Height > 0 && prs.Height <= conR.conS.blockStore.Height() &&
 				prs.Height >= conR.conS.blockStore.Base() {
 				if commit := conR.conS.LoadCommit(prs.Height); commit != nil {
-					peer.TrySend(p2p.Envelope{
+					peer.TrySend(conR.conS.state.ChainID, p2p.Envelope{
 						ChannelID: StateChannel,
 						Message: &cmtcons.VoteSetMaj23{
 							Height:  prs.Height,
@@ -1220,16 +1222,16 @@ func (ps *PeerState) setHasProposalBlockPart(height int64, round int32, index in
 
 // SendPartSetHasPart sends the part to the peer.
 // Returns true and marks the peer as having the part if the part was sent.
-func (ps *PeerState) SendPartSetHasPart(part *types.Part, prs *cstypes.PeerRoundState) bool {
+func (ps *PeerState) SendPartSetHasPart(chainID string, part *types.Part, prs *cstypes.PeerRoundState) bool {
 	// Send the part
-	ps.logger.Debug("Sending block part", "height", prs.Height, "round", prs.Round, "index", part.Index)
+	ps.logger.Debug("Sending block part", "chain_id", chainID, "height", prs.Height, "round", prs.Round, "index", part.Index)
 	pp, err := part.ToProto()
 	if err != nil {
 		// NOTE: only returns error if part is nil, which it should never be by here
 		ps.logger.Error("Could not convert part to proto", "index", part.Index, "error", err)
 		return false
 	}
-	if ps.peer.Send(p2p.Envelope{
+	if ps.peer.Send(chainID, p2p.Envelope{
 		ChannelID: DataChannel,
 		Message: &cmtcons.BlockPart{
 			Height: prs.Height, // Not our height, so it doesn't matter.
@@ -1248,12 +1250,13 @@ func (ps *PeerState) SendPartSetHasPart(part *types.Part, prs *cstypes.PeerRound
 // If successful, it marks the peer as having the proposal.
 func (ps *PeerState) SendProposalSetHasProposal(
 	logger log.Logger,
+	chainID string,
 	rs *cstypes.RoundState,
 	prs *cstypes.PeerRoundState,
 ) {
 	// Proposal: share the proposal metadata with peer.
-	logger.Debug("Sending proposal", "height", prs.Height, "round", prs.Round)
-	if ps.peer.Send(p2p.Envelope{
+	logger.Debug("Sending proposal", "chain_id", chainID, "height", prs.Height, "round", prs.Round)
+	if ps.peer.Send(chainID, p2p.Envelope{
 		ChannelID: DataChannel,
 		Message:   &cmtcons.Proposal{Proposal: *rs.Proposal.ToProto()},
 	}) {
@@ -1266,8 +1269,8 @@ func (ps *PeerState) SendProposalSetHasProposal(
 	// rs.Proposal was validated, so rs.Proposal.POLRound <= rs.Round,
 	// so we definitely have rs.Votes.Prevotes(rs.Proposal.POLRound).
 	if 0 <= rs.Proposal.POLRound {
-		logger.Debug("Sending POL", "height", prs.Height, "round", prs.Round)
-		ps.peer.Send(p2p.Envelope{
+		logger.Debug("Sending POL", "chain_id", chainID, "height", prs.Height, "round", prs.Round)
+		ps.peer.Send(chainID, p2p.Envelope{
 			ChannelID: DataChannel,
 			Message: &cmtcons.ProposalPOL{
 				Height:           rs.Height,
@@ -1280,9 +1283,9 @@ func (ps *PeerState) SendProposalSetHasProposal(
 
 // sendVoteSetHasVote sends the vote to the peer.
 // Returns true and marks the peer as having the vote if the vote was sent.
-func (ps *PeerState) sendVoteSetHasVote(vote *types.Vote) bool {
-	ps.logger.Debug("Sending vote message", "ps", ps, "vote", vote)
-	if ps.peer.Send(p2p.Envelope{
+func (ps *PeerState) sendVoteSetHasVote(chainID string, vote *types.Vote) bool {
+	ps.logger.Debug("Sending vote message", "chain_id", chainID, "ps", ps, "vote", vote)
+	if ps.peer.Send(chainID, p2p.Envelope{
 		ChannelID: VoteChannel,
 		Message: &cmtcons.Vote{
 			Vote: vote.ToProto(),

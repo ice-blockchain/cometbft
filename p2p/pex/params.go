@@ -4,7 +4,10 @@ import "time"
 
 const (
 	// addresses under which the address manager will claim to need more addresses.
-	needAddressThreshold = 1000
+	// NOTE(midas): We use a *very small* threshold because relays are expected
+	// to connect *only* to 7 other relays for any supported network.
+	// NOTE(midas): Using 4 as the result of `num_relays / 2 + 1`.
+	needAddressThreshold = 4
 
 	// interval used to dump the address cache to disk for future use.
 	dumpAddressInterval = time.Minute * 2

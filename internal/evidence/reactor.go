@@ -32,15 +32,32 @@ type Reactor struct {
 	p2p.BaseReactor
 	evpool   *Pool
 	eventBus *types.EventBus
+
+	ChainID string
 }
 
 // NewReactor returns a new Reactor with the given config and evpool.
-func NewReactor(evpool *Pool) *Reactor {
+func NewReactor(evpool *Pool, options ...func(*Reactor)) *Reactor {
 	evR := &Reactor{
 		evpool: evpool,
 	}
+
+	// Enable overwrite of some optional properties.
+	for _, option := range options {
+		option(evR)
+	}
+
 	evR.BaseReactor = *p2p.NewBaseReactor("Evidence", evR)
 	return evR
+}
+
+// WithChainID is an option helper to inject a custom ChainID.
+func WithChainID(
+	chainID string,
+) func(*Reactor) {
+	return func(r *Reactor) {
+		r.ChainID = chainID
+	}
 }
 
 // GetPoolPtr returns a pointer to the Pool object.
@@ -139,7 +156,7 @@ func (evR *Reactor) broadcastEvidenceRoutine(peer p2p.Peer) {
 				panic(err)
 			}
 
-			success := peer.Send(p2p.Envelope{
+			success := peer.Send(evR.ChainID, p2p.Envelope{
 				ChannelID: EvidenceChannel,
 				Message:   evp,
 			})

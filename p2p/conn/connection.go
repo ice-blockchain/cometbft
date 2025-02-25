@@ -88,7 +88,7 @@ type MConnection struct {
 	send          chan struct{}
 	pong          chan struct{}
 	channels      []*Channel
-	channelsIdx   map[byte]*Channel
+	channelsIdx   map[string]map[byte]*Channel
 	onReceive     receiveCbFunc
 	onError       errorCbFunc
 	errored       uint32
@@ -196,14 +196,20 @@ func NewMConnectionWithConfig(
 	}
 
 	// Create channels
-	channelsIdx := map[byte]*Channel{}
+	channelsIdx := make(map[string]map[byte]*Channel, len(chDescs))
 	channels := []*Channel{}
+	oneChainID := ""
 
 	for chainID, chByChain := range chDescs {
+		channelsIdx[chainID] = make(map[byte]*Channel, len(chByChain))
 		for _, desc := range chByChain {
 			channel := newChannel(chainID, mconn, *desc)
-			channelsIdx[channel.desc.ID] = channel
+			channelsIdx[chainID][channel.desc.ID] = channel
 			channels = append(channels, channel)
+
+			if len(oneChainID) == 0 {
+				oneChainID = chainID
+			}
 		}
 	}
 	mconn.channels = channels
@@ -211,8 +217,9 @@ func NewMConnectionWithConfig(
 
 	mconn.BaseService = *service.NewBaseService(nil, "MConnection", mconn)
 
-	// maxPacketMsgSize() is a bit heavy, so call just once
-	mconn._maxPacketMsgSize = mconn.maxPacketMsgSize()
+	// maxPacketMsgSize() is a bit heavy, so call just once,
+	// it uses oneChainID to create a correctly-sized PacketMsg.
+	mconn._maxPacketMsgSize = mconn.maxPacketMsgSize(oneChainID)
 
 	return mconn
 }
@@ -357,17 +364,17 @@ func (c *MConnection) stopForError(r any) {
 }
 
 // Queues a message to be sent to channel.
-func (c *MConnection) Send(chID byte, msgBytes []byte) bool {
+func (c *MConnection) Send(chainID string, chID byte, msgBytes []byte) bool {
 	if !c.IsRunning() {
 		return false
 	}
 
-	c.Logger.Debug("Send", "channel", chID, "conn", c, "msgBytes", log.NewLazySprintf("%X", msgBytes))
+	c.Logger.Debug("Send", "chain_id", chainID, "channel", chID, "conn", c, "msgBytes", log.NewLazySprintf("%X", msgBytes))
 
 	// Send message to channel.
-	channel, ok := c.channelsIdx[chID]
+	channel, ok := c.channelsIdx[chainID][chID]
 	if !ok {
-		c.Logger.Error(fmt.Sprintf("Cannot send bytes, unknown channel %X", chID))
+		c.Logger.Error(fmt.Sprintf("Cannot send bytes, unknown channel %X with ChainID %s", chID, chainID))
 		return false
 	}
 
@@ -386,17 +393,17 @@ func (c *MConnection) Send(chID byte, msgBytes []byte) bool {
 
 // Queues a message to be sent to channel.
 // Nonblocking, returns true if successful.
-func (c *MConnection) TrySend(chID byte, msgBytes []byte) bool {
+func (c *MConnection) TrySend(chainID string, chID byte, msgBytes []byte) bool {
 	if !c.IsRunning() {
 		return false
 	}
 
-	c.Logger.Debug("TrySend", "channel", chID, "conn", c, "msgBytes", log.NewLazySprintf("%X", msgBytes))
+	c.Logger.Debug("TrySend", "chain_id", chainID, "channel", chID, "conn", c, "msgBytes", log.NewLazySprintf("%X", msgBytes))
 
 	// Send message to channel.
-	channel, ok := c.channelsIdx[chID]
+	channel, ok := c.channelsIdx[chainID][chID]
 	if !ok {
-		c.Logger.Error(fmt.Sprintf("Cannot send bytes, unknown channel %X", chID))
+		c.Logger.Error(fmt.Sprintf("Cannot send bytes, unknown channel %X with ChainID %s", chID, chainID))
 		return false
 	}
 
@@ -414,12 +421,17 @@ func (c *MConnection) TrySend(chID byte, msgBytes []byte) bool {
 
 // CanSend returns true if you can send more data onto the chID, false
 // otherwise. Use only as a heuristic.
-func (c *MConnection) CanSend(chID byte) bool {
+func (c *MConnection) CanSend(chainID string, chID byte) bool {
 	if !c.IsRunning() {
 		return false
 	}
 
-	channel, ok := c.channelsIdx[chID]
+	if _, ok := c.channelsIdx[chainID]; !ok {
+		c.Logger.Error(fmt.Sprintf("Unknown ChainID %s", chainID))
+		return false
+	}
+
+	channel, ok := c.channelsIdx[chainID][chID]
 	if !ok {
 		c.Logger.Error(fmt.Sprintf("Unknown channel %X", chID))
 		return false
@@ -659,7 +671,7 @@ FOR_LOOP:
 		case *tmp2p.Packet_PacketMsg:
 			chainID := pkt.PacketMsg.ChainID
 			channelID := byte(pkt.PacketMsg.ChannelID)
-			channel, ok := c.channelsIdx[channelID]
+			channel, ok := c.channelsIdx[chainID][channelID]
 			if pkt.PacketMsg.ChannelID < 0 || pkt.PacketMsg.ChannelID > math.MaxUint8 || !ok || channel == nil {
 				err := fmt.Errorf("unknown channel %X", pkt.PacketMsg.ChannelID)
 				c.Logger.Debug("Connection failed @ recvRoutine", "conn", c, "err", err)
@@ -701,8 +713,9 @@ func (c *MConnection) stopPongTimer() {
 }
 
 // maxPacketMsgSize returns a maximum size of PacketMsg.
-func (c *MConnection) maxPacketMsgSize() int {
+func (c *MConnection) maxPacketMsgSize(chainID string) int {
 	bz, err := proto.Marshal(mustWrapPacket(&tmp2p.PacketMsg{
+		ChainID:   chainID,
 		ChannelID: 0x01,
 		EOF:       true,
 		Data:      make([]byte, c.config.MaxPacketMsgPayloadSize),

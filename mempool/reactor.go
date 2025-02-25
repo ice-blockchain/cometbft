@@ -39,6 +39,7 @@ type Reactor struct {
 	// Inject custom transaction verification with an acceptor implementation.
 	txAcceptor  client.Acceptor
 	userAddress string
+	ChainID     string // Exported.
 }
 
 // NewReactor returns a new Reactor with the given config and mempool.
@@ -79,6 +80,15 @@ func WithAcceptor(
 	return func(r *Reactor) {
 		r.txAcceptor = acceptor
 		r.userAddress = userAddress
+	}
+}
+
+// WithChainID is an option helper to inject a custom ChainID.
+func WithChainID(
+	chainID string,
+) func(*Reactor) {
+	return func(r *Reactor) {
+		r.ChainID = chainID
 	}
 }
 
@@ -381,7 +391,7 @@ func (memR *Reactor) broadcastTxRoutine(peer p2p.Peer) {
 			memR.Logger.Debug("Sending transaction to peer",
 				"tx", log.NewLazySprintf("%X", txHash), "peer", peer.ID())
 
-			success := peer.Send(p2p.Envelope{
+			success := peer.Send(memR.ChainID, p2p.Envelope{
 				ChannelID: MempoolChannel,
 				Message:   &protomem.Txs{Txs: [][]byte{entry.Tx()}},
 			})
@@ -406,7 +416,7 @@ func (memR *Reactor) broadcastTxRoutine(peer p2p.Peer) {
 // sendAckTransactionBroadcast sends a AckTransactionBroadcast message.
 // This object may be used to determine that a relay acknowledges
 // the receipt (and will process acceptance) of a transaction broadcast.
-func (r *Reactor) sendAckTransactionBroadcast(
+func (memR *Reactor) sendAckTransactionBroadcast(
 	peer p2p.Peer,
 	protoTxs [][]byte,
 ) error {
@@ -416,7 +426,7 @@ func (r *Reactor) sendAckTransactionBroadcast(
 		txHashes = append(txHashes, memTx.Hash())
 	}
 
-	peer.Send(p2p.Envelope{
+	peer.Send(memR.ChainID, p2p.Envelope{
 		ChannelID: server.ReplicationChannel,
 		Message: &mxp2p.Message{
 			Sum: &mxp2p.Message_AckTransactionBroadcast{

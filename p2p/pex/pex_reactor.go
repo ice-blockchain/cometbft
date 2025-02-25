@@ -87,6 +87,9 @@ type Reactor struct {
 	ensurePeersPeriod time.Duration // TODO: should go in the config
 	peersRoutineWg    sync.WaitGroup
 
+	// Multiplex needs ChainID
+	ChainID string
+
 	// maps to prevent abuse
 	requestsSent         *cmap.CMap // ID->struct{}: unanswered send requests
 	lastReceivedRequests *cmap.CMap // ID->time.Time: last time peer requested from us
@@ -102,7 +105,11 @@ type Reactor struct {
 func (r *Reactor) minReceiveRequestInterval() time.Duration {
 	// NOTE: must be less than ensurePeersPeriod, otherwise we'll request
 	// peers too quickly from others and they'll think we're bad!
-	return r.ensurePeersPeriod / 3
+	// return r.ensurePeersPeriod / 3
+
+	// Due to many PEX requests done for multiple networks, we disable
+	// the minInterval completely.
+	return 0
 }
 
 // ReactorConfig holds reactor specific configuration data.
@@ -129,7 +136,7 @@ type _attemptsToDial struct {
 }
 
 // NewReactor creates new PEX reactor.
-func NewReactor(b AddrBook, config *ReactorConfig) *Reactor {
+func NewReactor(b AddrBook, config *ReactorConfig, options ...func(*Reactor)) *Reactor {
 	r := &Reactor{
 		book:                 b,
 		config:               config,
@@ -140,7 +147,21 @@ func NewReactor(b AddrBook, config *ReactorConfig) *Reactor {
 		crawlPeerInfos:       make(map[p2p.ID]crawlPeerInfo),
 	}
 	r.BaseReactor = *p2p.NewBaseReactor("PEX", r)
+
+	for _, option := range options {
+		option(r)
+	}
+
 	return r
+}
+
+// WithChainID is an option helper to inject a custom ChainID.
+func WithChainID(
+	chainID string,
+) func(*Reactor) {
+	return func(r *Reactor) {
+		r.ChainID = chainID
+	}
 }
 
 // OnStart implements BaseService.
@@ -350,7 +371,7 @@ func (r *Reactor) RequestAddrs(p Peer) {
 	}
 	r.Logger.Debug("Request addrs", "from", p)
 	r.requestsSent.Set(id, struct{}{})
-	p.Send(p2p.Envelope{
+	p.Send(r.ChainID, p2p.Envelope{
 		ChannelID: PexChannel,
 		Message:   &tmp2p.PexRequest{},
 	})
@@ -361,10 +382,9 @@ func (r *Reactor) RequestAddrs(p Peer) {
 // If there's no open request for the src peer, it returns an error.
 func (r *Reactor) ReceiveAddrs(addrs []*p2p.NetAddress, src Peer) error {
 	id := string(src.ID())
-	if !r.requestsSent.Has(id) {
-		return ErrUnsolicitedList
+	if r.requestsSent.Has(id) {
+		r.requestsSent.Delete(id)
 	}
-	r.requestsSent.Delete(id)
 
 	srcAddr, err := src.NodeInfo().NetAddress()
 	if err != nil {
@@ -397,12 +417,13 @@ func (r *Reactor) ReceiveAddrs(addrs []*p2p.NetAddress, src Peer) error {
 }
 
 // SendAddrs sends addrs to the peer.
-func (*Reactor) SendAddrs(p Peer, netAddrs []*p2p.NetAddress) {
+func (r *Reactor) SendAddrs(p Peer, netAddrs []*p2p.NetAddress) {
 	e := p2p.Envelope{
+		//ChainID:   r.chainID,
 		ChannelID: PexChannel,
 		Message:   &tmp2p.PexAddrs{Addrs: p2p.NetAddressesToProto(netAddrs)},
 	}
-	p.Send(e)
+	p.Send(r.ChainID, e)
 }
 
 // SetEnsurePeersPeriod sets period to ensure peers connected.
@@ -463,6 +484,17 @@ func (r *Reactor) ensurePeers() {
 		out, in, dial = r.Switch.NumPeers()
 		numToDial     = r.Switch.MaxNumOutboundPeers() - (out + dial)
 	)
+
+	// NOTE(midas): Networks with smaller nodes count (we use 7 relays) tend
+	// to request PEX addresses too often due to their short address books.
+	// Thus, we wait 2 minutes before asking other peers (again) for addresses.
+	if len(r.seedAddrs) > 0 {
+		_, lastDialed := r.dialAttemptsInfo(r.seedAddrs[0])
+		if time.Since(lastDialed) < minTimeBetweenCrawls {
+			return
+		}
+	}
+
 	r.Logger.Info(
 		"Ensure peers",
 		"numOutPeers", out,
@@ -476,7 +508,7 @@ func (r *Reactor) ensurePeers() {
 	}
 
 	// bias to prefer more vetted peers when we have fewer connections.
-	// not perfect, but somewhate ensures that we prioritize connecting to more-vetted
+	// not perfect, but somewhat ensures that we prioritize connecting to more-vetted
 	// NOTE: range here is [10, 90]. Too high ?
 	newBias := cmtmath.MinInt(out, 8)*10 + 10
 
@@ -520,26 +552,26 @@ func (r *Reactor) ensurePeers() {
 		}(addr)
 	}
 
-	if r.book.NeedMoreAddrs() {
-		// Check if banned nodes can be reinstated
+	// Check if banned nodes can be reinstated
+	if r.book.NeedMoreAddrs() && len(toDial) == 0 {
 		r.book.ReinstateBadPeers()
 	}
 
-	if r.book.NeedMoreAddrs() {
-		// 1) Pick a random peer and ask for more.
+	// 1) Pick a random peer and ask for more.
+	if r.book.NeedMoreAddrs() && len(toDial) > 0 {
 		peer := r.Switch.Peers().Random()
 		if peer != nil {
 			r.Logger.Info("We need more addresses. Sending pexRequest to random peer", "peer", peer)
 			r.RequestAddrs(peer)
 		}
+	}
 
-		// 2) Dial seeds if we are not dialing anyone.
-		// This is done in addition to asking a peer for addresses to work-around
-		// peers not participating in PEX.
-		if len(toDial) == 0 {
-			r.Logger.Info("No addresses to dial. Falling back to seeds")
-			r.dialSeeds()
-		}
+	// 2) Dial seeds if we are not dialing anyone.
+	// This is done in addition to asking a peer for addresses to work-around
+	// peers not participating in PEX.
+	if len(toDial) == 0 {
+		r.Logger.Info("No addresses to dial. Falling back to seeds", "chain_id", r.ChainID)
+		r.dialSeeds()
 	}
 }
 

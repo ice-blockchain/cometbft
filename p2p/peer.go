@@ -39,8 +39,8 @@ type Peer interface {
 	Status() cmtconn.ConnectionStatus
 	SocketAddr() *NetAddress // actual address of the socket
 
-	Send(e Envelope) bool
-	TrySend(e Envelope) bool
+	Send(chainID string, e Envelope) bool
+	TrySend(chainID string, e Envelope) bool
 
 	Set(key string, value any)
 	Get(key string) any
@@ -254,19 +254,24 @@ func (p *peer) Status() cmtconn.ConnectionStatus {
 // send queue is full after timeout, specified by MConnection.
 //
 // thread safe.
-func (p *peer) Send(e Envelope) bool {
-	return p.send(e.ChannelID, e.Message, p.mconn.Send)
+func (p *peer) Send(chainID string, e Envelope) bool {
+	return p.send(chainID, e.ChannelID, e.Message, p.mconn.Send)
 }
 
 // TrySend msg bytes to the channel identified by chID byte. Immediately returns
 // false if the send queue is full.
 //
 // thread safe.
-func (p *peer) TrySend(e Envelope) bool {
-	return p.send(e.ChannelID, e.Message, p.mconn.TrySend)
+func (p *peer) TrySend(chainID string, e Envelope) bool {
+	return p.send(chainID, e.ChannelID, e.Message, p.mconn.TrySend)
 }
 
-func (p *peer) send(chID byte, msg proto.Message, sendFunc func(byte, []byte) bool) bool {
+func (p *peer) send(
+	chainID string,
+	chID byte,
+	msg proto.Message,
+	sendFunc func(string, byte, []byte) bool,
+) bool {
 	if !p.IsRunning() {
 		return false
 	} else if !p.hasChannel(chID) {
@@ -281,7 +286,7 @@ func (p *peer) send(chID byte, msg proto.Message, sendFunc func(byte, []byte) bo
 		p.Logger.Error("marshaling message to send", "error", err)
 		return false
 	}
-	res := sendFunc(chID, msgBytes)
+	res := sendFunc(chainID, chID, msgBytes)
 	if res {
 		p.pendingMetrics.AddPendingSendBytes(msgType, len(msgBytes))
 	}
@@ -341,11 +346,11 @@ func (p *peer) RemoteAddr() net.Addr {
 }
 
 // CanSend returns true if the send queue is not full, false otherwise.
-func (p *peer) CanSend(chID byte) bool {
+func (p *peer) CanSend(chainID string, chID byte) bool {
 	if !p.IsRunning() {
 		return false
 	}
-	return p.mconn.CanSend(chID)
+	return p.mconn.CanSend(chainID, chID)
 }
 
 // ---------------------------------------------------

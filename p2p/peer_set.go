@@ -54,7 +54,11 @@ func (ps *PeerSet) Add(peer Peer) error {
 	defer ps.mtx.Unlock()
 
 	if ps.lookup[peer.ID()] != nil {
-		return ErrSwitchDuplicatePeerID{peer.ID()}
+		// NOTE(midas):
+		// In a multiplex environment, it is common to discover peers with IDs
+		// that we already know about because we are using AddrBook with the
+		// same NodeID. Note that these AddrBook may contain different peers.
+		return nil
 	}
 	if peer.GetRemovalFailed() {
 		return ErrPeerRemoval{}

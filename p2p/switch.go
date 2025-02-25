@@ -322,10 +322,10 @@ func (sw *Switch) OnStop() {
 // to send for defaultSendTimeoutSeconds.
 //
 // NOTE: Broadcast uses goroutines, so order of broadcast may not be preserved.
-func (sw *Switch) Broadcast(e Envelope) {
+func (sw *Switch) Broadcast(chainID string, e Envelope) {
 	sw.peers.ForEach(func(p Peer) {
 		go func(peer Peer) {
-			success := peer.Send(e)
+			success := peer.Send(chainID, e)
 			_ = success
 		}(p)
 	})
@@ -335,10 +335,10 @@ func (sw *Switch) Broadcast(e Envelope) {
 // If the send queue of the destination channel and peer are full, the message will not be sent. To make sure that messages are indeed sent to all destination, use `Broadcast`.
 //
 // NOTE: TryBroadcast uses goroutines, so order of broadcast may not be preserved.
-func (sw *Switch) TryBroadcast(e Envelope) {
+func (sw *Switch) TryBroadcast(chainID string, e Envelope) {
 	sw.peers.ForEach(func(p Peer) {
 		go func(peer Peer) {
-			peer.TrySend(e)
+			peer.TrySend(chainID, e)
 		}(p)
 	})
 }
@@ -835,10 +835,13 @@ func (sw *Switch) addOutboundPeerWithConfig(
 }
 
 func (sw *Switch) filterPeer(p Peer) error {
-	// Avoid duplicate
-	if sw.peers.Has(p.ID()) {
-		return ErrRejected{id: p.ID(), isDuplicate: true}
-	}
+	// NOTE(midas):
+	// We don't need to throw a rejection error on duplicate peers at this
+	// stage because we skip known peers in [PeerSet#Add].
+	//
+	// if sw.peers.Has(p.ID()) {
+	// 	return ErrRejected{id: p.ID(), isDuplicate: true}
+	// }
 
 	errc := make(chan error, len(sw.peerFilters))
 

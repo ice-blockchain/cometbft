@@ -57,6 +57,7 @@ type Reactor struct {
 
 	// immutable
 	initialState sm.State
+	chainID      string
 
 	blockExec     *sm.BlockExecutor
 	store         sm.BlockStore
@@ -76,6 +77,7 @@ type Reactor struct {
 // NewReactor returns new reactor instance.
 func NewReactor(state sm.State, blockExec *sm.BlockExecutor, store *store.BlockStore,
 	blockSync bool, localAddr crypto.Address, metrics *Metrics, offlineStateSyncHeight int64,
+	options ...func(*Reactor),
 ) *Reactor {
 	storeHeight := store.Height()
 	if storeHeight == 0 {
@@ -116,8 +118,32 @@ func NewReactor(state sm.State, blockExec *sm.BlockExecutor, store *store.BlockS
 		errorsCh:     errorsCh,
 		metrics:      metrics,
 	}
+
+	// Enable overwrite of some optional properties.
+	for _, option := range options {
+		option(bcR)
+	}
+
 	bcR.BaseReactor = *p2p.NewBaseReactor("Reactor", bcR)
 	return bcR
+}
+
+// WithChainID is an option helper to inject a custom ChainID.
+func WithChainID(
+	chainID string,
+) func(*Reactor) {
+	return func(r *Reactor) {
+		r.chainID = chainID
+	}
+}
+
+// ChainID returns the chainID property.
+func (bcR *Reactor) ChainID() string {
+	if len(bcR.chainID) == 0 {
+		return bcR.initialState.ChainID
+	}
+
+	return bcR.chainID
 }
 
 // SetLogger implements service.Service by setting the logger on reactor and pool.
@@ -186,7 +212,7 @@ func (*Reactor) GetChannels() []*p2p.ChannelDescriptor {
 
 // AddPeer implements Reactor by sending our state to peer.
 func (bcR *Reactor) AddPeer(peer p2p.Peer) {
-	peer.Send(p2p.Envelope{
+	peer.Send(bcR.ChainID(), p2p.Envelope{
 		ChannelID: BlocksyncChannel,
 		Message: &bcproto.StatusResponse{
 			Base:   bcR.store.Base(),
@@ -210,7 +236,7 @@ func (bcR *Reactor) respondToPeer(msg *bcproto.BlockRequest, src p2p.Peer) (queu
 	block, _ := bcR.store.LoadBlock(msg.Height)
 	if block == nil {
 		bcR.Logger.Info("Peer asking for a block we don't have", "src", src, "height", msg.Height)
-		return src.TrySend(p2p.Envelope{
+		return src.TrySend(bcR.ChainID(), p2p.Envelope{
 			ChannelID: BlocksyncChannel,
 			Message:   &bcproto.NoBlockResponse{Height: msg.Height},
 		})
@@ -236,7 +262,7 @@ func (bcR *Reactor) respondToPeer(msg *bcproto.BlockRequest, src p2p.Peer) (queu
 		return false
 	}
 
-	return src.TrySend(p2p.Envelope{
+	return src.TrySend(bcR.ChainID(), p2p.Envelope{
 		ChannelID: BlocksyncChannel,
 		Message: &bcproto.BlockResponse{
 			Block:     bl,
@@ -287,7 +313,7 @@ func (bcR *Reactor) Receive(e p2p.Envelope) {
 		go bcR.handlePeerResponse(msg, e.Src)
 	case *bcproto.StatusRequest:
 		// Send peer our state.
-		e.Src.TrySend(p2p.Envelope{
+		e.Src.TrySend(bcR.ChainID(), p2p.Envelope{
 			ChannelID: BlocksyncChannel,
 			Message: &bcproto.StatusResponse{
 				Height: bcR.store.Height(),
@@ -334,7 +360,7 @@ func (bcR *Reactor) poolRoutine(stateSynced bool) {
 
 	blocksSynced := uint64(0)
 
-	chainID := bcR.initialState.ChainID
+	chainID := bcR.ChainID()
 	state := bcR.initialState
 
 	lastHundred := time.Now()
@@ -356,7 +382,7 @@ func (bcR *Reactor) poolRoutine(stateSynced bool) {
 				if peer == nil {
 					continue
 				}
-				queued := peer.TrySend(p2p.Envelope{
+				queued := peer.TrySend(bcR.ChainID(), p2p.Envelope{
 					ChannelID: BlocksyncChannel,
 					Message:   &bcproto.BlockRequest{Height: request.Height},
 				})
@@ -572,7 +598,7 @@ FOR_LOOP:
 
 // BroadcastStatusRequest broadcasts `BlockStore` base and height.
 func (bcR *Reactor) BroadcastStatusRequest() {
-	bcR.Switch.Broadcast(p2p.Envelope{
+	bcR.Switch.Broadcast(bcR.ChainID(), p2p.Envelope{
 		ChannelID: BlocksyncChannel,
 		Message:   &bcproto.StatusRequest{},
 	})
