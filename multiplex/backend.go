@@ -961,13 +961,26 @@ func (b *MultiplexBackend) StartP2PServerCometBFT() error {
 
 	b.cometbftP2PAddr = addr
 
-	// // Always connect to chain seed nodes, if any
-	// if len(b.reactor.nodeConfig.P2P.Seeds) > 0 {
-	// 	err = sw.DialPeersAsync(splitAndTrimEmpty(b.reactor.nodeConfig.P2P.Seeds, ",", " "))
-	// 	if err != nil {
-	// 		return fmt.Errorf("could not dial peers from seeds field: %w", err)
-	// 	}
-	// }
+	// Always connect to chain seed nodes, if any available
+	if len(b.reactor.nodeConfig.P2P.Seeds) > 0 {
+		knownSeeds := splitAndTrimEmpty(b.reactor.nodeConfig.P2P.Seeds, ",", " ")
+		seedIds := []string{}
+		for _, seedNodeAddr := range knownSeeds {
+			seedAddr, err := server.NewRelayAddress(seedNodeAddr)
+			if err != nil {
+				return fmt.Errorf(
+					"could not create seed node address for P2P: %w", err)
+			}
+
+			seedIds = append(seedIds, string(seedAddr.ID()))
+		}
+
+		sw.AddUnconditionalPeerIDs(seedIds)
+
+		if err := sw.DialPeersAsync(knownSeeds); err != nil {
+			return fmt.Errorf("could not dial peers from seeds field: %w", err)
+		}
+	}
 
 	return nil
 }

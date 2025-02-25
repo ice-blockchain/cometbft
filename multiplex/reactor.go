@@ -1090,7 +1090,7 @@ func (reactor *Reactor) sendChainReplicationResponse(
 	chainID string,
 ) error {
 	myPeerID := reactor.nodeKey.ID()
-	peer.Send(p2p.Envelope{
+	peer.Send(chainID, p2p.Envelope{
 		ChannelID: server.ReplicationChannel,
 		Message: &mxp2p.Message{
 			Sum: &mxp2p.Message_ChainReplicationResponse{

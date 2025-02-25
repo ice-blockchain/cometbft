@@ -242,7 +242,7 @@ func (reactor *Reactor) CreateAddressBooks(
 				// blocks assuming 10s blocks ~ 28 hours.
 				SeedDisconnectWaitPeriod:     28 * time.Hour,
 				PersistentPeersMaxDialPeriod: cfgOverwrite.P2P.PersistentPeersMaxDialPeriod,
-			})
+			}, pex.WithChainID(chainID))
 		pexReactor.SetLogger(pexLogger)
 
 		// Set address book and PEX reactor on Switch

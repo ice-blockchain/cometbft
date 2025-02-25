@@ -88,7 +88,7 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 				"peer_id", peerID,
 			)
 
-			peer.Send(p2p.Envelope{
+			peer.Send(chainID, p2p.Envelope{
 				ChannelID: server.ReplicationChannel,
 				Message: &mxp2p.Message{
 					Sum: &mxp2p.Message_ChainReplicationRequest{
@@ -250,7 +250,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 				// Send transaction to relay mempool, after checks the mempool
 				// reactor shall send a AckTransactionBroadcast back to us which
 				// sends a AckTransactionBroadcast object on ackTxAcceptCh
-				if success := peer.Send(p2p.Envelope{
+				if success := peer.Send(chainID, p2p.Envelope{
 					ChannelID: mempl.MempoolChannel,
 					Message:   &memp2p.Txs{Txs: [][]byte{rawTx}},
 				}); success {
@@ -311,14 +311,14 @@ func (b *MultiplexBackend) DefaultCancelBroadcastRoutine() server.CancelBroadcas
 		// Iterate through transactions and broadcast rollback operations
 		// for each of them to all other relays.
 		for _, transaction := range transactions {
-			// chainID := client.GetChainID(userAddress, transaction.Fingerprint)
+			chainID := client.GetChainID(userAddress, transaction.Fingerprint)
 			// eventsSwitch := switchProvider(chainID).(*p2p.Switch)
 
 			// Encode and get transaction hash
 			rawTx := client.TransactionToRawTx(transaction)
 
 			// Broadcast the rollback message for this transaction to all relays.
-			eventsSwitch.Broadcast(p2p.Envelope{
+			eventsSwitch.Broadcast(chainID, p2p.Envelope{
 				ChannelID: mempl.MempoolChannel,
 				Message:   &memp2p.RollbackTxs{Txs: [][]byte{rawTx}},
 			})

@@ -186,6 +186,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 			extChainID.GetUserAddress(),
 			reactor.acceptorImpl,
 		),
+		mempl.WithChainID(chainID),
 	)
 	if cfgOverwrite.Consensus.WaitForTxs() {
 		mempool.EnableTxsAvailable()
@@ -207,7 +208,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	if err != nil {
 		return fmt.Errorf("error creating the evidence pool: %w", err)
 	}
-	evidenceReactor := evidence.NewReactor(evidencePool)
+	evidenceReactor := evidence.NewReactor(evidencePool, evidence.WithChainID(chainID))
 	evidenceReactor.SetLogger(evidenceLogger)
 
 	// 3) Create the block executor
@@ -239,6 +240,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 		privValPubKey.Address(),
 		bsyncMetricsProvider,
 		offlineStateSyncHeight,
+		blocksync.WithChainID(chainID),
 	)
 	blockSyncReactor.SetLogger(clogger.With("module", "blocksync"))
 
