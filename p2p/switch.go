@@ -128,10 +128,10 @@ func NewSwitch(
 		unconditionalPeerIDs: make(map[ID]struct{}),
 	}
 
-	sw.reactors[""] = make(map[string]Reactor)
-	sw.chDescs[""] = make([]*conn.ChannelDescriptor, 0)
-	sw.reactorsByCh[""] = make(map[byte]Reactor)
-	sw.msgTypeByChID[""] = make(map[byte]proto.Message)
+	sw.reactors[conn.SharedChannelsNamespace] = make(map[string]Reactor)
+	sw.chDescs[conn.SharedChannelsNamespace] = make([]*conn.ChannelDescriptor, 0)
+	sw.reactorsByCh[conn.SharedChannelsNamespace] = make(map[byte]Reactor)
+	sw.msgTypeByChID[conn.SharedChannelsNamespace] = make(map[byte]proto.Message)
 
 	// Ensure we have a completely undeterministic PRNG.
 	sw.rng = rand.NewRand()

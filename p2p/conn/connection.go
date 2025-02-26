@@ -45,6 +45,8 @@ const (
 	defaultSendTimeout         = 10 * time.Second
 	defaultPingInterval        = 60 * time.Second
 	defaultPongTimeout         = 45 * time.Second
+
+	SharedChannelsNamespace = "_shared_channels"
 )
 
 type (
@@ -363,6 +365,32 @@ func (c *MConnection) stopForError(r any) {
 	}
 }
 
+// getChannel searches for a reactor by ChainID and chID.
+// If none can be found, it will search in shared channels by chID.
+func (c *MConnection) getChannel(chainID string, chID byte) (*Channel, error) {
+	// Searches for the ChainID in the channels index.
+	if _, ok := c.channelsIdx[chainID]; !ok {
+		return nil, fmt.Errorf("Unknown chain_id %s", chainID)
+	}
+
+	// Searches the reactor instance per channel and per ChainID.
+	channel, ok := c.channelsIdx[chainID][chID]
+	if !ok {
+		// Do we have shared channels yet? Otherwise stop here.
+		if _, ok := c.channelsIdx[SharedChannelsNamespace]; !ok {
+			return nil, errors.New("Empty shared channels")
+		}
+
+		// Search the reactor instance per shared channel, without ChainID.
+		channel, ok = c.channelsIdx[SharedChannelsNamespace][chID]
+		if !ok {
+			return nil, fmt.Errorf("Unknown channel %X", chID)
+		}
+	}
+
+	return channel, nil
+}
+
 // Queues a message to be sent to channel.
 func (c *MConnection) Send(chainID string, chID byte, msgBytes []byte) bool {
 	if !c.IsRunning() {
@@ -371,13 +399,13 @@ func (c *MConnection) Send(chainID string, chID byte, msgBytes []byte) bool {
 
 	c.Logger.Debug("Send", "chain_id", chainID, "channel", chID, "conn", c, "msgBytes", log.NewLazySprintf("%X", msgBytes))
 
-	// Send message to channel.
-	channel, ok := c.channelsIdx[chainID][chID]
-	if !ok {
-		c.Logger.Error(fmt.Sprintf("Cannot send bytes, unknown channel %X with ChainID %s", chID, chainID))
+	channel, err := c.getChannel(chainID, chID)
+	if err != nil {
+		c.Logger.Error(fmt.Sprintf("Cannot send bytes: %s", err.Error()))
 		return false
 	}
 
+	// Send message to channel.
 	success := channel.sendBytes(msgBytes)
 	if success {
 		// Wake up sendRoutine if necessary
@@ -400,14 +428,14 @@ func (c *MConnection) TrySend(chainID string, chID byte, msgBytes []byte) bool {
 
 	c.Logger.Debug("TrySend", "chain_id", chainID, "channel", chID, "conn", c, "msgBytes", log.NewLazySprintf("%X", msgBytes))
 
-	// Send message to channel.
-	channel, ok := c.channelsIdx[chainID][chID]
-	if !ok {
-		c.Logger.Error(fmt.Sprintf("Cannot send bytes, unknown channel %X with ChainID %s", chID, chainID))
+	// Searches the reactor instance per channel.
+	channel, err := c.getChannel(chainID, chID)
+	if err != nil {
+		c.Logger.Error(fmt.Sprintf("Cannot send bytes: %s", err.Error()))
 		return false
 	}
 
-	ok = channel.trySendBytes(msgBytes)
+	ok := channel.trySendBytes(msgBytes)
 	if ok {
 		// Wake up sendRoutine if necessary
 		select {
@@ -426,16 +454,13 @@ func (c *MConnection) CanSend(chainID string, chID byte) bool {
 		return false
 	}
 
-	if _, ok := c.channelsIdx[chainID]; !ok {
-		c.Logger.Error(fmt.Sprintf("Unknown ChainID %s", chainID))
+	// Searches the reactor instance per channel.
+	channel, err := c.getChannel(chainID, chID)
+	if err != nil {
+		c.Logger.Error(fmt.Sprintf("Cannot send bytes: %s", err.Error()))
 		return false
 	}
 
-	channel, ok := c.channelsIdx[chainID][chID]
-	if !ok {
-		c.Logger.Error(fmt.Sprintf("Unknown channel %X", chID))
-		return false
-	}
 	return channel.canSend()
 }
 

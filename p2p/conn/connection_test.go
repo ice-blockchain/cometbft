@@ -37,7 +37,10 @@ func createMConnectionWithCallbacks(
 	cfg := DefaultMConnConfig()
 	cfg.PingInterval = 90 * time.Millisecond
 	cfg.PongTimeout = 45 * time.Millisecond
-	chDescs := []*ChannelDescriptor{{ID: 0x01, Priority: 1, SendQueueCapacity: 1}}
+	chDescs := map[string][]*ChannelDescriptor{}
+	chDescs[SharedChannelsNamespace] = []*ChannelDescriptor{
+		{ID: 0x01, Priority: 1, SendQueueCapacity: 1},
+	}
 	c := NewMConnectionWithConfig(conn, chDescs, onReceive, onError, cfg)
 	c.SetLogger(log.TestingLogger())
 	return c
@@ -54,7 +57,7 @@ func TestMConnectionSendFlushStop(t *testing.T) {
 	defer clientConn.Stop() //nolint:errcheck // ignore for tests
 
 	msg := []byte("abc")
-	assert.True(t, clientConn.Send(0x01, msg))
+	assert.True(t, clientConn.Send(SharedChannelsNamespace, 0x01, msg))
 
 	msgLength := 14
 
@@ -92,24 +95,24 @@ func TestMConnectionSend(t *testing.T) {
 	defer mconn.Stop() //nolint:errcheck // ignore for tests
 
 	msg := []byte("Ant-Man")
-	assert.True(t, mconn.Send(0x01, msg))
+	assert.True(t, mconn.Send(SharedChannelsNamespace, 0x01, msg))
 	// Note: subsequent Send/TrySend calls could pass because we are reading from
 	// the send queue in a separate goroutine.
 	_, err = server.Read(make([]byte, len(msg)))
 	if err != nil {
 		t.Error(err)
 	}
-	assert.True(t, mconn.CanSend(0x01))
+	assert.True(t, mconn.CanSend(SharedChannelsNamespace, 0x01))
 
 	msg = []byte("Spider-Man")
-	assert.True(t, mconn.TrySend(0x01, msg))
+	assert.True(t, mconn.TrySend(SharedChannelsNamespace, 0x01, msg))
 	_, err = server.Read(make([]byte, len(msg)))
 	if err != nil {
 		t.Error(err)
 	}
 
-	assert.False(t, mconn.CanSend(0x05), "CanSend should return false because channel is unknown")
-	assert.False(t, mconn.Send(0x05, []byte("Absorbing Man")), "Send should return false because channel is unknown")
+	assert.False(t, mconn.CanSend(SharedChannelsNamespace, 0x05), "CanSend should return false because channel is unknown")
+	assert.False(t, mconn.Send(SharedChannelsNamespace, 0x05, []byte("Absorbing Man")), "Send should return false because channel is unknown")
 }
 
 func TestMConnectionReceive(t *testing.T) {
@@ -136,7 +139,7 @@ func TestMConnectionReceive(t *testing.T) {
 	defer mconn2.Stop() //nolint:errcheck // ignore for tests
 
 	msg := []byte("Cyclops")
-	assert.True(t, mconn2.Send(0x01, msg))
+	assert.True(t, mconn2.Send(SharedChannelsNamespace, 0x01, msg))
 
 	select {
 	case receivedBytes := <-receivedCh:
@@ -405,7 +408,8 @@ func newClientAndServerConnsForReadErrors(t *testing.T, chOnErr chan struct{}) (
 	onError := func(_ any) {}
 
 	// create client conn with two channels
-	chDescs := []*ChannelDescriptor{
+	chDescs := map[string][]*ChannelDescriptor{}
+	chDescs[SharedChannelsNamespace] = []*ChannelDescriptor{
 		{ID: 0x01, Priority: 1, SendQueueCapacity: 1},
 		{ID: 0x02, Priority: 1, SendQueueCapacity: 1},
 	}
@@ -468,11 +472,11 @@ func TestMConnectionReadErrorUnknownChannel(t *testing.T) {
 	msg := []byte("Ant-Man")
 
 	// fail to send msg on channel unknown by client
-	assert.False(t, mconnClient.Send(0x03, msg))
+	assert.False(t, mconnClient.Send(SharedChannelsNamespace, 0x03, msg))
 
 	// send msg on channel unknown by the server.
 	// should cause an error
-	assert.True(t, mconnClient.Send(0x02, msg))
+	assert.True(t, mconnClient.Send(SharedChannelsNamespace, 0x02, msg))
 	assert.True(t, expectSend(chOnErr), "unknown channel")
 
 	t.Cleanup(func() {
@@ -552,18 +556,18 @@ func TestMConnectionTrySend(t *testing.T) {
 
 	msg := []byte("Semicolon-Woman")
 	resultCh := make(chan string, 2)
-	assert.True(t, mconn.TrySend(0x01, msg))
+	assert.True(t, mconn.TrySend(SharedChannelsNamespace, 0x01, msg))
 	_, err = server.Read(make([]byte, len(msg)))
 	require.NoError(t, err)
-	assert.True(t, mconn.CanSend(0x01))
-	assert.True(t, mconn.TrySend(0x01, msg))
-	assert.False(t, mconn.CanSend(0x01))
+	assert.True(t, mconn.CanSend(SharedChannelsNamespace, 0x01))
+	assert.True(t, mconn.TrySend(SharedChannelsNamespace, 0x01, msg))
+	assert.False(t, mconn.CanSend(SharedChannelsNamespace, 0x01))
 	go func() {
-		mconn.TrySend(0x01, msg)
+		mconn.TrySend(SharedChannelsNamespace, 0x01, msg)
 		resultCh <- "TrySend"
 	}()
-	assert.False(t, mconn.CanSend(0x01))
-	assert.False(t, mconn.TrySend(0x01, msg))
+	assert.False(t, mconn.CanSend(SharedChannelsNamespace, 0x01))
+	assert.False(t, mconn.TrySend(SharedChannelsNamespace, 0x01, msg))
 	assert.Equal(t, "TrySend", <-resultCh)
 }
 

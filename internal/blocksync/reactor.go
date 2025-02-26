@@ -188,7 +188,7 @@ func (bcR *Reactor) SwitchToBlockSync(state sm.State) error {
 
 // OnStop implements service.Service.
 func (bcR *Reactor) OnStop() {
-	if bcR.blockSync {
+	if bcR.blockSync && bcR.pool.IsRunning() {
 		if err := bcR.pool.Stop(); err != nil {
 			bcR.Logger.Error("Error stopping pool", "err", err)
 		}
