@@ -14,6 +14,7 @@ import (
 	"github.com/ice-blockchain/cometbft/internal/evidence"
 	mempl "github.com/ice-blockchain/cometbft/mempool"
 	"github.com/ice-blockchain/cometbft/p2p"
+	"github.com/ice-blockchain/cometbft/p2p/conn"
 	"github.com/ice-blockchain/cometbft/p2p/pex"
 )
 
@@ -88,6 +89,9 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 		eventSwitch.SetLogger(p2pLogger)
 		eventSwitch.SetNodeInfo(reactor.nodeInfo)
 		eventSwitch.SetNodeKey(reactor.nodeKey)
+
+		// Make sure we accept ChainReplicationRequest messages
+		eventSwitch.AddReactor(conn.SharedChannelsNamespace, "MULTIPLEX", reactor)
 	}
 
 	// Used to retrieve configuration and state per chain.

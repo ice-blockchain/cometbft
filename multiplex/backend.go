@@ -20,6 +20,7 @@ import (
 	mempl "github.com/ice-blockchain/cometbft/mempool"
 	"github.com/ice-blockchain/cometbft/node"
 	"github.com/ice-blockchain/cometbft/p2p"
+	"github.com/ice-blockchain/cometbft/p2p/conn"
 	rpccore "github.com/ice-blockchain/cometbft/rpc/core"
 	rpcclient "github.com/ice-blockchain/cometbft/rpc/jsonrpc/client"
 	rpcserver "github.com/ice-blockchain/cometbft/rpc/jsonrpc/server"
@@ -272,7 +273,7 @@ func (b *MultiplexBackend) EventSwitch() *p2p.Switch {
 	sw.SetNodeKey(b.reactor.nodeKey)
 
 	// Make sure we listen to ChainReplicationRequest messages
-	sw.AddReactor("", "MULTIPLEX", b.reactor)
+	sw.AddReactor(conn.SharedChannelsNamespace, "MULTIPLEX", b.reactor)
 	return sw
 }
 
@@ -1243,8 +1244,10 @@ func (b *MultiplexBackend) StopNodeInstances() error {
 		go func(network string, n *node.Node) {
 			b.reactor.logger.Info("Stopping node runtime", "chain_id", network)
 
-			if err := n.Stop(); err != nil {
-				panic(fmt.Errorf("failed to stop node: %w", err))
+			if n.IsRunning() {
+				if err := n.Stop(); err != nil {
+					panic(fmt.Errorf("failed to stop node: %w", err))
+				}
 			}
 
 			wg.Done()

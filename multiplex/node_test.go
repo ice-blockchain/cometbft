@@ -294,8 +294,10 @@ func TestMultiplexNodeNewNodesMultiplex(t *testing.T) {
 		//t.Logf("Waiting for %d nodes to be stopped.", len(testReactor.GetNetworks()))
 		wg.Wait()
 
-		err := testReactor.Stop()
-		require.NoError(t, err)
+		if testReactor.IsRunning() {
+			err := testReactor.Stop()
+			require.NoError(t, err)
+		}
 	}()
 }
 
@@ -336,8 +338,10 @@ func TestMultiplexNodeNewNodesMultiplexSingleNetworkProduceBlocks(t *testing.T) 
 		//t.Logf("Waiting for %d nodes to be stopped.", len(testReactor.GetNetworks()))
 		wg.Wait()
 
-		err := testReactor.Stop()
-		require.NoError(t, err)
+		if testReactor.IsRunning() {
+			err := testReactor.Stop()
+			require.NoError(t, err)
+		}
 	}()
 
 	// Must start CometBFT RPC and P2P servers exactly once
@@ -392,8 +396,10 @@ func TestMultiplexNodeNewNodesMultiplexProduceBlocks(t *testing.T) {
 		//t.Logf("Waiting for %d nodes to be stopped.", len(testReactor.GetNetworks()))
 		wg.Wait()
 
-		err := testReactor.Stop()
-		require.NoError(t, err)
+		if testReactor.IsRunning() {
+			err := testReactor.Stop()
+			require.NoError(t, err)
+		}
 	}()
 
 	// Must start CometBFT RPC and P2P servers exactly once

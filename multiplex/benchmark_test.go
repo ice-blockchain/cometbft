@@ -176,6 +176,126 @@ func BenchmarkMultiplexRelaysWithHundredChainsAndThreeRelays(b *testing.B) {
 	)
 }
 
+func BenchmarkMultiplexRelaysWith1KChains(b *testing.B) {
+	numChains := 1000
+	numRelays := 1
+
+	relayLoggers := make([]cmtlog.Logger, numRelays)
+	for i := 0; i < numRelays; i++ {
+		// For debug, change the loggers to cmtlog.TestingLogger()
+		relayLoggers[i] = cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-"+strconv.Itoa(i+1))
+	}
+
+	servers, shutdownRoutineFn := ResetTestMultiplexBenchmark(
+		b,
+		numChains,
+		numRelays,
+		relayLoggers...,
+	)
+	require.NotEmpty(b, servers)
+
+	// Shutdown routine
+	defer shutdownRoutineFn()
+
+	benchmarkRawTxThroughput(
+		b,
+		servers[0].GetNetworks(),
+		numChains,
+		numRelays,
+		1000000, // SetParallelism()
+	)
+}
+
+func BenchmarkMultiplexRelaysWith10KChains(b *testing.B) {
+	numChains := 10000
+	numRelays := 1
+
+	relayLoggers := make([]cmtlog.Logger, numRelays)
+	for i := 0; i < numRelays; i++ {
+		// For debug, change the loggers to cmtlog.TestingLogger()
+		relayLoggers[i] = cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-"+strconv.Itoa(i+1))
+	}
+
+	servers, shutdownRoutineFn := ResetTestMultiplexBenchmark(
+		b,
+		numChains,
+		numRelays,
+		relayLoggers...,
+	)
+	require.NotEmpty(b, servers)
+
+	// Shutdown routine
+	defer shutdownRoutineFn()
+
+	benchmarkRawTxThroughput(
+		b,
+		servers[0].GetNetworks(),
+		numChains,
+		numRelays,
+		1000000, // SetParallelism()
+	)
+}
+
+func BenchmarkMultiplexRelaysWith100KChains(b *testing.B) {
+	numChains := 100000
+	numRelays := 1
+
+	relayLoggers := make([]cmtlog.Logger, numRelays)
+	for i := 0; i < numRelays; i++ {
+		// For debug, change the loggers to cmtlog.TestingLogger()
+		relayLoggers[i] = cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-"+strconv.Itoa(i+1))
+	}
+
+	servers, shutdownRoutineFn := ResetTestMultiplexBenchmark(
+		b,
+		numChains,
+		numRelays,
+		relayLoggers...,
+	)
+	require.NotEmpty(b, servers)
+
+	// Shutdown routine
+	defer shutdownRoutineFn()
+
+	benchmarkRawTxThroughput(
+		b,
+		servers[0].GetNetworks(),
+		numChains,
+		numRelays,
+		1000000, // SetParallelism()
+	)
+}
+
+func BenchmarkMultiplexRelaysWith1MioChains(b *testing.B) {
+	numChains := 1000000
+	numRelays := 1
+
+	relayLoggers := make([]cmtlog.Logger, numRelays)
+	for i := 0; i < numRelays; i++ {
+		// For debug, change the loggers to cmtlog.TestingLogger()
+		relayLoggers[i] = cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-"+strconv.Itoa(i+1))
+	}
+
+	servers, shutdownRoutineFn := ResetTestMultiplexBenchmark(
+		b,
+		numChains,
+		numRelays,
+		relayLoggers...,
+	)
+	require.NotEmpty(b, servers)
+
+	// Shutdown routine
+	defer shutdownRoutineFn()
+
+	benchmarkRawTxThroughput(
+		b,
+		servers[0].GetNetworks(),
+		numChains,
+		numRelays,
+		1000000, // SetParallelism()
+	)
+}
+
 // ----------------------------------------------------------------------------
 // Helpers
 
