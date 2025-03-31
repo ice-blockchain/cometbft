@@ -68,7 +68,7 @@ type MultiplexBackend struct {
 	multiNodeInfo   *MultiNetworkNodeInfo
 	broadcastAddr   *p2p.NetAddress // P2P Discovery (:dp)
 	discoveryAddr   *p2p.NetAddress // RPC Discovery (:dp-1)
-	cometbftP2PAddr *p2p.NetAddress // CometBFT P2P (:dp+1)
+	cometbftP2PAddr *p2p.NetAddress // CometBFT P2P  (:dp+1)
 	cometbftRPCAddr *p2p.NetAddress // CometBFT RPC  (:dp+2)
 	prometheusAddr  *p2p.NetAddress // Prometheus (:dp+3)
 
@@ -1036,7 +1036,6 @@ func (b *MultiplexBackend) StartRPCServerCometBFT() error {
 	// We configure one RPC environment per running network,
 	// i.e. contains reactors, stores and genesis.
 	nodesProvider := b.reactor.GetServicesProvider()
-	chainEnvs := map[string]*rpccore.Environment{}
 	chainRoutes := map[string]rpccore.RoutesMap{}
 	for _, chainID := range b.GetNetworks() {
 		nodeRuntime := nodesProvider(ServiceKeyNodeRuntime, chainID).(*node.Node)
@@ -1051,7 +1050,6 @@ func (b *MultiplexBackend) StartRPCServerCometBFT() error {
 			env.AddUnsafeRoutes(nodeRoutes)
 		}
 
-		chainEnvs[chainID] = env
 		chainRoutes[chainID] = nodeRoutes
 	}
 
@@ -1090,7 +1088,7 @@ func (b *MultiplexBackend) StartRPCServerCometBFT() error {
 		rpcConf.WriteTimeout = nodeCfg.RPC.TimeoutBroadcastTxCommit + 1*time.Second
 	}
 
-	mux := http.NewServeMux()
+	rpcMultiplexer := http.NewServeMux()
 	rpcLogger := b.logger.With("module", "rpc-server")
 	wmLogger := rpcLogger.With("protocol", "websocket")
 	wm := rpcserver.NewWebsocketManager(routes,
@@ -1105,9 +1103,9 @@ func (b *MultiplexBackend) StartRPCServerCometBFT() error {
 		rpcserver.WriteChanCapacity(nodeCfg.RPC.WebSocketWriteBufferSize),
 	)
 	wm.SetLogger(wmLogger)
-	mux.HandleFunc("/websocket", wm.WebsocketHandler)
-	mux.HandleFunc("/v1/websocket", wm.WebsocketHandler)
-	rpcserver.RegisterRPCFuncs(mux, routes, rpcLogger)
+	rpcMultiplexer.HandleFunc("/websocket", wm.WebsocketHandler)
+	rpcMultiplexer.HandleFunc("/v1/websocket", wm.WebsocketHandler)
+	rpcserver.RegisterRPCFuncs(rpcMultiplexer, routes, rpcLogger)
 	rpcListener, err := rpcserver.Listen(
 		relayAddr.StringWithoutId(),
 		rpcConf.MaxOpenConnections,
@@ -1116,14 +1114,14 @@ func (b *MultiplexBackend) StartRPCServerCometBFT() error {
 		return err
 	}
 
-	var rootHandler http.Handler = mux
+	var rootHandler http.Handler = rpcMultiplexer
 	if nodeCfg.RPC.IsCorsEnabled() {
 		corsMiddleware := cors.New(cors.Options{
 			AllowedOrigins: nodeCfg.RPC.CORSAllowedOrigins,
 			AllowedMethods: nodeCfg.RPC.CORSAllowedMethods,
 			AllowedHeaders: nodeCfg.RPC.CORSAllowedHeaders,
 		})
-		rootHandler = corsMiddleware.Handler(mux)
+		rootHandler = corsMiddleware.Handler(rpcMultiplexer)
 	}
 	if nodeCfg.RPC.IsTLSEnabled() {
 		go func() {
@@ -1150,6 +1148,8 @@ func (b *MultiplexBackend) StartRPCServerCometBFT() error {
 			}
 		}()
 	}
+
+	b.reactor.SetRPCMultiplexer(rpcMultiplexer)
 
 	b.rpcListeners = append(b.rpcListeners, rpcListener)
 	return nil

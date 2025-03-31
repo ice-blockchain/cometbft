@@ -58,6 +58,10 @@ type Backend interface {
 	// GetNetworks should return a slice of supported ChainID values.
 	GetNetworks() []string
 
+	// UpdateAvailableNetworks should update the NodeInfo pointer and p2p switch
+	// to permit communications related to new (or unknown) networks.
+	UpdateAvailableNetworks(networks []string) []string
+
 	// WaitForNextAvailableNetwork should wait for a *local* chain replication
 	// and it should return a ChainID.
 	WaitForNextAvailableNetwork(ctx context.Context) (string, error)

@@ -2,7 +2,9 @@ package multiplex
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -23,6 +25,8 @@ import (
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/privval"
 	"github.com/ice-blockchain/cometbft/proxy"
+	rpccore "github.com/ice-blockchain/cometbft/rpc/core"
+	rpcserver "github.com/ice-blockchain/cometbft/rpc/jsonrpc/server"
 	sm "github.com/ice-blockchain/cometbft/state"
 	"github.com/ice-blockchain/cometbft/state/indexer"
 	blockidxkv "github.com/ice-blockchain/cometbft/state/indexer/block/kv"
@@ -106,10 +110,11 @@ type Reactor struct {
 	acceptorImpl client.Acceptor
 
 	// Networking layer
-	networks    []string
-	nodeInfo    *MultiNetworkNodeInfo
-	eventSwitch *p2p.Switch
-	transport   *p2p.MultiplexTransport
+	networks       []string
+	nodeInfo       *MultiNetworkNodeInfo
+	eventSwitch    *p2p.Switch
+	transport      *p2p.MultiplexTransport
+	rpcMultiplexer *http.ServeMux
 
 	// Services registry is a multiplex map which is searchable by service name
 	// and which contains other multiplex maps where keys are ChainID values.
@@ -347,6 +352,11 @@ func (reactor *Reactor) GetLogger() cmtlog.Logger {
 	return reactor.logger
 }
 
+// GetRPCMultiplexer returns a [http.ServeMux] instance.
+func (reactor *Reactor) GetRPCMultiplexer() *http.ServeMux {
+	return reactor.rpcMultiplexer
+}
+
 // GetStateStore returns a [sm.Store].
 //
 // GetStateStore implements [snapsapp.Reactor].
@@ -389,6 +399,11 @@ func (reactor *Reactor) SetConfigsPaths(fs MultiplexFS) {
 // SetLogger sets a custom [cmtlog.Logger] instance.
 func (reactor *Reactor) SetLogger(logger cmtlog.Logger) {
 	reactor.logger = logger
+}
+
+// SetRPCMultiplexer sets a custom [http.ServeMux] instance.
+func (reactor *Reactor) SetRPCMultiplexer(mux *http.ServeMux) {
+	reactor.rpcMultiplexer = mux
 }
 
 // RegisterService inserts a [cmtlibs.Service] instance in the registry
@@ -1218,5 +1233,52 @@ func (reactor *Reactor) handleChainReplicationRequest(
 			"could not dial relay %s: %w", peerAddr.DialString(), err)
 	}
 
+	return nil
+}
+
+// EnableNewRuntimeRPC adds RPC routes for networks in a running
+// http request multiplexer.
+//
+// TODO(midas): TBI whether the server must be restarted.
+func (reactor *Reactor) EnableNewRuntimeRPC(networks []string) error {
+	if reactor.rpcMultiplexer == nil {
+		return errors.New(
+			"could not enable RPC runtime, missing multiplexer")
+	}
+
+	nodeCfg := reactor.nodeConfig
+
+	// We configure one RPC environment per running network,
+	// i.e. contains reactors, stores and genesis.
+	nodesProvider := reactor.GetServicesProvider()
+	chainRoutes := map[string]rpccore.RoutesMap{}
+	for _, chainID := range networks {
+		nodeRuntime := nodesProvider(ServiceKeyNodeRuntime, chainID).(*node.Node)
+		env, err := nodeRuntime.ConfigureRPC()
+		if err != nil {
+			return fmt.Errorf(
+				"could not create RPC environment with ChainID %s: %w", chainID, err)
+		}
+
+		nodeRoutes := env.GetRoutes()
+		if nodeCfg.RPC.Unsafe {
+			env.AddUnsafeRoutes(nodeRoutes)
+		}
+
+		chainRoutes[chainID] = nodeRoutes
+	}
+
+	// Each network's ChainID is appended to the route name.
+	// i.e. `/broadcast_tx_commit/%CHAIN_ID%`.
+	newRoutes := rpccore.RoutesMap{}
+	for chainID, nodeRoutes := range chainRoutes {
+		for route, rpcFunc := range nodeRoutes {
+			routeKey := route + "/" + chainID
+			newRoutes[routeKey] = rpcFunc
+		}
+	}
+
+	rpcLogger := reactor.logger.With("module", "rpc-server")
+	rpcserver.RegisterAddedRPCFuncs(reactor.rpcMultiplexer, newRoutes, rpcLogger)
 	return nil
 }

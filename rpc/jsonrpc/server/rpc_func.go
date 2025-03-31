@@ -11,7 +11,7 @@ import (
 
 // RegisterRPCFuncs adds a route for each function in the funcMap, as well as
 // general jsonrpc and websocket handlers for all functions. "result" is the
-// interface on which the result objects are registered, and is popualted with
+// interface on which the result objects are registered, and is populated with
 // every RPCResponse.
 func RegisterRPCFuncs(mux *http.ServeMux, funcMap map[string]*RPCFunc, logger log.Logger) {
 	// HTTP endpoints
@@ -24,6 +24,15 @@ func RegisterRPCFuncs(mux *http.ServeMux, funcMap map[string]*RPCFunc, logger lo
 	mux.HandleFunc("/", handleInvalidJSONRPCPaths(makeJSONRPCHandler(funcMap, logger)))
 	mux.HandleFunc("/v1", handleInvalidJSONRPCPaths(makeJSONRPCHandler(funcMap, logger)))
 	mux.HandleFunc("/v1/", handleInvalidJSONRPCPaths(makeJSONRPCHandler(funcMap, logger)))
+}
+
+// RegisterRPCFuncs adds a route for each function in the funcMap.
+func RegisterAddedRPCFuncs(mux *http.ServeMux, funcMap map[string]*RPCFunc, logger log.Logger) {
+	// HTTP endpoints
+	for funcName, rpcFunc := range funcMap {
+		mux.HandleFunc("/"+funcName, makeHTTPHandler(rpcFunc, logger))
+		mux.HandleFunc("/v1/"+funcName, makeHTTPHandler(rpcFunc, logger))
+	}
 }
 
 type Option func(*RPCFunc)

@@ -403,6 +403,14 @@ func (reactor *Reactor) InjectNewRuntime(
 		)
 	}(chainID, runNode)
 
+	// Also hot-plug the RPC routes for added network
+	if reactor.rpcMultiplexer != nil {
+		if err := reactor.EnableNewRuntimeRPC([]string{chainID}); err != nil {
+			return fmt.Errorf(
+				"error adding RPC routes for %s: %w", chainID, err)
+		}
+	}
+
 	// The node instance is now running and producing blocks. Other relays
 	// may now join the network and shall do so when the transaction broadcast
 	// is executed as a follow-up of the networks creation routine.
