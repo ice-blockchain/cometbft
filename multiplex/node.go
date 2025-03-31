@@ -159,6 +159,7 @@ func NewNodesMultiplex(
 	localABCISnapsApp := proxy.NewLocalClientCreator(snapsapp.NewSnapsApplication(
 		reactor,
 		logger.With("module", "snapsapp"),
+		snapsapp.WithAcceptor(acceptor),
 	))
 
 	// Start the ABCI client (proxyApp)
