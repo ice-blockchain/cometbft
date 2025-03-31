@@ -18,17 +18,6 @@ import (
 	"github.com/ice-blockchain/cometbft/p2p/pex"
 )
 
-func (reactor *Reactor) UpdateNodeInfo(
-	newNodeInfo MultiNetworkNodeInfo,
-) error {
-	if reactor.eventSwitch == nil {
-		return fmt.Errorf("invalid state, event switch not yet created")
-	}
-
-	reactor.eventSwitch.SetNodeInfo(newNodeInfo)
-	return nil
-}
-
 // CreateTransportSwitches initializes P2P transports using the legacy
 // structure [p2p.MultiplexTransport], but injects a *custom TLS handshake*
 // implementation with [MultiplexTransportHandshake].

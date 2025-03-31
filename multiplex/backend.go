@@ -282,9 +282,9 @@ func (b *MultiplexBackend) EventSwitch() *p2p.Switch {
 // to permit communications related to networks.
 //
 // TODO(midas): TBI whether p2p.conn channels must be opened manually.
-func (b *MultiplexBackend) UpdateAvailableNetworks(networks []string) {
+func (b *MultiplexBackend) UpdateAvailableNetworks(networks []string) []string {
 	if b.eventSwitch == nil {
-		return
+		return b.multiNodeInfo.Networks
 	}
 
 	for _, chainID := range networks {
@@ -300,6 +300,7 @@ func (b *MultiplexBackend) UpdateAvailableNetworks(networks []string) {
 	}
 
 	b.eventSwitch.SetNodeInfo(b.multiNodeInfo)
+	return b.multiNodeInfo.Networks
 }
 
 // MustStart starts a replication backend basically selecting void

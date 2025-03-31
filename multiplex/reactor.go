@@ -556,9 +556,23 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			r.logger.Debug("Now processing ChainReplicationRequest", "msg", msg)
 			replRequest := extMsg.GetChainReplicationRequest()
 
+			// Determine public source address from secret connection.
+			sourceAddr, err := e.Src.NodeInfo().NetAddress()
+			if err != nil {
+				r.logger.Error(
+					"CONSENSUS PANIC! Source peer not found in ChainReplicationRequest",
+					"chain_id", replRequest.ChainID,
+					"err", err,
+				)
+				return
+			}
+
+			// A ChainReplicationResponse is sent to the source peer.
+			sourcePeer := r.eventSwitch.Peers().Get(sourceAddr.ID)
+
 			// Instantly respond with a [ChainReplicationResponse].
 			// This serves as a receipt for a chain replication request.
-			if err := r.sendChainReplicationResponse(e.Src, replRequest.ChainID); err != nil {
+			if err := r.sendChainReplicationResponse(sourcePeer, replRequest.ChainID); err != nil {
 				r.logger.Error(
 					"CONSENSUS PANIC! Error with ChainReplicationResponse",
 					"chain_id", replRequest.ChainID,
@@ -568,7 +582,10 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			}
 
 			// After having acknowledged the chain replication, process it.
-			if err := r.handleChainReplicationRequest(e.Src, replRequest); err != nil {
+			//
+			// CAUTION: This modifies the runtime and allocates the necessary resources
+			// for the newly replicated ChainID, and then *dials* the source peer.
+			if err := r.handleChainReplicationRequest(sourcePeer, replRequest); err != nil {
 				r.logger.Error(
 					"CONSENSUS PANIC! Error with ChainReplicationRequest",
 					"chain_id", replRequest.ChainID,
