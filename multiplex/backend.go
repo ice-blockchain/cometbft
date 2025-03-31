@@ -701,6 +701,12 @@ func (b *MultiplexBackend) CheckDialCompatibleRelay(
 	// Using the switch here affects the internal AddrBook.
 	localSwitch := b.EventSwitch()
 	if err := localSwitch.DialPeerWithAddress(relayNetAddr); err != nil {
+		// Ignore existing addresses here in case of long-living process
+		// broadcasting more transactions, when peer is already dialed.
+		if _, ok := err.(p2p.ErrCurrentlyDialingOrExistingAddress); ok {
+			return nil
+		}
+
 		return fmt.Errorf(
 			"could not dial relay %s: %w", relayAddr.String(), err)
 	}
