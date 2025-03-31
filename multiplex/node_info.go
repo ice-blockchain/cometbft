@@ -97,9 +97,22 @@ func NewMultiNetworkNodeInfo(
 	nodeKey *p2p.NodeKey,
 	listenAddr *p2p.NetAddress,
 ) *MultiNetworkNodeInfo {
+	chainIds := []string{}
+	protoVer := []ChainProtocolVersion{}
+	for _, userChains := range nodeCfg.UserChains {
+		chainIds = append(chainIds, userChains...)
+
+		for _, chainID := range userChains {
+			protoVer = append(protoVer, NewChainProtocolVersion(
+				chainID,
+				DefaultProtocolVersion,
+			))
+		}
+	}
+
 	return &MultiNetworkNodeInfo{
-		Networks:         []string{},
-		ProtocolVersions: []ChainProtocolVersion{},
+		Networks:         chainIds,
+		ProtocolVersions: protoVer,
 		DefaultNodeID:    nodeKey.ID(),
 		Version:          nodeCfg.Version,
 		Moniker:          nodeCfg.Moniker,

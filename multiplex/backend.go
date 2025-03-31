@@ -65,6 +65,7 @@ type MultiplexBackend struct {
 	rpcListeners []net.Listener
 	httpServers  []*http.Server
 
+	multiNodeInfo   *MultiNetworkNodeInfo
 	broadcastAddr   *p2p.NetAddress // P2P Discovery (:dp)
 	discoveryAddr   *p2p.NetAddress // RPC Discovery (:dp-1)
 	cometbftP2PAddr *p2p.NetAddress // CometBFT P2P (:dp+1)
@@ -250,7 +251,7 @@ func (b *MultiplexBackend) EventSwitch() *p2p.Switch {
 
 	// In-place mutation of the listen address so that it always uses
 	// the configured broadcast address.
-	localNodeInfo := NewMultiNetworkNodeInfo(
+	b.multiNodeInfo = NewMultiNetworkNodeInfo(
 		b.reactor.nodeConfig,
 		b.reactor.nodeKey,
 		b.broadcastAddr,
@@ -258,7 +259,7 @@ func (b *MultiplexBackend) EventSwitch() *p2p.Switch {
 
 	mConnConfig := p2p.MConnConfig(b.reactor.nodeConfig.P2P)
 	localTransport := p2p.NewMultiplexTransportWithCustomHandshake(
-		localNodeInfo, // local nodeInfo
+		b.multiNodeInfo, // local nodeInfo
 		*b.reactor.nodeKey,
 		mConnConfig,
 		MultiplexTransportHandshake,
@@ -269,12 +270,36 @@ func (b *MultiplexBackend) EventSwitch() *p2p.Switch {
 		localTransport,
 	)
 	sw.SetLogger(b.reactor.logger.With("module", "p2p"))
-	sw.SetNodeInfo(localNodeInfo)
+	sw.SetNodeInfo(b.multiNodeInfo)
 	sw.SetNodeKey(b.reactor.nodeKey)
 
 	// Make sure we listen to ChainReplicationRequest messages
 	sw.AddReactor(conn.SharedChannelsNamespace, "MULTIPLEX", b.reactor)
 	return sw
+}
+
+// UpdateAvailableNetworks updates the NodeInfo pointer and event switch
+// to permit communications related to networks.
+//
+// TODO(midas): TBI whether p2p.conn channels must be opened manually.
+func (b *MultiplexBackend) UpdateAvailableNetworks(networks []string) {
+	if b.eventSwitch == nil {
+		return
+	}
+
+	for _, chainID := range networks {
+		if !slices.Contains(b.multiNodeInfo.Networks, chainID) {
+			b.multiNodeInfo.Networks = append(b.multiNodeInfo.Networks, chainID)
+			b.multiNodeInfo.ProtocolVersions = append(b.multiNodeInfo.ProtocolVersions,
+				NewChainProtocolVersion(
+					chainID,
+					DefaultProtocolVersion,
+				),
+			)
+		}
+	}
+
+	b.eventSwitch.SetNodeInfo(b.multiNodeInfo)
 }
 
 // MustStart starts a replication backend basically selecting void

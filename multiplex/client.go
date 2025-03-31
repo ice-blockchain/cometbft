@@ -158,6 +158,9 @@ func (c MultiplexClient) BroadcastTx(
 		requiredNetworks = append(requiredNetworks, chainID)
 	}
 
+	// Updates the supported ChainIDs of NodeInfo and p2p.Switch.
+	c.GetBackend().UpdateAvailableNetworks(requiredNetworks)
+
 	// TODO(midas): remove debug logs
 	c.backend.GetLogger().Debug("Fetching exact relay addresses",
 		"num_relays", len(relays))
