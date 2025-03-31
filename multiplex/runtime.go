@@ -337,13 +337,13 @@ func (reactor *Reactor) InjectNewRuntime(
 	waitSyncd := true
 	logNodeStartupInfo(stateMachine.Copy(), privValPubKey, clogger)
 
-	// Start the actual consensus instance.
+	// Configure the actual consensus instance.
 	//
 	// Creates a mempool, evidence pool, block executor, blocksync
 	// and finally a consensus reactor.
 	if err := reactor.CreateConsensusInstanceReactors(ctx, chainID, blockSync, waitSyncd); err != nil {
 		return fmt.Errorf(
-			"error starting consensus reactors: %w", err)
+			"error creating consensus reactors: %w", err)
 	}
 
 	// Inform about the consensus readiness
@@ -369,7 +369,16 @@ func (reactor *Reactor) InjectNewRuntime(
 		"nodeId", string(reactor.nodeKey.ID()))
 
 	// ------------------------------------------------------------------------
-	// Step 5: Create the runnable node.Node instance
+	// Step 5: Start running the consensus reactors
+
+	// Start the actual consensus instance.
+	if err := reactor.StartConsensusInstanceReactors(ctx, chainID); err != nil {
+		return fmt.Errorf(
+			"error starting consensus reactors: %w", err)
+	}
+
+	// ------------------------------------------------------------------------
+	// Step 6: Create the runnable node.Node instance
 
 	// Create a MultiplexMap[*node.Node] with this new network.
 	updatedMx := reactor.createMultiplexNodesWithServices(
@@ -379,7 +388,7 @@ func (reactor *Reactor) InjectNewRuntime(
 	)
 
 	// ------------------------------------------------------------------------
-	// Step 6: Start the node
+	// Step 7: Start the node
 
 	// Type-assertion makes sure we have a [*node.Node]
 	runNode := updatedMx[chainID].GetInstance().(*node.Node)

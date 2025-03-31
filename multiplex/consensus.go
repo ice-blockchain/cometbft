@@ -282,3 +282,40 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 
 	return nil
 }
+
+// StartConsensusInstanceReactors starts the mempool, blocksync, consensus
+// and evidence reactors. This must be called when the networks are injected
+// into runtime and the p2p.Switch is already running.
+func (reactor *Reactor) StartConsensusInstanceReactors(
+	ctx context.Context,
+	chainID string,
+) error {
+	servicesProvider := reactor.GetServicesProvider()
+
+	mempoolReactor := servicesProvider(ServiceKeyMempoolReactor, chainID).(*mempl.Reactor)
+	blocksyncReactor := servicesProvider(ServiceKeyBlockSyncReactor, chainID).(*blocksync.Reactor)
+	consensusReactor := servicesProvider(ServiceKeyConsensusReactor, chainID).(*cs.Reactor)
+	evidenceReactor := servicesProvider(ServiceKeyEvidenceReactor, chainID).(*evidence.Reactor)
+
+	if err := mempoolReactor.Start(); err != nil {
+		return fmt.Errorf(
+			"error starting mempool reactor: %w", err)
+	}
+
+	if err := blocksyncReactor.Start(); err != nil {
+		return fmt.Errorf(
+			"error starting blocksync reactor: %w", err)
+	}
+
+	if err := consensusReactor.Start(); err != nil {
+		return fmt.Errorf(
+			"error starting consensus reactor: %w", err)
+	}
+
+	if err := evidenceReactor.Start(); err != nil {
+		return fmt.Errorf(
+			"error starting evidence reactor: %w", err)
+	}
+
+	return nil
+}
