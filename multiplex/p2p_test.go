@@ -78,10 +78,10 @@ func TestMultiplexReactorCreateTransportSwitchesWithReactors(t *testing.T) {
 	// switchesProvider := reactor.GetInstanceProvider(mx.InstanceKeyP2PSwitch)
 	// assert.NotNil(t, switchesProvider, "event switch provider must not be nil")
 
-	assert.NotNil(t, reactor.GetEventSwitch())
+	assert.NotNil(t, reactor.GetEventSwitchForCometBFT())
 	assert.NotNil(t, reactor.GetTransport())
 
-	testSwitch := reactor.GetEventSwitch()
+	testSwitch := reactor.GetEventSwitchForCometBFT()
 	testTransport := reactor.GetTransport()
 	assert.NotNil(t, testTransport.NetAddress())
 
@@ -129,8 +129,8 @@ func TestMultiplexReactorCreateAddressBooks(t *testing.T) {
 	// switchesProvider := reactor.GetInstanceProvider(mx.InstanceKeyP2PSwitch)
 	// assert.NotNil(t, switchesProvider, "event switch provider must not be nil")
 
-	assert.NotNil(t, reactor.GetEventSwitch())
-	testSwitch := reactor.GetEventSwitch()
+	assert.NotNil(t, reactor.GetEventSwitchForCometBFT())
+	testSwitch := reactor.GetEventSwitchForCometBFT()
 
 	for _, chainID := range reactor.GetNetworks() {
 		// eventSwitch := switchesProvider(chainID).(*p2p.Switch)

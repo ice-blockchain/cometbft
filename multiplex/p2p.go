@@ -51,8 +51,8 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 		transport   *p2p.MultiplexTransport
 		eventSwitch *p2p.Switch
 	)
-	if reactor.eventSwitch != nil {
-		eventSwitch = reactor.eventSwitch
+	if reactor.GetEventSwitchForCometBFT() != nil {
+		eventSwitch = reactor.GetEventSwitchForCometBFT()
 		transport = reactor.transport
 	} else {
 		p2pMetricsId := strings.Join([]string{
@@ -135,7 +135,7 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 		}
 	}
 
-	reactor.eventSwitch = eventSwitch
+	reactor.cometbftSwitch = eventSwitch
 	reactor.transport = transport
 
 	p2pLogger.Info("P2P Node ID",
@@ -162,14 +162,8 @@ func (reactor *Reactor) CreateAddressBooks(
 	// Used for logging with custom address book
 	p2pLogger := reactor.logger.With("module", "p2p")
 
-	// We shall iterate through all known networks and create separate
-	// multiplex transports and event switches for each replicated chain.
-	// chainRegistry := reactor.GetChainRegistry()
-
 	// Used to retrieve configuration and state per chain.
 	configProvider := reactor.GetInstanceProvider(InstanceKeyConfig)
-	// switchProvider := reactor.GetInstanceProvider(InstanceKeyP2PSwitch)
-
 	addressBookPath := filepath.Join(reactor.nodeConfig.RootDir, config.DefaultConfigDir)
 	addrBookFile := filepath.Join(addressBookPath, config.DefaultAddrBookName)
 	if _, err := os.Stat(addressBookPath); err != nil {
@@ -182,28 +176,7 @@ func (reactor *Reactor) CreateAddressBooks(
 	for _, chainID := range networks {
 		// The config overwrite notably contains P2P.Seeds overwrite
 		cfgOverwrite := configProvider(chainID).(*config.Config)
-		// eventSwitch := switchProvider(chainID).(*p2p.Switch)
-
 		chainSeedNodes := splitAndTrimEmpty(cfgOverwrite.P2P.Seeds, ",", " ")
-
-		// We can safely ignore the error as we know an address is available.
-		// Builds a custom address book path: %rootDir%/config/%address%/%chain%/
-		// userAddress, _ := chainRegistry.GetAddress(chainID)
-		// userConfDir := filepath.Join(cfgOverwrite.RootDir, config.DefaultConfigDir, userAddress)
-		// addressBookPath := filepath.Join(userConfDir, chainID)
-
-		// // Uses default address book file name: addrbook.json
-		// addrBookFile := filepath.Join(addressBookPath, config.DefaultAddrBookName)
-		// if _, err := os.Stat(addressBookPath); err != nil {
-		// 	return fmt.Errorf("could not open address book file %s: %w", addrBookFile, err)
-		// }
-
-		// 1) Create an address book
-		//
-		// We shall also add our external/local addresses to it to prevent
-		// dialing ourselves out of mistake.
-		// addrBook := pex.NewAddrBook(addrBookFile, cfgOverwrite.P2P.AddrBookStrict)
-		// addrBook.SetLogger(p2pLogger.With("book", addrBookFile))
 
 		// Add ourselves to addrbook to prevent dialing ourselves
 		if cfgOverwrite.P2P.ExternalAddress != "" {
@@ -239,9 +212,9 @@ func (reactor *Reactor) CreateAddressBooks(
 		pexReactor.SetLogger(pexLogger)
 
 		// Set address book and PEX reactor on Switch
-		reactor.eventSwitch.AddReactor(chainID, "PEX", pexReactor)
+		reactor.cometbftSwitch.AddReactor(chainID, "PEX", pexReactor)
 	}
 
-	reactor.eventSwitch.SetAddrBook(addrBook)
+	reactor.cometbftSwitch.SetAddrBook(addrBook)
 	return nil
 }

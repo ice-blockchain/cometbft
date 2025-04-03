@@ -213,7 +213,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 		b.poolRequestsSent = map[string][]string{}
 
 		// Iterate through transaction and broadcast each of them to other relays
-		eventsSwitch := b.reactor.GetEventSwitch()
+		eventsSwitch := b.reactor.GetEventSwitchForCometBFT()
 		for i, transaction := range transactions {
 			chainID := client.GetChainID(userAddress, transaction.Fingerprint)
 			// eventsSwitch := switchProvider(chainID).(*p2p.Switch)
@@ -226,6 +226,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 			if _, ok := relaysByChain[chainID]; ok {
 				numRelaysForChain = len(relaysByChain[chainID])
 			}
+
 			b.logger.Debug("Sending transaction to relays",
 				"hash", txHash,
 				"num_relays", numRelaysForChain,
@@ -249,6 +250,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 			b.logger.Debug("Keeping only healthy relays for broadcast",
 				"hash", txHash,
 				"num_relays", len(chainHealthyPeers),
+				"relays", chainHealthyPeers,
 			)
 
 			// Broadcast the transaction to all healthy relays.
@@ -324,8 +326,7 @@ func (b *MultiplexBackend) DefaultCancelBroadcastRoutine() server.CancelBroadcas
 		userAddress string,
 		transactions []client.Transaction,
 	) {
-		// switchProvider := b.reactor.GetInstanceProvider(InstanceKeyP2PSwitch)
-		eventsSwitch := b.reactor.GetEventSwitch()
+		eventsSwitch := b.reactor.GetEventSwitchForCometBFT()
 
 		// Iterate through transactions and broadcast rollback operations
 		// for each of them to all other relays.

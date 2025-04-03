@@ -241,8 +241,8 @@ func (b *MultiplexBackend) GetPoolRequestPeers(chainID string) []string {
 //
 // The relayMtx is expected to be locked by the caller.
 func (b *MultiplexBackend) EventSwitch() *p2p.Switch {
-	if b.eventSwitch != nil {
-		return b.eventSwitch
+	if b.reactor.discoverySwitch != nil {
+		return b.reactor.discoverySwitch
 	}
 
 	b.logger.Debug("Creating switch for P2P discovery",
@@ -275,6 +275,8 @@ func (b *MultiplexBackend) EventSwitch() *p2p.Switch {
 
 	// Make sure we listen to ChainReplicationRequest messages
 	sw.AddReactor(conn.SharedChannelsNamespace, "MULTIPLEX", b.reactor)
+
+	b.reactor.discoverySwitch = sw
 	return sw
 }
 
@@ -283,7 +285,7 @@ func (b *MultiplexBackend) EventSwitch() *p2p.Switch {
 //
 // TODO(midas): TBI whether p2p.conn channels must be opened manually.
 func (b *MultiplexBackend) UpdateAvailableNetworks(networks []string) []string {
-	if b.eventSwitch == nil {
+	if b.reactor.discoverySwitch == nil {
 		return b.multiNodeInfo.Networks
 	}
 
@@ -299,7 +301,7 @@ func (b *MultiplexBackend) UpdateAvailableNetworks(networks []string) []string {
 		}
 	}
 
-	b.eventSwitch.SetNodeInfo(b.multiNodeInfo)
+	b.reactor.discoverySwitch.SetNodeInfo(b.multiNodeInfo)
 	return b.multiNodeInfo.Networks
 }
 
@@ -379,7 +381,7 @@ func (b *MultiplexBackend) MustStart() {
 			"p2p", b.broadcastAddr.DialString(),
 			"rpc", b.discoveryAddr.DialString(),
 			"mon", b.prometheusAddr.DialString(),
-			"info", b.eventSwitch.NodeInfo(),
+			"info", b.reactor.discoverySwitch.NodeInfo(),
 		)
 
 		// Start the RPC server before the P2P server
@@ -400,7 +402,7 @@ func (b *MultiplexBackend) MustStart() {
 			"id", b.reactor.nodeKey.ID(),
 			"p2p", b.cometbftP2PAddr.DialString(),
 			"rpc", b.cometbftRPCAddr.DialString(),
-			"info", b.reactor.eventSwitch.NodeInfo(),
+			"info", b.reactor.cometbftSwitch.NodeInfo(),
 		)
 
 		if len(b.reactor.GetNetworks()) > 0 {
@@ -463,17 +465,6 @@ func (b *MultiplexBackend) Close() error {
 
 	if b.relayAcceptTxCh != nil {
 		close(b.relayAcceptTxCh)
-	}
-
-	if b.eventSwitch != nil && b.eventSwitch.IsRunning() {
-		// Must stop listening for P2P messages on broadcast port
-		if ts := b.eventSwitch.Transport(); ts != nil {
-			ts.Close()
-		}
-
-		// Must stop reactors and listener channels
-		b.eventSwitch.Stop()
-		b.eventSwitch = nil
 	}
 
 	// Stop RelayInfo RPC and CometBFT RPC
@@ -669,7 +660,9 @@ func (b *MultiplexBackend) GetRelaysByNetwork(
 
 	// Populate a slice of relay addresses which produced errors
 	for errRelay, _ := range relaysWithFailure {
-		errorRelays = append(errorRelays, errRelay)
+		if !slices.Contains(errorRelays, errRelay) {
+			errorRelays = append(errorRelays, errRelay)
+		}
 	}
 
 	return chainRelays, errorRelays
@@ -858,17 +851,17 @@ func (b *MultiplexBackend) StartP2PServerDiscovery(
 
 	// Initializes the local p2p.Switch
 	// Creates a global P2P switch to respond even without chain info.
-	b.eventSwitch = b.EventSwitch()
+	eventSwitch := b.EventSwitch()
 
 	// And start the switch (the P2P server).
-	err = b.eventSwitch.Start()
+	err = eventSwitch.Start()
 	if err != nil {
 		return nil, fmt.Errorf(
 			"could not start p2p switch: %w", err)
 	}
 
 	// Open the broadcast port for listening continuously
-	if listenTransport := b.eventSwitch.Transport(); listenTransport != nil {
+	if listenTransport := eventSwitch.Transport(); listenTransport != nil {
 		netAddress := b.broadcastAddr
 		if err := listenTransport.Listen(*netAddress); err != nil {
 			return nil, fmt.Errorf(
@@ -972,7 +965,7 @@ func (b *MultiplexBackend) StartP2PServerCometBFT() error {
 		int(b.reactor.nodeConfig.DiscoveryPort+1), // always DiscoveryPort+1
 	)
 
-	sw := b.reactor.eventSwitch // uses DiscoveryPort+1
+	sw := b.reactor.cometbftSwitch // uses DiscoveryPort+1
 
 	// Start the transport.
 	addr, err := p2p.NewNetAddressString(p2p.IDAddressString(
@@ -1228,6 +1221,8 @@ func (b *MultiplexBackend) StartNodeInstances() error {
 	for _, chainID := range b.GetNetworks() {
 		// Type-assertion makes sure we have a [*node.Node]
 		runNode := servicesProvider(ServiceKeyNodeRuntime, chainID).(*node.Node)
+
+		// TODO(midas): relax some resources at i % 1000 == 0
 
 		// Calls the Start method on the node.Node instance.
 		// This goroutine produces a panic in case of errors.

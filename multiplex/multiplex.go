@@ -48,7 +48,7 @@ func (reactor *Reactor) createMultiplexNodesWithServices(
 
 	// Allocate return objects
 	nodesMultiplex := MultiplexMap[*node.Node]{}
-	eventSwitch := reactor.eventSwitch
+	eventSwitch := reactor.cometbftSwitch
 	p2pTransport := reactor.transport
 
 	// We iterate through an ordered list of known networks to create

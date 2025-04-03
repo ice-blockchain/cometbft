@@ -110,11 +110,12 @@ type Reactor struct {
 	acceptorImpl client.Acceptor
 
 	// Networking layer
-	networks       []string
-	nodeInfo       *MultiNetworkNodeInfo
-	eventSwitch    *p2p.Switch
-	transport      *p2p.MultiplexTransport
-	rpcMultiplexer *http.ServeMux
+	networks        []string
+	nodeInfo        *MultiNetworkNodeInfo
+	discoverySwitch *p2p.Switch
+	cometbftSwitch  *p2p.Switch
+	transport       *p2p.MultiplexTransport
+	rpcMultiplexer  *http.ServeMux
 
 	// Services registry is a multiplex map which is searchable by service name
 	// and which contains other multiplex maps where keys are ChainID values.
@@ -281,9 +282,18 @@ func (reactor *Reactor) GetNodeKey() *p2p.NodeKey {
 	return reactor.nodeKey
 }
 
-// GetEventSwitch returns the [p2p.Switch] instance.
-func (reactor *Reactor) GetEventSwitch() *p2p.Switch {
-	return reactor.eventSwitch
+// GetEventSwitchForDiscovery returns the [p2p.Switch] instance
+// used to communicate [ChainReplicationRequest] messages.
+// This switch must be used to send messages on `DiscoveryPort`.
+func (reactor *Reactor) GetEventSwitchForDiscovery() *p2p.Switch {
+	return reactor.discoverySwitch
+}
+
+// GetEventSwitchForCometBFT returns the [p2p.Switch] instance
+// used to communicate CometBFT messages, including block-sync.
+// This switch must be used to send messages on `DiscoveryPort+1`.
+func (reactor *Reactor) GetEventSwitchForCometBFT() *p2p.Switch {
+	return reactor.cometbftSwitch
 }
 
 // GetTransport returns the [p2p.MultiplexTransport] instance.
@@ -582,22 +592,23 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 				return
 			}
 
-			// Dials the *discovery* relay address to be able to send
-			// a ChainReplicationResponse to the source relay.
-			if err := r.eventSwitch.DialPeerWithAddress(sourceAddr); err != nil {
-				if _, ok := err.(p2p.ErrCurrentlyDialingOrExistingAddress); !ok {
-					r.logger.Error(
-						"CONSENSUS PANIC! Could not dial source peer",
-						"chain_id", replRequest.ChainID,
-						"addr", sourceAddr.String(),
-						"err", err,
-					)
-					return
-				}
-			}
+			// TODO(midas): this dial should be unnecessary now, done already in CheckDialCompatibleRelay.
+			// // Dials the *discovery* relay address to be able to send
+			// // a ChainReplicationResponse to the source relay.
+			// if err := r.discoverySwitch.DialPeerWithAddress(sourceAddr); err != nil {
+			// 	if _, ok := err.(p2p.ErrCurrentlyDialingOrExistingAddress); !ok {
+			// 		r.logger.Error(
+			// 			"CONSENSUS PANIC! Could not dial source peer",
+			// 			"chain_id", replRequest.ChainID,
+			// 			"addr", sourceAddr.String(),
+			// 			"err", err,
+			// 		)
+			// 		return
+			// 	}
+			// }
 
 			// A ChainReplicationResponse is sent to the source peer.
-			sourcePeer := r.eventSwitch.Peers().Get(sourceAddr.ID)
+			sourcePeer := r.discoverySwitch.Peers().Get(sourceAddr.ID)
 
 			// Instantly respond with a [ChainReplicationResponse].
 			// This serves as a receipt for a chain replication request.
@@ -769,13 +780,25 @@ func (reactor *Reactor) OnStop() {
 	}
 
 	// Stop the P2P Discovery Server that is injected
-	if reactor.eventSwitch != nil && reactor.eventSwitch.IsRunning() {
-		if ts := reactor.eventSwitch.Transport(); ts != nil {
+	if reactor.discoverySwitch != nil && reactor.discoverySwitch.IsRunning() {
+		// Must stop listening for P2P messages on broadcast port
+		if ts := reactor.discoverySwitch.Transport(); ts != nil {
 			ts.Close()
 		}
 
-		reactor.eventSwitch.Stop()
-		reactor.eventSwitch = nil
+		// Must stop reactors and listener channels
+		reactor.discoverySwitch.Stop()
+		reactor.discoverySwitch = nil
+	}
+
+	// Stop the P2P CometBFT Server that is injected
+	if reactor.cometbftSwitch != nil && reactor.cometbftSwitch.IsRunning() {
+		if ts := reactor.cometbftSwitch.Transport(); ts != nil {
+			ts.Close()
+		}
+
+		reactor.cometbftSwitch.Stop()
+		reactor.cometbftSwitch = nil
 	}
 
 	// Shutdown all registered services atomically
@@ -1242,7 +1265,7 @@ func (reactor *Reactor) handleChainReplicationRequest(
 			"invalid cometbft relay address %s: %w", source.SocketAddr(), err)
 	}
 
-	if err := reactor.eventSwitch.DialPeerWithAddress(peerAddr); err != nil {
+	if err := reactor.cometbftSwitch.DialPeerWithAddress(peerAddr); err != nil {
 		if _, ok := err.(p2p.ErrCurrentlyDialingOrExistingAddress); ok {
 			return nil
 		}
