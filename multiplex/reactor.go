@@ -1196,8 +1196,14 @@ func (reactor *Reactor) handleChainReplicationRequest(
 
 	// Parse the remote relay address, i.e. the source of a replication
 	// request, because we dial their CometBFT P2P address for block-sync.
-	// Note that source.SocketAddr should contain the remote's DiscoveryPort.
-	sourceAddr, err := server.NewRelayAddress(source.SocketAddr().String())
+	// Note that publicAddr should contain the remote's DiscoveryPort.
+	publicAddr, err := source.NodeInfo().NetAddress()
+	if err != nil {
+		return fmt.Errorf(
+			"invalid source address %s: %w", source.SocketAddr(), err)
+	}
+
+	sourceAddr, err := server.NewRelayAddress(publicAddr.String())
 	if err != nil {
 		return fmt.Errorf(
 			"invalid source relay address %s: %w", source.SocketAddr(), err)
