@@ -582,13 +582,18 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 				return
 			}
 
+			// Dials the *discovery* relay address to be able to send
+			// a ChainReplicationResponse to the source relay.
 			if err := r.eventSwitch.DialPeerWithAddress(sourceAddr); err != nil {
-				r.logger.Error(
-					"CONSENSUS PANIC! Could not dial source peer",
-					"chain_id", replRequest.ChainID,
-					"addr", sourceAddr.String(),
-					"err", err,
-				)
+				if _, ok := err.(p2p.ErrCurrentlyDialingOrExistingAddress); !ok {
+					r.logger.Error(
+						"CONSENSUS PANIC! Could not dial source peer",
+						"chain_id", replRequest.ChainID,
+						"addr", sourceAddr.String(),
+						"err", err,
+					)
+					return
+				}
 			}
 
 			// A ChainReplicationResponse is sent to the source peer.
@@ -1166,6 +1171,15 @@ func (reactor *Reactor) handleChainReplicationRequest(
 	}
 	userAddress := extChainID.GetUserAddress()
 
+	// Parse the remote relay address, i.e. the source of a replication
+	// request, because we dial their CometBFT P2P address for block-sync.
+	// Note that source.SocketAddr should contain the remote's DiscoveryPort.
+	sourceAddr, err := server.NewRelayAddress(source.SocketAddr().String())
+	if err != nil {
+		return fmt.Errorf(
+			"invalid source relay address %s: %w", source.SocketAddr(), err)
+	}
+
 	// Pre-allocates filesystem, database and priv validator.
 	if err := reactor.AllocateNetwork(req.ChainID); err != nil {
 		return fmt.Errorf(
@@ -1214,6 +1228,27 @@ func (reactor *Reactor) handleChainReplicationRequest(
 	if err = reactor.InjectNewRuntime(context.Background(), req.ChainID); err != nil {
 		return fmt.Errorf(
 			"could not spawn node runtime: %w", err)
+	}
+
+	// IMPORTANT:
+	//
+	// Finally, dial the relay to permit block-sync to start instantly.
+	// Note that NetAddressForCometBFT should contain `DiscoveryPort+1`.
+
+	// We need DiscoveryPort+1 to interact with CometBFT.
+	peerAddr, err := sourceAddr.NetAddressForCometBFT()
+	if err != nil {
+		return fmt.Errorf(
+			"invalid cometbft relay address %s: %w", source.SocketAddr(), err)
+	}
+
+	if err := reactor.eventSwitch.DialPeerWithAddress(peerAddr); err != nil {
+		if _, ok := err.(p2p.ErrCurrentlyDialingOrExistingAddress); ok {
+			return nil
+		}
+
+		return fmt.Errorf(
+			"could not dial relay %s: %w", peerAddr.DialString(), err)
 	}
 
 	return nil
