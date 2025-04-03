@@ -582,6 +582,15 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 				return
 			}
 
+			if err := r.eventSwitch.DialPeerWithAddress(sourceAddr); err != nil {
+				r.logger.Error(
+					"CONSENSUS PANIC! Could not dial source peer",
+					"chain_id", replRequest.ChainID,
+					"addr", sourceAddr.String(),
+					"err", err,
+				)
+			}
+
 			// A ChainReplicationResponse is sent to the source peer.
 			sourcePeer := r.eventSwitch.Peers().Get(sourceAddr.ID)
 

@@ -222,6 +222,15 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 			rawTx := client.TransactionToRawTx(transaction)
 			txHash := strings.ToUpper(hex.EncodeToString(rawTx.Hash()))
 
+			numRelaysForChain := 0
+			if _, ok := relaysByChain[chainID]; ok {
+				numRelaysForChain = len(relaysByChain[chainID])
+			}
+			b.logger.Debug("Sending transaction to relays",
+				"hash", txHash,
+				"num_relays", numRelaysForChain,
+			)
+
 			// Broadcast must happen only if there is at least one healthy relay.
 			// For NEW networks, we don't need to broadcast to other relays.
 			if _, ok := relaysByChain[chainID]; !ok {
@@ -232,10 +241,15 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 			// Force the execution of mempool broadcast to *all* healthy relays.
 			relaysAccepted := 0
 			minHealthyRelays := len(relaysByChain[chainID])
-			chainHealthyPeers := make([]string, len(relaysByChain[chainID]))
-			for i, relayAddr := range relaysByChain[chainID] {
-				chainHealthyPeers[i] = string(relayAddr.ID())
+			chainHealthyPeers := []string{}
+			for _, relayAddr := range relaysByChain[chainID] {
+				chainHealthyPeers = append(chainHealthyPeers, string(relayAddr.ID()))
 			}
+
+			b.logger.Debug("Keeping only healthy relays for broadcast",
+				"hash", txHash,
+				"num_relays", len(chainHealthyPeers),
+			)
 
 			// Broadcast the transaction to all healthy relays.
 			poolRequestPeers := []string{}
@@ -246,6 +260,11 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 				if !slices.Contains(chainHealthyPeers, peerID) {
 					return
 				}
+
+				b.logger.Debug("Sending transaction to remote mempool",
+					"hash", txHash,
+					"id", peerID,
+				)
 
 				// Send transaction to relay mempool, after checks the mempool
 				// reactor shall send a AckTransactionBroadcast back to us which
