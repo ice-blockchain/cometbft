@@ -1166,15 +1166,6 @@ func (reactor *Reactor) handleChainReplicationRequest(
 	}
 	userAddress := extChainID.GetUserAddress()
 
-	// Parse the remote relay address, i.e. the source of a replication
-	// request, because we dial their CometBFT P2P address for block-sync.
-	// Note that source.SocketAddr should contain the remote's DiscoveryPort.
-	sourceAddr, err := server.NewRelayAddress(source.SocketAddr().String())
-	if err != nil {
-		return fmt.Errorf(
-			"invalid source relay address %s: %w", source.SocketAddr(), err)
-	}
-
 	// Pre-allocates filesystem, database and priv validator.
 	if err := reactor.AllocateNetwork(req.ChainID); err != nil {
 		return fmt.Errorf(
@@ -1223,23 +1214,6 @@ func (reactor *Reactor) handleChainReplicationRequest(
 	if err = reactor.InjectNewRuntime(context.Background(), req.ChainID); err != nil {
 		return fmt.Errorf(
 			"could not spawn node runtime: %w", err)
-	}
-
-	// IMPORTANT:
-	//
-	// Finally, dial the relay to permit block-sync to start instantly.
-	// Note that NetAddressForCometBFT should contain `DiscoveryPort+1`.
-
-	// We need DiscoveryPort+1 to interact with CometBFT.
-	peerAddr, err := sourceAddr.NetAddressForCometBFT()
-	if err != nil {
-		return fmt.Errorf(
-			"invalid cometbft relay address %s: %w", source.SocketAddr(), err)
-	}
-
-	if err := reactor.eventSwitch.DialPeerWithAddress(peerAddr); err != nil {
-		return fmt.Errorf(
-			"could not dial relay %s: %w", peerAddr.DialString(), err)
 	}
 
 	return nil
