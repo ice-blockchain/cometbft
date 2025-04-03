@@ -251,46 +251,31 @@ func (info MultiNetworkNodeInfo) Validate() error {
 func (info MultiNetworkNodeInfo) CompatibleWith(otherInfo p2p.NodeInfo) error {
 	other, ok := otherInfo.(MultiNetworkNodeInfo)
 	if !ok {
-		return fmt.Errorf("wrong NodeInfo type. Expected DefaultNodeInfo, got %v", reflect.TypeOf(otherInfo))
+		return fmt.Errorf(
+			"wrong NodeInfo type. Expected MultiNetworkNodeInfo, got %v", reflect.TypeOf(otherInfo))
 	}
 
-	haveCommonReplicatedChain := false
+	// Validate per-network protocol versions here because differing versions
+	// indicate a breaking network upgrade.
 	for _, otherProtocolVersion := range other.ProtocolVersions {
 		otherChainID := otherProtocolVersion.ChainID
 		versionPos := slices.IndexFunc(info.ProtocolVersions, func(v ChainProtocolVersion) bool {
 			return v.ChainID == otherChainID
 		})
 
-		// Not having *all* the same replicated chains is allowed
+		// Not having the same replicated chains is allowed
 		if versionPos < 0 {
 			continue
 		}
 
 		localProtocolVersion := info.ProtocolVersions[versionPos]
 
-		// Block versions must be the same on both nodes
+		// Block versions for one ChainID must be the same on both nodes
 		if localProtocolVersion.Block != otherProtocolVersion.Block {
 			// nodes must share a block version
 			return fmt.Errorf("peer is on a different Block version for ChainID %s. Got %v, expected %v",
 				localProtocolVersion.ChainID, otherProtocolVersion.Block, localProtocolVersion.Block)
 		}
-
-		// Make sure we also have the network information such as ChainID
-		networkPos := slices.IndexFunc(info.Networks, func(v string) bool {
-			return v == otherChainID
-		})
-
-		// Not having *all* the same replicated chains is allowed
-		if networkPos < 0 {
-			continue
-		}
-
-		haveCommonReplicatedChain = true
-	}
-
-	// nodes must share at least one replicated chain
-	if !haveCommonReplicatedChain && len(info.ProtocolVersions) > 0 {
-		return errors.New("peer does not have at least one replicated chain in common")
 	}
 
 	// if we have no channels, we're just testing

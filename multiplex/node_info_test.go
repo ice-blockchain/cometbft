@@ -120,7 +120,6 @@ func TestMultiplexMultiNetworkNodeInfoCompatible(t *testing.T) {
 		malleateNodeInfo func(*mx.MultiNetworkNodeInfo)
 	}{
 		{"Wrong block version", func(ni *mx.MultiNetworkNodeInfo) { ni.ProtocolVersions[0].Block++ }},
-		{"Wrong network", func(ni *mx.MultiNetworkNodeInfo) { ni.ProtocolVersions[0].ChainID += "-wrong" }},
 		{"No common channels", func(ni *mx.MultiNetworkNodeInfo) { ni.Channels = []byte{newTestChannel} }},
 	}
 

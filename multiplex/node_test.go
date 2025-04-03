@@ -356,7 +356,14 @@ func TestMultiplexNodeNewNodesMultiplexSingleNetworkProduceBlocks(t *testing.T) 
 	require.NoError(t, p2pErr, "should start CometBFT P2P server")
 
 	expectedBlocks := 3
-	assertWaitForNodesMultiplexToProduceBlocks(t, testReactor, testMultiplex, expectedBlocks)
+	assertWaitForNodesMultiplexToProduceBlocks(t,
+		testReactor,
+		testMultiplex,
+		expectedBlocks,
+		15*time.Second,
+		"node_test",
+		broadcastRawTx,
+	)
 }
 
 func TestMultiplexNodeNewNodesMultiplexProduceBlocks(t *testing.T) {
@@ -413,7 +420,14 @@ func TestMultiplexNodeNewNodesMultiplexProduceBlocks(t *testing.T) {
 	require.NoError(t, p2pErr, "should start CometBFT P2P server")
 
 	expectedBlocks := 2
-	assertWaitForNodesMultiplexToProduceBlocks(t, testReactor, testMultiplex, expectedBlocks)
+	assertWaitForNodesMultiplexToProduceBlocks(t,
+		testReactor,
+		testMultiplex,
+		expectedBlocks,
+		15*time.Second,
+		"node_test",
+		broadcastRawTx,
+	)
 }
 
 // ----------------------------------------------------------------------------
@@ -644,17 +658,18 @@ func assertWaitForNodesMultiplexToProduceBlocks(
 	testReactor *mx.Reactor,
 	testMultiplex mx.MultiplexMap[*cmtnode.Node],
 	expectedBlocks int,
-) {
+	maximumDuration time.Duration,
+	subscriberName string,
+	broadcastTxFn func(testing.TB, string, int),
+) (actualNumBlocks map[string]int, actualNumTxes map[string]int) {
 	tb.Helper()
-
-	if expectedBlocks == 0 {
-		return // Nothing to do
-	}
 
 	wg := sync.WaitGroup{}
 	wg.Add(len(testReactor.GetNetworks()))
 
-	actualNumBlocks := make(map[string]int, len(testReactor.GetNetworks()))
+	mtx := sync.RWMutex{}
+	actualNumBlocks = make(map[string]int, len(testReactor.GetNetworks()))
+	actualNumTxes = make(map[string]int, len(testReactor.GetNetworks()))
 	for _, testChainID := range testReactor.GetNetworks() {
 		// Test that we have the correct node instance
 		assert.Contains(tb, testMultiplex, testChainID)
@@ -665,7 +680,7 @@ func assertWaitForNodesMultiplexToProduceBlocks(
 
 		if !nodeInstance.Config().Consensus.CreateEmptyBlocks {
 			// Must broadcast transactions
-			go broadcastRawTx(tb, testChainID, 1) // 1 transaction
+			go broadcastTxFn(tb, testChainID, 1) // 1 transaction
 		}
 
 		// Parallel goroutines with internal blocks loops
@@ -673,27 +688,48 @@ func assertWaitForNodesMultiplexToProduceBlocks(
 			// Wait for the node to produce blocks
 			blocksSub, err := the_node.EventBus().Subscribe(
 				context.Background(),
-				"node_test",
+				subscriberName,
 				types.EventQueryNewBlock,
 			)
 			assert.NoError(tb, err)
 
+			defer the_node.EventBus().Unsubscribe(
+				context.Background(),
+				subscriberName,
+				types.EventQueryNewBlock,
+			)
+
 			numBlocks := 0
+
+			mtx.Lock()
+			actualNumTxes[the_chain] = 0
+			mtx.Unlock()
 
 		NODE_BLOCKS_LOOP:
 			for {
 				select {
-				case <-blocksSub.Out():
+				case msg := <-blocksSub.Out():
 					numBlocks++
-					if numBlocks == maxBlocks {
+					eventNewBlock := msg.Data().(types.EventDataNewBlock)
+					actualNumTxes[the_chain] += len(eventNewBlock.Block.Data.Txs)
+
+					if maxBlocks > 0 && numBlocks == maxBlocks {
+						mtx.Lock()
 						actualNumBlocks[the_chain] = numBlocks
+						mtx.Unlock()
 						wg.Done()
 						break NODE_BLOCKS_LOOP
 					}
 				case <-blocksSub.Canceled():
+					mtx.Lock()
+					actualNumBlocks[the_chain] = numBlocks
+					mtx.Unlock()
 					wg.Done()
 					break NODE_BLOCKS_LOOP
-				case <-time.After(15 * time.Second):
+				case <-time.After(maximumDuration):
+					mtx.Lock()
+					actualNumBlocks[the_chain] = numBlocks
+					mtx.Unlock()
 					wg.Done()
 					break NODE_BLOCKS_LOOP
 				}
@@ -701,15 +737,22 @@ func assertWaitForNodesMultiplexToProduceBlocks(
 		}(testChainID, nodeInstance, expectedBlocks)
 	}
 
-	// Wait for all nodes to produce 3 blocks in parallel
+	// Wait for all nodes to produce X blocks in parallel
 	wg.Wait()
 
-	// We assert that all networks produced at least 3 blocks, if an error
+	// We assert that all networks produced at least X blocks, if an error
 	// occurred on one of the networks, the map entry won't exist.
 	for _, chainID := range testReactor.GetNetworks() {
 		assert.Contains(tb, actualNumBlocks, chainID)
-		assert.Equal(tb, expectedBlocks, actualNumBlocks[chainID])
+
+		if expectedBlocks > 0 {
+			assert.Equal(tb, expectedBlocks, actualNumBlocks[chainID])
+		}
 	}
+
+	mtx.RLock()
+	defer mtx.RUnlock()
+	return actualNumBlocks, actualNumTxes
 }
 
 func broadcastRawTx(tb testing.TB, chainID string, numTxes int) {

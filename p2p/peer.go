@@ -414,7 +414,23 @@ func createMConnection(
 	config cmtconn.MConnConfig,
 ) *cmtconn.MConnection {
 	onReceive := func(chainID string, chID byte, msgBytes []byte) {
-		reactor := reactorsByCh[chainID][chID]
+		var reactor Reactor
+		if _, ok := reactorsByCh[chainID]; !ok {
+			if _, ok := reactorsByCh[cmtconn.SharedChannelsNamespace]; !ok {
+				panic(fmt.Sprintf(
+					"could not get channel %X, ChainID is unknown", chID))
+			}
+
+			if _, ok := reactorsByCh[cmtconn.SharedChannelsNamespace][chID]; !ok {
+				panic(fmt.Sprintf(
+					"could not get channel %X, channel is not shared", chID))
+			}
+
+			reactor = reactorsByCh[cmtconn.SharedChannelsNamespace][chID]
+		} else {
+			reactor = reactorsByCh[chainID][chID]
+		}
+
 		if reactor == nil {
 			// Note that its ok to panic here as it's caught in the conn._recover,
 			// which does onPeerError.

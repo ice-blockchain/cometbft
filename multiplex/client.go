@@ -344,9 +344,17 @@ func (c MultiplexClient) BroadcastTx(
 
 		// Decode to bytes slice makes sure we have a transaction hash
 		txHashBytes, err := hex.DecodeString(acceptedTxHash)
-		if err != nil || len(txHashBytes) != tmhash.Size {
+		if err != nil {
 			acceptErr = fmt.Errorf(
 				"invalid transaction hash %s: %w", acceptedTxHash, err)
+			c.backend.GetLogger().Error(acceptErr.Error())
+			break
+		}
+
+		if len(txHashBytes) != tmhash.Size {
+			acceptErr = fmt.Errorf(
+				"invalid hash size with '%s', expected %d, got %d",
+				acceptedTxHash, tmhash.Size, len(txHashBytes))
 			c.backend.GetLogger().Error(acceptErr.Error())
 			break
 		}
@@ -356,6 +364,13 @@ func (c MultiplexClient) BroadcastTx(
 
 		// Will be added to BroadcastStatus.TxHashes in case of success.
 		acceptedTxHashes = append(acceptedTxHashes, txHashBytes)
+	}
+
+	if len(acceptedTxHashes) < len(transactions) {
+		c.notifier.Error(fmt.Errorf(
+			"missing accepted transaction hashes, expected %d, got %d",
+			len(transactions), len(acceptedTxHashes)))
+		return // STOP here
 	}
 
 	// ------------------------------------------------------------------------

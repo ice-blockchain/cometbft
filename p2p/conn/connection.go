@@ -369,26 +369,37 @@ func (c *MConnection) stopForError(r any) {
 // If none can be found, it will search in shared channels by chID.
 func (c *MConnection) getChannel(chainID string, chID byte) (*Channel, error) {
 	// Searches for the ChainID in the channels index.
+	// If it doesn't exist, see if this channel is shared.
 	if _, ok := c.channelsIdx[chainID]; !ok {
-		return nil, fmt.Errorf("Unknown chain_id %s", chainID)
-	}
-
-	// Searches the reactor instance per channel and per ChainID.
-	channel, ok := c.channelsIdx[chainID][chID]
-	if !ok {
-		// Do we have shared channels yet? Otherwise stop here.
-		if _, ok := c.channelsIdx[SharedChannelsNamespace]; !ok {
-			return nil, errors.New("Empty shared channels")
+		channel, err := c.getSharedChannel(chID)
+		if err != nil {
+			return nil, fmt.Errorf("Unknown chain_id %s", chainID)
 		}
 
-		// Search the reactor instance per shared channel, without ChainID.
-		channel, ok = c.channelsIdx[SharedChannelsNamespace][chID]
-		if !ok {
-			return nil, fmt.Errorf("Unknown channel %X", chID)
-		}
+		return channel, nil
 	}
 
-	return channel, nil
+	// Searches the channel per ChainID.
+	// If it doesn't exist, see if this channel is shared.
+	if _, ok := c.channelsIdx[chainID][chID]; !ok {
+		return c.getSharedChannel(chID)
+	}
+
+	return c.channelsIdx[chainID][chID], nil
+}
+
+func (c *MConnection) getSharedChannel(chID byte) (*Channel, error) {
+	// Do we have shared channels yet? Otherwise stop here.
+	if _, ok := c.channelsIdx[SharedChannelsNamespace]; !ok {
+		return nil, errors.New("Empty shared channels")
+	}
+
+	// Search the channel in shared channels, without ChainID.
+	if _, ok := c.channelsIdx[SharedChannelsNamespace][chID]; !ok {
+		return nil, fmt.Errorf("Unknown channel %X", chID)
+	}
+
+	return c.channelsIdx[SharedChannelsNamespace][chID], nil
 }
 
 // Queues a message to be sent to channel.
