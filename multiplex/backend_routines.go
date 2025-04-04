@@ -210,8 +210,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 		notifierImpl client.Notifier,
 		relayAcceptTxCh chan<- string,
 	) {
-		// switchProvider := b.reactor.GetInstanceProvider(InstanceKeyP2PSwitch)
-		broadcastTxHashes := make([][]byte, 0, len(transactions))
+		broadcastTxHashes := make([][]byte, len(transactions))
 
 		// Reset the sent requests cache
 		b.poolRequestsSent = map[string][]string{}
@@ -335,7 +334,9 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 				return // terminates the process
 			}
 
-			copy(broadcastTxHashes[i], rawTx.Hash())
+			rawTxHashBytes := rawTx.Hash()
+			broadcastTxHashes[i] = make([]byte, len(rawTxHashBytes))
+			copy(broadcastTxHashes[i], rawTxHashBytes)
 		}
 
 		// Done, notify about succeeded broadcast (nil error)

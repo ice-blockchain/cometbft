@@ -245,6 +245,7 @@ func (b *MultiplexBackend) EventSwitch() *p2p.Switch {
 		return b.reactor.discoverySwitch
 	}
 
+	// TODO(midas): remove debug logs
 	b.logger.Debug("Creating switch for P2P discovery",
 		"addr", b.broadcastAddr.String(),
 	)
@@ -289,6 +290,12 @@ func (b *MultiplexBackend) UpdateAvailableNetworks(networks []string) []string {
 		return b.multiNodeInfo.Networks
 	}
 
+	// TODO(midas): remove debug logs
+	b.logger.Debug("Updating available networks",
+		"num_before", len(b.multiNodeInfo.Networks),
+		"num_adding", len(networks),
+	)
+
 	for _, chainID := range networks {
 		if !slices.Contains(b.multiNodeInfo.Networks, chainID) {
 			b.multiNodeInfo.Networks = append(b.multiNodeInfo.Networks, chainID)
@@ -302,6 +309,49 @@ func (b *MultiplexBackend) UpdateAvailableNetworks(networks []string) []string {
 	}
 
 	b.reactor.discoverySwitch.SetNodeInfo(b.multiNodeInfo)
+
+	// We must upgrade the mconn channels for P2P discovery peers
+	// for injected networks that were not present at time of creation.
+	b.reactor.discoverySwitch.Peers().ForEach(func(peer p2p.Peer) {
+		mconn := peer.MConn()
+
+		for _, chainID := range b.multiNodeInfo.Networks {
+			for name, reactor := range b.reactor.discoverySwitch.Reactors(chainID) {
+				for _, chDesc := range reactor.GetChannels() {
+					// TODO(midas): remove debug logs
+					b.logger.Debug("Adding connection channel (discovery)",
+						"chain_id", chainID,
+						"reactor", name,
+						"chID", chDesc.ID,
+					)
+
+					mconn.AddChannel(chainID, *chDesc)
+				}
+			}
+		}
+	})
+
+	// We must upgrade the mconn channels for P2P cometbft peers
+	// for injected networks that were not present at time of creation.
+	b.reactor.cometbftSwitch.Peers().ForEach(func(peer p2p.Peer) {
+		mconn := peer.MConn()
+
+		for _, chainID := range b.multiNodeInfo.Networks {
+			for name, reactor := range b.reactor.cometbftSwitch.Reactors(chainID) {
+				for _, chDesc := range reactor.GetChannels() {
+					// TODO(midas): remove debug logs
+					b.logger.Debug("Adding connection channel (cometbft)",
+						"chain_id", chainID,
+						"reactor", name,
+						"chID", chDesc.ID,
+					)
+
+					mconn.AddChannel(chainID, *chDesc)
+				}
+			}
+		}
+	})
+
 	return b.multiNodeInfo.Networks
 }
 
@@ -320,6 +370,7 @@ func (b *MultiplexBackend) MustStart() {
 		defer addTimeSample(b.metrics.StartDurationSeconds, startTime)()
 	}
 
+	// TODO(midas): remove debug logs
 	b.logger.Debug("Process now starting a node backend",
 		"id", b.reactor.nodeKey.ID(),
 	)
@@ -441,6 +492,7 @@ func (b *MultiplexBackend) Close() error {
 	b.relayMtx.Lock()
 	defer b.relayMtx.Unlock()
 
+	// TODO(midas): remove debug logs
 	b.logger.Debug("Shutting down node backend",
 		"id", b.reactor.nodeKey.ID(),
 	)
@@ -524,7 +576,7 @@ func (b *MultiplexBackend) WaitForRelayAckTransaction(
 	select {
 	case ackResponse := <-b.reactor.ackTxAcceptCh:
 		for _, txHash := range ackResponse.TxHashes {
-			b.relayAcceptTxCh <- fmt.Sprintf("%x", txHash)
+			b.relayAcceptTxCh <- fmt.Sprintf("%X", txHash)
 		}
 
 	case <-ctx.Done():
@@ -535,20 +587,34 @@ func (b *MultiplexBackend) WaitForRelayAckTransaction(
 	return nil
 }
 
-// WaitForRelayTxAcceptance waits for a relay transaction acceptance using
-// the internal relayAcceptTxCh channel and returns a transaction hash.
-// WaitForRelayTxAcceptance implements [server.Backend].
-func (b *MultiplexBackend) WaitForRelayTxAcceptance(
+// WaitForRelaysTxAcceptance waits for all relays to accept a transaction
+// the internal relayAcceptTxCh channel and returns a number of acceptance
+// message intercepted by transaction hash.
+// WaitForRelaysTxAcceptance implements [server.Backend].
+func (b *MultiplexBackend) WaitForRelaysTxAcceptance(
 	ctx context.Context,
-) (string, error) {
-	select {
-	case txHash := <-b.relayAcceptTxCh:
-		return txHash, nil
+	numRelays int,
+	numTransactions int,
+) (map[string]int, error) {
+	acceptsPerTxHash := map[string]int{}
 
-	case <-ctx.Done():
-		return "", errors.New(
-			"process timed out waiting for relay acceptance")
+	// Every relay must accept once per transaction.
+	for i := 0; i < numRelays*numTransactions; i++ {
+		select {
+		case txHash := <-b.relayAcceptTxCh:
+			if _, ok := acceptsPerTxHash[txHash]; !ok {
+				acceptsPerTxHash[txHash] = 1
+			} else {
+				acceptsPerTxHash[txHash]++
+			}
+
+		case <-ctx.Done():
+			return map[string]int{}, errors.New(
+				"process timed out waiting for relay acceptance")
+		}
 	}
+
+	return acceptsPerTxHash, nil
 }
 
 // getLocalNetworkHeights finds out about the last block height and determines
@@ -641,6 +707,7 @@ func (b *MultiplexBackend) GetRelaysByNetwork(
 			continue
 		}
 
+		// TODO(midas): remove debug logs
 		b.logger.Debug("Retrieved networks information from relay",
 			"relay", relayAddr.String(),
 			"networks", result.Networks,
@@ -687,6 +754,7 @@ func (b *MultiplexBackend) CheckDialCompatibleRelay(
 	// Dial the relay to find out whether it is compatible (handshake).
 	// Using the switch here affects the internal AddrBook.
 
+	// TODO(midas): remove debug logs
 	b.logger.Debug("Process now dialing remote relay (discovery)",
 		"relay", relayAddr.String(),
 	)
@@ -889,6 +957,7 @@ func (b *MultiplexBackend) StartP2PServerDiscovery(
 				"could not start listening on %s: %w", netAddress.DialString(), err)
 		}
 
+		// TODO(midas): remove debug logs
 		b.logger.Debug("Process is now listening on broadcast port",
 			"addr", netAddress.DialString(),
 		)

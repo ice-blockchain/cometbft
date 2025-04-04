@@ -33,6 +33,7 @@ type Peer interface {
 	IsOutbound() bool   // did we dial the peer
 	IsPersistent() bool // do we redial this peer when we disconnect
 
+	MConn() *cmtconn.MConnection
 	CloseConn() error // close original connection
 
 	NodeInfo() NodeInfo // peer's info
@@ -174,6 +175,10 @@ func (p *peer) String() string {
 	}
 
 	return fmt.Sprintf("Peer{%v %v in}", p.mconn, p.ID())
+}
+
+func (p *peer) MConn() *cmtconn.MConnection {
+	return p.mconn
 }
 
 // ---------------------------------------------------

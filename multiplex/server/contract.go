@@ -76,10 +76,14 @@ type Backend interface {
 	// Use this method to wait for a transaction to be accepted *remotely*.
 	WaitForRelayAckTransaction(ctx context.Context) error
 
-	// WaitForRelayTxAcceptance should wait for *remote* relays transaction
-	// acceptance and it should return the transaction hash.
-	// Use this method to wait for a transaction to be accepted *locally*.
-	WaitForRelayTxAcceptance(ctx context.Context) (string, error)
+	// WaitForRelaysTxAcceptance should wait for *remote* relays transaction
+	// acceptance and it should return a number of messages per tx hash.
+	// Use this method to wait for a transaction to be accepted *remotely*.
+	WaitForRelaysTxAcceptance(
+		ctx context.Context,
+		numRelays int,
+		numTransactions int,
+	) (map[string]int, error)
 
 	// GetLocalNetworkHeights should query the last block height and determine
 	// a list of required networks. Iff the last block height is 1, the network

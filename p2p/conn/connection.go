@@ -233,6 +233,23 @@ func (c *MConnection) SetLogger(l log.Logger) {
 	}
 }
 
+func (c *MConnection) AddChannel(chainID string, desc ChannelDescriptor) *Channel {
+	if _, ok := c.channelsIdx[chainID]; !ok {
+		c.channelsIdx[chainID] = map[byte]*Channel{}
+	}
+
+	if _, ok := c.channelsIdx[chainID][desc.ID]; ok {
+		// Nothing to do
+		return c.channelsIdx[chainID][desc.ID]
+	}
+
+	channel := newChannel(chainID, c, desc)
+	c.channelsIdx[chainID][channel.desc.ID] = channel
+	c.channels = append(c.channels, channel)
+
+	return channel
+}
+
 // OnStart implements BaseService.
 func (c *MConnection) OnStart() error {
 	if err := c.BaseService.OnStart(); err != nil {

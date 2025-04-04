@@ -592,21 +592,6 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 				return
 			}
 
-			// TODO(midas): this dial should be unnecessary now, done already in CheckDialCompatibleRelay.
-			// // Dials the *discovery* relay address to be able to send
-			// // a ChainReplicationResponse to the source relay.
-			// if err := r.discoverySwitch.DialPeerWithAddress(sourceAddr); err != nil {
-			// 	if _, ok := err.(p2p.ErrCurrentlyDialingOrExistingAddress); !ok {
-			// 		r.logger.Error(
-			// 			"CONSENSUS PANIC! Could not dial source peer",
-			// 			"chain_id", replRequest.ChainID,
-			// 			"addr", sourceAddr.String(),
-			// 			"err", err,
-			// 		)
-			// 		return
-			// 	}
-			// }
-
 			// A ChainReplicationResponse is sent to the source peer.
 			sourcePeer := r.discoverySwitch.Peers().Get(sourceAddr.ID)
 
@@ -643,12 +628,12 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 		case *mxp2p.Message_ChainReplicationResponse:
 			r.logger.Debug("Now processing ChainReplicationResponse", "msg", msg)
 			replResponse := extMsg.GetChainReplicationResponse()
-
-			r.ackReplResCh <- replResponse
 			r.logger.Debug("[ACK] Relay received replication request",
 				"chain_id", replResponse.ChainID,
 				"relay_id", replResponse.NodeId,
 			)
+
+			r.ackReplResCh <- replResponse
 			// Done.
 			return
 
@@ -657,11 +642,11 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 		case *mxp2p.Message_AckTransactionBroadcast:
 			r.logger.Debug("Now processing AckTransactionBroadcast", "msg", msg)
 			ackTxBroadcast := extMsg.GetAckTransactionBroadcast()
+			r.logger.Debug("[ACK] Relay received the transaction batch",
+				"num_txs", len(ackTxBroadcast.TxHashes),
+			)
 
 			r.ackTxAcceptCh <- ackTxBroadcast
-			r.logger.Debug("[ACK] Relay received the transaction batch",
-				"tx_hashes", ackTxBroadcast.TxHashes,
-			)
 			// Done.
 			return
 

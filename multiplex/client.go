@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/ice-blockchain/cometbft/crypto/tmhash"
-
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/server"
 )
@@ -158,9 +156,6 @@ func (c MultiplexClient) BroadcastTx(
 		requiredNetworks = append(requiredNetworks, chainID)
 	}
 
-	// Updates the supported ChainIDs of NodeInfo and p2p.Switch.
-	c.GetBackend().UpdateAvailableNetworks(requiredNetworks)
-
 	// TODO(midas): remove debug logs
 	c.backend.GetLogger().Debug("Fetching exact relay addresses",
 		"num_relays", len(relays))
@@ -242,6 +237,14 @@ func (c MultiplexClient) BroadcastTx(
 		// Inform about the readiness of this chain
 		c.backend.GetLogger().Info("Network is now available", "chain_id", chainID)
 	}
+
+	// TODO(midas): remove debug logs
+	c.backend.GetLogger().Debug("Updating events switch for CometBFT",
+		"num_networks", len(requiredNetworks))
+
+	// Updates the supported ChainIDs of NodeInfo and p2p.Switch.
+	// This enables internal P2P channels for Discovery and CometBFT.
+	c.GetBackend().UpdateAvailableNetworks(requiredNetworks)
 
 	// ------------------------------------------------------------------------
 	// Step 4: Ask relays to replicate chain if necessary
@@ -330,47 +333,38 @@ func (c MultiplexClient) BroadcastTx(
 
 	// TODO(midas): remove debug logs
 	c.backend.GetLogger().Debug("Waiting for remote transaction acceptance",
+		"num_relays", numHealthyRelays,
 		"num_txes", len(transactions))
 
-	// Select a limited number of listeners message updates from
-	// the relayAcceptTxCh channel. This loop forbids excess transactions.
-	//
-	// Waits for RelaysBroadcast routine to push on relayAcceptTxCh.
-	for i := 0; i < len(transactions); i++ {
-		// The RelaysBroadcast routine communicates the tx hash on a
-		// channel to tell this broadcaster about the acceptance of the
-		// transaction by our own mempool.
-		acceptedTxHash,
-			acceptErr := c.GetBackend().WaitForRelayTxAcceptance(ctx)
-		if acceptErr != nil {
-			c.backend.GetLogger().Error(
-				"error waiting for relay acceptance", "err", acceptErr.Error())
-			c.notifier.Error(acceptErr)
+	// The RelaysBroadcast routine communicates the tx hash on a
+	// channel to tell this broadcaster about the acceptance of the
+	// transaction by our own mempool.
+	numAcceptsByTxHash,
+		acceptErr := c.GetBackend().WaitForRelaysTxAcceptance(ctx, numHealthyRelays, len(transactions))
+	if acceptErr != nil {
+		c.backend.GetLogger().Error(
+			"error waiting for relays acceptance", "err", acceptErr.Error())
+		c.notifier.Error(acceptErr)
+		return // STOP here
+	}
+
+	// Inform about the readiness of transaction acceptance
+	c.backend.GetLogger().Info("Relays accepted transactions",
+		"num_relays", numHealthyRelays,
+		"num_txes", len(transactions))
+
+	for txHash, numAccepts := range numAcceptsByTxHash {
+		if numAccepts < numHealthyRelays {
+			c.notifier.Error(fmt.Errorf(
+				"missing relays acceptance for %s, expected %d, got %d",
+				txHash, numHealthyRelays, numAccepts))
 			return // STOP here
 		}
 
-		// Decode to bytes slice makes sure we have a transaction hash
-		txHashBytes, err := hex.DecodeString(acceptedTxHash)
-		if err != nil {
-			acceptErr = fmt.Errorf(
-				"invalid transaction hash %s: %w", acceptedTxHash, err)
-			c.backend.GetLogger().Error(acceptErr.Error())
-			break
-		}
-
-		if len(txHashBytes) != tmhash.Size {
-			acceptErr = fmt.Errorf(
-				"invalid hash size with '%s', expected %d, got %d",
-				acceptedTxHash, tmhash.Size, len(txHashBytes))
-			c.backend.GetLogger().Error(acceptErr.Error())
-			break
-		}
-
-		// Inform about the readiness of transaction acceptance
-		c.backend.GetLogger().Info("Relays accepted transaction", "hash", acceptedTxHash)
-
 		// Will be added to BroadcastStatus.TxHashes in case of success.
-		acceptedTxHashes = append(acceptedTxHashes, txHashBytes)
+		if hashbz, err := hex.DecodeString(txHash); err == nil {
+			acceptedTxHashes = append(acceptedTxHashes, hashbz)
+		}
 	}
 
 	if len(acceptedTxHashes) < len(transactions) {
