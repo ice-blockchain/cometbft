@@ -361,6 +361,8 @@ func (mem *CListMempool) handleCheckTxResponse(tx types.Tx, sender p2p.ID) func(
 			return ErrTxInMempool
 		}
 
+		mem.logger.Debug("Accept tx", "tx", log.NewLazySprintf("%X", tx.Hash()), "height", mem.height.Load())
+
 		// Add tx to mempool and notify that new txs are available.
 		memTx := mempoolTx{
 			height:    mem.height.Load(),

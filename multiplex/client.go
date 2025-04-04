@@ -249,10 +249,6 @@ func (c MultiplexClient) BroadcastTx(
 	// Move status update to next step (step=4)
 	currentBroadcastStep++
 
-	// TODO(midas): remove debug logs
-	c.backend.GetLogger().Debug("Requesting chain replication from relays",
-		"num_peers", len(chainRelays))
-
 	// As some relays may not know of all networks, we must ask
 	// to replicate required networks if they did not report some.
 	catchupRelays := c.GetBackend().ApplyFilterReplRequestRelays(
@@ -260,6 +256,15 @@ func (c MultiplexClient) BroadcastTx(
 		addresses,
 		chainRelays,
 	)
+
+	numCatchupRelays := 0
+	for _, addrs := range catchupRelays {
+		numCatchupRelays += len(addrs)
+	}
+
+	// TODO(midas): remove debug logs
+	c.backend.GetLogger().Debug("Requesting chain replication from relays",
+		"num_peers", numCatchupRelays)
 
 	// Ask the relays to catch-up with the chain by replicating it.
 	for chainID, chainCatchupRelays := range catchupRelays {
@@ -303,7 +308,7 @@ func (c MultiplexClient) BroadcastTx(
 
 	// TODO(midas): remove debug logs
 	c.backend.GetLogger().Debug("Broadcasting transaction batch to relays",
-		"num_relays", len(relays))
+		"num_txes", len(transactions), "num_relays", len(relays))
 
 	// Pushes the transaction to other relays mempool to trigger
 	// the call to client.AcceptBroadcastTx by the other relays.
@@ -338,6 +343,8 @@ func (c MultiplexClient) BroadcastTx(
 		acceptedTxHash,
 			acceptErr := c.GetBackend().WaitForRelayTxAcceptance(ctx)
 		if acceptErr != nil {
+			c.backend.GetLogger().Error(
+				"error waiting for relay acceptance", "err", acceptErr.Error())
 			c.notifier.Error(acceptErr)
 			return // STOP here
 		}

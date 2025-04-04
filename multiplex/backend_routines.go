@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 
 	memp2p "github.com/ice-blockchain/cometbft/api/cometbft/mempool/v1"
 	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
@@ -57,7 +58,8 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 			}
 		}
 
-		b.logger.Debug("preparing to send ChainReplicationRequest",
+		// TODO(midas): remove debug logs
+		b.logger.Debug("Preparing to send ChainReplicationRequest",
 			"chain_id", chainID,
 			"relays", relays,
 			"ids", knownPeers,
@@ -75,6 +77,7 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 		}
 
 		// Broadcast the ChainReplicationRequest.
+		// Note that this events switch uses `DiscoveryPort`.
 		eventsSwitch := b.EventSwitch()
 		eventsSwitch.Peers().ForEach(func(peer p2p.Peer) {
 			// Send only to relays we are interested in.
@@ -83,7 +86,8 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 				return
 			}
 
-			b.logger.Debug("now sending ChainReplicationRequest",
+			// TODO(midas): remove debug logs
+			b.logger.Debug("Now sending ChainReplicationRequest",
 				"chain_id", chainID,
 				"peer_id", peerID,
 			)
@@ -213,24 +217,14 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 		b.poolRequestsSent = map[string][]string{}
 
 		// Iterate through transaction and broadcast each of them to other relays
+		// Note that this events switch uses `DiscoveryPort+1`.
 		eventsSwitch := b.reactor.GetEventSwitchForCometBFT()
 		for i, transaction := range transactions {
 			chainID := client.GetChainID(userAddress, transaction.Fingerprint)
-			// eventsSwitch := switchProvider(chainID).(*p2p.Switch)
 
 			// Encode and get transaction hash
 			rawTx := client.TransactionToRawTx(transaction)
 			txHash := strings.ToUpper(hex.EncodeToString(rawTx.Hash()))
-
-			numRelaysForChain := 0
-			if _, ok := relaysByChain[chainID]; ok {
-				numRelaysForChain = len(relaysByChain[chainID])
-			}
-
-			b.logger.Debug("Sending transaction to relays",
-				"hash", txHash,
-				"num_relays", numRelaysForChain,
-			)
 
 			// Broadcast must happen only if there is at least one healthy relay.
 			// For NEW networks, we don't need to broadcast to other relays.
@@ -240,22 +234,30 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 			}
 
 			// Force the execution of mempool broadcast to *all* healthy relays.
-			relaysAccepted := 0
 			minHealthyRelays := len(relaysByChain[chainID])
 			chainHealthyPeers := []string{}
 			for _, relayAddr := range relaysByChain[chainID] {
 				chainHealthyPeers = append(chainHealthyPeers, string(relayAddr.ID()))
 			}
 
+			// TODO(midas): remove debug logs
 			b.logger.Debug("Keeping only healthy relays for broadcast",
-				"hash", txHash,
+				"chain_id", chainID,
+				"tx_hash", txHash,
 				"num_relays", len(chainHealthyPeers),
-				"relays", chainHealthyPeers,
+				"num_peers", eventsSwitch.Peers().Size(),
 			)
+
+			// Waits to make sure we reached enough of the healthy relays.
+			ackWg := sync.WaitGroup{}
+			ackWg.Add(eventsSwitch.Peers().Size())
 
 			// Broadcast the transaction to all healthy relays.
 			poolRequestPeers := []string{}
+			relaysAccepted := 0
 			eventsSwitch.Peers().ForEach(func(peer p2p.Peer) {
+				defer ackWg.Done()
+
 				// Send only to relays we are interested in (healthy relays).
 				// Skip unhealthy relays because they would produce an error.
 				peerID := string(peer.ID())
@@ -263,9 +265,11 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 					return
 				}
 
+				// TODO(midas): remove debug logs
 				b.logger.Debug("Sending transaction to remote mempool",
-					"hash", txHash,
-					"id", peerID,
+					"chain_id", chainID,
+					"tx_hash", txHash,
+					"peer", peerID,
 				)
 
 				// Send transaction to relay mempool, after checks the mempool
@@ -274,17 +278,33 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 				if success := peer.Send(chainID, p2p.Envelope{
 					ChannelID: mempl.MempoolChannel,
 					Message:   &memp2p.Txs{Txs: [][]byte{rawTx}},
-				}); success {
-					relaysAccepted++
+				}); !success {
+					b.logger.Error("count not send message on mempool channel",
+						"chain_id", chainID,
+						"tx_hash", txHash,
+						"peer", peerID,
+					)
+					return
+				}
+
+				if err := b.WaitForRelayAckTransaction(ctx); err != nil {
+					// At least one healthy relay is not acknowledging the broadcast.
+					b.logger.Error("relay did not acknowledge transaction",
+						"chain_id", chainID,
+						"tx_hash", txHash,
+						"peer", peerID,
+						"err", err.Error(),
+					)
+					return
 				}
 
 				poolRequestPeers = append(poolRequestPeers, peerID)
+				relaysAccepted++
 			})
 
+			// Waits to process all healthy relays' acknowledgments.
+			ackWg.Wait()
 			b.poolRequestsSent[chainID] = poolRequestPeers
-
-			// TODO(midas): update flow here to WaitForRelayAckTransaction() for each relay
-			// TODO(midas): relayID, waitErr := c.GetBackend().WaitForRelayAckTransaction(ctx)
 
 			// We require healthy relays to accept this broadcast.
 			if relaysAccepted >= minHealthyRelays {
@@ -293,6 +313,13 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 				// Otherwise broadcast a rollback operation if some of the healthy
 				// relays already added this transaction to their mempool.
 				// The mempool calls [Acceptor#RollbackTx] before removing txes.
+
+				// TODO(midas): remove debug logs
+				b.logger.Debug("Cancelling broadcast request",
+					"chain_id", chainID,
+					"tx_hash", txHash,
+				)
+
 				routineCancelBroadcast := b.GetRoutines().CancelBroadcast
 				go routineCancelBroadcast(ctx, userAddress, transactions)
 
@@ -332,7 +359,6 @@ func (b *MultiplexBackend) DefaultCancelBroadcastRoutine() server.CancelBroadcas
 		// for each of them to all other relays.
 		for _, transaction := range transactions {
 			chainID := client.GetChainID(userAddress, transaction.Fingerprint)
-			// eventsSwitch := switchProvider(chainID).(*p2p.Switch)
 
 			// Encode and get transaction hash
 			rawTx := client.TransactionToRawTx(transaction)

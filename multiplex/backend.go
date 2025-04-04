@@ -658,7 +658,7 @@ func (b *MultiplexBackend) GetRelaysByNetwork(
 		}
 	}
 
-	// Populate a slice of relay addresses which produced errors
+	// Populate a slice of unique relay addresses which produced errors
 	for errRelay, _ := range relaysWithFailure {
 		if !slices.Contains(errorRelays, errRelay) {
 			errorRelays = append(errorRelays, errRelay)
@@ -671,6 +671,9 @@ func (b *MultiplexBackend) GetRelaysByNetwork(
 // CheckDialCompatibleRelay dials the relay using a local [p2p.Switch] instance
 // to perform a handshake and determine whether relayAddress is compatible.
 //
+// Ignore existing address errors here in case of long-living process
+// broadcasting more transactions, when peer is already dialed or being dialed.
+//
 // CheckDialCompatibleRelay implements [server.Backend].
 func (b *MultiplexBackend) CheckDialCompatibleRelay(
 	relayAddr *server.RelayAddress,
@@ -680,28 +683,46 @@ func (b *MultiplexBackend) CheckDialCompatibleRelay(
 		return nil
 	}
 
-	b.logger.Debug("Process now dialing remote relay",
+	// (1)
+	// Dial the relay to find out whether it is compatible (handshake).
+	// Using the switch here affects the internal AddrBook.
+
+	b.logger.Debug("Process now dialing remote relay (discovery)",
 		"relay", relayAddr.String(),
 	)
 
-	relayNetAddr, err := relayAddr.NetAddress()
+	relayDiscovery, err := relayAddr.NetAddress()
 	if err != nil {
 		return fmt.Errorf(
 			"invalid relay address %s: %w", relayAddr.String(), err)
 	}
 
-	// Dial the relay to find out whether it is compatible (handshake).
-	// Using the switch here affects the internal AddrBook.
+	// Note that this events switch uses `DiscoveryPort`.
 	localSwitch := b.EventSwitch()
-	if err := localSwitch.DialPeerWithAddress(relayNetAddr); err != nil {
-		// Ignore existing addresses here in case of long-living process
-		// broadcasting more transactions, when peer is already dialed.
-		if _, ok := err.(p2p.ErrCurrentlyDialingOrExistingAddress); ok {
-			return nil
+	if err := localSwitch.DialPeerWithAddress(relayDiscovery); err != nil {
+		if _, ok := err.(p2p.ErrCurrentlyDialingOrExistingAddress); !ok {
+			return fmt.Errorf(
+				"could not dial relay %s for discovery: %w", relayAddr.String(), err)
 		}
+	}
 
+	// (2)
+	// We also dial the CometBFT P2P address to make sure
+	// communication with this relay is possible for blocksync.
+
+	relayCometBFT, err := relayAddr.NetAddressForCometBFT()
+	if err != nil {
 		return fmt.Errorf(
-			"could not dial relay %s: %w", relayAddr.String(), err)
+			"invalid relay address %s: %w", relayAddr.String(), err)
+	}
+
+	// Note that this events switch uses `DiscoveryPort+1`.
+	cometSwitch := b.reactor.GetEventSwitchForCometBFT()
+	if err := cometSwitch.DialPeerWithAddress(relayCometBFT); err != nil {
+		if _, ok := err.(p2p.ErrCurrentlyDialingOrExistingAddress); !ok {
+			return fmt.Errorf(
+				"could not dial relay %s for cometbft: %w", relayAddr.String(), err)
+		}
 	}
 
 	return nil
