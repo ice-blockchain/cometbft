@@ -557,6 +557,12 @@ func (*Reactor) GetChannels() []*p2p.ChannelDescriptor {
 			Priority:    3,
 			MessageType: &mxp2p.Message{},
 		},
+		{
+			ID: server.AckBroadcastChannel,
+			// Lower priority than blocksync, evidence, mempool & consensus
+			Priority:    3,
+			MessageType: &mxp2p.Receipt{},
+		},
 	}
 }
 
@@ -637,9 +643,22 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			// Done.
 			return
 
+		default:
+			r.logger.Error(
+				"Unknown internal message type",
+				"src", e.Src,
+				"chId", e.ChannelID,
+				"msg", e.Message,
+			)
+			return
+		}
+
+	case *mxp2p.Receipt:
+		msg := extMsg.GetSum()
+		switch msg.(type) {
 		// AckTransactionBroadcast
 		// Received a receipt of relay mempool inclusion for a transaction hash.
-		case *mxp2p.Message_AckTransactionBroadcast:
+		case *mxp2p.Receipt_AckTransactionBroadcast:
 			r.logger.Debug("Now processing AckTransactionBroadcast", "msg", msg)
 			ackTxBroadcast := extMsg.GetAckTransactionBroadcast()
 			r.logger.Debug("[ACK] Relay received the transaction batch",
@@ -652,13 +671,14 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 
 		default:
 			r.logger.Error(
-				"Unknown internal message type",
+				"Unknown internal receipt type",
 				"src", e.Src,
 				"chId", e.ChannelID,
 				"msg", e.Message,
 			)
 			return
 		}
+
 	default:
 		r.logger.Error(
 			"Unknown message type",

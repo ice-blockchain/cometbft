@@ -256,6 +256,7 @@ func (b *MultiplexBackend) EventSwitch() *p2p.Switch {
 		b.reactor.nodeConfig,
 		b.reactor.nodeKey,
 		b.broadcastAddr,
+		[]byte{server.ReplicationChannel},
 	)
 
 	mConnConfig := p2p.MConnConfig(b.reactor.nodeConfig.P2P)

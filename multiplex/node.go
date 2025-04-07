@@ -463,7 +463,7 @@ func makeNodeInfo(
 			evidence.EvidenceChannel,
 			statesync.SnapshotChannel, statesync.ChunkChannel,
 			pex.PexChannel,
-			server.ReplicationChannel,
+			server.AckBroadcastChannel,
 		},
 		Moniker: moniker,
 		Other: p2p.DefaultNodeInfoOther{

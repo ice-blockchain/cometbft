@@ -427,9 +427,9 @@ func (memR *Reactor) sendAckTransactionBroadcast(
 	}
 
 	peer.Send(memR.ChainID, p2p.Envelope{
-		ChannelID: server.ReplicationChannel,
-		Message: &mxp2p.Message{
-			Sum: &mxp2p.Message_AckTransactionBroadcast{
+		ChannelID: server.AckBroadcastChannel,
+		Message: &mxp2p.Receipt{
+			Sum: &mxp2p.Receipt_AckTransactionBroadcast{
 				AckTransactionBroadcast: &mxp2p.AckTransactionBroadcast{
 					TxHashes: txHashes,
 				},

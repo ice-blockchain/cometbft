@@ -6,9 +6,11 @@ import (
 )
 
 const (
-	// ReplicationChannel is used to send replicated chain updates and
-	// transaction broadcast receipts.
+	// ReplicationChannel is used to send replicated chain updates.
 	ReplicationChannel = byte(0x90)
+
+	// AckBroadcastChannel is used to transaction broadcast receipts.
+	AckBroadcastChannel = byte(0x91)
 )
 
 // RPCResultRelayInfo describes relays information.

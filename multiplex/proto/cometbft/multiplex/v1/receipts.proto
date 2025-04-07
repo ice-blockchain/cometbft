@@ -1,0 +1,17 @@
+syntax = "proto3";
+package cometbft.multiplex.v1;
+
+option go_package = "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1";
+
+// AckTransactionBroadcast acknowledges the broadcast of a transaction batch.
+message AckTransactionBroadcast {
+  repeated bytes tx_hashes = 1;
+}
+
+// Receipt is an abstract receipt message.
+message Receipt {
+  // Sum of all possible messages.
+  oneof sum {
+    AckTransactionBroadcast ack_transaction_broadcast = 1;
+  }
+}

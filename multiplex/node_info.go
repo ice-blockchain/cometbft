@@ -96,6 +96,7 @@ func NewMultiNetworkNodeInfo(
 	nodeCfg *config.Config,
 	nodeKey *p2p.NodeKey,
 	listenAddr *p2p.NetAddress,
+	channels []byte,
 ) *MultiNetworkNodeInfo {
 	chainIds := []string{}
 	protoVer := []ChainProtocolVersion{}
@@ -117,7 +118,7 @@ func NewMultiNetworkNodeInfo(
 		Version:          nodeCfg.Version,
 		Moniker:          nodeCfg.Moniker,
 		ListenAddr:       listenAddr.DialString(),
-		Channels:         []byte{server.ReplicationChannel},
+		Channels:         channels,
 		Other: p2p.DefaultNodeInfoOther{
 			TxIndex:    "off",
 			RPCAddress: "",
@@ -168,7 +169,7 @@ func (info MultiNetworkNodeInfo) GetNodeInfo(chainID string) p2p.DefaultNodeInfo
 			evidence.EvidenceChannel,
 			statesync.SnapshotChannel, statesync.ChunkChannel,
 			pex.PexChannel,
-			server.ReplicationChannel,
+			server.AckBroadcastChannel,
 		},
 		Moniker: info.Moniker,
 		Other:   info.Other,
