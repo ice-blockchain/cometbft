@@ -223,14 +223,23 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 			}
 		}
 	case *protomem.Txs:
-		if memR.WaitSync() {
-			memR.Logger.Debug("Ignored message received while syncing", "msg", msg)
-			return
-		}
-
 		protoTxs := msg.GetTxs()
 		if len(protoTxs) == 0 {
 			memR.Logger.Error("Received empty Txs message from peer", "src", e.Src)
+			return
+		}
+
+		if memR.WaitSync() {
+			memR.Logger.Debug("Ignored message received while syncing", "msg", msg)
+
+			// Uses the multiplex server.AckBroadcastChannel to send a receipt.
+			// Note that in this case, we don't check the transaction ourselves.
+			// Unblocks the broadcast on relays that are handling a ReplRequest.
+			if err := memR.sendAckTransactionBroadcast(e.Src, protoTxs); err != nil {
+				memR.Logger.Error("Error with AckTransactionBroadcast", "err", err)
+				return
+			}
+
 			return
 		}
 
@@ -271,7 +280,7 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 			}
 		}
 
-		// Uses the multiplex server.ReplicationChannel to send an acknowledgment
+		// Uses the multiplex server.AckBroadcastChannel to send an acknowledgment
 		// message, or receipt, to describe that the transaction has been checked.
 		if err := memR.sendAckTransactionBroadcast(e.Src, protoTxs); err != nil {
 			memR.Logger.Debug("Error with AckTransactionBroadcast",

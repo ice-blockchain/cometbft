@@ -70,6 +70,13 @@ type Backend interface {
 	// response and it should return a relay ID.
 	WaitForRelayReplResponse(ctx context.Context) (string, error)
 
+	// WaitForRelaysReplResponse should wait for a number of *remote* relay's
+	// replication response and it should return their relay IDs.
+	WaitForRelaysReplResponse(
+		ctx context.Context,
+		numRelays int,
+	) ([]string, error)
+
 	// WaitForRelayAckTransaction should wait for a *remote* relay to acknowledge
 	// a transaction broadcast operation and it should then send a message using
 	// the channel [GetRelayAcceptTxCh].

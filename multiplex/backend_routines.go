@@ -105,8 +105,6 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 			})
 
 			replRequestPeers = append(replRequestPeers, peerID)
-
-			// TODO(midas): wait for replication ACK with b.reactor.ackReplResCh
 		})
 
 		// Keep track of node IDs

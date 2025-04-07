@@ -565,6 +565,28 @@ func (b *MultiplexBackend) WaitForRelayReplResponse(
 	}
 }
 
+// WaitForRelaysReplResponse waits for a number of *remote* relay's
+// replication response and it returns their relay IDs.
+// WaitForRelaysReplResponse implements [server.Backend].
+func (b *MultiplexBackend) WaitForRelaysReplResponse(
+	ctx context.Context,
+	numRelays int,
+) ([]string, error) {
+	responsePeers := []string{}
+
+	// Every relay must accept once per ChainReplicationRequest.
+	for i := 0; i < numRelays; i++ {
+		nodeId, err := b.WaitForRelayReplResponse(ctx)
+		if err != nil {
+			return responsePeers, err
+		}
+
+		responsePeers = append(responsePeers, nodeId)
+	}
+
+	return responsePeers, nil
+}
+
 // WaitForRelayAckTransaction waits for a *remote* relay to acknowledge
 // a transaction broadcast operation and reads a message from the internal
 // ackTxAcceptCh channel.

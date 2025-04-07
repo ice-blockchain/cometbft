@@ -275,16 +275,35 @@ func (c MultiplexClient) BroadcastTx(
 			continue
 		}
 
+		numCatchupRelays := len(chainCatchupRelays)
 		routineNodeReplRequest := c.GetBackend().GetRoutines().NodeReplRequest
 		go routineNodeReplRequest(ctx,
 			chainCatchupRelays,
 			chainID,
 			c.notifier,
 		)
-	}
 
-	// XXX relayID, waitErr := c.GetBackend().WaitForRelayReplResponse(ctx)
-	//     => should be waiting for c.backend.reactor.ackReplResCh
+		// TODO(midas): remove debug logs
+		c.backend.GetLogger().Debug("Waiting for chain replication responses",
+			"chain_id", chainID,
+			"num_relays", numCatchupRelays)
+
+		// The reactor communicates the relay ID in a ChainReplicationResponse.
+		// Waits internally until this ChainID has been acknowledged by relays.
+		responseRelayIds,
+			replErr := c.GetBackend().WaitForRelaysReplResponse(ctx, numCatchupRelays)
+		if replErr != nil {
+			c.backend.GetLogger().Error(
+				"error waiting for relays replication response", "err", replErr.Error())
+			c.notifier.Error(replErr)
+			return // STOP here
+		}
+
+		// TODO(midas): remove debug logs
+		c.backend.GetLogger().Debug("Relays acknowledged chain replication",
+			"chain_id", chainID,
+			"num_relays", len(responseRelayIds))
+	}
 
 	// ------------------------------------------------------------------------
 	// Step 5: Add transactions to mempool, trigger broadcast to relays

@@ -1058,7 +1058,7 @@ func (reactor *Reactor) startNodeListeners(chainID string) error {
 	// Prometheus does not allow hyphens in metrics names, it must match
 	// following regexp: [a-zA-Z_:][a-zA-Z0-9_:]*
 	// see also: https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels
-	metricsNames := nodeConfig.Instrumentation.Namespace + ":" + strings.ReplaceAll(chainID, "-", "_")
+	metricsNames := nodeConfig.Instrumentation.Namespace + "_" + string(reactor.nodeKey.ID()) + ":" + strings.ReplaceAll(chainID, "-", "_")
 	stateMetricsProvider := reactor.RegisterMetrics("state", metricsNames, func() interface{} {
 		return sm.PrometheusMetrics(metricsNames, "chain_id", chainID)
 	}).(*sm.Metrics)

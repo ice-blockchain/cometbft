@@ -9,7 +9,7 @@ const (
 	// ReplicationChannel is used to send replicated chain updates.
 	ReplicationChannel = byte(0x90)
 
-	// AckBroadcastChannel is used to transaction broadcast receipts.
+	// AckBroadcastChannel is used to send transaction broadcast receipts.
 	AckBroadcastChannel = byte(0x91)
 )
 
