@@ -293,9 +293,15 @@ func (c MultiplexClient) BroadcastTx(
 		responseRelayIds,
 			replErr := c.GetBackend().WaitForRelaysReplResponse(ctx, numCatchupRelays)
 		if replErr != nil {
-			c.backend.GetLogger().Error(
-				"error waiting for relays replication response", "err", replErr.Error())
 			c.notifier.Error(replErr)
+			return // STOP here
+		}
+
+		// Start network consensus when replication is accepted by remotes.
+		// This fixes a race condition between the multiplex discovery
+		// and CometBFT consensus reactors
+		if err := c.backend.StartConsensusInstance(ctx, chainID); err != nil {
+			c.notifier.Error(err)
 			return // STOP here
 		}
 

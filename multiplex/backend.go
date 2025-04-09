@@ -336,47 +336,19 @@ func (b *MultiplexBackend) UpdateAvailableNetworks(networks []string) []string {
 
 	// We must upgrade the mconn channels for P2P discovery peers
 	// for injected networks that were not present at time of creation.
-	b.reactor.discoverySwitch.Peers().ForEach(func(peer p2p.Peer) {
-		mconn := peer.MConn()
+	b.reactor.AddConnectionChannels(
+		b.reactor.discoverySwitch,
+		b.multiNodeInfo.Networks,
+		[]byte{server.ReplicationChannel},
+	)
 
-		for _, chainID := range b.multiNodeInfo.Networks {
-			for name, reactor := range b.reactor.discoverySwitch.Reactors(chainID) {
-				for _, chDesc := range reactor.GetChannels() {
-					if chDesc.ID == server.ReplicationChannel {
-						// TODO(midas): remove debug logs
-						b.logger.Debug("Adding connection channel (discovery)",
-							"chain_id", chainID,
-							"reactor", name,
-							"chID", chDesc.ID,
-						)
-
-						mconn.AddChannel(chainID, *chDesc)
-					}
-				}
-			}
-		}
-	})
-
-	// We must upgrade the mconn channels for P2P cometbft peers
+	// We must also upgrade the mconn channels for P2P cometbft peers
 	// for injected networks that were not present at time of creation.
-	b.reactor.cometbftSwitch.Peers().ForEach(func(peer p2p.Peer) {
-		mconn := peer.MConn()
-
-		for _, chainID := range b.multiNodeInfo.Networks {
-			for name, reactor := range b.reactor.cometbftSwitch.Reactors(chainID) {
-				for _, chDesc := range reactor.GetChannels() {
-					// TODO(midas): remove debug logs
-					b.logger.Debug("Adding connection channel (cometbft)",
-						"chain_id", chainID,
-						"reactor", name,
-						"chID", chDesc.ID,
-					)
-
-					mconn.AddChannel(chainID, *chDesc)
-				}
-			}
-		}
-	})
+	b.reactor.AddConnectionChannels(
+		b.reactor.cometbftSwitch,
+		b.multiNodeInfo.Networks,
+		[]byte{}, // all channels
+	)
 
 	return b.multiNodeInfo.Networks
 }
@@ -813,32 +785,14 @@ func (b *MultiplexBackend) CheckDialCompatibleRelay(
 		}
 	}
 
-	// (2)
-	// We also dial the CometBFT P2P address to make sure
-	// communication with this relay is possible using mempool.
-	// This also enables a faster blocksync startup process.
-
-	relayCometBFT, err := relayAddr.NetAddressForCometBFT()
-	if err != nil {
-		return fmt.Errorf(
-			"invalid relay address %s: %w", relayAddr.String(), err)
-	}
-
-	// Note that this events switch uses `DiscoveryPort+1`.
-	cometSwitch := b.reactor.GetEventSwitchForCometBFT()
-	if err := cometSwitch.DialPeerWithAddress(relayCometBFT); err != nil {
-		if _, ok := err.(p2p.ErrCurrentlyDialingOrExistingAddress); !ok {
-			return fmt.Errorf(
-				"could not dial relay %s for cometbft: %w", relayAddr.String(), err)
-		}
-	}
-
 	return nil
 }
 
 // ApplyFilterReplRequestRelays filters relays and returns a map of relays
 // by ChainID which contains only relays that need to catchup, i.e. it returns
 // relays that will receive a chain replication request.
+//
+// ApplyFilterReplRequestRelays implements [server.Backend].
 func (b *MultiplexBackend) ApplyFilterReplRequestRelays(
 	requiredNetworks []string,
 	relays []*server.RelayAddress,
@@ -928,6 +882,7 @@ func (b *MultiplexBackend) AddTransactions(
 //
 // This method is called by [BroadcastTx] when a transaction rollback must
 // be executed due to some of the healthy relays not accepting a batch.
+//
 // RemoveTransactions implements [server.Backend].
 func (b *MultiplexBackend) RemoveTransactions(
 	userAddress string,
@@ -950,6 +905,18 @@ func (b *MultiplexBackend) RemoveTransactions(
 	}
 
 	return nil
+}
+
+// StartConsensusInstance calls the Start method of consensus reactors,
+// including mempool, blocksync, consensus and evidence reactors.
+// This method separates the consensus instance from node services.
+//
+// StartConsensusInstance implements [server.Backend].
+func (b *MultiplexBackend) StartConsensusInstance(
+	ctx context.Context,
+	chainID string,
+) error {
+	return b.reactor.StartConsensusInstanceReactors(ctx, chainID)
 }
 
 // ----------------------------------------------------------------------------

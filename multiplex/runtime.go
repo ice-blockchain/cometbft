@@ -369,16 +369,7 @@ func (reactor *Reactor) InjectNewRuntime(
 		"nodeId", string(reactor.nodeKey.ID()))
 
 	// ------------------------------------------------------------------------
-	// Step 5: Start running the consensus reactors
-
-	// Start the actual consensus instance.
-	if err := reactor.StartConsensusInstanceReactors(ctx, chainID); err != nil {
-		return fmt.Errorf(
-			"error starting consensus reactors: %w", err)
-	}
-
-	// ------------------------------------------------------------------------
-	// Step 6: Create the runnable node.Node instance
+	// Step 5: Create the runnable node.Node instance
 
 	// Create a MultiplexMap[*node.Node] with this new network.
 	updatedMx := reactor.createMultiplexNodesWithServices(
@@ -388,7 +379,11 @@ func (reactor *Reactor) InjectNewRuntime(
 	)
 
 	// ------------------------------------------------------------------------
-	// Step 7: Start the node
+	// Step 6: Start the node
+	//
+	// CAUTION:
+	// Note that consensus reactors are not started here to prevent race
+	// conditions between the replication routine and cometbft services.
 
 	// Type-assertion makes sure we have a [*node.Node]
 	runNode := updatedMx[chainID].GetInstance().(*node.Node)

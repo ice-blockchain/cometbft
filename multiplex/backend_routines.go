@@ -212,6 +212,37 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 		// Reset the sent requests cache
 		b.poolRequestsSent = map[string][]string{}
 
+		// (1)
+		// First dial the CometBFT P2P addresses to make sure
+		// communication with this relay is possible using mempool.
+		for _, relays := range relaysByChain {
+			relaysWithoutSelf := []*server.RelayAddress{}
+			for _, relayAddr := range relays {
+				if relayAddr.ID() != b.reactor.nodeKey.ID() {
+					relaysWithoutSelf = append(relaysWithoutSelf, relayAddr)
+				}
+			}
+
+			for _, relayAddr := range relaysWithoutSelf {
+				peerAddr, err := relayAddr.NetAddressForCometBFT()
+				if err != nil {
+					notifierImpl.Error(fmt.Errorf(
+						"invalid cometbft relay address %s: %w", relayAddr.AddressForCometBFT(), err))
+					return
+				}
+
+				// Note that this events switch uses `DiscoveryPort+1`.
+				sw := b.reactor.GetEventSwitchForCometBFT()
+				if err := sw.DialPeerWithAddress(peerAddr); err != nil {
+					if _, ok := err.(p2p.ErrCurrentlyDialingOrExistingAddress); !ok {
+						notifierImpl.Error(fmt.Errorf(
+							"could not dial relay %s: %w", relayAddr.AddressForCometBFT(), err))
+					}
+				}
+			}
+		}
+
+		// (2)
 		// Iterate through transaction and broadcast each of them to other relays
 		// Note that this events switch uses `DiscoveryPort+1`.
 		eventsSwitch := b.reactor.GetEventSwitchForCometBFT()
@@ -354,7 +385,13 @@ func (b *MultiplexBackend) DefaultCancelBroadcastRoutine() server.CancelBroadcas
 			// Broadcast the rollback message for this transaction to all relays.
 			eventsSwitch.Broadcast(chainID, p2p.Envelope{
 				ChannelID: mempl.MempoolChannel,
-				Message:   &memp2p.RollbackTxs{Txs: [][]byte{rawTx}},
+				Message: &memp2p.Message{
+					Sum: &memp2p.Message_RollbackTxs{
+						RollbackTxs: &memp2p.RollbackTxs{
+							Txs: [][]byte{rawTx},
+						},
+					},
+				},
 			})
 		}
 	}

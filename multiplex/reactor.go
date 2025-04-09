@@ -579,6 +579,15 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 	switch extMsg := e.Message.(type) {
 	case *mxp2p.Message:
 		msg := extMsg.GetSum()
+
+		// Determine public source address from secret connection.
+		sourceAddr, err := e.Src.NodeInfo().NetAddress()
+		if err != nil {
+			r.logger.Error("couldn't determine source address from message",
+				"msg", msg, "err", err)
+			return
+		}
+
 		switch msg.(type) {
 
 		// ChainReplicationRequest
@@ -587,30 +596,8 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			r.logger.Debug("Now processing ChainReplicationRequest", "msg", msg)
 			replRequest := extMsg.GetChainReplicationRequest()
 
-			// Determine public source address from secret connection.
-			sourceAddr, err := e.Src.NodeInfo().NetAddress()
-			if err != nil {
-				r.logger.Error(
-					"CONSENSUS PANIC! Source peer not found in ChainReplicationRequest",
-					"chain_id", replRequest.ChainID,
-					"err", err,
-				)
-				return
-			}
-
-			// A ChainReplicationResponse is sent to the source peer.
+			// A ChainReplicationResponse will be sent to the source peer.
 			sourcePeer := r.discoverySwitch.Peers().Get(sourceAddr.ID)
-
-			// Instantly respond with a [ChainReplicationResponse].
-			// This serves as a receipt for a chain replication request.
-			if err := r.sendChainReplicationResponse(sourcePeer, replRequest.ChainID); err != nil {
-				r.logger.Error(
-					"CONSENSUS PANIC! Error with ChainReplicationResponse",
-					"chain_id", replRequest.ChainID,
-					"err", err,
-				)
-				return
-			}
 
 			// After having acknowledged the chain replication, process it.
 			//
@@ -618,7 +605,52 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			// for the newly replicated ChainID, and then *dials* the source peer.
 			if err := r.handleChainReplicationRequest(sourcePeer, replRequest); err != nil {
 				r.logger.Error(
-					"CONSENSUS PANIC! Error with ChainReplicationRequest",
+					"ChainReplicationRequest: Error handling ChainReplicationRequest",
+					"chain_id", replRequest.ChainID,
+					"err", err,
+				)
+				return
+			}
+
+			// Open any missing CometBFT channels for injected network consensus.
+			chs := []byte{} // all channels
+			if err := r.AddConnectionChannels(r.cometbftSwitch, r.GetNetworks(), chs); err != nil {
+				r.logger.Error(
+					"ChainReplicationRequest: Error opening MConnection channels",
+					"chain_id", replRequest.ChainID,
+					"err", err,
+				)
+				return
+			}
+
+			// Start consensus reactors for newly injected runtime.
+			if err := r.StartConsensusInstanceReactors(
+				context.Background(),
+				replRequest.ChainID,
+			); err != nil {
+				r.logger.Error(
+					"ChainReplicationRequest: Error starting consensus reactors",
+					"chain_id", replRequest.ChainID,
+					"err", err,
+				)
+				return
+			}
+
+			// Dials the CometBFT relay to permit faster consensus startup.
+			if err := r.DialBackReplicationPartner(e.Src, replRequest.ChainID); err != nil {
+				r.logger.Error(
+					"ChainReplicationRequest: Error dialing replication partner",
+					"chain_id", replRequest.ChainID,
+					"err", err,
+				)
+				return
+			}
+
+			// Now respond with a [ChainReplicationResponse].
+			// This serves as a receipt for a chain replication request.
+			if err := r.sendChainReplicationResponse(sourcePeer, replRequest.ChainID); err != nil {
+				r.logger.Error(
+					"ChainReplicationRequest: Error sending ChainReplicationResponse",
 					"chain_id", replRequest.ChainID,
 					"err", err,
 				)
@@ -638,6 +670,17 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 				"chain_id", replResponse.ChainID,
 				"relay_id", replResponse.NodeId,
 			)
+
+			// Dials the CometBFT relay to permit faster consensus startup and
+			// make sure communication with this relay is possible for blocksync.
+			if err := r.DialBackReplicationPartner(e.Src, replResponse.ChainID); err != nil {
+				r.logger.Error(
+					"ChainReplicationResponse: Error dialing replication partner",
+					"chain_id", replResponse.ChainID,
+					"err", err,
+				)
+				return
+			}
 
 			r.ackReplResCh <- replResponse
 			// Done.
@@ -695,6 +738,57 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 		)
 		return
 	}
+}
+
+// DialBackReplicationPartner dials sourcePeer using its' NetAddressForCometBFT,
+// i.e. `DiscoveryPort+1`.
+// In case the events switch is already running, we must also manually add the
+// peer to the running reactors.
+func (r *Reactor) DialBackReplicationPartner(
+	sourcePeer p2p.Peer,
+	chainID string,
+) error {
+	// Parse the remote relay address, i.e. the source of a replication
+	// request, because we dial their CometBFT P2P address for block-sync.
+	// Note that publicAddr should contain the remote's DiscoveryPort.
+	publicAddr, err := sourcePeer.NodeInfo().NetAddress()
+	if err != nil {
+		return fmt.Errorf(
+			"invalid source address %s: %w", sourcePeer.SocketAddr(), err)
+	}
+
+	sourceAddr, err := server.NewRelayAddress(publicAddr.String())
+	if err != nil {
+		return fmt.Errorf(
+			"invalid source relay address %s: %w", publicAddr.String(), err)
+	}
+
+	// IMPORTANT:
+	//
+	// Finally, dial the relay to permit block-sync to start instantly.
+	// Note that NetAddressForCometBFT should contain `DiscoveryPort+1`.
+
+	// We need DiscoveryPort+1 to interact with CometBFT.
+	peerAddr, err := sourceAddr.NetAddressForCometBFT()
+	if err != nil {
+		return fmt.Errorf(
+			"invalid cometbft relay address %s: %w", sourceAddr.AddressForCometBFT(), err)
+	}
+
+	if err := r.cometbftSwitch.DialPeerWithAddress(peerAddr); err != nil {
+		if _, ok := err.(p2p.ErrCurrentlyDialingOrExistingAddress); !ok {
+			return fmt.Errorf(
+				"could not dial relay %s: %w", peerAddr.DialString(), err)
+		}
+	}
+
+	// Manually add peers when the switch was already running.
+	dialedPeer := r.cometbftSwitch.Peers().Get(peerAddr.ID)
+	for _, reactor := range r.cometbftSwitch.Reactors(chainID) {
+		reactor.AddPeer(dialedPeer)
+	}
+
+	return nil
 }
 
 // ----------------------------------------------------------------------------
@@ -1219,21 +1313,6 @@ func (reactor *Reactor) handleChainReplicationRequest(
 	}
 	userAddress := extChainID.GetUserAddress()
 
-	// Parse the remote relay address, i.e. the source of a replication
-	// request, because we dial their CometBFT P2P address for block-sync.
-	// Note that publicAddr should contain the remote's DiscoveryPort.
-	publicAddr, err := source.NodeInfo().NetAddress()
-	if err != nil {
-		return fmt.Errorf(
-			"invalid source address %s: %w", source.SocketAddr(), err)
-	}
-
-	sourceAddr, err := server.NewRelayAddress(publicAddr.String())
-	if err != nil {
-		return fmt.Errorf(
-			"invalid source relay address %s: %w", source.SocketAddr(), err)
-	}
-
 	// Pre-allocates filesystem, database and priv validator.
 	if err := reactor.AllocateNetwork(req.ChainID); err != nil {
 		return fmt.Errorf(
@@ -1282,27 +1361,6 @@ func (reactor *Reactor) handleChainReplicationRequest(
 	if err = reactor.InjectNewRuntime(context.Background(), req.ChainID); err != nil {
 		return fmt.Errorf(
 			"could not spawn node runtime: %w", err)
-	}
-
-	// IMPORTANT:
-	//
-	// Finally, dial the relay to permit block-sync to start instantly.
-	// Note that NetAddressForCometBFT should contain `DiscoveryPort+1`.
-
-	// We need DiscoveryPort+1 to interact with CometBFT.
-	peerAddr, err := sourceAddr.NetAddressForCometBFT()
-	if err != nil {
-		return fmt.Errorf(
-			"invalid cometbft relay address %s: %w", source.SocketAddr(), err)
-	}
-
-	if err := reactor.cometbftSwitch.DialPeerWithAddress(peerAddr); err != nil {
-		if _, ok := err.(p2p.ErrCurrentlyDialingOrExistingAddress); ok {
-			return nil
-		}
-
-		return fmt.Errorf(
-			"could not dial relay %s: %w", peerAddr.DialString(), err)
 	}
 
 	return nil

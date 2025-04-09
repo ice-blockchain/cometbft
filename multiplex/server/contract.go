@@ -58,6 +58,10 @@ type Backend interface {
 	// GetNetworks should return a slice of supported ChainID values.
 	GetNetworks() []string
 
+	// StartConsensusInstance should start the consensus reactors,
+	// including mempool, blocksync, consensus and evidence reactors.
+	StartConsensusInstance(ctx context.Context, chainID string) error
+
 	// UpdateAvailableNetworks should update the NodeInfo pointer and p2p switch
 	// to permit communications related to new (or unknown) networks.
 	UpdateAvailableNetworks(networks []string) []string

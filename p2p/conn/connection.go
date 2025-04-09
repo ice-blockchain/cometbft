@@ -233,6 +233,8 @@ func (c *MConnection) SetLogger(l log.Logger) {
 	}
 }
 
+// AddChannel registers a ChannelDescriptor in a running mconn for chainID,
+// reactors may then process messages on a new channel for this network.
 func (c *MConnection) AddChannel(chainID string, desc ChannelDescriptor) *Channel {
 	if _, ok := c.channelsIdx[chainID]; !ok {
 		c.channelsIdx[chainID] = map[byte]*Channel{}
@@ -244,6 +246,8 @@ func (c *MConnection) AddChannel(chainID string, desc ChannelDescriptor) *Channe
 	}
 
 	channel := newChannel(chainID, c, desc)
+	channel.SetLogger(c.Logger)
+
 	c.channelsIdx[chainID][channel.desc.ID] = channel
 	c.channels = append(c.channels, channel)
 
@@ -969,7 +973,9 @@ func (ch *Channel) writePacketMsgTo(w protoio.Writer) (n int, err error) {
 // complete. NOTE message bytes may change on next call to recvPacketMsg.
 // Not goroutine-safe.
 func (ch *Channel) recvPacketMsg(packet tmp2p.PacketMsg) ([]byte, error) {
-	ch.Logger.Debug("Read PacketMsg", "conn", ch.conn, "packet", packet)
+	if ch.Logger != nil {
+		ch.Logger.Debug("Read PacketMsg", "conn", ch.conn, "packet", packet)
+	}
 	recvCap, recvReceived := ch.desc.RecvMessageCapacity, len(ch.recving)+len(packet.Data)
 	if recvCap < recvReceived {
 		return nil, fmt.Errorf("received message exceeds available capacity: %v < %v", recvCap, recvReceived)

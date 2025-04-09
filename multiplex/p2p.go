@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -216,5 +217,40 @@ func (reactor *Reactor) CreateAddressBooks(
 	}
 
 	reactor.cometbftSwitch.SetAddrBook(addrBook)
+	return nil
+}
+
+// AddConnectionChannels opens reactor channels for listening to new messages.
+// Accepts a [p2p.Switch], a list of ChainIDs and an optional list of channels.
+// Leave channels empty to register all reactor's channels.
+func (reactor *Reactor) AddConnectionChannels(
+	sw *p2p.Switch,
+	chainIds []string,
+	channels []byte,
+) error {
+	sw.Peers().ForEach(func(peer p2p.Peer) {
+		mconn := peer.MConn()
+
+		for _, chainID := range chainIds {
+			for name, r := range sw.Reactors(chainID) {
+				for _, chDesc := range r.GetChannels() {
+					if len(channels) > 0 && !slices.Contains(channels, chDesc.ID) {
+						continue
+					}
+
+					// TODO(midas): remove debug logs
+					reactor.logger.Debug("Adding connection channel",
+						"chain_id", chainID,
+						"reactor", name,
+						"chID", chDesc.ID,
+						"peer", peer.SocketAddr().String(),
+					)
+
+					mconn.AddChannel(chainID, *chDesc)
+				}
+			}
+		}
+	})
+
 	return nil
 }
