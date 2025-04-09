@@ -607,8 +607,12 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 	relaysPerTx = map[string][]string{}
 	numReceived = 0
 
+	maxAcceptMsgs := numRelays * numTransactions
 	asyncResultsCh := make(chan AckTransactionResult, 1)
 	shutdownWaitCh := make(chan struct{}, 1)
+
+	// Resets the ack channel to expect the correct number of Acks.
+	b.remoteRelayTxCh = make(chan string, maxAcceptMsgs)
 
 	// Collects AckTransactionBroadcast messages and proxy to remoteRelayTxCh.
 	// Stopped on shutdownWaitCh. And we consume asyncResultsCh before end.
@@ -616,7 +620,6 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 
 	// Collects remoteRelayTxCh messages and create result object.
 	// Stopped shutdownWaitCh. And we consume asyncResultsCh before end.
-	maxAcceptMsgs := numRelays * numTransactions
 	go b.localAckTransactionConsumer(ctx, maxAcceptMsgs, asyncResultsCh, shutdownWaitCh)
 
 	defer func() {

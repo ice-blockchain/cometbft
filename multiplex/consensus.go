@@ -298,24 +298,32 @@ func (reactor *Reactor) StartConsensusInstanceReactors(
 	consensusReactor := servicesProvider(ServiceKeyConsensusReactor, chainID).(*cs.Reactor)
 	evidenceReactor := servicesProvider(ServiceKeyEvidenceReactor, chainID).(*evidence.Reactor)
 
-	if err := mempoolReactor.Start(); err != nil {
-		return fmt.Errorf(
-			"error starting mempool reactor: %w", err)
+	if !mempoolReactor.IsRunning() {
+		if err := mempoolReactor.Start(); err != nil {
+			return fmt.Errorf(
+				"error starting mempool reactor: %w", err)
+		}
 	}
 
-	if err := blocksyncReactor.Start(); err != nil {
-		return fmt.Errorf(
-			"error starting blocksync reactor: %w", err)
+	if !blocksyncReactor.IsRunning() {
+		if err := blocksyncReactor.Start(); err != nil {
+			return fmt.Errorf(
+				"error starting blocksync reactor: %w", err)
+		}
 	}
 
-	if err := consensusReactor.Start(); err != nil {
-		return fmt.Errorf(
-			"error starting consensus reactor: %w", err)
+	if !consensusReactor.IsRunning() {
+		if err := consensusReactor.Start(); err != nil {
+			return fmt.Errorf(
+				"error starting consensus reactor: %w", err)
+		}
 	}
 
-	if err := evidenceReactor.Start(); err != nil {
-		return fmt.Errorf(
-			"error starting evidence reactor: %w", err)
+	if !evidenceReactor.IsRunning() {
+		if err := evidenceReactor.Start(); err != nil {
+			return fmt.Errorf(
+				"error starting evidence reactor: %w", err)
+		}
 	}
 
 	return nil
