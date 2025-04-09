@@ -49,16 +49,12 @@ type NetworksCreatorFn func(
 // goroutine and which should broadcast all transactions to relays.
 //
 // A [StatusNotifier] instance contains a channel used to transmit errors.
-// Also a string channel instance is accepted as relayAcceptTxCh where
-// transaction hashes are pushed when a transaction has been accepted by at
-// least 50%+1 of the healthy (currently active) relays.
 type RelaysBroadcastFn func(
 	context.Context,
 	map[string][]*RelayAddress,
 	string,
 	[]client.Transaction,
 	client.Notifier,
-	chan<- string, // relayAcceptTxCh
 )
 
 // CancelBroadcastFn describes a function that may be run on a separate

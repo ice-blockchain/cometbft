@@ -288,7 +288,7 @@ func (c MultiplexClient) BroadcastTx(
 			"chain_id", chainID,
 			"num_relays", numCatchupRelays)
 
-		// The reactor communicates the relay ID in a ChainReplicationResponse.
+		// The recipient sends the relay ID in a ChainReplicationResponse.
 		// Waits internally until this ChainID has been acknowledged by relays.
 		responseRelayIds,
 			replErr := c.GetBackend().WaitForRelaysReplResponse(ctx, numCatchupRelays)
@@ -341,7 +341,6 @@ func (c MultiplexClient) BroadcastTx(
 		userAddress,
 		transactions,
 		c.notifier,
-		c.backend.GetRelayAcceptTxCh(),
 	)
 
 	// ------------------------------------------------------------------------
@@ -358,8 +357,12 @@ func (c MultiplexClient) BroadcastTx(
 	// The RelaysBroadcast routine communicates the tx hash on a
 	// channel to tell this broadcaster about the acceptance of the
 	// transaction by our own mempool.
-	numAcceptsByTxHash,
-		acceptErr := c.GetBackend().WaitForRelaysTxAcceptance(ctx, numHealthyRelays, len(transactions))
+	relaysPerTx,
+		totalAckReceived,
+		acceptErr := c.GetBackend().WaitForRelaysAckTransactionBatch(ctx,
+		numHealthyRelays,
+		len(transactions),
+	)
 	if acceptErr != nil {
 		c.backend.GetLogger().Error(
 			"error waiting for relays acceptance", "err", acceptErr.Error())
@@ -367,16 +370,24 @@ func (c MultiplexClient) BroadcastTx(
 		return // STOP here
 	}
 
-	// Inform about the readiness of transaction acceptance
-	c.backend.GetLogger().Info("Relays accepted transactions",
-		"num_relays", numHealthyRelays,
-		"num_txes", len(transactions))
+	if totalAckReceived >= numHealthyRelays*len(transactions) {
+		// Inform about the readiness of transaction acceptance
+		c.backend.GetLogger().Info("Relays accepted transactions",
+			"num_relays", numHealthyRelays,
+			"num_txes", len(transactions))
+	} else {
+		// Just log for now, inform will be more precise in loop
+		c.backend.GetLogger().Error("Relays did not accept transactions",
+			"num_acks", totalAckReceived,
+			"num_relays", numHealthyRelays,
+			"num_txes", len(transactions))
+	}
 
-	for txHash, numAccepts := range numAcceptsByTxHash {
-		if numAccepts < numHealthyRelays {
+	for txHash, ackedRelays := range relaysPerTx {
+		if len(ackedRelays) < numHealthyRelays {
 			c.notifier.Error(fmt.Errorf(
 				"missing relays acceptance for %s, expected %d, got %d",
-				txHash, numHealthyRelays, numAccepts))
+				txHash, numHealthyRelays, len(ackedRelays)))
 			return // STOP here
 		}
 
@@ -402,7 +413,8 @@ func (c MultiplexClient) BroadcastTx(
 
 	// TODO(midas): remove debug logs
 	c.backend.GetLogger().Debug("Transaction batch was successfully broadcast",
-		"num_accepted", len(acceptedTxHashes))
+		"num_accepted", len(acceptedTxHashes),
+		"num_relays", numHealthyRelays)
 
 	// Done, notify about succeeded broadcast (nil error)
 	c.notifier.Success(acceptedTxHashes)

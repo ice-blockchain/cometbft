@@ -41,7 +41,7 @@ func TestMultiplexReactorPrepareConsensusInstanceWithReactor(t *testing.T) {
 	abciClient := proxy.NewMultiplexAppConn(
 		reactor.GetNetworks(),
 		proxy.DefaultClientCreator(globalCfg.ProxyApp, globalCfg.ABCI, globalCfg.DBDir()),
-		proxy.PrometheusMetrics(globalCfg.Instrumentation.Namespace),
+		proxy.PrometheusMetrics(globalCfg.Instrumentation.Namespace+"_"+string(reactor.GetNodeKey().ID())),
 	)
 	abciClient.SetLogger(cmtlog.NewNopLogger())
 	err = abciClient.Start()

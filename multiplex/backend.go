@@ -88,6 +88,7 @@ type MultiplexBackend struct {
 	// This channel is used to communicate the tx hash of a transaction
 	// that has been accepted by our own mempool AND by a relays' mempool.
 	relayAcceptTxCh chan string
+	remoteRelayTxCh chan string
 
 	// Internals
 	logger   cmtlog.Logger
@@ -107,6 +108,23 @@ func WithMetrics(metrics *Metrics) func(*MultiplexBackend) {
 	return func(b *MultiplexBackend) {
 		b.metrics = metrics
 	}
+}
+
+// WithLogger is an option helper to inject a custom backend logger.
+func WithLogger(
+	logger cmtlog.Logger,
+) func(*MultiplexBackend) {
+	return func(b *MultiplexBackend) {
+		b.logger = logger
+	}
+}
+
+// AckTransactionResult describes a remote transaction receipt.
+type AckTransactionResult struct {
+	totalReceived int
+	relaysPerTxes map[string][]string
+
+	err error
 }
 
 // NewServer initializes a new [MultiplexBackend] around an empty multiplex
@@ -167,6 +185,11 @@ func NewServer(
 // GetLogger returns the [cmtlog.Logger] property.
 func (b *MultiplexBackend) GetLogger() cmtlog.Logger {
 	return b.logger
+}
+
+// SetLogger sets a custom [cmtlog.Logger].
+func (b *MultiplexBackend) SetLogger(logger cmtlog.Logger) {
+	b.logger = logger
 }
 
 // GetAcceptor returns the injected [client.Acceptor] implementation.
@@ -319,14 +342,16 @@ func (b *MultiplexBackend) UpdateAvailableNetworks(networks []string) []string {
 		for _, chainID := range b.multiNodeInfo.Networks {
 			for name, reactor := range b.reactor.discoverySwitch.Reactors(chainID) {
 				for _, chDesc := range reactor.GetChannels() {
-					// TODO(midas): remove debug logs
-					b.logger.Debug("Adding connection channel (discovery)",
-						"chain_id", chainID,
-						"reactor", name,
-						"chID", chDesc.ID,
-					)
+					if chDesc.ID == server.ReplicationChannel {
+						// TODO(midas): remove debug logs
+						b.logger.Debug("Adding connection channel (discovery)",
+							"chain_id", chainID,
+							"reactor", name,
+							"chID", chDesc.ID,
+						)
 
-					mconn.AddChannel(chainID, *chDesc)
+						mconn.AddChannel(chainID, *chDesc)
+					}
 				}
 			}
 		}
@@ -389,6 +414,7 @@ func (b *MultiplexBackend) MustStart() {
 	// Starting a node backend starts internal channels
 	b.newChainReadyCh = make(chan string)
 	b.relayAcceptTxCh = make(chan string)
+	b.remoteRelayTxCh = make(chan string)
 	b.replRequestsSent = map[string][]string{}
 
 	go b.metricsReporter()
@@ -516,6 +542,10 @@ func (b *MultiplexBackend) Close() error {
 		close(b.newChainReadyCh)
 	}
 
+	if b.remoteRelayTxCh != nil {
+		close(b.remoteRelayTxCh)
+	}
+
 	if b.relayAcceptTxCh != nil {
 		close(b.relayAcceptTxCh)
 	}
@@ -557,6 +587,9 @@ func (b *MultiplexBackend) WaitForRelayReplResponse(
 ) (string, error) {
 	select {
 	case res := <-b.reactor.ackReplResCh:
+		b.logger.Debug("[ChainReplicationResponse] Relay responded to ChainReplicationRequest",
+			"relay_id", res.NodeId,
+		)
 		return res.NodeId, nil
 
 	case <-ctx.Done():
@@ -587,57 +620,40 @@ func (b *MultiplexBackend) WaitForRelaysReplResponse(
 	return responsePeers, nil
 }
 
-// WaitForRelayAckTransaction waits for a *remote* relay to acknowledge
-// a transaction broadcast operation and reads a message from the internal
-// ackTxAcceptCh channel.
-// Use this method to wait for a transaction to be accepted *remotely*.
-// WaitForRelayAckTransaction implements [server.Backend].
-func (b *MultiplexBackend) WaitForRelayAckTransaction(
-	ctx context.Context,
-) error {
-	// Blocks until a AckTransactionBroadcast was received.
-	select {
-	case ackResponse := <-b.reactor.ackTxAcceptCh:
-		for _, txHash := range ackResponse.TxHashes {
-			b.relayAcceptTxCh <- fmt.Sprintf("%X", txHash)
-		}
-
-	case <-ctx.Done():
-		return errors.New(
-			"process timed out waiting for relay replication")
-	}
-
-	return nil
-}
-
-// WaitForRelaysTxAcceptance waits for all relays to accept a transaction
-// the internal relayAcceptTxCh channel and returns a number of acceptance
-// message intercepted by transaction hash.
-// WaitForRelaysTxAcceptance implements [server.Backend].
-func (b *MultiplexBackend) WaitForRelaysTxAcceptance(
+// WaitForRelaysAckTransactionBatch waits for a number of healthy relays
+// to ack a complete transaction batch. For this we use a combination of
+// the reactor's `ackTxAcceptCh` which receives updates upon processing
+// AckTransactionBroadcast messages from peers, and the `remoteRelayTxCh`
+// channel to process the messages into a relay ID and transaction hash.
+//
+// WaitForRelaysAckTransactionBatch implements [server.Backend].
+func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 	ctx context.Context,
 	numRelays int,
 	numTransactions int,
-) (map[string]int, error) {
-	acceptsPerTxHash := map[string]int{}
+) (relaysPerTx map[string][]string, numReceived int, err error) {
+	relaysPerTx = map[string][]string{}
+	numReceived = 0
 
-	// Every relay must accept once per transaction.
-	for i := 0; i < numRelays*numTransactions; i++ {
-		select {
-		case txHash := <-b.relayAcceptTxCh:
-			if _, ok := acceptsPerTxHash[txHash]; !ok {
-				acceptsPerTxHash[txHash] = 1
-			} else {
-				acceptsPerTxHash[txHash]++
-			}
+	asyncResultsCh := make(chan AckTransactionResult, 1)
+	shutdownWaitCh := make(chan struct{}, 1)
 
-		case <-ctx.Done():
-			return map[string]int{}, errors.New(
-				"process timed out waiting for relay acceptance")
-		}
-	}
+	// Collects AckTransactionBroadcast messages and proxy to remoteRelayTxCh.
+	// Stopped on shutdownWaitCh. And we consume asyncResultsCh before end.
+	go b.remoteAckTransactionConsumer(ctx, asyncResultsCh, shutdownWaitCh)
 
-	return acceptsPerTxHash, nil
+	// Collects remoteRelayTxCh messages and create result object.
+	// Stopped shutdownWaitCh. And we consume asyncResultsCh before end.
+	maxAcceptMsgs := numRelays * numTransactions
+	go b.localAckTransactionConsumer(ctx, maxAcceptMsgs, asyncResultsCh, shutdownWaitCh)
+
+	defer func() {
+		shutdownWaitCh <- struct{}{}
+	}()
+
+	// Waits until we have any kind of result.
+	results := <-asyncResultsCh
+	return results.relaysPerTxes, results.totalReceived, results.err
 }
 
 // getLocalNetworkHeights finds out about the last block height and determines
@@ -799,7 +815,8 @@ func (b *MultiplexBackend) CheckDialCompatibleRelay(
 
 	// (2)
 	// We also dial the CometBFT P2P address to make sure
-	// communication with this relay is possible for blocksync.
+	// communication with this relay is possible using mempool.
+	// This also enables a faster blocksync startup process.
 
 	relayCometBFT, err := relayAddr.NetAddressForCometBFT()
 	if err != nil {
@@ -827,10 +844,17 @@ func (b *MultiplexBackend) ApplyFilterReplRequestRelays(
 	relays []*server.RelayAddress,
 	chainRelays map[string][]*server.RelayAddress,
 ) map[string][]*server.RelayAddress {
+	relaysWithoutSelf := []*server.RelayAddress{}
+	for _, relayAddr := range relays {
+		if relayAddr.ID() != b.reactor.nodeKey.ID() {
+			relaysWithoutSelf = append(relaysWithoutSelf, relayAddr)
+		}
+	}
+
 	catchupRelays := map[string][]*server.RelayAddress{}
 	for chainID, relaysByChain := range chainRelays {
 		// Did all relays report to know this ChainID?
-		if len(relaysByChain) == len(relays) {
+		if len(relaysByChain) >= len(relaysWithoutSelf) {
 			catchupRelays[chainID] = nil
 			continue
 		}
@@ -838,12 +862,14 @@ func (b *MultiplexBackend) ApplyFilterReplRequestRelays(
 		// Build a (searchable) slice of relay IDs
 		relayIdsByChain := []string{}
 		for _, relayAddr := range relaysByChain {
-			relayIdsByChain = append(relayIdsByChain, string(relayAddr.ID()))
+			if relayAddr.ID() != b.reactor.nodeKey.ID() {
+				relayIdsByChain = append(relayIdsByChain, string(relayAddr.ID()))
+			}
 		}
 
 		// Find out which relays are missing for this chain.
 		// Those are relays that need to catchup with the chain.
-		for _, relayAddr := range relays {
+		for _, relayAddr := range relaysWithoutSelf {
 			if !slices.Contains(relayIdsByChain, string(relayAddr.ID())) {
 				catchupRelays[chainID] = append(catchupRelays[chainID], relayAddr)
 			}
@@ -853,7 +879,7 @@ func (b *MultiplexBackend) ApplyFilterReplRequestRelays(
 	// Handling case when chainRelays is empty (0 networks on remote relays).
 	for _, chainID := range requiredNetworks {
 		if _, has := catchupRelays[chainID]; !has {
-			catchupRelays[chainID] = append(catchupRelays[chainID], relays...)
+			catchupRelays[chainID] = append(catchupRelays[chainID], relaysWithoutSelf...)
 		}
 	}
 
@@ -1031,7 +1057,7 @@ func (b *MultiplexBackend) StartRPCServerDiscovery(
 	rpcConf.MaxOpenConnections = nodeRpc.MaxOpenConnections
 
 	mux := http.NewServeMux()
-	rpcLogger := b.reactor.logger.With("module", "rpc-server")
+	rpcLogger := b.logger.With("module", "rpc-server")
 
 	// Enabled procedures:
 	// - "info": POST /info to retrieve RelayInfo.
@@ -1340,8 +1366,8 @@ func (b *MultiplexBackend) StartNodeInstances() error {
 		// Calls the Start method on the node.Node instance.
 		// This goroutine produces a panic in case of errors.
 		go func(network string, n *node.Node) {
-			b.reactor.logger.Info("Starting new node", "chain_id", network)
-			b.reactor.logger.Info("Using custom listen addresses",
+			b.logger.Info("Starting new node", "chain_id", network)
+			b.logger.Info("Using custom listen addresses",
 				"p2p", n.Config().P2P.ListenAddress,
 				"rpc", n.Config().RPC.ListenAddress,
 			)
@@ -1350,7 +1376,7 @@ func (b *MultiplexBackend) StartNodeInstances() error {
 				panic(fmt.Errorf("failed to start node: %w", err))
 			}
 
-			b.reactor.logger.Info("Started node",
+			b.logger.Info("Started node",
 				"chain_id", network,
 				"nodeInfo", n.Switch().NodeInfo(),
 			)
@@ -1382,7 +1408,7 @@ func (b *MultiplexBackend) StopNodeInstances() error {
 		// Calls the Stop method on the node.Node instance.
 		// This goroutine produces a panic in case of errors.
 		go func(network string, n *node.Node) {
-			b.reactor.logger.Info("Stopping node runtime", "chain_id", network)
+			b.logger.Info("Stopping node runtime", "chain_id", network)
 
 			if n.IsRunning() {
 				if err := n.Stop(); err != nil {
@@ -1391,7 +1417,7 @@ func (b *MultiplexBackend) StopNodeInstances() error {
 			}
 
 			wg.Done()
-			b.reactor.logger.Info("Stopped node runtime", "chain_id", network)
+			b.logger.Info("Stopped node runtime", "chain_id", network)
 		}(chainID, runNode)
 	}
 
@@ -1399,6 +1425,109 @@ func (b *MultiplexBackend) StopNodeInstances() error {
 	wg.Wait()
 
 	return nil
+}
+
+// remoteAckTransactionConsumer reacts to AckTransactionBroadcast messages.
+// Consumes AckTransactionBroadcast messages and proxies to remoteRelayTxCh
+// in a message formatted to contain relay ID and tx hash.
+func (b *MultiplexBackend) remoteAckTransactionConsumer(
+	ctx context.Context,
+	resultsCh chan AckTransactionResult,
+	shutdownCh chan struct{},
+) {
+	for {
+		select {
+		// Note: AckTransactionBroadcast always contains exactly one tx hash
+		// because the remote mempool processes one transaction at a time.
+		case ackResponse := <-b.reactor.ackTxAcceptCh:
+			relayId := ackResponse.NodeId
+			txHash := fmt.Sprintf("%X", ackResponse.TxHashes[0])
+			acceptMsg := fmt.Sprintf("%s:%s", relayId, txHash)
+
+			b.logger.Debug("[remoteAckTransaction] Relay received a transaction",
+				"relay_id", relayId,
+				"tx_hash", txHash,
+			)
+
+			b.remoteRelayTxCh <- acceptMsg
+
+		case <-ctx.Done():
+			err := errors.New(
+				"process timed out waiting for relay replication")
+
+			resultsCh <- AckTransactionResult{err: err}
+			return
+
+		case <-b.reactor.Quit():
+		case <-shutdownCh:
+			return
+		}
+	}
+}
+
+// localAckTransactionConsumer reacts to internal updates on remoteRelayTxCh,
+// which are issued after parsing a AckTransactionBroadcast message in method
+// remoteAckTransactionConsumer.
+// Collects remoteRelayTxCh messages and creates a result object.
+// The resultsCh channel is used in case of cancellation of the context.
+func (b *MultiplexBackend) localAckTransactionConsumer(
+	ctx context.Context,
+	maxAcceptMsgs int,
+	resultsCh chan AckTransactionResult,
+	shutdownCh chan struct{},
+) {
+	relaysPerTx := map[string][]string{}
+	numReceived := 0
+
+	for {
+		select {
+		// Note: acceptTxMsg contains one relay ID and one tx hash.
+		case acceptTxMsg := <-b.remoteRelayTxCh:
+			parts := strings.Split(acceptTxMsg, ":")
+			if len(parts) != 2 {
+				err := fmt.Errorf(
+					"could not parse ack transaction message: '%s'", acceptTxMsg)
+
+				resultsCh <- AckTransactionResult{err: err}
+				return
+			}
+
+			relayId, txHash := parts[0], parts[1]
+
+			b.logger.Debug("[localTransactionAccept] Processing incoming ack",
+				"relay_id", relayId,
+				"tx_hash", txHash,
+			)
+
+			if _, ok := relaysPerTx[txHash]; !ok {
+				relaysPerTx[txHash] = []string{}
+			}
+
+			if !slices.Contains(relaysPerTx[txHash], relayId) {
+				relaysPerTx[txHash] = append(relaysPerTx[txHash], relayId)
+				numReceived++
+			}
+
+			if numReceived >= maxAcceptMsgs {
+				resultsCh <- AckTransactionResult{
+					totalReceived: numReceived,
+					relaysPerTxes: relaysPerTx,
+				}
+				return
+			}
+
+		case <-ctx.Done():
+			err := errors.New(
+				"process timed out waiting for relay replication")
+
+			resultsCh <- AckTransactionResult{err: err}
+			return
+
+		case <-b.reactor.Quit():
+		case <-shutdownCh:
+			return
+		}
+	}
 }
 
 // metricsReporter runs a reporter every metricsTickerDuration until

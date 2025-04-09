@@ -187,6 +187,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 			reactor.acceptorImpl,
 		),
 		mempl.WithChainID(chainID),
+		mempl.WithNodeKey(reactor.nodeKey),
 	)
 	if cfgOverwrite.Consensus.WaitForTxs() {
 		mempool.EnableTxsAvailable()

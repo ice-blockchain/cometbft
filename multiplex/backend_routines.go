@@ -206,7 +206,6 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 		userAddress string,
 		transactions []client.Transaction,
 		notifierImpl client.Notifier,
-		relayAcceptTxCh chan<- string,
 	) {
 		broadcastTxHashes := make([][]byte, len(transactions))
 
@@ -226,7 +225,6 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 			// Broadcast must happen only if there is at least one healthy relay.
 			// For NEW networks, we don't need to broadcast to other relays.
 			if _, ok := relaysByChain[chainID]; !ok {
-				relayAcceptTxCh <- txHash
 				continue // Do not broadcast to relays
 			}
 
@@ -246,14 +244,14 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 			)
 
 			// Waits to make sure we reached enough of the healthy relays.
-			ackWg := sync.WaitGroup{}
-			ackWg.Add(eventsSwitch.Peers().Size())
+			sentWg := sync.WaitGroup{}
+			sentWg.Add(eventsSwitch.Peers().Size())
 
 			// Broadcast the transaction to all healthy relays.
 			poolRequestPeers := []string{}
 			relaysAccepted := 0
 			eventsSwitch.Peers().ForEach(func(peer p2p.Peer) {
-				defer ackWg.Done()
+				defer sentWg.Done()
 
 				// Send only to relays we are interested in (healthy relays).
 				// Skip unhealthy relays because they would produce an error.
@@ -276,21 +274,10 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 					ChannelID: mempl.MempoolChannel,
 					Message:   &memp2p.Txs{Txs: [][]byte{rawTx}},
 				}); !success {
-					b.logger.Error("count not send message on mempool channel",
+					b.logger.Error("could not send message on mempool channel",
 						"chain_id", chainID,
 						"tx_hash", txHash,
 						"peer", peerID,
-					)
-					return
-				}
-
-				if err := b.WaitForRelayAckTransaction(ctx); err != nil {
-					// At least one healthy relay is not acknowledging the broadcast.
-					b.logger.Error("relay did not acknowledge transaction",
-						"chain_id", chainID,
-						"tx_hash", txHash,
-						"peer", peerID,
-						"err", err.Error(),
 					)
 					return
 				}
@@ -300,12 +287,21 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 			})
 
 			// Waits to process all healthy relays' acknowledgments.
-			ackWg.Wait()
+			sentWg.Wait()
 			b.poolRequestsSent[chainID] = poolRequestPeers
 
 			// We require healthy relays to accept this broadcast.
 			if relaysAccepted >= minHealthyRelays {
-				relayAcceptTxCh <- txHash
+				// TODO(midas): remove debug logs
+				b.logger.Debug("Done broadcasting to remote mempools",
+					"num_relays", relaysAccepted,
+					"tx_hash", txHash,
+				)
+
+				rawTxHashBytes := rawTx.Hash()
+				broadcastTxHashes[i] = make([]byte, len(rawTxHashBytes))
+				copy(broadcastTxHashes[i], rawTxHashBytes)
+				continue
 			} else {
 				// Otherwise broadcast a rollback operation if some of the healthy
 				// relays already added this transaction to their mempool.
@@ -331,14 +327,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 					"other relays failed to accept transaction %s", txHash))
 				return // terminates the process
 			}
-
-			rawTxHashBytes := rawTx.Hash()
-			broadcastTxHashes[i] = make([]byte, len(rawTxHashBytes))
-			copy(broadcastTxHashes[i], rawTxHashBytes)
 		}
-
-		// Done, notify about succeeded broadcast (nil error)
-		notifierImpl.Success(broadcastTxHashes)
 	}
 }
 

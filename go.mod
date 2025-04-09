@@ -1,6 +1,6 @@
 module github.com/ice-blockchain/cometbft
 
-go 1.23.1
+go 1.24.2
 
 require (
 	github.com/BurntSushi/toml v1.4.0

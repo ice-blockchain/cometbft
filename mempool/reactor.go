@@ -37,6 +37,7 @@ type Reactor struct {
 	activeNonPersistentPeersSemaphore *semaphore.Weighted
 
 	// Inject custom transaction verification with an acceptor implementation.
+	nodeKey     *p2p.NodeKey
 	txAcceptor  client.Acceptor
 	userAddress string
 	ChainID     string // Exported.
@@ -89,6 +90,15 @@ func WithChainID(
 ) func(*Reactor) {
 	return func(r *Reactor) {
 		r.ChainID = chainID
+	}
+}
+
+// WithNodeKey is an option helper to inject a custom ChainID.
+func WithNodeKey(
+	nodeKey *p2p.NodeKey,
+) func(*Reactor) {
+	return func(r *Reactor) {
+		r.nodeKey = nodeKey
 	}
 }
 
@@ -435,12 +445,19 @@ func (memR *Reactor) sendAckTransactionBroadcast(
 		txHashes = append(txHashes, memTx.Hash())
 	}
 
+	myPeerID := "unknown"
+	if memR.nodeKey != nil {
+		myPeerID = string(memR.nodeKey.ID())
+	}
+
 	peer.Send(memR.ChainID, p2p.Envelope{
 		ChannelID: server.AckBroadcastChannel,
 		Message: &mxp2p.Receipt{
 			Sum: &mxp2p.Receipt_AckTransactionBroadcast{
 				AckTransactionBroadcast: &mxp2p.AckTransactionBroadcast{
 					TxHashes: txHashes,
+					NodeId:   myPeerID,
+					ChainID:  memR.ChainID,
 				},
 			},
 		},

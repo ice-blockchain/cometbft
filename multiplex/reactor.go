@@ -632,9 +632,9 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 		// ChainReplicationResponse
 		// Received a receipt of replication from one of the relays.
 		case *mxp2p.Message_ChainReplicationResponse:
-			r.logger.Debug("Now processing ChainReplicationResponse", "msg", msg)
+			// r.logger.Debug("Now processing ChainReplicationResponse", "msg", msg)
 			replResponse := extMsg.GetChainReplicationResponse()
-			r.logger.Debug("[ACK] Relay received replication request",
+			r.logger.Debug("[ChainReplicationResponse] Relay received replication request",
 				"chain_id", replResponse.ChainID,
 				"relay_id", replResponse.NodeId,
 			)
@@ -659,10 +659,17 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 		// AckTransactionBroadcast
 		// Received a receipt of relay mempool inclusion for a transaction hash.
 		case *mxp2p.Receipt_AckTransactionBroadcast:
-			r.logger.Debug("Now processing AckTransactionBroadcast", "msg", msg)
+			// r.logger.Debug("Now processing AckTransactionBroadcast", "msg", msg)
 			ackTxBroadcast := extMsg.GetAckTransactionBroadcast()
-			r.logger.Debug("[ACK] Relay received the transaction batch",
-				"num_txs", len(ackTxBroadcast.TxHashes),
+			txHashes := []string{}
+			for _, bzHash := range ackTxBroadcast.TxHashes {
+				txHashes = append(txHashes, fmt.Sprintf("%X", bzHash))
+			}
+
+			r.logger.Debug("[AckTransactionBroadcast] Relay received a transaction",
+				"num_txs", len(txHashes),
+				"relay_id", ackTxBroadcast.NodeId,
+				"txes", txHashes,
 			)
 
 			r.ackTxAcceptCh <- ackTxBroadcast
@@ -852,6 +859,19 @@ func (reactor *Reactor) OnStop() {
 			}
 		}
 		reactor.multiplexMutex.RUnlock()
+	}
+
+	// and close local channels
+	if reactor.chainReadyCh != nil {
+		close(reactor.chainReadyCh)
+	}
+
+	if reactor.ackReplResCh != nil {
+		close(reactor.ackReplResCh)
+	}
+
+	if reactor.ackTxAcceptCh != nil {
+		close(reactor.ackTxAcceptCh)
 	}
 }
 

@@ -1,6 +1,8 @@
 package multiplex_test
 
 import (
+	"context"
+	"fmt"
 	"math/rand"
 	"net/http"
 	"os"
@@ -14,6 +16,7 @@ import (
 
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	mx "github.com/ice-blockchain/cometbft/multiplex"
+	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/node"
 	sm "github.com/ice-blockchain/cometbft/state"
 )
@@ -89,7 +92,7 @@ func broadcastRawTxes(
 	wg.Wait()
 }
 
-func TestScenarioSevenHealthyRelays(t *testing.T) {
+func TestScenarioServerBroadcastSevenHealthyRelays(t *testing.T) {
 	numChains := 1
 	numRelays := 7
 
@@ -204,4 +207,142 @@ func TestScenarioSevenHealthyRelays(t *testing.T) {
 
 	// And also wait for enough blocks to be produced
 	wgBlocks.Wait()
+}
+
+func TestScenarioClientBroadcastSevenHealthyRelaysClientBroadcast(t *testing.T) {
+	numChains := 1
+	numRelays := 7
+
+	// For debug, change the loggers to cmtlog.TestingLogger()
+	loggerRelay1 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
+	loggerRelay2 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-2")
+	loggerRelay3 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-3")
+	loggerRelay4 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-4")
+	loggerRelay5 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-5")
+	loggerRelay6 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-6")
+	loggerRelay7 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-7")
+
+	// Uses config.TestConfig() and random MultiplexConfig
+	rootDirs,
+		servers := ResetTestMultiplexBackendCompatibleRelays(
+		t,
+		numChains,
+		numRelays,
+		loggerRelay1,
+		loggerRelay2,
+		loggerRelay3,
+		loggerRelay4,
+		loggerRelay5,
+		loggerRelay6,
+		loggerRelay7,
+	)
+	require.NotEmpty(t, servers)
+	require.Len(t, rootDirs, numRelays)
+	require.Len(t, servers, numRelays)
+
+	defer func() {
+		for i := 0; i < len(servers); i++ {
+			defer os.RemoveAll(rootDirs[i])
+
+			if servers[i] != nil {
+				err := servers[i].Close()
+				assert.NoError(t, err, "should shutdown server at index: "+strconv.Itoa(i))
+			}
+		}
+	}()
+
+	// Start the node backends
+	for i := 0; i < len(servers); i++ {
+		servers[i].MustStart()
+	}
+
+	// Give the backend some time before broadcast
+	// 5 seconds is long but bearable for a 7 relays setup.
+	time.Sleep(5 * time.Second)
+
+	// Prepare the data that we shall broadcast
+	relaysAddresses := []string{}
+	for i := 1; i < len(servers); i++ {
+		relaysAddresses = append(relaysAddresses, servers[i].GetListenAddress())
+	}
+
+	testChainID := servers[0].GetNetworks()[0]
+	chainInfo, err := mx.NewExtendedChainIDFromLegacy(testChainID)
+	require.NoError(t, err, "should create correctly formatted ChainID")
+
+	testUserAddress := chainInfo.GetUserAddress()
+	testFingerprint := chainInfo.GetFingerprint()
+	testTransactions := []client.Transaction{
+		client.Transaction{Data: []byte{1, 2, 3}, Fingerprint: testFingerprint},
+		client.Transaction{Data: []byte{4, 5, 6}, Fingerprint: testFingerprint},
+	}
+
+	// Set a custom logger to log all backend messages
+	servers[0].SetLogger(cmtlog.TestingLogger().With("process", "relay-1"))
+
+	// Cancelable context to permit stopping by timeout
+	ctx, cancelCtxFn := context.WithTimeout(context.TODO(), 20*time.Second)
+	defer cancelCtxFn()
+
+	// Separate goroutine for client broadcast process
+	notifyCh := make(chan client.BroadcastStatus)
+	go func() {
+		t.Log("Initializing broadcast goroutine")
+
+		multiplexClient := mx.NewClient(
+			mx.WithBackend(servers[0]),
+			mx.WithNotifier(&client.StatusNotifier{}),
+		)
+
+		t.Log("Sending call to BroadcastTx")
+
+		multiplexClient.BroadcastTx(ctx,
+			testUserAddress,
+			relaysAddresses,
+			notifyCh,
+			testTransactions...,
+		)
+
+		t.Log("Finalizing broadcast goroutine")
+	}()
+
+	t.Log("Waiting for BroadcastStatus update from client")
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+
+	resultStatusMsg := client.BroadcastStatus{}
+
+	// Expects a BroadcastStatus update, or timeout after 30s.
+	go func(status *client.BroadcastStatus) {
+		defer wg.Done()
+
+		for {
+			select {
+			case *status = <-notifyCh:
+				return
+
+			case <-ctx.Done():
+				t.Error("Timed out waiting for broadcast status")
+				return // cancels context
+			}
+		}
+	}(&resultStatusMsg)
+
+	// Waits for a status update or timeout
+	wg.Wait()
+
+	txHashes := []string{}
+	for _, bzHash := range resultStatusMsg.TxHashes {
+		txHashes = append(txHashes, fmt.Sprintf("%X", bzHash))
+	}
+
+	t.Logf("Status from BroadcastTx: <%d, %s, %v>",
+		len(txHashes),
+		txHashes,
+		resultStatusMsg.Error)
+
+	assert.NotNil(t, resultStatusMsg)
+	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
+	assert.Len(t, resultStatusMsg.TxHashes, len(testTransactions))
 }
