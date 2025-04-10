@@ -215,7 +215,8 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 		// (1)
 		// First dial the CometBFT P2P addresses to make sure
 		// communication with this relay is possible using mempool.
-		for _, relays := range relaysByChain {
+		minRelaysByChain := make(map[string]int, len(relaysByChain))
+		for chainID, relays := range relaysByChain {
 			relaysWithoutSelf := []*server.RelayAddress{}
 			for _, relayAddr := range relays {
 				if relayAddr.ID() != b.reactor.nodeKey.ID() {
@@ -240,6 +241,8 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 					}
 				}
 			}
+
+			minRelaysByChain[chainID] = len(relaysWithoutSelf)
 		}
 
 		// (2)
@@ -260,7 +263,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 			}
 
 			// Force the execution of mempool broadcast to *all* healthy relays.
-			minHealthyRelays := len(relaysByChain[chainID])
+			minHealthyRelays := minRelaysByChain[chainID]
 			chainHealthyPeers := []string{}
 			for _, relayAddr := range relaysByChain[chainID] {
 				chainHealthyPeers = append(chainHealthyPeers, string(relayAddr.ID()))
