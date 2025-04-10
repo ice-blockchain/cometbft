@@ -25,6 +25,7 @@ func nullTxBroadcasterOverwrite(tb testing.TB, _ string, _ int) {
 	tb.Helper()
 }
 
+// Uses RPC Server to broadcast transactions.
 func txBroadcasterOverwrite(tb testing.TB, chainID string, numTxes int) {
 	tb.Helper()
 
@@ -37,6 +38,7 @@ func txBroadcasterOverwrite(tb testing.TB, chainID string, numTxes int) {
 	)
 }
 
+// Uses RPC Server to broadcast transactions.
 func broadcastRawTxes(
 	tb testing.TB,
 	networks []string,
@@ -92,47 +94,83 @@ func broadcastRawTxes(
 	wg.Wait()
 }
 
+// Uses MultiplexClient to broadcast transactions.
+func clientBroadcastTx(
+	tb testing.TB,
+	ctx context.Context,
+	server *mx.MultiplexBackend,
+	relays []string,
+	testChainID string,
+	numTransactions int,
+	notifyCh chan client.BroadcastStatus,
+) {
+	tb.Helper()
+
+	chainInfo, err := mx.NewExtendedChainIDFromLegacy(testChainID)
+	require.NoError(tb, err, "should create correctly formatted ChainID")
+
+	testTransactions := []client.Transaction{}
+	for i := 0; i < numTransactions; i++ {
+		testTransactions = append(testTransactions, client.Transaction{
+			Data:        []byte{byte(i), byte(i + 1), byte(i + 2)},
+			Fingerprint: chainInfo.GetFingerprint(),
+		})
+	}
+
+	multiplexClient := mx.NewClient(
+		mx.WithBackend(server),
+		mx.WithNotifier(&client.StatusNotifier{}),
+	)
+
+	multiplexClient.BroadcastTx(ctx,
+		chainInfo.GetUserAddress(),
+		relays,
+		notifyCh,
+		testTransactions...,
+	)
+}
+
+// Consumes messages on notifyCh and/or context cancellation.
+func waitForClientBroadcastStatus(
+	tb testing.TB,
+	ctx context.Context,
+	notifyCh chan client.BroadcastStatus,
+) client.BroadcastStatus {
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+
+	resultStatusMsg := client.BroadcastStatus{}
+
+	// Expects a BroadcastStatus update, or timeout after 30s.
+	go func(status *client.BroadcastStatus) {
+		defer wg.Done()
+
+		for {
+			select {
+			case *status = <-notifyCh:
+				return
+
+			case <-ctx.Done():
+				tb.Error("Timed out waiting for broadcast status")
+				return // cancels context
+			}
+		}
+	}(&resultStatusMsg)
+
+	// Waits for a status update or timeout
+	wg.Wait()
+	return resultStatusMsg
+}
+
 func TestScenarioServerBroadcastSevenHealthyRelays(t *testing.T) {
 	numChains := 1
 	numRelays := 7
 
-	// For debug, change the loggers to cmtlog.TestingLogger()
-	loggerRelay1 := cmtlog.TestingLogger().With("process", "relay-1")
-	loggerRelay2 := cmtlog.TestingLogger().With("process", "relay-2")
-	loggerRelay3 := cmtlog.TestingLogger().With("process", "relay-3")
-	loggerRelay4 := cmtlog.TestingLogger().With("process", "relay-4")
-	loggerRelay5 := cmtlog.TestingLogger().With("process", "relay-5")
-	loggerRelay6 := cmtlog.TestingLogger().With("process", "relay-6")
-	loggerRelay7 := cmtlog.TestingLogger().With("process", "relay-7")
+	servers, shutdownFn := ResetTestScenarioRelays(t, numChains, numRelays)
+	defer shutdownFn()
 
-	// Uses config.TestConfig() and random MultiplexConfig
-	rootDirs,
-		servers := ResetTestMultiplexBackendCompatibleRelays(
-		t,
-		numChains,
-		numRelays,
-		loggerRelay1,
-		loggerRelay2,
-		loggerRelay3,
-		loggerRelay4,
-		loggerRelay5,
-		loggerRelay6,
-		loggerRelay7,
-	)
 	require.NotEmpty(t, servers)
-	require.Len(t, rootDirs, numRelays)
 	require.Len(t, servers, numRelays)
-
-	defer func() {
-		for i := 0; i < len(servers); i++ {
-			defer os.RemoveAll(rootDirs[i])
-
-			if servers[i] != nil {
-				err := servers[i].Close()
-				assert.NoError(t, err, "should shutdown server at index: "+strconv.Itoa(i))
-			}
-		}
-	}()
 
 	// Start the node backends
 	for i := 0; i < len(servers); i++ {
@@ -209,47 +247,15 @@ func TestScenarioServerBroadcastSevenHealthyRelays(t *testing.T) {
 	wgBlocks.Wait()
 }
 
-func TestScenarioClientBroadcastSevenHealthyRelaysClientBroadcast(t *testing.T) {
+func TestScenarioClientBroadcastSevenHealthyRelays(t *testing.T) {
 	numChains := 1
 	numRelays := 7
 
-	// For debug, change the loggers to cmtlog.TestingLogger()
-	loggerRelay1 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
-	loggerRelay2 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-2")
-	loggerRelay3 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-3")
-	loggerRelay4 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-4")
-	loggerRelay5 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-5")
-	loggerRelay6 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-6")
-	loggerRelay7 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-7")
+	servers, shutdownFn := ResetTestScenarioRelays(t, numChains, numRelays)
+	defer shutdownFn()
 
-	// Uses config.TestConfig() and random MultiplexConfig
-	rootDirs,
-		servers := ResetTestMultiplexBackendCompatibleRelays(
-		t,
-		numChains,
-		numRelays,
-		loggerRelay1,
-		loggerRelay2,
-		loggerRelay3,
-		loggerRelay4,
-		loggerRelay5,
-		loggerRelay6,
-		loggerRelay7,
-	)
 	require.NotEmpty(t, servers)
-	require.Len(t, rootDirs, numRelays)
 	require.Len(t, servers, numRelays)
-
-	defer func() {
-		for i := 0; i < len(servers); i++ {
-			defer os.RemoveAll(rootDirs[i])
-
-			if servers[i] != nil {
-				err := servers[i].Close()
-				assert.NoError(t, err, "should shutdown server at index: "+strconv.Itoa(i))
-			}
-		}
-	}()
 
 	// Start the node backends
 	for i := 0; i < len(servers); i++ {
@@ -260,77 +266,40 @@ func TestScenarioClientBroadcastSevenHealthyRelaysClientBroadcast(t *testing.T) 
 	// 5 seconds is long but bearable for a 7 relays setup.
 	time.Sleep(5 * time.Second)
 
-	// Prepare the data that we shall broadcast
+	// Prepare the data that we shall broadcast (skip "self")
 	relaysAddresses := []string{}
 	for i := 1; i < len(servers); i++ {
 		relaysAddresses = append(relaysAddresses, servers[i].GetListenAddress())
 	}
 
-	testChainID := servers[0].GetNetworks()[0]
-	chainInfo, err := mx.NewExtendedChainIDFromLegacy(testChainID)
-	require.NoError(t, err, "should create correctly formatted ChainID")
-
-	testUserAddress := chainInfo.GetUserAddress()
-	testFingerprint := chainInfo.GetFingerprint()
-	testTransactions := []client.Transaction{
-		client.Transaction{Data: []byte{1, 2, 3}, Fingerprint: testFingerprint},
-		client.Transaction{Data: []byte{4, 5, 6}, Fingerprint: testFingerprint},
-	}
-
 	// Set a custom logger to log all backend messages
-	servers[0].SetLogger(cmtlog.TestingLogger().With("process", "relay-1"))
+	// For debug, change this logger instance
+	backendLogger := cmtlog.TestingLogger().With("process", "relay-1")
+	servers[0].SetLogger(backendLogger)
 
 	// Cancelable context to permit stopping by timeout
 	ctx, cancelCtxFn := context.WithTimeout(context.TODO(), 20*time.Second)
 	defer cancelCtxFn()
 
 	// Separate goroutine for client broadcast process
+	numTransactions := 2
+	testChainID := servers[0].GetNetworks()[0]
 	notifyCh := make(chan client.BroadcastStatus)
-	go func() {
-		t.Log("Initializing broadcast goroutine")
+	go clientBroadcastTx(t,
+		ctx,
+		servers[0],
+		relaysAddresses,
+		testChainID,
+		numTransactions,
+		notifyCh,
+	)
 
-		multiplexClient := mx.NewClient(
-			mx.WithBackend(servers[0]),
-			mx.WithNotifier(&client.StatusNotifier{}),
-		)
-
-		t.Log("Sending call to BroadcastTx")
-
-		multiplexClient.BroadcastTx(ctx,
-			testUserAddress,
-			relaysAddresses,
-			notifyCh,
-			testTransactions...,
-		)
-
-		t.Log("Finalizing broadcast goroutine")
-	}()
-
-	t.Log("Waiting for BroadcastStatus update from client")
-
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-
-	resultStatusMsg := client.BroadcastStatus{}
-
-	// Expects a BroadcastStatus update, or timeout after 30s.
-	go func(status *client.BroadcastStatus) {
-		defer wg.Done()
-
-		for {
-			select {
-			case *status = <-notifyCh:
-				return
-
-			case <-ctx.Done():
-				t.Error("Timed out waiting for broadcast status")
-				return // cancels context
-			}
-		}
-	}(&resultStatusMsg)
-
-	// Waits for a status update or timeout
-	wg.Wait()
+	// Blocks the main thread until we consume from notifyCh.
+	resultStatusMsg := waitForClientBroadcastStatus(t,
+		ctx,
+		notifyCh,
+	)
+	assert.NotNil(t, resultStatusMsg)
 
 	txHashes := []string{}
 	for _, bzHash := range resultStatusMsg.TxHashes {
@@ -342,7 +311,53 @@ func TestScenarioClientBroadcastSevenHealthyRelaysClientBroadcast(t *testing.T) 
 		txHashes,
 		resultStatusMsg.Error)
 
-	assert.NotNil(t, resultStatusMsg)
+	// assert.NotNil(t, resultStatusMsg)
 	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
-	assert.Len(t, resultStatusMsg.TxHashes, len(testTransactions))
+	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+}
+
+func TestScenarioClientBroadcastMinusOneHealthyRelays(t *testing.T) {
+
+}
+
+// ----------------------------------------------------------------------------
+// Helpers
+
+func ResetTestScenarioRelays(
+	tb testing.TB,
+	numChains int,
+	numRelays int,
+) ([]*mx.MultiplexBackend, func()) {
+	tb.Helper()
+
+	// For debug, change the loggers to cmtlog.TestingLogger()
+	customLoggers := make([]cmtlog.Logger, numRelays)
+	for i := 0; i < numRelays; i++ {
+		customLoggers[i] = cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-" + strconv.Itoa(i+1))
+	}
+
+	// Uses config.TestConfig() and random MultiplexConfig
+	rootDirs,
+		servers := ResetTestMultiplexBackendCompatibleRelays(
+		tb,
+		numChains,
+		numRelays,
+		customLoggers...,
+	)
+	require.NotEmpty(tb, servers)
+	require.Len(tb, rootDirs, numRelays)
+	require.Len(tb, servers, numRelays)
+
+	shutdownFn := func() {
+		for i := 0; i < len(servers); i++ {
+			defer os.RemoveAll(rootDirs[i])
+
+			if servers[i] != nil {
+				err := servers[i].Close()
+				assert.NoError(tb, err, "should shutdown server at index: "+strconv.Itoa(i))
+			}
+		}
+	}
+
+	return servers, shutdownFn
 }
