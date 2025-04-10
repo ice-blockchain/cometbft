@@ -140,7 +140,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	// Prometheus does not allow hyphens in metrics names, it must match
 	// following regexp: [a-zA-Z_:][a-zA-Z0-9_:]*
 	// see also: https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels
-	metricsNames := cfgOverwrite.Instrumentation.Namespace + "_" + strings.ReplaceAll(chainID, "-", "_")
+	metricsNames := cfgOverwrite.Instrumentation.Namespace + "_" + string(reactor.nodeKey.ID()) + ":" + strings.ReplaceAll(chainID, "-", "_")
 
 	// We can safely ignore the error because it triggers before in Reactor.
 	privValPubKey, _ := privValidator.GetPubKey()
