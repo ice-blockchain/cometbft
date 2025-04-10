@@ -118,17 +118,10 @@ func (c MultiplexClient) BroadcastTx(
 		addresses[i] = relayAddr
 	}
 
-	relaysWithoutSelf := []*server.RelayAddress{}
-	for _, relayAddr := range addresses {
-		if relayAddr.ID() != c.GetBackend().GetRelayID() {
-			relaysWithoutSelf = append(relaysWithoutSelf, relayAddr)
-		}
-	}
-
 	currentBroadcastStep := uint16(1)
 	acceptedTxHashes := make([][]byte, 0, len(transactions))
-	minHealthyRelays := (len(relaysWithoutSelf) / 2) + 1
-	maxFailingRelays := len(relaysWithoutSelf) - minHealthyRelays
+	minHealthyRelays := (len(relays) / 2) + 1
+	maxFailingRelays := len(relays) - minHealthyRelays - 1
 
 	// TODO(midas): remove debug logs
 	c.backend.GetLogger().Debug("Starting consensus instance",
@@ -165,11 +158,19 @@ func (c MultiplexClient) BroadcastTx(
 
 	// TODO(midas): remove debug logs
 	c.backend.GetLogger().Debug("Fetching exact relay addresses",
-		"num_relays", len(relaysWithoutSelf))
+		"num_relays", len(addresses))
 
 	// Determine relay IDs (CometBFT Node ID) and supported networks of each
 	// of the relays and identify potential unhealthy relays.
-	chainRelays, errorRelays := c.GetBackend().GetRelaysByNetwork(relaysWithoutSelf)
+	chainRelays, errorRelays := c.GetBackend().GetRelaysByNetwork(addresses)
+
+	relaysWithoutSelf := []*server.RelayAddress{}
+	for _, relayAddr := range addresses {
+		if relayAddr.ID() != c.GetBackend().GetRelayID() {
+			relaysWithoutSelf = append(relaysWithoutSelf, relayAddr)
+		}
+	}
+
 	numHealthyRelays := len(relaysWithoutSelf) - len(errorRelays)
 
 	// Next, we dial remote relays to find out about any incompatibility
