@@ -255,7 +255,7 @@ func (c MultiplexClient) BroadcastTx(
 	c.GetBackend().UpdateAvailableNetworks(requiredNetworks)
 
 	// ------------------------------------------------------------------------
-	// Step 4: Ask relays to replicate chain if necessary
+	// Step 4.1: Ask relays to replicate chain if necessary
 
 	// Move status update to next step (step=4)
 	currentBroadcastStep++
@@ -305,18 +305,23 @@ func (c MultiplexClient) BroadcastTx(
 			return // STOP here
 		}
 
-		// Start network consensus when replication is accepted by remotes.
-		// This fixes a race condition between the multiplex discovery
-		// and CometBFT consensus reactors
-		if err := c.backend.StartConsensusInstance(ctx, chainID); err != nil {
-			c.notifier.Error(err)
-			return // STOP here
-		}
-
 		// TODO(midas): remove debug logs
 		c.backend.GetLogger().Debug("Relays acknowledged chain replication",
 			"chain_id", chainID,
 			"num_relays", len(responseRelayIds))
+	}
+
+	// ------------------------------------------------------------------------
+	// Step 4.2: We can start the node services after full ACK of replication
+	// and after re-start of services in case the nodes are not yet running.
+	//
+	// Starting the reactors here fixes a race condition between the multiplex
+	// discovery and CometBFT consensus reactors.
+	for _, chainID := range requiredNetworks {
+		if err := c.backend.StartConsensusInstance(ctx, chainID); err != nil {
+			c.notifier.Error(err)
+			return // STOP here
+		}
 	}
 
 	// ------------------------------------------------------------------------
