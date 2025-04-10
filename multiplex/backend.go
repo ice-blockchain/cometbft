@@ -1545,6 +1545,13 @@ func (b *MultiplexBackend) metricsReporter() {
 				return
 			}
 
+			// If we are (also) shutting down, stop here.
+			select {
+			case <-b.reactor.Quit():
+				return
+			default:
+			}
+
 			prometheusCfg := b.reactor.GetNodeConfig().Instrumentation
 			relayMetricsPrefix := prometheusCfg.Namespace + "_" + string(b.reactor.nodeKey.ID())
 
@@ -1561,7 +1568,7 @@ func (b *MultiplexBackend) metricsReporter() {
 			// For each network, collect CometBFT metrics (blocks, txes)
 			for _, chainID := range b.GetNetworks() {
 				// See also: multiplex/consensus.go
-				chainMetricsPrefix := prometheusCfg.Namespace + "_" + strings.ReplaceAll(chainID, "-", "_")
+				chainMetricsPrefix := relayMetricsPrefix + ":" + strings.ReplaceAll(chainID, "-", "_")
 
 				collectSampleCometBFT(
 					// string(b.reactor.nodeKey.ID()),
