@@ -51,7 +51,8 @@ type NetworksCreatorFn func(
 // A [StatusNotifier] instance contains a channel used to transmit errors.
 type RelaysBroadcastFn func(
 	context.Context,
-	map[string][]*RelayAddress,
+	map[string][]*RelayAddress, // relaysByChain
+	map[string][]*RelayAddress, // replReqRelays
 	string,
 	[]client.Transaction,
 	client.Notifier,

@@ -911,15 +911,19 @@ func (b *MultiplexBackend) RemoveTransactions(
 }
 
 // StartConsensusInstance calls the Start method of consensus reactors,
-// including mempool, blocksync, consensus and evidence reactors.
-// This method separates the consensus instance from node services.
+// including mempool, blocksync, consensus and evidence reactors, and
+// starts the node services afterwards.
 //
 // StartConsensusInstance implements [server.Backend].
 func (b *MultiplexBackend) StartConsensusInstance(
 	ctx context.Context,
 	chainID string,
 ) error {
-	return b.reactor.StartConsensusInstanceReactors(ctx, chainID)
+	if err := b.reactor.StartConsensusInstanceReactors(ctx, chainID); err != nil {
+		return err
+	}
+
+	return b.reactor.StartNode(ctx, chainID)
 }
 
 // ----------------------------------------------------------------------------

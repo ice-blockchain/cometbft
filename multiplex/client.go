@@ -344,6 +344,7 @@ func (c MultiplexClient) BroadcastTx(
 	routineRelaysBroadcast := c.GetBackend().GetRoutines().RelaysBroadcast
 	go routineRelaysBroadcast(ctx,
 		chainRelays,
+		catchupRelays,
 		userAddress,
 		transactions,
 		c.notifier,

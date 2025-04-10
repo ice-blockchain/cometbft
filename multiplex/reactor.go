@@ -1028,7 +1028,7 @@ func (reactor *Reactor) initMultiplexProviders(
 		}
 
 		if _, ok := reactor.servicesRegistry[serviceName][chainId]; !ok {
-			panic(fmt.Errorf("could not find a service %s for ChainID %s", serviceName, chainId))
+			return nil
 		}
 
 		return reactor.servicesRegistry[serviceName][chainId].GetInstance().(cmtlibs.Service)

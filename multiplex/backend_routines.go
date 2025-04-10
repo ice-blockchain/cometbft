@@ -203,6 +203,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 	return func(
 		ctx context.Context,
 		relaysByChain map[string][]*server.RelayAddress,
+		replReqRelays map[string][]*server.RelayAddress,
 		userAddress string,
 		transactions []client.Transaction,
 		notifierImpl client.Notifier,
@@ -224,7 +225,13 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 				}
 			}
 
-			for _, relayAddr := range relaysWithoutSelf {
+			minRelaysByChain[chainID] = len(relaysWithoutSelf)
+
+			// Excludes "self" and replication partners (already dialed).
+			relaysToDial := slices.DeleteFunc(relaysWithoutSelf, func(address *server.RelayAddress) bool {
+				return slices.Contains(replReqRelays[chainID], address)
+			})
+			for _, relayAddr := range relaysToDial {
 				peerAddr, err := relayAddr.NetAddressForCometBFT()
 				if err != nil {
 					notifierImpl.Error(fmt.Errorf(
@@ -241,8 +248,6 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 					}
 				}
 			}
-
-			minRelaysByChain[chainID] = len(relaysWithoutSelf)
 		}
 
 		// (2)

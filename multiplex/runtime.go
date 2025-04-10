@@ -368,6 +368,20 @@ func (reactor *Reactor) InjectNewRuntime(
 	clogger.Info("The new network is now configured",
 		"nodeId", string(reactor.nodeKey.ID()))
 
+	return nil
+}
+
+func (reactor *Reactor) StartNode(ctx context.Context, chainID string) error {
+	clogger := reactor.logger.With("chain_id", chainID)
+
+	// Locks the reactor's services mutex.
+	servicesProvider := reactor.GetServicesProvider()
+
+	// If the node is running already, stop here.
+	if n := servicesProvider(ServiceKeyNodeRuntime, chainID); n != nil {
+		return nil
+	}
+
 	// ------------------------------------------------------------------------
 	// Step 5: Create the runnable node.Node instance
 
@@ -375,7 +389,6 @@ func (reactor *Reactor) InjectNewRuntime(
 	updatedMx := reactor.createMultiplexNodesWithServices(
 		ctx,
 		[]string{chainID},
-		options...,
 	)
 
 	// ------------------------------------------------------------------------
