@@ -316,6 +316,74 @@ func TestScenarioClientBroadcastSevenHealthyRelays(t *testing.T) {
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
 }
 
+func TestScenarioClientReplRequestSevenHealthyRelays(t *testing.T) {
+	numChains := 0
+	numRelays := 7
+
+	servers, shutdownFn := ResetTestScenarioRelays(t, numChains, numRelays)
+	defer shutdownFn()
+
+	require.NotEmpty(t, servers)
+	require.Len(t, servers, numRelays)
+
+	// Start the node backends
+	for i := 0; i < len(servers); i++ {
+		servers[i].MustStart()
+	}
+
+	// Give the backend some time before broadcast
+	time.Sleep(2 * time.Second)
+
+	// Prepare the data that we shall broadcast (skip "self")
+	relaysAddresses := []string{}
+	for i := 1; i < len(servers); i++ {
+		relaysAddresses = append(relaysAddresses, servers[i].GetListenAddress())
+	}
+
+	// Set a custom logger to log all backend messages
+	// For debug, change this logger instance
+	backendLogger := cmtlog.TestingLogger().With("process", "relay-1")
+	servers[0].SetLogger(backendLogger)
+
+	// Cancelable context to permit stopping by timeout
+	ctx, cancelCtxFn := context.WithTimeout(context.TODO(), 20*time.Second)
+	defer cancelCtxFn()
+
+	// Separate goroutine for client broadcast process
+	numTransactions := 2
+	testChainID := makeChainID("test chain")
+	notifyCh := make(chan client.BroadcastStatus)
+	go clientBroadcastTx(t,
+		ctx,
+		servers[0],
+		relaysAddresses,
+		testChainID,
+		numTransactions,
+		notifyCh,
+	)
+
+	// Blocks the main thread until we consume from notifyCh.
+	resultStatusMsg := waitForClientBroadcastStatus(t,
+		ctx,
+		notifyCh,
+	)
+	assert.NotNil(t, resultStatusMsg)
+
+	txHashes := []string{}
+	for _, bzHash := range resultStatusMsg.TxHashes {
+		txHashes = append(txHashes, fmt.Sprintf("%X", bzHash))
+	}
+
+	t.Logf("Status from BroadcastTx: <%d, %s, %v>",
+		len(txHashes),
+		txHashes,
+		resultStatusMsg.Error)
+
+	// assert.NotNil(t, resultStatusMsg)
+	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
+	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+}
+
 func TestScenarioClientBroadcastMinusOneHealthyRelays(t *testing.T) {
 
 }

@@ -862,7 +862,12 @@ func (b *MultiplexBackend) AddTransactions(
 		clogger := b.logger.With("chain_id", chainID)
 
 		reactorsProvider := b.reactor.GetServicesProvider()
-		memplReactor := reactorsProvider(ServiceKeyMempoolReactor, chainID).(*mempl.Reactor)
+		memplReactor, ok := reactorsProvider(ServiceKeyMempoolReactor, chainID).(*mempl.Reactor)
+		if !ok {
+			return fmt.Errorf(
+				"could not get local mempool reactor instance in AddTransactions with ChainID %s", chainID)
+		}
+
 		chainMempool := memplReactor.GetMempoolPtr()
 
 		checkTxRes, err := chainMempool.CheckTx(
@@ -896,7 +901,12 @@ func (b *MultiplexBackend) RemoveTransactions(
 		clogger := b.logger.With("chain_id", chainID)
 
 		reactorsProvider := b.reactor.GetServicesProvider()
-		memplReactor := reactorsProvider(ServiceKeyMempoolReactor, chainID).(*mempl.Reactor)
+		memplReactor, ok := reactorsProvider(ServiceKeyMempoolReactor, chainID).(*mempl.Reactor)
+		if !ok {
+			return fmt.Errorf(
+				"could not get local mempool reactor instance in RemoveTransactions with ChainID %s", chainID)
+		}
+
 		chainMempool := memplReactor.GetMempoolPtr()
 
 		memTx := client.TransactionToRawTx(transaction)
@@ -1150,7 +1160,12 @@ func (b *MultiplexBackend) StartRPCServerCometBFT() error {
 	nodesProvider := b.reactor.GetServicesProvider()
 	chainRoutes := map[string]rpccore.RoutesMap{}
 	for _, chainID := range b.GetNetworks() {
-		nodeRuntime := nodesProvider(ServiceKeyNodeRuntime, chainID).(*node.Node)
+		nodeRuntime, ok := nodesProvider(ServiceKeyNodeRuntime, chainID).(*node.Node)
+		if !ok {
+			return fmt.Errorf(
+				"could not get node runtime in StartRPCServerCometBFT with ChainID %s", chainID)
+		}
+
 		env, err := nodeRuntime.ConfigureRPC()
 		if err != nil {
 			return fmt.Errorf(
@@ -1333,7 +1348,10 @@ func (b *MultiplexBackend) StartNodeInstances() error {
 	servicesProvider := b.reactor.GetServicesProvider()
 	for _, chainID := range b.GetNetworks() {
 		// Type-assertion makes sure we have a [*node.Node]
-		runNode := servicesProvider(ServiceKeyNodeRuntime, chainID).(*node.Node)
+		runNode, ok := servicesProvider(ServiceKeyNodeRuntime, chainID).(*node.Node)
+		if !ok {
+			return errors.New("could not get node runtime in StartNodeInstances")
+		}
 
 		// TODO(midas): relax some resources at i % 1000 == 0
 
@@ -1373,8 +1391,8 @@ func (b *MultiplexBackend) StopNodeInstances() error {
 	servicesProvider := b.reactor.GetServicesProvider()
 	for _, chainID := range b.GetNetworks() {
 		// Type-assertion makes sure we have a [*node.Node]
-		runNode := servicesProvider(ServiceKeyNodeRuntime, chainID).(*node.Node)
-		if !runNode.IsRunning() {
+		runNode, ok := servicesProvider(ServiceKeyNodeRuntime, chainID).(*node.Node)
+		if !ok || !runNode.IsRunning() {
 			wg.Done()
 			continue
 		}

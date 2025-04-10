@@ -139,9 +139,8 @@ func (b *MultiplexBackend) DefaultNetworksCreatorRoutine() server.NetworksCreato
 			newChainReadyCh <- missingChainID
 		}
 
-		// If possible, notify success and terminate here.
+		// If possible,  terminate here.
 		if len(unknownNetworks) == 0 {
-			notifierImpl.Success([][]byte{})
 			return
 		}
 
@@ -186,10 +185,6 @@ func (b *MultiplexBackend) DefaultNetworksCreatorRoutine() server.NetworksCreato
 			// relays will be able to join the newly created network.
 			newChainReadyCh <- newChainID
 		}
-
-		// We are not done with the entire broadcast process,
-		// the transaction must not be considered accepted.
-		notifierImpl.Success([][]byte{})
 	}
 }
 

@@ -52,7 +52,11 @@ func (reactor *Reactor) PrepareConsensusInstanceWithReactor(
 	stateMachine := stateProvider(chainID).(sm.State)
 	stateStore := stateStoreProvider(chainID).(sm.Store)
 	blockStore := blockStoreProvider(chainID).(*bs.BlockStore)
-	eventBus := servicesProvider(ServiceKeyEventBus, chainID).(*types.EventBus)
+	eventBus, ok := servicesProvider(ServiceKeyEventBus, chainID).(*types.EventBus)
+	if !ok {
+		return fmt.Errorf(
+			"could not get event bus in PrepareConsensusInstanceWithReactor with ChainID %s", chainID)
+	}
 
 	// 1) Consensus handshake with ABCI
 	handshaker := cs.NewHandshaker(
@@ -135,7 +139,11 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	cfgOverwrite := configProvider(chainID).(*config.Config)
 	stateMachine := statesProvider(chainID).(sm.State)
 	privValidator := privvalProvider(chainID).(types.PrivValidator)
-	eventBus := servicesProvider(ServiceKeyEventBus, chainID).(*types.EventBus)
+	eventBus, ok := servicesProvider(ServiceKeyEventBus, chainID).(*types.EventBus)
+	if !ok {
+		return fmt.Errorf(
+			"could not get event bus in CreateConsensusInstanceReactors with ChainID %s", chainID)
+	}
 
 	// Prometheus does not allow hyphens in metrics names, it must match
 	// following regexp: [a-zA-Z_:][a-zA-Z0-9_:]*
@@ -293,33 +301,40 @@ func (reactor *Reactor) StartConsensusInstanceReactors(
 ) error {
 	servicesProvider := reactor.GetServicesProvider()
 
-	mempoolReactor := servicesProvider(ServiceKeyMempoolReactor, chainID).(*mempl.Reactor)
-	blocksyncReactor := servicesProvider(ServiceKeyBlockSyncReactor, chainID).(*blocksync.Reactor)
-	consensusReactor := servicesProvider(ServiceKeyConsensusReactor, chainID).(*cs.Reactor)
-	evidenceReactor := servicesProvider(ServiceKeyEvidenceReactor, chainID).(*evidence.Reactor)
-
-	if !mempoolReactor.IsRunning() {
+	if mempoolReactor, ok := servicesProvider(
+		ServiceKeyMempoolReactor,
+		chainID,
+	).(*mempl.Reactor); ok && !mempoolReactor.IsRunning() {
 		if err := mempoolReactor.Start(); err != nil {
 			return fmt.Errorf(
 				"error starting mempool reactor: %w", err)
 		}
 	}
 
-	if !blocksyncReactor.IsRunning() {
+	if blocksyncReactor, ok := servicesProvider(
+		ServiceKeyBlockSyncReactor,
+		chainID,
+	).(*blocksync.Reactor); ok && !blocksyncReactor.IsRunning() {
 		if err := blocksyncReactor.Start(); err != nil {
 			return fmt.Errorf(
 				"error starting blocksync reactor: %w", err)
 		}
 	}
 
-	if !consensusReactor.IsRunning() {
+	if consensusReactor, ok := servicesProvider(
+		ServiceKeyConsensusReactor,
+		chainID,
+	).(*cs.Reactor); ok && !consensusReactor.IsRunning() {
 		if err := consensusReactor.Start(); err != nil {
 			return fmt.Errorf(
 				"error starting consensus reactor: %w", err)
 		}
 	}
 
-	if !evidenceReactor.IsRunning() {
+	if evidenceReactor, ok := servicesProvider(
+		ServiceKeyEvidenceReactor,
+		chainID,
+	).(*evidence.Reactor); ok && !evidenceReactor.IsRunning() {
 		if err := evidenceReactor.Start(); err != nil {
 			return fmt.Errorf(
 				"error starting evidence reactor: %w", err)

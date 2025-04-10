@@ -1383,7 +1383,12 @@ func (reactor *Reactor) EnableNewRuntimeRPC(networks []string) error {
 	nodesProvider := reactor.GetServicesProvider()
 	chainRoutes := map[string]rpccore.RoutesMap{}
 	for _, chainID := range networks {
-		nodeRuntime := nodesProvider(ServiceKeyNodeRuntime, chainID).(*node.Node)
+		nodeRuntime, ok := nodesProvider(ServiceKeyNodeRuntime, chainID).(*node.Node)
+		if !ok {
+			return fmt.Errorf(
+				"could not get node runtime in EnableNewRuntimeRPC with ChainID %s", chainID)
+		}
+
 		env, err := nodeRuntime.ConfigureRPC()
 		if err != nil {
 			return fmt.Errorf(
