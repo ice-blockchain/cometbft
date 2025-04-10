@@ -127,8 +127,8 @@ func (c MultiplexClient) BroadcastTx(
 
 	currentBroadcastStep := uint16(1)
 	acceptedTxHashes := make([][]byte, 0, len(transactions))
-	minHealthyRelays := (len(relays) / 2) + 1
-	maxFailingRelays := len(relays) - minHealthyRelays
+	minHealthyRelays := (len(relaysWithoutSelf) / 2) + 1
+	maxFailingRelays := len(relaysWithoutSelf) - minHealthyRelays
 
 	// TODO(midas): remove debug logs
 	c.backend.GetLogger().Debug("Starting consensus instance",
@@ -170,7 +170,7 @@ func (c MultiplexClient) BroadcastTx(
 	// Determine relay IDs (CometBFT Node ID) and supported networks of each
 	// of the relays and identify potential unhealthy relays.
 	chainRelays, errorRelays := c.GetBackend().GetRelaysByNetwork(relaysWithoutSelf)
-	numHealthyRelays := len(relays) - len(errorRelays)
+	numHealthyRelays := len(relaysWithoutSelf) - len(errorRelays)
 
 	// Next, we dial remote relays to find out about any incompatibility
 	// before counting the number of failing relays.
