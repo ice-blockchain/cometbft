@@ -269,15 +269,16 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 			if err != nil {
 				memR.Logger.Debug("Acceptor rejected batch broadcast",
 					"address", memR.userAddress,
+					"err", err,
 				)
 				return // do not accept transaction
 			}
 		}
 
+		acceptedTxs := make([][]byte, 0, len(protoTxs))
 		for _, txBytes := range protoTxs {
 			tx := types.Tx(txBytes)
-			_, err := memR.mempool.CheckTx(tx, e.Src.ID())
-			if err != nil {
+			if _, err := memR.mempool.CheckTx(tx, e.Src.ID()); err != nil {
 				switch {
 				case errors.Is(err, ErrTxInCache):
 					memR.Logger.Debug("Tx already exists in cache", "tx", tx.Hash())
@@ -287,16 +288,22 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 				default:
 					memR.Logger.Info("Could not check tx", "tx", tx.Hash(), "err", err)
 				}
+
+				continue
 			}
+
+			acceptedTxs = append(acceptedTxs, txBytes)
 		}
 
 		// Uses the multiplex server.AckBroadcastChannel to send an acknowledgment
 		// message, or receipt, to describe that the transaction has been checked.
-		if err := memR.sendAckTransactionBroadcast(e.Src, protoTxs); err != nil {
-			memR.Logger.Debug("Error with AckTransactionBroadcast",
-				"err", err,
-			)
-			return
+		if len(acceptedTxs) > 0 {
+			if err := memR.sendAckTransactionBroadcast(e.Src, acceptedTxs); err != nil {
+				memR.Logger.Debug("Error with AckTransactionBroadcast",
+					"err", err,
+				)
+				return
+			}
 		}
 
 	default:
