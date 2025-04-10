@@ -78,16 +78,23 @@ type MultiplexBackend struct {
 	// Routines may be extended directly using the [server.Jobs] struct.
 	routines *server.Jobs
 
-	// Stores the node IDs of relays to whom we sent P2P messages.
+	// Mapping of replication partners relay IDs by ChainID.
+	replRequestsMtx  sync.RWMutex
 	replRequestsSent map[string][]string
+
+	// Mapping of mempool partners relay IDs by transaction hash.
+	poolRequestsMtx  sync.RWMutex
 	poolRequestsSent map[string][]string
+
+	// Mapping of relay IDs whom ack'd a transaction, by its' hash.
+	ackResponsesMtx  sync.RWMutex
+	ackResponsesRcvd map[string][]string
 
 	// This channel is used to wait when new networks must be created.
 	newChainReadyCh chan string
 
 	// This channel is used to communicate the tx hash of a transaction
-	// that has been accepted by our own mempool AND by a relays' mempool.
-	relayAcceptTxCh chan string
+	// that has been ack'd by a remote relays' mempool.
 	remoteRelayTxCh chan string
 
 	// Internals
@@ -213,11 +220,6 @@ func (b *MultiplexBackend) GetNewChainReadyCh() chan<- string {
 	return b.newChainReadyCh
 }
 
-// GetRelayAcceptTxCh returns a channel used to communicate transaction hashes.
-func (b *MultiplexBackend) GetRelayAcceptTxCh() chan<- string {
-	return b.relayAcceptTxCh
-}
-
 // GetRelayID returns the node ID assigned in the reactor.
 func (b *MultiplexBackend) GetRelayID() p2p.ID {
 	return b.reactor.nodeKey.ID()
@@ -241,8 +243,11 @@ func (b *MultiplexBackend) GetNetworks() []string {
 // sent a ChainReplicationRequest.
 // See also: [DefaultNodeReplRequestRoutine]
 func (b *MultiplexBackend) GetReplRequestPeers(chainID string) []string {
-	if peers, ok := b.replRequestsSent[chainID]; ok {
-		return peers
+	b.replRequestsMtx.RLock()
+	defer b.replRequestsMtx.RUnlock()
+
+	if peerIds, ok := b.replRequestsSent[chainID]; ok {
+		return peerIds
 	}
 
 	return []string{}
@@ -251,9 +256,26 @@ func (b *MultiplexBackend) GetReplRequestPeers(chainID string) []string {
 // GetPoolRequestPeers returns a list of node IDs to whom we have previously
 // sent a transaction through the Mempool.
 // See also: [DefaultRelaysBroadcastRoutine]
-func (b *MultiplexBackend) GetPoolRequestPeers(chainID string) []string {
-	if peers, ok := b.poolRequestsSent[chainID]; ok {
-		return peers
+func (b *MultiplexBackend) GetPoolRequestPeers(txHash string) []string {
+	b.poolRequestsMtx.RLock()
+	defer b.poolRequestsMtx.RUnlock()
+
+	if peerIds, ok := b.poolRequestsSent[txHash]; ok {
+		return peerIds
+	}
+
+	return []string{}
+}
+
+// GetAckResponsePeers returns a list of node IDs which have sent us back a
+// AckTransactionBroadcast upon receiving a transaction in their mempool.
+// See also: [DefaultRelaysBroadcastRoutine]
+func (b *MultiplexBackend) GetAckResponsePeers(txHash string) []string {
+	b.ackResponsesMtx.RLock()
+	defer b.ackResponsesMtx.RUnlock()
+
+	if peerIds, ok := b.ackResponsesRcvd[txHash]; ok {
+		return peerIds
 	}
 
 	return []string{}
@@ -385,9 +407,19 @@ func (b *MultiplexBackend) MustStart() {
 
 	// Starting a node backend starts internal channels
 	b.newChainReadyCh = make(chan string)
-	b.relayAcceptTxCh = make(chan string)
 	b.remoteRelayTxCh = make(chan string)
+
+	b.replRequestsMtx.Lock()
 	b.replRequestsSent = map[string][]string{}
+	b.replRequestsMtx.Unlock()
+
+	b.poolRequestsMtx.Lock()
+	b.poolRequestsSent = map[string][]string{}
+	b.poolRequestsMtx.Unlock()
+
+	b.ackResponsesMtx.Lock()
+	b.ackResponsesRcvd = map[string][]string{}
+	b.ackResponsesMtx.Unlock()
 
 	go b.metricsReporter()
 
@@ -516,10 +548,6 @@ func (b *MultiplexBackend) Close() error {
 
 	if b.remoteRelayTxCh != nil {
 		close(b.remoteRelayTxCh)
-	}
-
-	if b.relayAcceptTxCh != nil {
-		close(b.relayAcceptTxCh)
 	}
 
 	// Stop RelayInfo RPC and CometBFT RPC
@@ -841,7 +869,9 @@ func (b *MultiplexBackend) ApplyFilterReplRequestRelays(
 	}
 
 	// Also reset the sent requests cache
+	b.replRequestsMtx.Lock()
 	b.replRequestsSent = map[string][]string{}
+	b.replRequestsMtx.Unlock()
 
 	return catchupRelays
 }
@@ -1490,6 +1520,13 @@ func (b *MultiplexBackend) localAckTransactionConsumer(
 				"relay_id", relayId,
 				"tx_hash", txHash,
 			)
+
+			b.ackResponsesMtx.Lock()
+			if _, ok := b.ackResponsesRcvd[txHash]; !ok {
+				b.ackResponsesRcvd[txHash] = make([]string, 0, maxAcceptMsgs)
+			}
+			b.ackResponsesRcvd[txHash] = append(b.ackResponsesRcvd[txHash], relayId)
+			b.ackResponsesMtx.Unlock()
 
 			if _, ok := relaysPerTx[txHash]; !ok {
 				relaysPerTx[txHash] = []string{}

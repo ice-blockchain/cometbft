@@ -46,9 +46,6 @@ type Backend interface {
 	// GetNewChainReadyCh should return a read-only string channel.
 	GetNewChainReadyCh() chan<- string
 
-	// GetRelayAcceptTxCh should return a read-only string channel.
-	GetRelayAcceptTxCh() chan<- string
-
 	// GetRelayID should return a [p2p.ID] instance that identifies a relay.
 	GetRelayID() p2p.ID
 

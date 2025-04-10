@@ -108,7 +108,9 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 		})
 
 		// Keep track of node IDs
+		b.replRequestsMtx.Lock()
 		b.replRequestsSent[chainID] = replRequestPeers
+		b.replRequestsMtx.Unlock()
 	}
 }
 
@@ -205,9 +207,6 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 	) {
 		broadcastTxHashes := make([][]byte, len(transactions))
 
-		// Reset the sent requests cache
-		b.poolRequestsSent = map[string][]string{}
-
 		// (1)
 		// First dial the CometBFT P2P addresses to make sure
 		// communication with this relay is possible using mempool.
@@ -281,6 +280,13 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 			sentWg := sync.WaitGroup{}
 			sentWg.Add(eventsSwitch.Peers().Size())
 
+			// Reset the sent requests cache for this txHash
+			b.poolRequestsMtx.Lock()
+			if _, ok := b.poolRequestsSent[txHash]; ok {
+				b.poolRequestsSent[txHash] = []string{}
+			}
+			b.poolRequestsMtx.Unlock()
+
 			// Broadcast the transaction to all healthy relays.
 			poolRequestPeers := []string{}
 			relaysAccepted := 0
@@ -322,7 +328,10 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 
 			// Waits to process all healthy relays' acknowledgments.
 			sentWg.Wait()
-			b.poolRequestsSent[chainID] = poolRequestPeers
+
+			b.poolRequestsMtx.Lock()
+			b.poolRequestsSent[txHash] = poolRequestPeers
+			b.poolRequestsMtx.Unlock()
 
 			// We require healthy relays to accept this broadcast.
 			if relaysAccepted >= minHealthyRelays {
