@@ -103,7 +103,7 @@ func TestMultiplexRoutinesNodeReplRequest(t *testing.T) {
 	nodeReplRequestFn(context.TODO(),
 		chainRelays[useChainID],
 		useChainID,
-		&client.StatusNotifier{},
+		make(chan<- client.BroadcastStatus),
 	)
 
 	// Test that ChainReplicationRequest was sent to relay 2

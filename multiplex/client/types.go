@@ -30,15 +30,28 @@ type BroadcastStatus struct {
 	TxHashes [][]byte
 }
 
-// Notifier defines the contract for client status notifiers as they
-// are used during broadcast operations to asynchronously notify the caller
-// about exact broadcast status updates and errors.
-type Notifier interface {
-	SetChannel(ch chan<- BroadcastStatus)
-	GetChannel() chan<- BroadcastStatus
+// Error pushes a [BroadcastStatus] on the channel and attaches the error.
+func Error(
+	ch chan<- BroadcastStatus,
+	err error,
+) {
+	ch <- BroadcastStatus{
+		Error:    err,
+		TxHashes: [][]byte{},
+	}
+}
 
-	Error(err error)
-	Success(txHashes [][]byte)
+// Success pushes a [BroadcastStatus] on the channel and attaches a nil-error
+// and a list of accepted transaction hashes. The transaction hashes attached
+// are guaranteed to have been included in a block by a consensus instance.
+func Success(
+	ch chan<- BroadcastStatus,
+	txHashes [][]byte,
+) {
+	ch <- BroadcastStatus{
+		Error:    nil,
+		TxHashes: txHashes,
+	}
 }
 
 // Acceptor defines the contract for client-side transactions verification.

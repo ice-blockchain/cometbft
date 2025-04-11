@@ -48,7 +48,7 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 		_ context.Context,
 		relays []*server.RelayAddress,
 		chainID string,
-		notifierImpl client.Notifier,
+		notifyCh chan<- client.BroadcastStatus,
 	) {
 		replRequestPeers := []string{}
 		knownPeers := []string{}
@@ -72,7 +72,8 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 		// Build a transportable ChainParams protobuf message
 		chainParams, err := GenesisDocToChainParams(*genesisDoc)
 		if err != nil {
-			notifierImpl.Error(err)
+			client.Error(notifyCh, fmt.Errorf(
+				"could not load genesis doc in NodeReplRequest: %w", err))
 			return // terminates the process
 		}
 
@@ -125,7 +126,7 @@ func (b *MultiplexBackend) DefaultNetworksCreatorRoutine() server.NetworksCreato
 		ctx context.Context,
 		relaysByChain map[string][]*server.RelayAddress,
 		missingChains []string,
-		notifierImpl client.Notifier,
+		notifyCh chan<- client.BroadcastStatus,
 		newChainReadyCh chan<- string,
 	) {
 		// Find out if any of the relays told us about some missing networks,
@@ -178,7 +179,7 @@ func (b *MultiplexBackend) DefaultNetworksCreatorRoutine() server.NetworksCreato
 			}()
 			if err != nil {
 				// Terminates the upper broadcast process
-				notifierImpl.Error(fmt.Errorf(
+				client.Error(notifyCh, fmt.Errorf(
 					"could not create required networks: %w", err))
 				return
 			}
@@ -203,7 +204,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 		replReqRelays map[string][]*server.RelayAddress,
 		userAddress string,
 		transactions []client.Transaction,
-		notifierImpl client.Notifier,
+		notifyCh chan<- client.BroadcastStatus,
 	) {
 		broadcastTxHashes := make([][]byte, len(transactions))
 
@@ -228,7 +229,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 			for _, relayAddr := range relaysToDial {
 				peerAddr, err := relayAddr.NetAddressForCometBFT()
 				if err != nil {
-					notifierImpl.Error(fmt.Errorf(
+					client.Error(notifyCh, fmt.Errorf(
 						"invalid cometbft relay address %s: %w", relayAddr.AddressForCometBFT(), err))
 					return
 				}
@@ -237,7 +238,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 				sw := b.reactor.GetEventSwitchForCometBFT()
 				if err := sw.DialPeerWithAddress(peerAddr); err != nil {
 					if _, ok := err.(p2p.ErrCurrentlyDialingOrExistingAddress); !ok {
-						notifierImpl.Error(fmt.Errorf(
+						client.Error(notifyCh, fmt.Errorf(
 							"could not dial relay %s: %w", relayAddr.AddressForCometBFT(), err))
 					}
 				}
@@ -319,6 +320,11 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 						"tx_hash", txHash,
 						"peer", peerID,
 					)
+
+					// Note: we do not push an error on the notifyCh channel
+					// because a failure in sending to one relay must not
+					// prevent the transaction broadcast operation.
+
 					return
 				}
 
@@ -366,7 +372,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 				}
 
 				// We are missing some relays' acceptance, fail here.
-				notifierImpl.Error(fmt.Errorf(
+				client.Error(notifyCh, fmt.Errorf(
 					"other relays failed to accept transaction %s", txHash))
 				return // terminates the process
 			}

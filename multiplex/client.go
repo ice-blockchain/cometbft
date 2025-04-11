@@ -19,9 +19,6 @@ type MultiplexClient struct {
 	// A backend adapter instance is used to delegate communication
 	// with other relays and to execute local operations, e.g. persist data.
 	backend server.Backend
-
-	// A client notifier implementation, e.g. [StatusNotifier].
-	notifier client.Notifier
 }
 
 // Assert that our implementation satisfy the Client interface.
@@ -34,20 +31,11 @@ func WithBackend(a server.Backend) func(*MultiplexClient) {
 	}
 }
 
-// WithNotifier is an option helper to overwrite the default client notifier.
-func WithNotifier(n client.Notifier) func(*MultiplexClient) {
-	return func(c *MultiplexClient) {
-		c.notifier = n
-	}
-}
-
 // NewClient initializes a new [MultiplexClient].
 func NewClient(
 	options ...func(*MultiplexClient),
 ) *MultiplexClient {
-	cli := &MultiplexClient{
-		notifier: &client.StatusNotifier{},
-	}
+	cli := &MultiplexClient{}
 
 	// Enable overwrite of optional properties
 	for _, option := range options {
@@ -96,10 +84,8 @@ func (c MultiplexClient) BroadcastTx(
 ) {
 	// Can't broadcast without a multiplex backend
 	if c.GetBackend() == nil {
-		notifyCh <- client.BroadcastStatus{
-			Error: errors.New(
-				"could not find a running multiplex backend"),
-		}
+		client.Error(notifyCh, errors.New(
+			"could not find a running multiplex backend"))
 		return // STOP here
 	}
 
@@ -131,8 +117,6 @@ func (c MultiplexClient) BroadcastTx(
 		"max_failing", maxFailingRelays,
 		"num_txes", len(transactions),
 	)
-
-	c.notifier.SetChannel(notifyCh)
 
 	// ------------------------------------------------------------------------
 	// Step 1: Basic verifications and opening relay connections
@@ -188,7 +172,7 @@ func (c MultiplexClient) BroadcastTx(
 
 	// We must have at least 50%+1 healthy relays, otherwise discard the batch.
 	if len(errorRelays) > maxFailingRelays {
-		c.notifier.Error(fmt.Errorf(
+		client.Error(notifyCh, fmt.Errorf(
 			"CONSENSUS FAILURE: not enough healthy relays; expected %d, got %d",
 			minHealthyRelays,
 			numHealthyRelays,
@@ -213,7 +197,7 @@ func (c MultiplexClient) BroadcastTx(
 		go routineNetworksCreator(ctx,
 			chainRelays,
 			mustCreateNetworks,
-			c.notifier,
+			notifyCh,
 			c.backend.GetNewChainReadyCh(),
 		)
 	}
@@ -238,7 +222,7 @@ func (c MultiplexClient) BroadcastTx(
 		chainID,
 			waitErr := c.GetBackend().WaitForNextAvailableNetwork(ctx)
 		if waitErr != nil {
-			c.notifier.Error(waitErr)
+			client.Error(notifyCh, waitErr)
 			return // STOP here
 		}
 
@@ -288,7 +272,7 @@ func (c MultiplexClient) BroadcastTx(
 		go routineNodeReplRequest(ctx,
 			chainCatchupRelays,
 			chainID,
-			c.notifier,
+			notifyCh,
 		)
 
 		// TODO(midas): remove debug logs
@@ -301,7 +285,7 @@ func (c MultiplexClient) BroadcastTx(
 		responseRelayIds,
 			replErr := c.GetBackend().WaitForRelaysReplResponse(ctx, numCatchupRelays)
 		if replErr != nil {
-			c.notifier.Error(replErr)
+			client.Error(notifyCh, replErr)
 			return // STOP here
 		}
 
@@ -319,7 +303,7 @@ func (c MultiplexClient) BroadcastTx(
 	// discovery and CometBFT consensus reactors.
 	for _, chainID := range requiredNetworks {
 		if err := c.backend.StartConsensusInstance(ctx, chainID); err != nil {
-			c.notifier.Error(err)
+			client.Error(notifyCh, err)
 			return // STOP here
 		}
 	}
@@ -336,7 +320,7 @@ func (c MultiplexClient) BroadcastTx(
 
 	// Add each transaction to the local mempool, an error stops the process.
 	if err := c.GetBackend().AddTransactions(userAddress, transactions...); err != nil {
-		c.notifier.Error(fmt.Errorf(
+		client.Error(notifyCh, fmt.Errorf(
 			"error adding txes to mempool: %w", err))
 		return // STOP here
 	}
@@ -360,7 +344,7 @@ func (c MultiplexClient) BroadcastTx(
 		catchupRelays,
 		userAddress,
 		transactions,
-		c.notifier,
+		notifyCh,
 	)
 
 	// ------------------------------------------------------------------------
@@ -384,9 +368,8 @@ func (c MultiplexClient) BroadcastTx(
 		len(transactions),
 	)
 	if acceptErr != nil {
-		c.backend.GetLogger().Error(
-			"error waiting for relays acceptance", "err", acceptErr.Error())
-		c.notifier.Error(acceptErr)
+		client.Error(notifyCh, fmt.Errorf(
+			"error waiting for relays acceptance: %w", acceptErr))
 		return // STOP here
 	}
 
@@ -405,7 +388,7 @@ func (c MultiplexClient) BroadcastTx(
 
 	for txHash, ackedRelays := range relaysPerTx {
 		if len(ackedRelays) < numHealthyRelays {
-			c.notifier.Error(fmt.Errorf(
+			client.Error(notifyCh, fmt.Errorf(
 				"missing relays acceptance for %s, expected %d, got %d",
 				txHash, numHealthyRelays, len(ackedRelays)))
 			return // STOP here
@@ -418,7 +401,7 @@ func (c MultiplexClient) BroadcastTx(
 	}
 
 	if len(acceptedTxHashes) < len(transactions) {
-		c.notifier.Error(fmt.Errorf(
+		client.Error(notifyCh, fmt.Errorf(
 			"missing accepted transaction hashes, expected %d, got %d",
 			len(transactions), len(acceptedTxHashes)))
 		return // STOP here
@@ -437,7 +420,7 @@ func (c MultiplexClient) BroadcastTx(
 		"num_relays", numHealthyRelays)
 
 	// Done, notify about succeeded broadcast (nil error)
-	c.notifier.Success(acceptedTxHashes)
+	client.Success(notifyCh, acceptedTxHashes)
 }
 
 // BroadcastTxRemoval sends an error to a notifier if any of the removal

@@ -49,7 +49,6 @@ func clientBroadcastTx(
 
 	multiplexClient := mx.NewClient(
 		mx.WithBackend(server),
-		mx.WithNotifier(&client.StatusNotifier{}),
 	)
 
 	multiplexClient.BroadcastTx(ctx,
@@ -66,6 +65,8 @@ func waitForClientBroadcastStatus(
 	ctx context.Context,
 	notifyCh chan client.BroadcastStatus,
 ) client.BroadcastStatus {
+	tb.Helper()
+
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 

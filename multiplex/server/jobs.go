@@ -23,39 +23,39 @@ type Jobs struct {
 // NodeReplRequestFn describes a function that may be run on a separate
 // goroutine and which should open connections to relays if necessary.
 //
-// A [StatusNotifier] instance contains a channel used to transmit errors.
+// A write-only [client.BroadcastStatus] channel is used to transmit errors.
 type NodeReplRequestFn func(
 	context.Context,
 	[]*RelayAddress,
 	string,
-	client.Notifier,
+	chan<- client.BroadcastStatus,
 )
 
 // NetworksCreatorFn describes a function that may be run on a separate
 // goroutine and which should communicate with relays about missing networks.
 //
-// A [StatusNotifier] instance contains a channel used to transmit errors.
+// A write-only [client.BroadcastStatus] channel is used to transmit errors.
 // Also a string channel instance is accepted as newChainReadyCh where ChainIDs
 // are pushed when a new network is ready (or is now known through relay).
 type NetworksCreatorFn func(
 	context.Context,
 	map[string][]*RelayAddress,
 	[]string,
-	client.Notifier,
+	chan<- client.BroadcastStatus,
 	chan<- string, // newChainReadyCh
 )
 
 // RelaysBroadcastFn describes a function that may be run on a separate
 // goroutine and which should broadcast all transactions to relays.
 //
-// A [StatusNotifier] instance contains a channel used to transmit errors.
+// A write-only [client.BroadcastStatus] channel is used to transmit errors.
 type RelaysBroadcastFn func(
 	context.Context,
 	map[string][]*RelayAddress, // relaysByChain
 	map[string][]*RelayAddress, // replReqRelays
 	string,
 	[]client.Transaction,
-	client.Notifier,
+	chan<- client.BroadcastStatus,
 )
 
 // CancelBroadcastFn describes a function that may be run on a separate
