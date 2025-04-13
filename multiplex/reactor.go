@@ -105,6 +105,7 @@ type Reactor struct {
 	nodeConfig   *config.Config
 	userConfig   *config.MultiplexConfig
 	abciClient   proxy.ChainConns
+	snapsApp     *snapsapp.SnapsApp
 	storagePaths MultiplexFS
 	configsPaths MultiplexFS
 	acceptorImpl client.Acceptor
@@ -143,6 +144,10 @@ type Reactor struct {
 	chainReadyCh    chan string
 	ackReplResCh    chan *mxp2p.ChainReplicationResponse
 	ackTxAcceptCh   chan *mxp2p.AckTransactionBroadcast
+
+	// Mapping of mempool partners relay IDs by transaction hash.
+	poolRequestsMtx  sync.RWMutex
+	poolRequestsSent map[string][]string
 }
 
 // Type assertion to make sure this structure is compatible with snapsapp.
@@ -306,6 +311,18 @@ func (reactor *Reactor) GetTransport() *p2p.MultiplexTransport {
 // GetNetworks implements [snapsapp.Reactor].
 func (reactor *Reactor) GetNetworks() []string {
 	return reactor.networks
+}
+
+// GetABCIClient returns a [proxy.ChainConns] ABCI client.
+// The ABCI, or "application-blockchain client interface"
+// creates blocks proposals locally and includes transactions.
+func (reactor *Reactor) GetABCIClient() proxy.ChainConns {
+	return reactor.abciClient
+}
+
+// GetSnapsApp returns a [snapsapp.SnapsApp] instance.
+func (reactor *Reactor) GetSnapsApp() *snapsapp.SnapsApp {
+	return reactor.snapsApp
 }
 
 // HasNetwork returns true if the ChainID can be found.
@@ -698,6 +715,15 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 
 	case *mxp2p.Receipt:
 		msg := extMsg.GetSum()
+
+		// Determine public source address from secret connection.
+		sourceAddr, err := e.Src.NodeInfo().NetAddress()
+		if err != nil {
+			r.logger.Error("couldn't determine source address from receipt",
+				"msg", msg, "err", err)
+			return
+		}
+
 		switch msg.(type) {
 		// AckTransactionBroadcast
 		// Received a receipt of relay mempool inclusion for a transaction hash.
@@ -713,9 +739,31 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 				"num_txs", len(txHashes),
 				"relay_id", ackTxBroadcast.NodeId,
 				"txes", txHashes,
+				"node", r.nodeKey.ID(),
+				"from", sourceAddr,
 			)
 
-			r.ackTxAcceptCh <- ackTxBroadcast
+			relayId := ackTxBroadcast.NodeId
+
+			// AckTransactionBroadcast is sent from mempool which always
+			// processes transactions singularly.
+			// TODO(midas): define AckTransactionBroadcast.TxHash instead
+			txHash := fmt.Sprintf("%X", ackTxBroadcast.TxHashes[0])
+			shouldProcessAckTx := false
+
+			// If request was already noted for this tx, we should not wait.
+			r.poolRequestsMtx.Lock()
+			if peers, ok := r.poolRequestsSent[txHash]; ok {
+				shouldProcessAckTx = slices.Contains(peers, relayId)
+				r.poolRequestsSent[txHash] = slices.DeleteFunc(peers, func(s string) bool {
+					return s == relayId
+				})
+			}
+			r.poolRequestsMtx.Unlock()
+
+			if shouldProcessAckTx {
+				r.ackTxAcceptCh <- ackTxBroadcast
+			}
 			// Done.
 			return
 
@@ -776,16 +824,20 @@ func (r *Reactor) DialBackReplicationPartner(
 	}
 
 	if err := r.cometbftSwitch.DialPeerWithAddress(peerAddr); err != nil {
-		if _, ok := err.(p2p.ErrCurrentlyDialingOrExistingAddress); !ok {
+		if _, ok := err.(p2p.ErrCurrentlyDialingOrExistingAddress); ok {
+			// Manually add peers when the switch was already running.
+			dialedPeer := r.cometbftSwitch.Peers().Get(peerAddr.ID)
+			for _, reactor := range r.cometbftSwitch.Reactors(chainID) {
+				reactor.AddPeer(dialedPeer)
+			}
+
+			err = nil
+		}
+
+		if err != nil {
 			return fmt.Errorf(
 				"could not dial relay %s: %w", peerAddr.DialString(), err)
 		}
-	}
-
-	// Manually add peers when the switch was already running.
-	dialedPeer := r.cometbftSwitch.Peers().Get(peerAddr.ID)
-	for _, reactor := range r.cometbftSwitch.Reactors(chainID) {
-		reactor.AddPeer(dialedPeer)
 	}
 
 	return nil

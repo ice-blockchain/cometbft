@@ -257,8 +257,19 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 			txHash := strings.ToUpper(hex.EncodeToString(rawTx.Hash()))
 
 			// Broadcast must happen only if there is at least one healthy relay.
-			// For NEW networks, we don't need to broadcast to other relays.
+			// For NEW networks, we don't need to broadcast to other relays,
+			// instead a ChainReplicationRequest will be sent to all of them.
 			if _, ok := relaysByChain[chainID]; !ok {
+				peers := []string{}
+				for _, relayAddr := range replReqRelays[chainID] {
+					peers = append(peers, string(relayAddr.ID()))
+				}
+
+				// Considers the relays as "ack'd", given no need to broadcast.
+				b.reactor.poolRequestsMtx.Lock()
+				b.reactor.poolRequestsSent[txHash] = peers
+				b.reactor.poolRequestsMtx.Unlock()
+
 				continue // Do not broadcast to relays
 			}
 
@@ -282,11 +293,11 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 			sentWg.Add(eventsSwitch.Peers().Size())
 
 			// Reset the sent requests cache for this txHash
-			b.poolRequestsMtx.Lock()
-			if _, ok := b.poolRequestsSent[txHash]; ok {
-				b.poolRequestsSent[txHash] = []string{}
+			b.reactor.poolRequestsMtx.Lock()
+			if _, ok := b.reactor.poolRequestsSent[txHash]; ok {
+				b.reactor.poolRequestsSent[txHash] = []string{}
 			}
-			b.poolRequestsMtx.Unlock()
+			b.reactor.poolRequestsMtx.Unlock()
 
 			// Broadcast the transaction to all healthy relays.
 			poolRequestPeers := []string{}
@@ -335,9 +346,9 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 			// Waits to process all healthy relays' acknowledgments.
 			sentWg.Wait()
 
-			b.poolRequestsMtx.Lock()
-			b.poolRequestsSent[txHash] = poolRequestPeers
-			b.poolRequestsMtx.Unlock()
+			b.reactor.poolRequestsMtx.Lock()
+			b.reactor.poolRequestsSent[txHash] = poolRequestPeers
+			b.reactor.poolRequestsMtx.Unlock()
 
 			// We require healthy relays to accept this broadcast.
 			if relaysAccepted >= minHealthyRelays {

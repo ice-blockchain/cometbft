@@ -156,11 +156,12 @@ func NewNodesMultiplex(
 	//
 	// The ABCI client is created once for the nodes multiplex, and we use
 	// a breaking [proxy.ChainConns] interface rather than [proxy.AppConns].
-	localABCISnapsApp := proxy.NewLocalClientCreator(snapsapp.NewSnapsApplication(
+	localSnapsApp := snapsapp.NewSnapsApplication(
 		reactor,
 		logger.With("module", "snapsapp"),
 		snapsapp.WithAcceptor(acceptor),
-	))
+	)
+	abciClientCreator := proxy.NewLocalClientCreator(localSnapsApp)
 
 	// Start the ABCI client (proxyApp)
 	// Note that we create only one ABCI client shared by all replicated chains.
@@ -168,7 +169,7 @@ func NewNodesMultiplex(
 	// BREAKING: we use [proxy.ChainConns] interfaces rather than [proxy.AppConns].
 	abciClient := proxy.NewMultiplexAppConn(
 		reactor.GetNetworks(),
-		localABCISnapsApp,
+		abciClientCreator,
 		proxy.PrometheusMetrics(globalCfg.Instrumentation.Namespace+"_"+string(nodeKey.ID())),
 	)
 	abciClient.SetLogger(logger.With("module", "proxy"))
@@ -178,6 +179,7 @@ func NewNodesMultiplex(
 	}
 
 	// Reactor: ABCI; ABCI: Reactor.
+	reactor.snapsApp = localSnapsApp
 	reactor.abciClient = abciClient
 
 	// Select a limited number of listeners message updates from

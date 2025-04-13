@@ -19,6 +19,7 @@ import (
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/node"
 	sm "github.com/ice-blockchain/cometbft/state"
+	"github.com/ice-blockchain/cometbft/store"
 )
 
 // ----------------------------------------------------------------------------
@@ -219,6 +220,86 @@ func TestScenarioClientBroadcastEmptyRelays(t *testing.T) {
 		assert.NotEmpty(t, actualResponsesRcvd)
 		assert.Len(t, actualResponsesRcvd, expectedResponseCnt)
 	}
+}
+
+// With a list of empty relays, a first block of the network will be created,
+// which includes the broadcast transactions data (using client.BroadcastTx),
+// and the state machine and blocks store are updated with transactions data.
+func TestScenarioClientBroadcastEmptyRelaysProduceBlockWithTx(t *testing.T) {
+	numChains := 0
+	numRelays := 7
+
+	servers, shutdownFn := ResetTestScenarioRelays(t, numChains, numRelays)
+	defer shutdownFn()
+
+	require.NotEmpty(t, servers)
+	require.Len(t, servers, numRelays)
+
+	// Set a custom logger to log all backend messages
+	// For debug, change this logger instance
+	backendLogger := cmtlog.TestingLogger().With("process", "relay-1")
+	servers[0].SetLogger(backendLogger)
+
+	// Note: relays includes self
+	relays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
+		servers,
+		2*time.Second,  // Time for backend
+		20*time.Second, // Time for broadcast
+	)
+
+	defer cancelCtxFn()
+
+	// Separate goroutine for client broadcast process
+	numTransactions := 2
+	testChainID := makeChainID("test chain")
+	notifyCh := make(chan client.BroadcastStatus)
+	go clientBroadcastTx(t,
+		broadcastCtx,
+		servers[0],
+		relays,
+		testChainID,
+		numTransactions,
+		notifyCh,
+	)
+
+	// Blocks the main thread until we consume from notifyCh.
+	resultStatusMsg := waitForClientBroadcastStatus(t,
+		broadcastCtx,
+		notifyCh,
+	)
+	assert.NotNil(t, resultStatusMsg)
+	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
+	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+
+	time.Sleep(5 * time.Second)
+
+	testReactor := servers[0].GetReactor()
+
+	stateStoreProvider := testReactor.GetInstanceProvider(mx.InstanceKeyStateStore)
+	assert.NotNil(t, stateStoreProvider, "should not error getting state store provider")
+	chainStore := stateStoreProvider(testChainID).(sm.Store)
+	assert.NotNil(t, chainStore, "state store per chain must not be nil")
+
+	stateMachine, err := chainStore.Load()
+	assert.NoError(t, err, "should not error loading state")
+	assert.Equal(t, testChainID, stateMachine.ChainID)
+	assert.Equal(t, stateMachine.LastBlockHeight, int64(1))
+
+	blockStoreProvider := testReactor.GetInstanceProvider(mx.InstanceKeyBlockStore)
+	assert.NotNil(t, blockStoreProvider, "should not error getting block store provider")
+	blockStore := blockStoreProvider(testChainID).(*store.BlockStore)
+	assert.NotNil(t, blockStore, "block store per chain must not be nil")
+
+	actualBlock, actualMeta := blockStore.LoadBlock(stateMachine.LastBlockHeight)
+	assert.NotNil(t, actualBlock, "should return correct block")
+	assert.NotNil(t, actualMeta, "should return correct block meta")
+	assert.NotEmpty(t, actualBlock.Data, "should return non-empty block data")
+	assert.NotEmpty(t, actualBlock.Data.Txs, "should return non-empty block transactions")
+	assert.Len(t, actualBlock.Data.Txs, numTransactions)
+}
+
+func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
+
 }
 
 // ----------------------------------------------------------------------------

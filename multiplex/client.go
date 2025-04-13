@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
+
+	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/server"
@@ -356,7 +359,15 @@ func (c MultiplexClient) BroadcastTx(
 	// TODO(midas): remove debug logs
 	c.backend.GetLogger().Debug("Waiting for remote transaction acceptance",
 		"num_relays", numHealthyRelays,
-		"num_txes", len(transactions))
+		"num_txes", len(transactions),
+		"tx", func() string {
+			h := make([]string, 0, len(transactions))
+			for _, t := range transactions {
+				h = append(h, cmtlog.NewLazySprintf("%X", client.TransactionToRawTx(t).Hash()).String())
+			}
+			return strings.Join(h, ", ")
+		}(),
+	)
 
 	// The RelaysBroadcast routine communicates the tx hash on a
 	// channel to tell this broadcaster about the acceptance of the

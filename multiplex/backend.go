@@ -82,20 +82,12 @@ type MultiplexBackend struct {
 	replRequestsMtx  sync.RWMutex
 	replRequestsSent map[string][]string
 
-	// Mapping of mempool partners relay IDs by transaction hash.
-	poolRequestsMtx  sync.RWMutex
-	poolRequestsSent map[string][]string
-
 	// Mapping of relay IDs whom ack'd a transaction, by its' hash.
 	ackResponsesMtx  sync.RWMutex
 	ackResponsesRcvd map[string][]string
 
 	// This channel is used to wait when new networks must be created.
 	newChainReadyCh chan string
-
-	// This channel is used to communicate the tx hash of a transaction
-	// that has been ack'd by a remote relays' mempool.
-	remoteRelayTxCh chan string
 
 	// Internals
 	logger   cmtlog.Logger
@@ -257,10 +249,10 @@ func (b *MultiplexBackend) GetReplRequestPeers(chainID string) []string {
 // sent a transaction through the Mempool.
 // See also: [DefaultRelaysBroadcastRoutine]
 func (b *MultiplexBackend) GetPoolRequestPeers(txHash string) []string {
-	b.poolRequestsMtx.RLock()
-	defer b.poolRequestsMtx.RUnlock()
+	b.reactor.poolRequestsMtx.RLock()
+	defer b.reactor.poolRequestsMtx.RUnlock()
 
-	if peerIds, ok := b.poolRequestsSent[txHash]; ok {
+	if peerIds, ok := b.reactor.poolRequestsSent[txHash]; ok {
 		return peerIds
 	}
 
@@ -407,15 +399,14 @@ func (b *MultiplexBackend) MustStart() {
 
 	// Starting a node backend starts internal channels
 	b.newChainReadyCh = make(chan string)
-	b.remoteRelayTxCh = make(chan string)
 
 	b.replRequestsMtx.Lock()
 	b.replRequestsSent = map[string][]string{}
 	b.replRequestsMtx.Unlock()
 
-	b.poolRequestsMtx.Lock()
-	b.poolRequestsSent = map[string][]string{}
-	b.poolRequestsMtx.Unlock()
+	b.reactor.poolRequestsMtx.Lock()
+	b.reactor.poolRequestsSent = map[string][]string{}
+	b.reactor.poolRequestsMtx.Unlock()
 
 	b.ackResponsesMtx.Lock()
 	b.ackResponsesRcvd = map[string][]string{}
@@ -546,10 +537,6 @@ func (b *MultiplexBackend) Close() error {
 		close(b.newChainReadyCh)
 	}
 
-	if b.remoteRelayTxCh != nil {
-		close(b.remoteRelayTxCh)
-	}
-
 	// Stop RelayInfo RPC and CometBFT RPC
 	for _, rpcListener := range b.rpcListeners {
 		rpcListener.Close()
@@ -640,18 +627,19 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 	shutdownWaitCh := make(chan struct{}, 1)
 
 	// Resets the ack channel to expect the correct number of Acks.
-	b.remoteRelayTxCh = make(chan string, maxAcceptMsgs)
+	remoteRelayTxCh := make(chan string, maxAcceptMsgs)
 
 	// Collects AckTransactionBroadcast messages and proxy to remoteRelayTxCh.
 	// Stopped on shutdownWaitCh. And we consume asyncResultsCh before end.
-	go b.remoteAckTransactionConsumer(ctx, asyncResultsCh, shutdownWaitCh)
+	go b.remoteAckTransactionConsumer(ctx, remoteRelayTxCh, asyncResultsCh, shutdownWaitCh)
 
 	// Collects remoteRelayTxCh messages and create result object.
 	// Stopped shutdownWaitCh. And we consume asyncResultsCh before end.
-	go b.localAckTransactionConsumer(ctx, maxAcceptMsgs, asyncResultsCh, shutdownWaitCh)
+	go b.localAckTransactionConsumer(ctx, maxAcceptMsgs, remoteRelayTxCh, asyncResultsCh, shutdownWaitCh)
 
 	defer func() {
 		shutdownWaitCh <- struct{}{}
+		close(remoteRelayTxCh)
 	}()
 
 	// Waits until we have any kind of result.
@@ -1454,6 +1442,7 @@ func (b *MultiplexBackend) StopNodeInstances() error {
 // in a message formatted to contain relay ID and tx hash.
 func (b *MultiplexBackend) remoteAckTransactionConsumer(
 	ctx context.Context,
+	remoteRelayTxCh chan string,
 	resultsCh chan AckTransactionResult,
 	shutdownCh chan struct{},
 ) {
@@ -1471,7 +1460,7 @@ func (b *MultiplexBackend) remoteAckTransactionConsumer(
 				"tx_hash", txHash,
 			)
 
-			b.remoteRelayTxCh <- acceptMsg
+			remoteRelayTxCh <- acceptMsg
 
 		case <-ctx.Done():
 			err := errors.New(
@@ -1495,6 +1484,7 @@ func (b *MultiplexBackend) remoteAckTransactionConsumer(
 func (b *MultiplexBackend) localAckTransactionConsumer(
 	ctx context.Context,
 	maxAcceptMsgs int,
+	remoteRelayTxCh chan string,
 	resultsCh chan AckTransactionResult,
 	shutdownCh chan struct{},
 ) {
@@ -1504,7 +1494,7 @@ func (b *MultiplexBackend) localAckTransactionConsumer(
 	for {
 		select {
 		// Note: acceptTxMsg contains one relay ID and one tx hash.
-		case acceptTxMsg := <-b.remoteRelayTxCh:
+		case acceptTxMsg := <-remoteRelayTxCh:
 			parts := strings.Split(acceptTxMsg, ":")
 			if len(parts) != 2 {
 				err := fmt.Errorf(
