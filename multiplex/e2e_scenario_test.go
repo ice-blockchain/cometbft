@@ -300,7 +300,75 @@ func TestScenarioClientBroadcastEmptyRelaysProduceBlockWithTx(t *testing.T) {
 }
 
 func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
+	numChains := 0
+	numRelays := 7
 
+	servers, shutdownFn := ResetTestScenarioRelays(t, numChains, numRelays)
+	defer shutdownFn()
+
+	require.NotEmpty(t, servers)
+	require.Len(t, servers, numRelays)
+
+	// Set a custom logger to log all backend messages
+	// For debug, change this logger instance
+	backendLogger := cmtlog.TestingLogger().With("process", "relay-1")
+	servers[0].SetLogger(backendLogger)
+
+	// Note: relays includes self
+	relays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
+		servers,
+		2*time.Second,  // Time for backend
+		20*time.Second, // Time for broadcast
+	)
+
+	defer cancelCtxFn()
+
+	require.NotEmpty(t, relays)
+	require.NotNil(t, broadcastCtx)
+	require.Len(t, relays, numRelays)
+
+	// Stop the receiving backend, then start it again.
+	err := servers[0].Close()
+	require.NoError(t, err, "should shutdown server")
+
+	time.Sleep(3 * time.Second)
+
+	// CAUTION:
+	// We mimic one of the relay shutting down completely, i.e. its process
+	// is not managed, corrupted or stopped. Setting nil on the "old" instance
+	// is only necessary during shutdown tests.
+
+	servers[0] = nil // Only for test
+	resetRelay, newShutdownFn := ResetTestSingleCompatibleRelay(t,
+		servers[1],
+		0, // indexRelay (resetting relay-1)
+		backendLogger,
+	)
+	defer newShutdownFn()
+
+	resetRelay.MustStart()
+
+	// Separate goroutine for client broadcast process
+	numTransactions := 2
+	testChainID := makeChainID("test chain")
+	notifyCh := make(chan client.BroadcastStatus)
+	go clientBroadcastTx(t,
+		broadcastCtx,
+		resetRelay,
+		relays,
+		testChainID,
+		numTransactions,
+		notifyCh,
+	)
+
+	// Blocks the main thread until we consume from notifyCh.
+	resultStatusMsg := waitForClientBroadcastStatus(t,
+		broadcastCtx,
+		notifyCh,
+	)
+	assert.NotNil(t, resultStatusMsg)
+	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
+	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
 }
 
 // ----------------------------------------------------------------------------
@@ -538,4 +606,49 @@ func StartTestScenarioRelays(
 	// Cancelable context to permit stopping by timeout
 	ctx, cancelFn := context.WithTimeout(context.TODO(), timeoutDuration)
 	return relays, ctx, cancelFn
+}
+
+func ResetTestSingleCompatibleRelay(
+	tb testing.TB,
+	otherRelay *mx.MultiplexBackend,
+	indexRelay int,
+	customLogger cmtlog.Logger,
+) (*mx.MultiplexBackend, func()) {
+	tb.Helper()
+	require.NotNil(tb, otherRelay)
+
+	baseCfg := otherRelay.GetReactor().GetNodeConfig()
+
+	// Uses config.TestConfig() and compatible MultiplexConfig
+	rootDirRelayX,
+		globalCfgRelayX := ResetTestMultiplexNodeWithConfigAndPorts(
+		tb,
+		tb.Name()+"-"+strconv.Itoa(indexRelay+1), // rootDir
+		"_"+strconv.Itoa(indexRelay+1),           // metricsSuffix
+		baseCfg.MultiplexConfig,
+		uint16(50001+(indexRelay*100)), // 50001, 50101, 50201, 50301, 50401
+	)
+
+	// Seeds must be valid (or empty), otherwise dialing will fail
+	for chainID := range globalCfgRelayX.ChainSeeds {
+		globalCfgRelayX.ChainSeeds[chainID] = ""
+	}
+
+	serverRelayX, err := mx.NewServer(
+		&client.DefaultAcceptor{},
+		globalCfgRelayX,
+		customLogger,
+	)
+	require.NoError(tb, err, "should create another server instance with cursor at "+strconv.Itoa(indexRelay))
+
+	shutdownFn := func() {
+		defer os.RemoveAll(rootDirRelayX)
+
+		if serverRelayX != nil {
+			err := serverRelayX.Close()
+			assert.NoError(tb, err, "should shutdown reset server at index: "+strconv.Itoa(indexRelay))
+		}
+	}
+
+	return serverRelayX, shutdownFn
 }

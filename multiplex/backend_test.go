@@ -698,7 +698,7 @@ func ResetTestMultiplexBackendCompatibleRelays(
 	backends[0] = serverRelay1
 
 	for r := 1; r < numRelays; r++ {
-		// Uses config.TestConfig() and empty MultiplexConfig
+		// Uses config.TestConfig() and copy MultiplexConfig
 		rootDirRelayX,
 			globalCfgRelayX := ResetTestMultiplexNodeWithConfigAndPorts(
 			tb,
