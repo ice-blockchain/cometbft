@@ -43,9 +43,6 @@ func (reactor *Reactor) AllocateNetwork(
 			"could not create filesystem for ChainID %s: %w", chainID, err)
 	}
 
-	// Register/inject in running reactor
-	reactor.storagePaths[chainID] = chainDataFolder
-	reactor.configsPaths[chainID] = chainConfFolder
 	reactor.RegisterInstance(InstanceKeyStorage, chainID, chainDataFolder)
 
 	// ------------------------------------------------------------------------
@@ -107,7 +104,7 @@ func (reactor *Reactor) InjectGenesisDoc(
 	}
 
 	// Retrieve initialGenesisDocSet, then append new doc and reset providers.
-	icsGenesisDocSet := reactor.initialGenesisDocs
+	icsGenesisDocSet := reactor.GetChecksummedGenesisDocSet()
 	icsGenesisDocSet.GenesisDocs = append(icsGenesisDocSet.GenesisDocs, genesisDoc)
 
 	// Get JSON of GenesisDocSet to update SHA256 checksum
@@ -121,14 +118,14 @@ func (reactor *Reactor) InjectGenesisDoc(
 	icsGenesisDocSet.Sha256Checksum = tmhash.Sum(genDocSetBytes)
 
 	// .. and persist the new genesis doc set with new network
-	err = icsGenesisDocSet.GenesisDocs.SaveAs(reactor.nodeConfig.GenesisFile())
+	err = icsGenesisDocSet.GenesisDocs.SaveAs(reactor.GetNodeConfig().GenesisFile())
 	if err != nil {
 		return nil, fmt.Errorf(
 			"could not save genesis.json with GenesisDocSet: %w", err)
 	}
 
 	// Register/inject in running reactor
-	reactor.initialGenesisDocs = icsGenesisDocSet
+	reactor.SetChecksummedGenesisDocSet(icsGenesisDocSet)
 	return icsGenesisDocSet, nil
 }
 
@@ -210,7 +207,10 @@ func (reactor *Reactor) InjectNewNetwork(
 	// Retrieve pre-allocated resources for priv validator and fs
 	privValProvider := reactor.GetInstanceProvider(InstanceKeyPrivValidator)
 	privValidator := privValProvider(chainID).(types.PrivValidator)
+
+	reactor.envMutex.RLock()
 	newConfFolder := reactor.configsPaths[chainID]
+	reactor.envMutex.RUnlock()
 
 	// Create the [types.GenesisDoc] instance for this network.
 	icsGenesisDocSet, err := reactor.MakeNetworkGenesis(
@@ -278,8 +278,8 @@ func (reactor *Reactor) InjectNewRuntime(
 	// This goroutine produces a panic in case of errors.
 	go func(network string) {
 		// Lock the filesystem mutex while loading priv val (fs)
-		reactor.filesystemMutex.Lock()
-		defer reactor.filesystemMutex.Unlock()
+		reactor.runtimesMutex.Lock()
+		defer reactor.runtimesMutex.Unlock()
 
 		// Start node listeners
 		if err := reactor.startNodeListeners(network); err != nil {
@@ -366,11 +366,13 @@ func (reactor *Reactor) InjectNewRuntime(
 
 	// Inform about all replicated chains being configured
 	clogger.Info("The new network is now configured",
-		"nodeId", string(reactor.nodeKey.ID()))
+		"nodeId", string(reactor.GetNodeKey().ID()))
 
 	return nil
 }
 
+// StartNode calls the Start method of [node.Node] instances and later
+// registers new routes for this ChainID in the RPC server.
 func (reactor *Reactor) StartNode(ctx context.Context, chainID string) error {
 	clogger := reactor.logger.With("chain_id", chainID)
 
@@ -386,10 +388,13 @@ func (reactor *Reactor) StartNode(ctx context.Context, chainID string) error {
 	// Step 5: Create the runnable node.Node instance
 
 	// Create a MultiplexMap[*node.Node] with this new network.
-	updatedMx := reactor.createMultiplexNodesWithServices(
+	updatedMx, err := reactor.createMultiplexNodesWithServices(
 		ctx,
 		[]string{chainID},
 	)
+	if err != nil {
+		return err
+	}
 
 	// ------------------------------------------------------------------------
 	// Step 6: Start the node
@@ -397,6 +402,8 @@ func (reactor *Reactor) StartNode(ctx context.Context, chainID string) error {
 	// CAUTION:
 	// Note that consensus reactors are not started here to prevent race
 	// conditions between the replication routine and cometbft services.
+
+	// TODO(midas): recover from panics happening in start coroutine.
 
 	// Type-assertion makes sure we have a [*node.Node]
 	runNode := updatedMx[chainID].GetInstance().(*node.Node)
@@ -421,7 +428,10 @@ func (reactor *Reactor) StartNode(ctx context.Context, chainID string) error {
 	}(chainID, runNode)
 
 	// Also hot-plug the RPC routes for added network
-	if reactor.rpcMultiplexer != nil {
+	reactor.networkMutex.RLock()
+	rpcMultiplexer := reactor.rpcMultiplexer
+	reactor.networkMutex.RUnlock()
+	if rpcMultiplexer != nil {
 		if err := reactor.EnableNewRuntimeRPC([]string{chainID}); err != nil {
 			return fmt.Errorf(
 				"error adding RPC routes for %s: %w", chainID, err)
@@ -447,12 +457,26 @@ func (reactor *Reactor) MakeNetworkFilesystem(
 	chainID ExtendedChainID,
 ) (string, string, error) {
 	// Uses the global node config
+	reactor.envMutex.RLock()
 	rootDir := reactor.nodeConfig.RootDir
+	reactor.envMutex.RUnlock()
 
 	// Uses default folder names
 	dataDir := filepath.Join(rootDir, config.DefaultDataDir)
 	confDir := filepath.Join(rootDir, config.DefaultConfigDir)
-	return EnsureNetworkFS(chainID, confDir, dataDir)
+
+	// runtimesMutex shall be locked during filesystem ops.
+	reactor.runtimesMutex.Lock()
+	defer reactor.runtimesMutex.Unlock()
+
+	chainConfDir,
+		chainDataDir,
+		err := EnsureNetworkFS(chainID, confDir, dataDir)
+
+	keyChainID := chainID.String()
+	reactor.storagePaths[keyChainID] = chainDataDir
+	reactor.configsPaths[keyChainID] = chainConfDir
+	return chainConfDir, chainDataDir, err
 }
 
 // MakeNetworkDatabases creates and opens database instances for a network
@@ -461,10 +485,12 @@ func (reactor *Reactor) MakeNetworkDatabases(
 	chainID ExtendedChainID,
 	databases []string,
 ) (dbs map[string]dbm.DB, err error) {
+	nodeConfig := reactor.GetNodeConfig()
+
 	// Prepare database parameters
-	dbBackend := dbm.BackendType(reactor.nodeConfig.DBBackend)
+	dbBackend := dbm.BackendType(nodeConfig.DBBackend)
 	dbStorage := filepath.Join(
-		reactor.nodeConfig.DBDir(),
+		nodeConfig.DBDir(),
 		chainID.GetUserAddress(),
 		chainID.String(),
 	)
@@ -487,9 +513,15 @@ func (reactor *Reactor) MakeNetworkValidator(
 	confDir string,
 	dataDir string,
 ) (types.PrivValidator, error) {
+	nodeConfig := reactor.GetNodeConfig()
+
 	// Uses filenames from configuration
-	keyFile := filepath.Base(reactor.nodeConfig.PrivValidatorKeyFile())
-	stateFile := filepath.Base(reactor.nodeConfig.PrivValidatorStateFile())
+	keyFile := filepath.Base(nodeConfig.PrivValidatorKeyFile())
+	stateFile := filepath.Base(nodeConfig.PrivValidatorStateFile())
+
+	// runtimesMutex shall be locked during filesystem ops.
+	reactor.runtimesMutex.Lock()
+	defer reactor.runtimesMutex.Unlock()
 
 	// NOTE: We force the ed25519 key type here.
 	return privval.LoadOrGenFilePV(
@@ -540,7 +572,7 @@ func (reactor *Reactor) MakeNetworkStateMachine(
 	stateDB dbm.DB,
 	blockstoreDB dbm.DB,
 ) (sm.State, sm.Store, *bs.BlockStore, error) {
-	nodeConfig := reactor.nodeConfig
+	nodeConfig := reactor.GetNodeConfig()
 	dbKeyLayoutVersion := nodeConfig.Storage.ExperimentalKeyLayout
 	dbCompactionMethod := nodeConfig.Storage.Compact
 	dbCompactionPeriod := nodeConfig.Storage.CompactionInterval
@@ -579,17 +611,16 @@ func (reactor *Reactor) MakeNetworkStateMachine(
 func (reactor *Reactor) MakeNetworkConfigOverwrite(
 	chainID ExtendedChainID,
 ) (*config.Config, error) {
-	// The network is new, so we open ports after all running networks.
-	// nextNodeIdx := len(reactor.networks)
+	nodeConfig := reactor.GetNodeConfig()
 
 	// Create a config overwrite without using the ChainRegistry
 	// We only update the ChainRegistry after initializing the network.
 	configOverwrite, err := NewConfigOverwriteWithParameters(
-		reactor.GetNodeConfig(),
+		nodeConfig,
 		chainID.String(),
 		"", // empty seed nodes (new network)
 		config.DefaultStateSyncConfig(),
-		int(reactor.nodeConfig.DiscoveryPort),
+		int(nodeConfig.DiscoveryPort),
 	)
 	if err != nil {
 		return nil, err

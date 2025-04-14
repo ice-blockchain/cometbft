@@ -230,12 +230,14 @@ func TestMultiplexNodeNewNodesMultiplex(t *testing.T) {
 	configProvider := testReactor.GetInstanceProvider(mx.InstanceKeyConfig)
 	assert.NotNil(t, configProvider)
 
+	testChainIds := testReactor.GetNetworks()
+
 	// Reset wait group for every iteration
 	wg := sync.WaitGroup{}
-	wg.Add(len(testReactor.GetNetworks()))
+	wg.Add(len(testChainIds))
 
 	// Test that we have all the required networks
-	for _, testChainID := range testReactor.GetNetworks() {
+	for _, testChainID := range testChainIds {
 		assert.Contains(t, testMultiplex, testChainID)
 		assert.NotNil(t, testMultiplex[testChainID])
 
@@ -265,7 +267,7 @@ func TestMultiplexNodeNewNodesMultiplex(t *testing.T) {
 	}
 
 	// Wait for both nodes to have produced a block
-	// t.Logf("Waiting for %d nodes to be up and running.", len(testReactor.GetNetworks()))
+	// t.Logf("Waiting for %d nodes to be up and running.", len(testChainIds))
 	wg.Wait()
 
 	// TODO(midas): test that it uses the multiplex RPC listen address
@@ -274,9 +276,9 @@ func TestMultiplexNodeNewNodesMultiplex(t *testing.T) {
 	defer func() {
 		// Uses waitgroup to ensure complete shutdown
 		wg := sync.WaitGroup{}
-		wg.Add(len(testReactor.GetNetworks()))
+		wg.Add(len(testChainIds))
 
-		for _, chainID := range testReactor.GetNetworks() {
+		for _, chainID := range testChainIds {
 			runningNode := testMultiplex[chainID].GetInstance().(*cmtnode.Node)
 
 			// Stop the running node instance and continue
@@ -291,7 +293,7 @@ func TestMultiplexNodeNewNodesMultiplex(t *testing.T) {
 		}
 
 		// Wait for all nodes to be shutdown
-		//t.Logf("Waiting for %d nodes to be stopped.", len(testReactor.GetNetworks()))
+		//t.Logf("Waiting for %d nodes to be stopped.", len(testChainIds))
 		wg.Wait()
 
 		if testReactor.IsRunning() {
@@ -312,15 +314,17 @@ func TestMultiplexNodeNewNodesMultiplexSingleNetworkProduceBlocks(t *testing.T) 
 	// CometBFT RPC and P2P servers started with above call,
 	// i.e. startServers=true
 
+	testChainIds := testReactor.GetNetworks()
+
 	// Shutdown routine
 	defer func() {
 		defer os.RemoveAll(globalCfg.RootDir)
 
 		// Uses waitgroup to ensure complete shutdown
 		wg := sync.WaitGroup{}
-		wg.Add(len(testReactor.GetNetworks()))
+		wg.Add(len(testChainIds))
 
-		for _, chainID := range testReactor.GetNetworks() {
+		for _, chainID := range testChainIds {
 			runningNode := testMultiplex[chainID].GetInstance().(*cmtnode.Node)
 
 			// Stop the running node instance and continue
@@ -335,7 +339,7 @@ func TestMultiplexNodeNewNodesMultiplexSingleNetworkProduceBlocks(t *testing.T) 
 		}
 
 		// Wait for all nodes to be shutdown
-		//t.Logf("Waiting for %d nodes to be stopped.", len(testReactor.GetNetworks()))
+		//t.Logf("Waiting for %d nodes to be stopped.", len(testChainIds))
 		wg.Wait()
 
 		if testReactor.IsRunning() {
@@ -345,7 +349,7 @@ func TestMultiplexNodeNewNodesMultiplexSingleNetworkProduceBlocks(t *testing.T) 
 	}()
 
 	// Must start CometBFT RPC and P2P servers exactly once
-	firstChainID := testReactor.GetNetworks()[0]
+	firstChainID := testChainIds[0]
 	fstRunningNode := testMultiplex[firstChainID].GetInstance().(*node.Node)
 
 	var rpcErr error
@@ -377,15 +381,17 @@ func TestMultiplexNodeNewNodesMultiplexProduceBlocks(t *testing.T) {
 	// CometBFT RPC and P2P servers NOT STARTED with above call,
 	// i.e. startServers=false
 
+	testChainIds := testReactor.GetNetworks()
+
 	// Shutdown routine
 	defer func() {
 		defer os.RemoveAll(globalCfg.RootDir)
 
 		// Uses waitgroup to ensure complete shutdown
 		wg := sync.WaitGroup{}
-		wg.Add(len(testReactor.GetNetworks()))
+		wg.Add(len(testChainIds))
 
-		for _, chainID := range testReactor.GetNetworks() {
+		for _, chainID := range testChainIds {
 			runningNode := testMultiplex[chainID].GetInstance().(*cmtnode.Node)
 
 			// Stop the running node instance and continue
@@ -400,7 +406,7 @@ func TestMultiplexNodeNewNodesMultiplexProduceBlocks(t *testing.T) {
 		}
 
 		// Wait for all nodes to be shutdown
-		//t.Logf("Waiting for %d nodes to be stopped.", len(testReactor.GetNetworks()))
+		//t.Logf("Waiting for %d nodes to be stopped.", len(testChainIds))
 		wg.Wait()
 
 		if testReactor.IsRunning() {
@@ -410,7 +416,7 @@ func TestMultiplexNodeNewNodesMultiplexProduceBlocks(t *testing.T) {
 	}()
 
 	// Must start CometBFT RPC and P2P servers exactly once
-	firstChainID := testReactor.GetNetworks()[0]
+	firstChainID := testChainIds[0]
 	fstRunningNode := testMultiplex[firstChainID].GetInstance().(*node.Node)
 
 	_, rpcErr := fstRunningNode.StartRPC()
@@ -619,12 +625,14 @@ func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog
 	require.Len(tb, testMultiplex, numChains, fmt.Sprintf(
 		"should contain exactly %d networks", numChains))
 
+	testChainIds := testReactor.GetNetworks()
+
 	// Reset wait group for every iteration
 	wg := sync.WaitGroup{}
-	wg.Add(len(testReactor.GetNetworks()))
+	wg.Add(len(testChainIds))
 
 	// Test that we have all the required networks
-	for _, testChainID := range testReactor.GetNetworks() {
+	for _, testChainID := range testChainIds {
 		require.Contains(tb, testMultiplex, testChainID)
 		require.NotNil(tb, testMultiplex[testChainID])
 
@@ -647,7 +655,7 @@ func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog
 	}
 
 	// Wait for all nodes to be up and running
-	// t.Logf("Waiting for %d nodes to be up and running.", len(testReactor.GetNetworks()))
+	// t.Logf("Waiting for %d nodes to be up and running.", len(testChainIds))
 	wg.Wait()
 
 	return globalCfg, testMultiplex, testReactor
@@ -664,13 +672,15 @@ func assertWaitForNodesMultiplexToProduceBlocks(
 ) (actualNumBlocks map[string]int, actualNumTxes map[string]int) {
 	tb.Helper()
 
+	testChainIds := testReactor.GetNetworks()
+
 	wg := sync.WaitGroup{}
-	wg.Add(len(testReactor.GetNetworks()))
+	wg.Add(len(testChainIds))
 
 	mtx := sync.RWMutex{}
-	actualNumBlocks = make(map[string]int, len(testReactor.GetNetworks()))
-	actualNumTxes = make(map[string]int, len(testReactor.GetNetworks()))
-	for _, testChainID := range testReactor.GetNetworks() {
+	actualNumBlocks = make(map[string]int, len(testChainIds))
+	actualNumTxes = make(map[string]int, len(testChainIds))
+	for _, testChainID := range testChainIds {
 		// Test that we have the correct node instance
 		assert.Contains(tb, testMultiplex, testChainID)
 		assert.NotNil(tb, testMultiplex[testChainID])
@@ -742,7 +752,7 @@ func assertWaitForNodesMultiplexToProduceBlocks(
 
 	// We assert that all networks produced at least X blocks, if an error
 	// occurred on one of the networks, the map entry won't exist.
-	for _, chainID := range testReactor.GetNetworks() {
+	for _, chainID := range testChainIds {
 		assert.Contains(tb, actualNumBlocks, chainID)
 
 		if expectedBlocks > 0 {

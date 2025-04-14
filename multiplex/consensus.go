@@ -29,14 +29,15 @@ func (reactor *Reactor) PrepareConsensusInstanceWithReactor(
 	chainID string,
 ) error {
 	// First make sure the ABCI is setup correctly
-	if reactor.abciClient == nil {
+	abciClient := reactor.GetABCIClient()
+	if abciClient == nil {
 		return errors.New("missing ABCI client (proxyApp) for consensus handshake")
 	}
 
 	clogger := reactor.logger.With("chain_id", chainID)
 
 	// Get this network's app connections for consensus
-	proxyApp := reactor.abciClient.ToAppConns(chainID)
+	proxyApp := abciClient.ToAppConns(chainID)
 
 	// Used for retrieving GenesisDoc instance by chain
 	genesisDocProvider := reactor.GetGenesisProvider()
@@ -48,7 +49,11 @@ func (reactor *Reactor) PrepareConsensusInstanceWithReactor(
 	blockStoreProvider := reactor.GetInstanceProvider(InstanceKeyBlockStore)
 
 	// Retrieve the correct instances/services by chain
-	genesisDoc := genesisDocProvider(chainID)
+	genesisDoc, genesisErr := genesisDocProvider(chainID)
+	if genesisErr != nil {
+		return genesisErr
+	}
+
 	stateMachine := stateProvider(chainID).(sm.State)
 	stateStore := stateStoreProvider(chainID).(sm.Store)
 	blockStore := blockStoreProvider(chainID).(*bs.BlockStore)
@@ -113,7 +118,8 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	waitSync bool,
 ) error {
 	// First make sure the ABCI is setup correctly
-	if reactor.abciClient == nil {
+	abciClient := reactor.GetABCIClient()
+	if abciClient == nil {
 		return errors.New(
 			"missing ABCI client (proxyApp) for consensus execution")
 	}
@@ -148,7 +154,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	// Prometheus does not allow hyphens in metrics names, it must match
 	// following regexp: [a-zA-Z_:][a-zA-Z0-9_:]*
 	// see also: https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels
-	metricsNames := cfgOverwrite.Instrumentation.Namespace + "_" + string(reactor.nodeKey.ID()) + ":" + strings.ReplaceAll(chainID, "-", "_")
+	metricsNames := cfgOverwrite.Instrumentation.Namespace + "_" + string(reactor.GetNodeKey().ID()) + ":" + strings.ReplaceAll(chainID, "-", "_")
 
 	// We can safely ignore the error because it triggers before in Reactor.
 	privValPubKey, _ := privValidator.GetPubKey()
@@ -179,7 +185,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	memplLogger := clogger.With("module", "mempool")
 	mempool := mempl.NewCListMempool(
 		cfgOverwrite.Mempool,
-		reactor.abciClient.Mempool(chainID),
+		abciClient.Mempool(chainID),
 		stateMachine.LastBlockHeight,
 		mempl.WithMetrics(memplMetricsProvider),
 		mempl.WithPreCheck(sm.TxPreCheck(stateMachine.Copy())),
@@ -192,10 +198,10 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 		waitSync, // "waitSync"
 		mempl.WithAcceptor(
 			extChainID.GetUserAddress(),
-			reactor.acceptorImpl,
+			reactor.GetAcceptor(),
 		),
 		mempl.WithChainID(chainID),
-		mempl.WithNodeKey(reactor.nodeKey),
+		mempl.WithNodeKey(reactor.GetNodeKey()),
 	)
 	if cfgOverwrite.Consensus.WaitForTxs() {
 		mempool.EnableTxsAvailable()
@@ -227,7 +233,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	blockExecutor := sm.NewBlockExecutor(
 		stateStore,
 		clogger.With("module", "state"),
-		reactor.abciClient.Consensus(chainID),
+		abciClient.Consensus(chainID),
 		mempool,
 		evidencePool,
 		blockStore,

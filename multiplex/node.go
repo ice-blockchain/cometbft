@@ -168,7 +168,7 @@ func NewNodesMultiplex(
 	//
 	// BREAKING: we use [proxy.ChainConns] interfaces rather than [proxy.AppConns].
 	abciClient := proxy.NewMultiplexAppConn(
-		reactor.GetNetworks(),
+		knownNetworks,
 		abciClientCreator,
 		proxy.PrometheusMetrics(globalCfg.Instrumentation.Namespace+"_"+string(nodeKey.ID())),
 	)
@@ -179,8 +179,8 @@ func NewNodesMultiplex(
 	}
 
 	// Reactor: ABCI; ABCI: Reactor.
-	reactor.snapsApp = localSnapsApp
-	reactor.abciClient = abciClient
+	reactor.SetSnapsApp(localSnapsApp)
+	reactor.SetABCIClient(abciClient)
 
 	// Select a limited number of listeners message updates from
 	// the multiplex reactor channel. This loop forbids duplicate
@@ -258,16 +258,16 @@ func NewNodesMultiplex(
 	}
 
 	// Reactor: Network; Network: Reactor.
-	reactor.nodeInfo = nodeInfo
+	reactor.SetNodeInfo(nodeInfo)
 
 	// Create the [p2p.MultiplexTransports] instances
-	if err := reactor.CreateTransportSwitchesWithReactors(ctx, reactor.GetNetworks()); err != nil {
+	if err := reactor.CreateTransportSwitchesWithReactors(ctx, knownNetworks); err != nil {
 		return nil, nil, fmt.Errorf(
 			"error creating p2p event switch: %w", err)
 	}
 
 	// Create the peer address books and set on switches
-	if err := reactor.CreateAddressBooks(ctx, reactor.GetNetworks()); err != nil {
+	if err := reactor.CreateAddressBooks(ctx, knownNetworks); err != nil {
 		return nil, nil, fmt.Errorf(
 			"error creating the pex address books: %w", err)
 	}
@@ -276,11 +276,14 @@ func NewNodesMultiplex(
 	logger.Info("All nodes are now configured", "nodeId", string(nodeKey.ID()))
 
 	// Create node.Node instances (runtime) and inject "runtime/node" service.
-	nodesMultiplex := reactor.createMultiplexNodesWithServices(
+	nodesMultiplex, err := reactor.createMultiplexNodesWithServices(
 		ctx,
-		reactor.GetNetworks(),
+		knownNetworks,
 		options...,
 	)
+	if err != nil {
+		return nodesMultiplex, reactor, err
+	}
 
 	return nodesMultiplex, reactor, nil
 }
@@ -441,14 +444,16 @@ func makeNodeInfo(
 		))
 	}
 
+	nodeConfig := reactor.GetNodeConfig()
+
 	p2pListenAddr := overwriteListenPort(
-		reactor.nodeConfig.P2P.ListenAddress,
-		int(reactor.nodeConfig.DiscoveryPort)+1, // defaults to 30002
+		nodeConfig.P2P.ListenAddress,
+		int(nodeConfig.DiscoveryPort)+1, // defaults to 30002
 	)
 
 	rpcListenAddr := overwriteListenPort(
-		reactor.nodeConfig.RPC.ListenAddress,
-		int(reactor.nodeConfig.DiscoveryPort)+2, // defaults to 30003
+		nodeConfig.RPC.ListenAddress,
+		int(nodeConfig.DiscoveryPort)+2, // defaults to 30003
 	)
 
 	txIndexerStatus := "on"

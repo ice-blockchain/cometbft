@@ -34,22 +34,21 @@ func (reactor *Reactor) createMultiplexNodesWithServices(
 	_ context.Context,
 	networks []string,
 	options ...node.Option,
-) MultiplexMap[*node.Node] {
+) (MultiplexMap[*node.Node], error) {
 	// Used to retrieve configuration and state per chain.
 	genesisDocProvider := reactor.GetGenesisProvider()
 	serviceProvider := reactor.GetServicesProvider()
 	configProvider := reactor.GetInstanceProvider(InstanceKeyConfig)
 	statesProvider := reactor.GetInstanceProvider(InstanceKeyState)
 	privvalProvider := reactor.GetInstanceProvider(InstanceKeyPrivValidator)
-	// switchProvider := reactor.GetInstanceProvider(InstanceKeyP2PSwitch)
-	// transportProvider := reactor.GetInstanceProvider(InstanceKeyP2PTransport)
 	stateStoreProvider := reactor.GetInstanceProvider(InstanceKeyStateStore)
 	blockStoreProvider := reactor.GetInstanceProvider(InstanceKeyBlockStore)
 
 	// Allocate return objects
 	nodesMultiplex := MultiplexMap[*node.Node]{}
-	eventSwitch := reactor.cometbftSwitch
-	p2pTransport := reactor.transport
+
+	eventSwitch := reactor.GetEventSwitchForCometBFT()
+	p2pTransport := reactor.GetTransportForCometBFT()
 
 	// We iterate through an ordered list of known networks to create
 	// one instance of [node.Node] for each replicated chain.
@@ -57,18 +56,18 @@ func (reactor *Reactor) createMultiplexNodesWithServices(
 	// This notably permits to keep backwards-compatibility with CometBFT.
 	for _, chainID := range networks {
 		// Config
-		genesisDoc := genesisDocProvider(chainID)
+		genesisDoc, genesisErr := genesisDocProvider(chainID)
+		if genesisErr != nil {
+			return nodesMultiplex, genesisErr
+		}
+
 		cfgOverwrite := configProvider(chainID).(*config.Config)
 		privValidator := privvalProvider(chainID).(types.PrivValidator)
-
-		// P2P
-		// eventSwitch := switchProvider(chainID).(*p2p.Switch)
-		// p2pTransport := transportProvider(chainID).(*p2p.MultiplexTransport)
 		pexAddrBook := eventSwitch.GetAddrBook().(pex.AddrBook)
 
 		// Consensus
 		eventBus := serviceProvider(ServiceKeyEventBus, chainID).(*types.EventBus)
-		proxyApp := reactor.abciClient.ToAppConns(chainID)
+		proxyApp := reactor.GetABCIClient().ToAppConns(chainID)
 		memplReactor := serviceProvider(ServiceKeyMempoolReactor, chainID).(*mempl.Reactor)
 		consensusReactor := serviceProvider(ServiceKeyConsensusReactor, chainID).(*cs.Reactor)
 		evidenceReactor := serviceProvider(ServiceKeyEvidenceReactor, chainID).(*evidence.Reactor)
@@ -81,11 +80,14 @@ func (reactor *Reactor) createMultiplexNodesWithServices(
 		stateStore := stateStoreProvider(chainID).(sm.Store)
 		blockStore := blockStoreProvider(chainID).(*bs.BlockStore)
 
+		multiNodeInfo := reactor.GetMultiNetworkNodeInfo()
+		withNodeKey := reactor.GetNodeKey()
+
 		nodeInstance := node.NewNodeWithServices(
 			cfgOverwrite,
 			genesisDoc,
-			reactor.nodeInfo.GetNodeInfo(chainID),
-			reactor.nodeKey,
+			multiNodeInfo.GetNodeInfo(chainID),
+			withNodeKey,
 			privValidator,
 			pexAddrBook,
 			p2pTransport,
@@ -104,7 +106,7 @@ func (reactor *Reactor) createMultiplexNodesWithServices(
 		)
 
 		nodeInstance.BaseService = *service.NewBaseService(
-			reactor.logger.With("node_id", reactor.nodeKey.ID()),
+			reactor.logger.With("node_id", withNodeKey.ID()),
 			"Node",
 			nodeInstance,
 		)
@@ -121,5 +123,5 @@ func (reactor *Reactor) createMultiplexNodesWithServices(
 		reactor.RegisterService(ServiceKeyNodeRuntime, chainID, nodeInstance)
 	}
 
-	return nodesMultiplex
+	return nodesMultiplex, nil
 }

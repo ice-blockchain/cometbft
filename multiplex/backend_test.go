@@ -4,6 +4,7 @@ import (
 	"os"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -57,7 +58,11 @@ func TestMultiplexBackendMustStart(t *testing.T) {
 
 	// Act
 	backend.MustStart()
-	testSwitch := backend.EventSwitch()
+
+	// Give it some time to start before checking open conns.
+	time.Sleep(2 * time.Second)
+
+	testSwitch := backend.CreateOrLoadDiscoveryEventSwitch()
 	assert.NotNil(t, testSwitch)
 
 	// Test that the broadcast port is opened
@@ -231,9 +236,9 @@ func TestMultiplexBackendCheckDialCompatibleRelayWithTwoRelays(t *testing.T) {
 	servers[1].MustStart()
 
 	// server 0 talks to server 1
-	sourceSwitch := servers[0].EventSwitch()
+	sourceSwitch := servers[0].CreateOrLoadDiscoveryEventSwitch()
 	sourceReactor := servers[0].GetReactor()
-	recipientSwitch := servers[1].EventSwitch()
+	recipientSwitch := servers[1].CreateOrLoadDiscoveryEventSwitch()
 	recipientReactor := servers[1].GetReactor()
 	recipientNodeID := string(recipientReactor.GetNodeKey().ID())
 
@@ -301,11 +306,11 @@ func TestMultiplexBackendCheckDialCompatibleRelaySevenCompatibleRelays(t *testin
 	}
 
 	// Test where RELAY_1 talks to RELAY_X
-	sourceSwitch := servers[0].EventSwitch()
+	sourceSwitch := servers[0].CreateOrLoadDiscoveryEventSwitch()
 	sourceReactor := servers[0].GetReactor()
 	sourceRelayID := string(sourceReactor.GetNodeKey().ID())
 	for i := 1; i < len(servers); i++ {
-		recipientSwitch := servers[i].EventSwitch()
+		recipientSwitch := servers[i].CreateOrLoadDiscoveryEventSwitch()
 		recipientReactor := servers[i].GetReactor()
 		recipientRelayID := string(recipientReactor.GetNodeKey().ID())
 
@@ -469,9 +474,9 @@ func TestMultiplexBackendGetRelaysByNetwork(t *testing.T) {
 	}
 
 	// server 0 talks to server 1
-	sourceSwitch := servers[0].EventSwitch()
+	sourceSwitch := servers[0].CreateOrLoadDiscoveryEventSwitch()
 	sourceReactor := servers[0].GetReactor()
-	recipientSwitch := servers[1].EventSwitch()
+	recipientSwitch := servers[1].CreateOrLoadDiscoveryEventSwitch()
 	recipientReactor := servers[1].GetReactor()
 	recipientNodeID := string(recipientReactor.GetNodeKey().ID())
 

@@ -135,6 +135,8 @@ func collectSampleP2P(
 
 // collectSampleCometBFT returns a function that, when called, adds an observation to m.
 // The observation added to m is the number of CometBFT blocks and transactions.
+//
+// TODO(midas): enable user-grouped metrics with ChainID and RelayID.
 func collectSampleCometBFT(
 	// relayID string,
 	// chainID string,

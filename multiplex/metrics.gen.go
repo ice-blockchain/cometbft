@@ -8,6 +8,7 @@ import (
 	stdprometheus "github.com/prometheus/client_golang/prometheus"
 )
 
+// TODO(midas): enable user-grouped metrics with ChainID and RelayID.
 func PrometheusMetrics(namespace string, labelsAndValues ...string) *Metrics {
 	labels := []string{}
 	for i := 0; i < len(labelsAndValues); i += 2 {
@@ -93,6 +94,7 @@ func PrometheusMetrics(namespace string, labelsAndValues ...string) *Metrics {
 	}
 }
 
+// TODO(midas): enable user-grouped metrics with ChainID and RelayID.
 func NopMetrics() *Metrics {
 	return &Metrics{
 		ProcessorUsage:    discard.NewHistogram(),

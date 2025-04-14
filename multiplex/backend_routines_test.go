@@ -74,11 +74,11 @@ func TestMultiplexRoutinesNodeReplRequest(t *testing.T) {
 	useChainID := servers[0].GetReactor().GetNetworks()[0]
 	require.Contains(t, chainRelays, useChainID)
 
-	sourceSwitch := servers[0].EventSwitch()
+	sourceSwitch := servers[0].CreateOrLoadDiscoveryEventSwitch()
 	sourceReactor := servers[0].GetReactor()
 	sourceRelayID := string(sourceReactor.GetNodeKey().ID())
 	for i := 1; i < len(servers); i++ {
-		recipientSwitch := servers[i].EventSwitch()
+		recipientSwitch := servers[i].CreateOrLoadDiscoveryEventSwitch()
 		recipientReactor := servers[i].GetReactor()
 		recipientRelayID := string(recipientReactor.GetNodeKey().ID())
 

@@ -154,7 +154,7 @@ func TestMultiplexRuntimeMakeNetworkGenesis(t *testing.T) {
 	testPrivValPubKey, err := testPrivValidator.GetPubKey()
 	require.NoError(t, err)
 
-	numNetworksBefore := len(testReactor.GetNetworks())
+	numNetworksBefore := testReactor.Size()
 
 	// Act
 	actualIcsGenDocSet, err := testReactor.MakeNetworkGenesis(
@@ -397,7 +397,8 @@ func TestMultiplexRuntimeInjectNewNetwork(t *testing.T) {
 	assert.NoError(t, injectErr, "should inject new network")
 
 	// Test that we injected the ChainID
-	assert.Len(t, testReactor.GetNetworks(), numChains+1) // Injected 1
+	testChainIds := testReactor.GetNetworks()
+	assert.Len(t, testChainIds, numChains+1) // Injected 1
 	assert.Equal(t, true, testReactor.HasNetwork(testChainID))
 
 	// Also test that we created a correct GenesisDoc
@@ -539,7 +540,8 @@ func TestMultiplexRuntimeInjectNewNetworkCallsRegisterNetwork(t *testing.T) {
 	assert.NoError(t, injectErr, "should inject new network")
 
 	// - Should have called RegisterNetwork
-	assert.Len(t, testReactor.GetNetworks(), numChains+1) // Injected 1
+	testChainIds := testReactor.GetNetworks()
+	assert.Len(t, testChainIds, numChains+1) // Injected 1
 	assert.Equal(t, true, testReactor.HasNetwork(testChainID))
 
 	// Also test that we updated MultiNetworkNodeInfo

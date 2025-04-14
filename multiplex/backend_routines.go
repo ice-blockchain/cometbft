@@ -66,8 +66,13 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 		)
 
 		// Retrieve the GenesisDoc for this chain
-		genDocProvider := b.reactor.GetGenesisProvider()
-		genesisDoc := genDocProvider(chainID)
+		genesisDocProvider := b.reactor.GetGenesisProvider()
+		genesisDoc, err := genesisDocProvider(chainID)
+		if err != nil {
+			client.Error(notifyCh, fmt.Errorf(
+				"could not load genesis doc in NodeReplRequest: %w", err))
+			return // terminates the process
+		}
 
 		// Build a transportable ChainParams protobuf message
 		chainParams, err := GenesisDocToChainParams(*genesisDoc)
@@ -79,7 +84,7 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 
 		// Broadcast the ChainReplicationRequest.
 		// Note that this events switch uses `DiscoveryPort`.
-		eventsSwitch := b.EventSwitch()
+		eventsSwitch := b.CreateOrLoadDiscoveryEventSwitch()
 		eventsSwitch.Peers().ForEach(func(peer p2p.Peer) {
 			// Send only to relays we are interested in.
 			peerID := string(peer.ID())
@@ -215,7 +220,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 		for chainID, relays := range relaysByChain {
 			relaysWithoutSelf := []*server.RelayAddress{}
 			for _, relayAddr := range relays {
-				if relayAddr.ID() != b.reactor.nodeKey.ID() {
+				if relayAddr.ID() != b.reactor.GetNodeKey().ID() {
 					relaysWithoutSelf = append(relaysWithoutSelf, relayAddr)
 				}
 			}

@@ -60,16 +60,18 @@ func TestMultiplexReactorCreateTransportSwitchesWithReactors(t *testing.T) {
 	rootDir, globalCfg, reactor := ResetTestMultiplexP2P(t, numChains)
 	defer os.RemoveAll(rootDir)
 
+	testChainIds := reactor.GetNetworks()
+
 	// Requires correct MultiNetworkNodeInfo
 	testNodeInfo := mockNodeInfoWithNetworks(
 		reactor.GetNodeKey().ID(),
 		globalCfg.Moniker,
-		reactor.GetNetworks(),
+		testChainIds,
 	)
 	reactor.SetNodeInfo(testNodeInfo)
 
 	// Should create [p2p.MultiplexTransport] instances
-	err := reactor.CreateTransportSwitchesWithReactors(context.TODO(), reactor.GetNetworks())
+	err := reactor.CreateTransportSwitchesWithReactors(context.TODO(), testChainIds)
 	assert.NoError(t, err, "should not error creating transports and switches")
 
 	// transportsProvider := reactor.GetInstanceProvider(mx.InstanceKeyP2PTransport)
@@ -79,13 +81,13 @@ func TestMultiplexReactorCreateTransportSwitchesWithReactors(t *testing.T) {
 	// assert.NotNil(t, switchesProvider, "event switch provider must not be nil")
 
 	assert.NotNil(t, reactor.GetEventSwitchForCometBFT())
-	assert.NotNil(t, reactor.GetTransport())
+	assert.NotNil(t, reactor.GetTransportForCometBFT())
 
 	testSwitch := reactor.GetEventSwitchForCometBFT()
-	testTransport := reactor.GetTransport()
+	testTransport := reactor.GetTransportForCometBFT()
 	assert.NotNil(t, testTransport.NetAddress())
 
-	for _, chainID := range reactor.GetNetworks() {
+	for _, chainID := range testChainIds {
 		// testTransport := transportsProvider(chainID).(*p2p.MultiplexTransport)
 		// assert.NotNil(t, testTransport)
 
@@ -110,19 +112,21 @@ func TestMultiplexReactorCreateAddressBooks(t *testing.T) {
 	rootDir, globalCfg, reactor := ResetTestMultiplexP2P(t, numChains)
 	defer os.RemoveAll(rootDir)
 
+	testChainIds := reactor.GetNetworks()
+
 	// Requires correct MultiNetworkNodeInfo
 	testNodeInfo := mockNodeInfoWithNetworks(
 		reactor.GetNodeKey().ID(),
 		globalCfg.Moniker,
-		reactor.GetNetworks(),
+		testChainIds,
 	)
 	reactor.SetNodeInfo(testNodeInfo)
 
-	err := reactor.CreateTransportSwitchesWithReactors(context.TODO(), reactor.GetNetworks())
+	err := reactor.CreateTransportSwitchesWithReactors(context.TODO(), testChainIds)
 	require.NoError(t, err, "should not error creating transports and switches")
 
 	// Should create [p2p.pex.AddrBook] instances
-	err = reactor.CreateAddressBooks(context.TODO(), reactor.GetNetworks())
+	err = reactor.CreateAddressBooks(context.TODO(), testChainIds)
 	assert.NoError(t, err, "should not error creating pex address books")
 
 	// Should set the AddrBook on [p2p.Switch]
@@ -132,7 +136,7 @@ func TestMultiplexReactorCreateAddressBooks(t *testing.T) {
 	assert.NotNil(t, reactor.GetEventSwitchForCometBFT())
 	testSwitch := reactor.GetEventSwitchForCometBFT()
 
-	for _, chainID := range reactor.GetNetworks() {
+	for _, chainID := range testChainIds {
 		// eventSwitch := switchesProvider(chainID).(*p2p.Switch)
 		// assert.NotNil(t, eventSwitch)
 
@@ -166,9 +170,11 @@ func ResetTestMultiplexP2P(tb testing.TB, numChains int) (string, *config.Config
 	err = reactor.WaitForNetworks()
 	require.NoError(tb, err, "should not error while waiting for networks")
 
+	testChainIds := reactor.GetNetworks()
+
 	// Start an ABCI client
 	abciClient := proxy.NewMultiplexAppConn(
-		reactor.GetNetworks(),
+		testChainIds,
 		proxy.DefaultClientCreator(globalCfg.ProxyApp, globalCfg.ABCI, globalCfg.DBDir()),
 		proxy.NopMetrics(),
 	)
@@ -180,7 +186,7 @@ func ResetTestMultiplexP2P(tb testing.TB, numChains int) (string, *config.Config
 	reactor.SetABCIClient(abciClient)
 
 	// Should now be able to do consensus handshake and load state machines
-	for _, chainID := range reactor.GetNetworks() {
+	for _, chainID := range testChainIds {
 		err = reactor.PrepareConsensusInstanceWithReactor(context.TODO(), chainID)
 		require.NoError(tb, err, "should not error for consensus handshake")
 

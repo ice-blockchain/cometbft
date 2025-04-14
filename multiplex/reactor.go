@@ -75,7 +75,7 @@ type multiplexProviderFn func(string) MultiplexMap[any]
 type instanceProviderFn func(string) any
 
 // genesisDocProviderFn provides a [types.GenesisDoc] by ChainID.
-type genesisDocProviderFn func(string) *types.GenesisDoc
+type genesisDocProviderFn func(string) (*types.GenesisDoc, error)
 
 // -----------------------------------------------------------------------------
 // Reactor
@@ -94,29 +94,46 @@ type Reactor struct {
 	p2p.BaseReactor // BaseService + p2p.Switch
 
 	// Registries for node services and network
-	chainRegistry      ChainRegistry
-	servicesProvider   func(string, string) cmtlibs.Service // service by name, e.g. "eventBus", and ChainID
-	multiplexProvider  func(string) MultiplexMap[any]       // multiplex by name, e.g. "database", "state", etc.
-	genesisDocProvider func(string) *types.GenesisDoc       // genesis doc by ChainID
+	servicesProvider   func(string, string) cmtlibs.Service    // service by name, e.g. "eventBus", and ChainID
+	multiplexProvider  func(string) MultiplexMap[any]          // multiplex by name, e.g. "database", "state", etc.
+	genesisDocProvider func(string) (*types.GenesisDoc, error) // genesis doc by ChainID
+
+	genesisDocsMutex   sync.RWMutex
 	initialGenesisDocs *ChecksummedGenesisDocSet
 
 	// Node configuration
+	//
+	// The envMutex must be locked to access or modify environment resources.
+	envMutex     sync.RWMutex
 	nodeKey      *p2p.NodeKey
 	nodeConfig   *config.Config
 	userConfig   *config.MultiplexConfig
 	abciClient   proxy.ChainConns
 	snapsApp     *snapsapp.SnapsApp
-	storagePaths MultiplexFS
-	configsPaths MultiplexFS
 	acceptorImpl client.Acceptor
 
+	// Runtime(s) configuration
+	//
+	// The runtimesMutex must be locked to access or modify runtime configs.
+	runtimesMutex sync.RWMutex
+	chainRegistry ChainRegistry
+	storagePaths  MultiplexFS
+	configsPaths  MultiplexFS
+
 	// Networking layer
+	//
+	// The envMutex must be locked to access or modify environment resources.
+	networkMutex    sync.RWMutex
 	networks        []string
 	nodeInfo        *MultiNetworkNodeInfo
 	discoverySwitch *p2p.Switch
 	cometbftSwitch  *p2p.Switch
 	transport       *p2p.MultiplexTransport
 	rpcMultiplexer  *http.ServeMux
+
+	// Mapping of mempool partners relay IDs by transaction hash.
+	poolRequestsMtx  sync.RWMutex
+	poolRequestsSent map[string][]string
 
 	// Services registry is a multiplex map which is searchable by service name
 	// and which contains other multiplex maps where keys are ChainID values.
@@ -138,16 +155,13 @@ type Reactor struct {
 	multiplexRegistry NamedMultiplexMap[any]
 	multiplexMetrics  NamedMultiplexMap[any]
 
-	// Internal
-	logger          cmtlog.Logger
-	filesystemMutex sync.Mutex
-	chainReadyCh    chan string
-	ackReplResCh    chan *mxp2p.ChainReplicationResponse
-	ackTxAcceptCh   chan *mxp2p.AckTransactionBroadcast
+	// Internal channels
+	chainReadyCh  chan string
+	ackReplResCh  chan *mxp2p.ChainReplicationResponse
+	ackTxAcceptCh chan *mxp2p.AckTransactionBroadcast
 
-	// Mapping of mempool partners relay IDs by transaction hash.
-	poolRequestsMtx  sync.RWMutex
-	poolRequestsSent map[string][]string
+	// Internal
+	logger cmtlog.Logger
 }
 
 // Type assertion to make sure this structure is compatible with snapsapp.
@@ -181,6 +195,7 @@ func NewReactor(
 	// - RPC Discovery Port: discovery_port-1
 	// - P2P CometBFT Port:  discovery_port+1
 	// - RPC CometBFT Port:  discovery_port+2
+	// - Prometheus Port:    discovery_port+3
 	nodeCfg.P2P.ListenAddress = p2pListenAddr
 	nodeCfg.RPC.ListenAddress = rpcListenAddr
 
@@ -208,11 +223,13 @@ func NewReactor(
 		storagePaths:      MultiplexFS{},
 		configsPaths:      MultiplexFS{},
 
-		// Internals
-		logger:        logger,
+		// Internal channels
 		chainReadyCh:  make(chan string),
 		ackReplResCh:  make(chan *mxp2p.ChainReplicationResponse),
 		ackTxAcceptCh: make(chan *mxp2p.AckTransactionBroadcast),
+
+		// Internals
+		logger: logger,
 	}
 
 	// Enable overwrite of some optional properties.
@@ -230,8 +247,10 @@ func NewReactor(
 		reactor.logger.Debug("CAUTION: Using empty GenesisDocSet (not an error)")
 	}
 
-	// Initialize all providers
-	reactor.initialGenesisDocs = icsGenesisDocSet.(*ChecksummedGenesisDocSet)
+	// Locks the genesisDocsMutex for writing
+	reactor.SetChecksummedGenesisDocSet(icsGenesisDocSet.(*ChecksummedGenesisDocSet))
+
+	// Initializes instance providers (services, multiplex)
 	reactor.initMultiplexProviders(icsGenesisDocSet)
 
 	return reactor
@@ -243,118 +262,266 @@ func WithAcceptor(
 	acceptor client.Acceptor,
 ) func(*Reactor) {
 	return func(r *Reactor) {
-		r.acceptorImpl = acceptor
+		r.SetAcceptor(acceptor)
 	}
 }
 
 // ----------------------------------------------------------------------------
 // Reactor public implementation
 
+// GetLogger returns a [cmtlog.Logger] instance.
+func (reactor *Reactor) GetLogger() cmtlog.Logger {
+	return reactor.logger
+}
+
+// SetLogger sets a custom [cmtlog.Logger] instance.
+func (reactor *Reactor) SetLogger(logger cmtlog.Logger) {
+	reactor.logger = logger
+}
+
+// GetNodeKey returns the [p2p.NodeKey] instance.
+// Internal mutex envMutex is locked for read.
+func (reactor *Reactor) GetNodeKey() *p2p.NodeKey {
+	reactor.envMutex.RLock()
+	defer reactor.envMutex.RUnlock()
+	return reactor.nodeKey
+}
+
 // GetNodeConfig returns a [config.Config] instance.
+// Internal mutex envMutex is locked for read.
 func (reactor *Reactor) GetNodeConfig() *config.Config {
+	reactor.envMutex.RLock()
+	defer reactor.envMutex.RUnlock()
 	return reactor.nodeConfig
 }
 
 // GetMultiplexConfig returns a [config.MultiplexConfig] instance.
+// Internal mutex envMutex is locked for read.
 func (reactor *Reactor) GetMultiplexConfig() *config.MultiplexConfig {
+	reactor.envMutex.RLock()
+	defer reactor.envMutex.RUnlock()
 	return reactor.userConfig
-}
-
-// GetStoragePaths returns a [MultiplexFS] instance.
-//
-// GetStoragePaths implements [snapsapp.Reactor].
-func (reactor *Reactor) GetStoragePaths() map[string]string {
-	return reactor.storagePaths
-}
-
-// GetConfigsPaths returns a [MultiplexFS] instance.
-func (reactor *Reactor) GetConfigsPaths() map[string]string {
-	return reactor.configsPaths
-}
-
-// GetChecksummedGenesisDocSet returns a [ChecksummedGenesisDocSet] instance.
-func (reactor *Reactor) GetChecksummedGenesisDocSet() *ChecksummedGenesisDocSet {
-	return reactor.initialGenesisDocs
-}
-
-// GetMultiNetworkNodeInfo returns a [MultiNetworkNodeInfo] pointer.
-func (reactor *Reactor) GetMultiNetworkNodeInfo() *MultiNetworkNodeInfo {
-	return reactor.nodeInfo
-}
-
-// GetNodeKey returns the [p2p.NodeKey] instance.
-func (reactor *Reactor) GetNodeKey() *p2p.NodeKey {
-	return reactor.nodeKey
-}
-
-// GetEventSwitchForDiscovery returns the [p2p.Switch] instance
-// used to communicate [ChainReplicationRequest] messages.
-// This switch must be used to send messages on `DiscoveryPort`.
-func (reactor *Reactor) GetEventSwitchForDiscovery() *p2p.Switch {
-	return reactor.discoverySwitch
-}
-
-// GetEventSwitchForCometBFT returns the [p2p.Switch] instance
-// used to communicate CometBFT messages, including block-sync.
-// This switch must be used to send messages on `DiscoveryPort+1`.
-func (reactor *Reactor) GetEventSwitchForCometBFT() *p2p.Switch {
-	return reactor.cometbftSwitch
-}
-
-// GetTransport returns the [p2p.MultiplexTransport] instance.
-func (reactor *Reactor) GetTransport() *p2p.MultiplexTransport {
-	return reactor.transport
-}
-
-// GetNetworks returns an ordered slice of ChainID values.
-//
-// GetNetworks implements [snapsapp.Reactor].
-func (reactor *Reactor) GetNetworks() []string {
-	return reactor.networks
 }
 
 // GetABCIClient returns a [proxy.ChainConns] ABCI client.
 // The ABCI, or "application-blockchain client interface"
 // creates blocks proposals locally and includes transactions.
+// Internal mutex envMutex is locked for read.
 func (reactor *Reactor) GetABCIClient() proxy.ChainConns {
+	reactor.envMutex.RLock()
+	defer reactor.envMutex.RUnlock()
 	return reactor.abciClient
 }
 
+// SetABCIClient sets a custom [proxy.ChainConns] ABCI client.
+// Note that this method is only used in tests for now.
+// Internal mutex envMutex is locked for write.
+func (reactor *Reactor) SetABCIClient(abciClient proxy.ChainConns) {
+	reactor.envMutex.Lock()
+	defer reactor.envMutex.Unlock()
+	reactor.abciClient = abciClient
+}
+
 // GetSnapsApp returns a [snapsapp.SnapsApp] instance.
+// Internal mutex envMutex is locked for read.
 func (reactor *Reactor) GetSnapsApp() *snapsapp.SnapsApp {
+	reactor.envMutex.RLock()
+	defer reactor.envMutex.RUnlock()
 	return reactor.snapsApp
 }
 
-// HasNetwork returns true if the ChainID can be found.
-//
-// HasNetwork implements [snapsapp.Reactor].
-func (reactor *Reactor) HasNetwork(chainID string) bool {
-	return slices.Contains(reactor.networks, chainID)
+// SetSnapsApp returns a [snapsapp.SnapsApp] instance.
+// Internal mutex envMutex is locked for read.
+func (reactor *Reactor) SetSnapsApp(app *snapsapp.SnapsApp) {
+	reactor.envMutex.Lock()
+	defer reactor.envMutex.Unlock()
+	reactor.snapsApp = app
 }
 
 // DiscoveryPort returns the configured DiscoveryPort.
+// Internal mutex envMutex is locked for read.
 func (reactor *Reactor) DiscoveryPort() uint16 {
+	reactor.envMutex.RLock()
+	defer reactor.envMutex.RUnlock()
 	return reactor.nodeConfig.DiscoveryPort
 }
 
+// GetAcceptor returns a [client.Acceptor] instance.
+// Internal mutex envMutex is locked for read.
+// See also: [WithAcceptor], [SetAcceptor]
+func (reactor *Reactor) GetAcceptor() client.Acceptor {
+	reactor.envMutex.RLock()
+	defer reactor.envMutex.RUnlock()
+	return reactor.acceptorImpl
+}
+
+// SetAcceptor sets a custom [client.Acceptor] acceptor implementation
+// Internal mutex envMutex is locked for write.
+func (reactor *Reactor) SetAcceptor(acceptor client.Acceptor) {
+	reactor.envMutex.Lock()
+	defer reactor.envMutex.Unlock()
+	reactor.acceptorImpl = acceptor
+}
+
+// GetStoragePaths returns a [MultiplexFS] instance.
+// Internal mutex runtimesMutex is locked for read.
+//
+// GetStoragePaths implements [snapsapp.Reactor].
+func (reactor *Reactor) GetStoragePaths() map[string]string {
+	reactor.runtimesMutex.RLock()
+	defer reactor.runtimesMutex.RUnlock()
+	return reactor.storagePaths
+}
+
+// SetStoragePaths sets a custom [MultiplexFS] map of storage paths.
+// Internal mutex runtimesMutex is locked for write.
+func (reactor *Reactor) SetStoragePaths(fs MultiplexFS) {
+	reactor.runtimesMutex.Lock()
+	defer reactor.runtimesMutex.Unlock()
+	reactor.storagePaths = fs
+}
+
+// GetConfigsPaths returns a [MultiplexFS] instance.
+// Internal mutex runtimesMutex is locked for read.
+func (reactor *Reactor) GetConfigsPaths() map[string]string {
+	reactor.runtimesMutex.RLock()
+	defer reactor.runtimesMutex.RUnlock()
+	return reactor.configsPaths
+}
+
+// SetConfigsPaths sets a custom [MultiplexFS] map of configs paths.
+// Internal mutex runtimesMutex is locked for write.
+func (reactor *Reactor) SetConfigsPaths(fs MultiplexFS) {
+	reactor.runtimesMutex.Lock()
+	defer reactor.runtimesMutex.Unlock()
+	reactor.configsPaths = fs
+}
+
 // GetChainRegistry returns a [ChainRegistry] instance.
+// Internal mutex runtimesMutex is locked for read.
 func (reactor *Reactor) GetChainRegistry() ChainRegistry {
+	reactor.runtimesMutex.RLock()
+	defer reactor.runtimesMutex.RUnlock()
 	return reactor.chainRegistry
 }
 
+// GetChecksummedGenesisDocSet returns a [ChecksummedGenesisDocSet] instance.
+// Internal mutex genesisDocsMutex is locked for read.
+func (reactor *Reactor) GetChecksummedGenesisDocSet() *ChecksummedGenesisDocSet {
+	reactor.genesisDocsMutex.RLock()
+	defer reactor.genesisDocsMutex.RUnlock()
+	return reactor.initialGenesisDocs
+}
+
+// SetChecksummedGenesisDocSet sets a custom [*ChecksummedGenesisDocSet].
+// Internal mutex genesisDocsMutex is locked for read.
+func (reactor *Reactor) SetChecksummedGenesisDocSet(ds *ChecksummedGenesisDocSet) {
+	reactor.genesisDocsMutex.Lock()
+	defer reactor.genesisDocsMutex.Unlock()
+	reactor.initialGenesisDocs = ds
+}
+
+// GetMultiNetworkNodeInfo returns a [MultiNetworkNodeInfo] pointer.
+// Internal mutex networkMutex is locked for read.
+func (reactor *Reactor) GetMultiNetworkNodeInfo() *MultiNetworkNodeInfo {
+	reactor.networkMutex.RLock()
+	defer reactor.networkMutex.RUnlock()
+	return reactor.nodeInfo
+}
+
+// SetNodeInfo sets a custom [MultiNetworkNodeInfo] instance.
+// Note that this method is only used in tests for now.
+// Internal mutex networkMutex is locked for write.
+func (reactor *Reactor) SetNodeInfo(nodeInfo *MultiNetworkNodeInfo) {
+	reactor.networkMutex.Lock()
+	defer reactor.networkMutex.Unlock()
+	reactor.nodeInfo = nodeInfo
+}
+
+// GetEventSwitchForDiscovery returns the [p2p.Switch] instance
+// used to communicate [ChainReplicationRequest] messages.
+// This switch must be used to send messages on `DiscoveryPort`.
+// Internal mutex networkMutex is locked for read.
+func (reactor *Reactor) GetEventSwitchForDiscovery() *p2p.Switch {
+	reactor.networkMutex.RLock()
+	defer reactor.networkMutex.RUnlock()
+	return reactor.discoverySwitch
+}
+
+// SetEventSwitchForDiscovery sets a custom [p2p.Switch] instance.
+// Internal mutex networkMutex is locked for write.
+func (reactor *Reactor) SetEventSwitchForDiscovery(sw *p2p.Switch) {
+	reactor.networkMutex.Lock()
+	defer reactor.networkMutex.Unlock()
+	reactor.discoverySwitch = sw
+}
+
+// GetEventSwitchForCometBFT returns the [p2p.Switch] instance
+// used to communicate CometBFT messages, including block-sync.
+// This switch must be used to send messages on `DiscoveryPort+1`.
+// Internal mutex networkMutex is locked for read.
+func (reactor *Reactor) GetEventSwitchForCometBFT() *p2p.Switch {
+	reactor.networkMutex.RLock()
+	defer reactor.networkMutex.RUnlock()
+	return reactor.cometbftSwitch
+}
+
+// SetEventSwitchForCometBFT sets a custom [p2p.Switch] instance.
+// Internal mutex networkMutex is locked for write.
+func (reactor *Reactor) SetEventSwitchForCometBFT(sw *p2p.Switch) {
+	reactor.networkMutex.Lock()
+	defer reactor.networkMutex.Unlock()
+	reactor.cometbftSwitch = sw
+}
+
+// GetTransportForCometBFT returns the [p2p.MultiplexTransport] instance.
+// Internal mutex networkMutex is locked for read.
+func (reactor *Reactor) GetTransportForCometBFT() *p2p.MultiplexTransport {
+	reactor.networkMutex.RLock()
+	defer reactor.networkMutex.RUnlock()
+	return reactor.transport
+}
+
+// SetTransportForCometBFT sets a custom [p2p.MultiplexTransport] instance.
+// Internal mutex networkMutex is locked for write.
+func (reactor *Reactor) SetTransportForCometBFT(t *p2p.MultiplexTransport) {
+	reactor.networkMutex.Lock()
+	defer reactor.networkMutex.Unlock()
+	reactor.transport = t
+}
+
+// GetRPCMultiplexer returns a [http.ServeMux] instance.
+// Internal mutex networkMutex is locked for read.
+func (reactor *Reactor) GetRPCMultiplexer() *http.ServeMux {
+	reactor.networkMutex.RLock()
+	defer reactor.networkMutex.RUnlock()
+	return reactor.rpcMultiplexer
+}
+
+// SetRPCMultiplexer sets a custom [http.ServeMux] instance.
+// Internal mutex networkMutex is locked for write.
+func (reactor *Reactor) SetRPCMultiplexer(mux *http.ServeMux) {
+	reactor.networkMutex.Lock()
+	defer reactor.networkMutex.Unlock()
+	reactor.rpcMultiplexer = mux
+}
+
+// ----------------------------------------------------------------------------
+// Service providers implementation
+
 // GetGenesisProvider returns a genesisDocProviderFn instance.
 func (reactor *Reactor) GetGenesisProvider() genesisDocProviderFn {
-	return reactor.genesisDocProvider
+	return reactor.genesisDocProvider // locks genesisDocsMutex
 }
 
 // GetServicesProvider returns a [ServiceProvider] providereactor.
 func (reactor *Reactor) GetServicesProvider() serviceProviderFn {
-	return reactor.servicesProvider
+	return reactor.servicesProvider // locks servicesMutex
 }
 
 // GetMultiplexProvider returns a [MultiplexProvider] providereactor.
 func (reactor *Reactor) GetMultiplexProvider() multiplexProviderFn {
-	return reactor.multiplexProvider
+	return reactor.multiplexProvider // locks multiplexMutex
 }
 
 // GetInstanceProvider returns a [InstanceProvider] providereactor.
@@ -374,64 +541,8 @@ func (reactor *Reactor) GetInstanceProvider(multiplexName string) instanceProvid
 	}
 }
 
-// GetLogger returns a [cmtlog.Logger] instance.
-func (reactor *Reactor) GetLogger() cmtlog.Logger {
-	return reactor.logger
-}
-
-// GetRPCMultiplexer returns a [http.ServeMux] instance.
-func (reactor *Reactor) GetRPCMultiplexer() *http.ServeMux {
-	return reactor.rpcMultiplexer
-}
-
-// GetStateStore returns a [sm.Store].
-//
-// GetStateStore implements [snapsapp.Reactor].
-func (reactor *Reactor) GetStateStore(chainID string) sm.Store {
-	// Retrieves the "stateStore" instance map
-	stateStoreProvider := reactor.GetInstanceProvider(InstanceKeyStateStore)
-
-	// Returns the instance mapped by ChainID
-	return stateStoreProvider(chainID).(sm.Store)
-}
-
-// SetServicesProvider sets a custom services providereactor.
-// Note that this method is only used in tests for now.
-func (reactor *Reactor) SetServicesProvider(provider serviceProviderFn) {
-	reactor.servicesProvider = provider
-}
-
-// SetABCIClient sets a custom [proxy.ChainConns] ABCI client.
-// Note that this method is only used in tests for now.
-func (reactor *Reactor) SetABCIClient(abciClient proxy.ChainConns) {
-	reactor.abciClient = abciClient
-}
-
-// SetNodeInfo sets a custom [MultiNetworkNodeInfo] instance.
-// Note that this method is only used in tests for now.
-func (reactor *Reactor) SetNodeInfo(nodeInfo *MultiNetworkNodeInfo) {
-	reactor.nodeInfo = nodeInfo
-}
-
-// SetStoragePaths sets a custom [MultiplexFS] map of storage paths.
-func (reactor *Reactor) SetStoragePaths(fs MultiplexFS) {
-	reactor.storagePaths = fs
-}
-
-// SetConfigsPaths sets a custom [MultiplexFS] map of configs paths.
-func (reactor *Reactor) SetConfigsPaths(fs MultiplexFS) {
-	reactor.configsPaths = fs
-}
-
-// SetLogger sets a custom [cmtlog.Logger] instance.
-func (reactor *Reactor) SetLogger(logger cmtlog.Logger) {
-	reactor.logger = logger
-}
-
-// SetRPCMultiplexer sets a custom [http.ServeMux] instance.
-func (reactor *Reactor) SetRPCMultiplexer(mux *http.ServeMux) {
-	reactor.rpcMultiplexer = mux
-}
+// ----------------------------------------------------------------------------
+// Service, instance and networks registry implementations
 
 // RegisterService inserts a [cmtlibs.Service] instance in the registry
 // by a given name and ChainID.
@@ -533,23 +644,29 @@ func (reactor *Reactor) RegisterNetwork(
 	}
 
 	// First things first, ChainRegistry must be updated.
+	reactor.runtimesMutex.Lock()
 	reactor.chainRegistry.AddChain(
 		userAddress,
 		chainID,
 	)
+	reactor.runtimesMutex.Unlock()
 
 	// .. because it must reflect on our list of networks.
-	reactor.networks = reactor.chainRegistry.GetChains()
+	reactor.SetNetworks(reactor.chainRegistry.GetChains())
+
+	nodeConfig := reactor.GetNodeConfig()
+	nodeKey := reactor.GetNodeKey()
+	abciClient := reactor.GetABCIClient()
 
 	// Injects new AppConns in MultiplexAppConn for ABCI.
-	if reactor.abciClient != nil {
-		reactor.abciClient.AddNetwork(chainID)
+	if abciClient != nil {
+		abciClient.AddNetwork(chainID)
 	}
 
 	// Update the MultiNetworkNodeInfo instance (just a re-make).
 	updatedNodeInfo, err := makeNodeInfo(
-		reactor.nodeConfig.Moniker,
-		reactor.nodeKey,
+		nodeConfig.Moniker,
+		nodeKey,
 		reactor,
 	)
 	if err != nil {
@@ -557,9 +674,64 @@ func (reactor *Reactor) RegisterNetwork(
 	}
 
 	// Injects the updated node info instance in the reactor.
-	reactor.nodeInfo = updatedNodeInfo
+	reactor.SetNodeInfo(updatedNodeInfo)
 
 	return nil
+}
+
+// ----------------------------------------------------------------------------
+// Reactor implements snapsapp.Reactor
+
+// GetNetworks returns an ordered slice of ChainID values.
+// Internal mutex networkMutex is locked for read.
+//
+// GetNetworks implements [snapsapp.Reactor].
+func (reactor *Reactor) GetNetworks() []string {
+	reactor.networkMutex.RLock()
+	defer reactor.networkMutex.RUnlock()
+	return reactor.networks
+}
+
+// SetNetworks sets a custom slice of ChainIDs.
+// Internal mutex networkMutex is locked for write.
+func (reactor *Reactor) SetNetworks(ns []string) {
+	reactor.networkMutex.Lock()
+	defer reactor.networkMutex.Unlock()
+	reactor.networks = make([]string, len(ns))
+	copy(reactor.networks, ns)
+}
+
+// HasNetwork returns true if the ChainID can be found.
+// Internal mutex networkMutex is locked for read.
+//
+// HasNetwork implements [snapsapp.Reactor].
+func (reactor *Reactor) HasNetwork(chainID string) bool {
+	reactor.networkMutex.RLock()
+	defer reactor.networkMutex.RUnlock()
+	return slices.Contains(reactor.networks, chainID)
+}
+
+// HasNetworks returns true if the networks registry is not empty.
+func (reactor *Reactor) HasNetworks() bool {
+	return reactor.Size() > 0
+}
+
+// Size returns the number of ChainIDs in networks registry.
+func (reactor *Reactor) Size() int {
+	reactor.networkMutex.RLock()
+	defer reactor.networkMutex.RUnlock()
+	return len(reactor.networks)
+}
+
+// GetStateStore returns a [sm.Store].
+//
+// GetStateStore implements [snapsapp.Reactor].
+func (reactor *Reactor) GetStateStore(chainID string) sm.Store {
+	// Retrieves the "stateStore" instance map
+	stateStoreProvider := reactor.GetInstanceProvider(InstanceKeyStateStore)
+
+	// Returns the instance mapped by ChainID
+	return stateStoreProvider(chainID).(sm.Store)
 }
 
 // ----------------------------------------------------------------------------
@@ -614,7 +786,9 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			replRequest := extMsg.GetChainReplicationRequest()
 
 			// A ChainReplicationResponse will be sent to the source peer.
+			r.networkMutex.RLock()
 			sourcePeer := r.discoverySwitch.Peers().Get(sourceAddr.ID)
+			r.networkMutex.RUnlock()
 
 			// After having acknowledged the chain replication, process it.
 			//
@@ -629,7 +803,8 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 				return
 			}
 
-			// Open any missing CometBFT channels for injected network consensus.
+			// AddConnectionChannels locks networkMutex for read.
+			// Opens any missing CometBFT channels for injected network consensus.
 			chs := []byte{} // all channels
 			if err := r.AddConnectionChannels(r.cometbftSwitch, r.GetNetworks(), chs); err != nil {
 				r.logger.Error(
@@ -823,6 +998,8 @@ func (r *Reactor) DialBackReplicationPartner(
 			"invalid cometbft relay address %s: %w", sourceAddr.AddressForCometBFT(), err)
 	}
 
+	r.networkMutex.RLock()
+	defer r.networkMutex.RUnlock()
 	if err := r.cometbftSwitch.DialPeerWithAddress(peerAddr); err != nil {
 		if _, ok := err.(p2p.ErrCurrentlyDialingOrExistingAddress); ok {
 			// Manually add peers when the switch was already running.
@@ -871,8 +1048,11 @@ func (r *Reactor) DialBackReplicationPartner(
 //
 // CAUTION: This method spawns one new goroutine for every replicated chain.
 func (reactor *Reactor) OnStart() error {
+	nodeConfig := reactor.GetNodeConfig()
+	chainRegistry := reactor.GetChainRegistry()
+
 	// Initialize filesystem directory structure
-	multiplexFS, err := NewMultiplexFS(reactor.nodeConfig)
+	multiplexFS, err := NewMultiplexFS(nodeConfig)
 	if err != nil {
 		return err
 	}
@@ -888,10 +1068,11 @@ func (reactor *Reactor) OnStart() error {
 	}
 
 	// For each ChainID, we run a node with a distinct listen address
-	for _, chainID := range reactor.GetNetworks() {
+	chainIds := reactor.GetNetworks()
+	for _, chainID := range chainIds {
 		configOverwrite := NewConfigOverwrite(
-			reactor.GetNodeConfig(),
-			reactor.GetChainRegistry(),
+			nodeConfig,
+			chainRegistry,
 			chainID,
 		)
 
@@ -902,10 +1083,12 @@ func (reactor *Reactor) OnStart() error {
 		// i.e. one goroutine spawned per each replicated chain
 		go func(network string) {
 			// lock the filesystem mutex while creating priv val (fs)
-			reactor.filesystemMutex.Lock()
-			defer reactor.filesystemMutex.Unlock()
+			reactor.runtimesMutex.Lock()
+			defer reactor.runtimesMutex.Unlock()
 
 			// Start node listeners
+			//
+			// TODO(midas): Caller should recover from panic.,
 			if err := reactor.startNodeListeners(network); err != nil {
 				panic(err)
 			}
@@ -930,12 +1113,17 @@ func (reactor *Reactor) OnStart() error {
 // database connection is independent of other database connections.
 func (reactor *Reactor) OnStop() {
 	// Shutdown the ABCI client if running
+	reactor.envMutex.Lock()
 	if reactor.abciClient != nil && reactor.abciClient.IsRunning() {
 		if err := reactor.abciClient.Stop(); err != nil {
 			reactor.logger.Error(
 				"Error stopping the ABCI client", "err", err)
 		}
 	}
+	reactor.envMutex.Unlock()
+
+	// Shutdown all network resources atomically
+	reactor.networkMutex.Lock()
 
 	// Stop the P2P Discovery Server that is injected
 	if reactor.discoverySwitch != nil && reactor.discoverySwitch.IsRunning() {
@@ -958,6 +1146,9 @@ func (reactor *Reactor) OnStop() {
 		reactor.cometbftSwitch.Stop()
 		reactor.cometbftSwitch = nil
 	}
+
+	// Done shutting down network resources
+	reactor.networkMutex.Unlock()
 
 	// Shutdown all registered services atomically
 	reactor.servicesMutex.RLock()
@@ -1007,7 +1198,7 @@ func (reactor *Reactor) OnStop() {
 		reactor.multiplexMutex.RUnlock()
 	}
 
-	// and close local channels
+	// and close internal channels
 	if reactor.chainReadyCh != nil {
 		close(reactor.chainReadyCh)
 	}
@@ -1021,7 +1212,7 @@ func (reactor *Reactor) OnStop() {
 	}
 }
 
-// OnReset implements Service by panicking.
+// OnReset implements Service.
 func (reactor *Reactor) OnReset() error {
 	reactor.logger.Debug("Reset multiplex reactor")
 	return nil
@@ -1060,13 +1251,16 @@ func (reactor *Reactor) initMultiplexProviders(
 	icsGenesisDocSet node.IChecksummedGenesisDoc,
 ) {
 	// Use the initial GenesisDocSet to load individual genesis docs
-	reactor.genesisDocProvider = func(chainId string) *types.GenesisDoc {
-		genDoc, err := icsGenesisDocSet.GenesisDocByChainID(chainId)
+	reactor.genesisDocProvider = func(chainId string) (*types.GenesisDoc, error) {
+		reactor.genesisDocsMutex.RLock()
+		defer reactor.genesisDocsMutex.RUnlock()
+
+		genDoc, err := reactor.initialGenesisDocs.GenesisDocByChainID(chainId)
 		if err != nil {
-			panic(fmt.Errorf("could not load genesis doc for ChainID %s", chainId))
+			return nil, fmt.Errorf("could not load genesis doc for ChainID %s", chainId)
 		}
 
-		return genDoc
+		return genDoc, nil
 	}
 
 	// Use the services registry to load node services
@@ -1111,9 +1305,11 @@ func (reactor *Reactor) initMultiplexProviders(
 //
 // TODO(midas): refactoring with MakeNetworkDatabases.
 func (reactor *Reactor) initMultiplexDatabases() error {
+	nodeConfig := reactor.GetNodeConfig()
+
 	// Create blockstore databases
 	bsMultiplexDB, err := NewMultiplexDB(&ChainDBContext{
-		DBContext: config.DBContext{ID: "blockstore", Config: reactor.GetNodeConfig()},
+		DBContext: config.DBContext{ID: "blockstore", Config: nodeConfig},
 	})
 	if err != nil {
 		return err
@@ -1121,7 +1317,7 @@ func (reactor *Reactor) initMultiplexDatabases() error {
 
 	// Create state databases
 	stateMultiplexDB, err := NewMultiplexDB(&ChainDBContext{
-		DBContext: config.DBContext{ID: "state", Config: reactor.GetNodeConfig()},
+		DBContext: config.DBContext{ID: "state", Config: nodeConfig},
 	})
 	if err != nil {
 		return err
@@ -1129,7 +1325,7 @@ func (reactor *Reactor) initMultiplexDatabases() error {
 
 	// Create indexer databases
 	indexerMultiplexDB, err := NewMultiplexDB(&ChainDBContext{
-		DBContext: config.DBContext{ID: "tx_index", Config: reactor.GetNodeConfig()},
+		DBContext: config.DBContext{ID: "tx_index", Config: nodeConfig},
 	})
 	if err != nil {
 		return err
@@ -1137,14 +1333,15 @@ func (reactor *Reactor) initMultiplexDatabases() error {
 
 	// Create evidence databases
 	evidenceMultiplexDB, err := NewMultiplexDB(&ChainDBContext{
-		DBContext: config.DBContext{ID: "evidence", Config: reactor.GetNodeConfig()},
+		DBContext: config.DBContext{ID: "evidence", Config: nodeConfig},
 	})
 	if err != nil {
 		return err
 	}
 
-	// Register the database instances with the Reactor
-	for _, chainID := range reactor.GetNetworks() {
+	// Register the database instances with the Reactor (thread-safe)
+	chainIds := reactor.GetNetworks()
+	for _, chainID := range chainIds {
 		reactor.RegisterInstance(InstanceKeyDatabaseBlock, chainID, bsMultiplexDB[chainID])
 		reactor.RegisterInstance(InstanceKeyDatabaseState, chainID, stateMultiplexDB[chainID])
 		reactor.RegisterInstance(InstanceKeyDatabaseIndex, chainID, indexerMultiplexDB[chainID])
@@ -1202,8 +1399,12 @@ func (reactor *Reactor) loadMultiplexState() error {
 // This method registers services in the servicesRegistry:
 // - `eventBus`: the event bus for block events.
 // - `indexers`: the transaction- and block indexers service.
+//
+// The caller must make sure about thread-safety of filesystem operations,
+// i.e. caller should always lock runtimesMutex during call.
 func (reactor *Reactor) startNodeListeners(chainID string) error {
 	clogger := reactor.logger.With("chain_id", chainID)
+	nodeKey := reactor.GetNodeKey()
 
 	// Retrieve the node's config overwrite object
 	configProvider := reactor.GetInstanceProvider(InstanceKeyConfig)
@@ -1224,7 +1425,7 @@ func (reactor *Reactor) startNodeListeners(chainID string) error {
 	// Prometheus does not allow hyphens in metrics names, it must match
 	// following regexp: [a-zA-Z_:][a-zA-Z0-9_:]*
 	// see also: https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels
-	metricsNames := nodeConfig.Instrumentation.Namespace + "_" + string(reactor.nodeKey.ID()) + ":" + strings.ReplaceAll(chainID, "-", "_")
+	metricsNames := nodeConfig.Instrumentation.Namespace + "_" + string(nodeKey.ID()) + ":" + strings.ReplaceAll(chainID, "-", "_")
 	stateMetricsProvider := reactor.RegisterMetrics("state", metricsNames, func() interface{} {
 		return sm.PrometheusMetrics(metricsNames, "chain_id", chainID)
 	}).(*sm.Metrics)
@@ -1329,7 +1530,7 @@ func (reactor *Reactor) sendChainReplicationResponse(
 	peer p2p.Peer,
 	chainID string,
 ) error {
-	myPeerID := reactor.nodeKey.ID()
+	myPeerID := reactor.GetNodeKey().ID()
 	peer.Send(chainID, p2p.Envelope{
 		ChannelID: server.ReplicationChannel,
 		Message: &mxp2p.Message{
@@ -1379,7 +1580,10 @@ func (reactor *Reactor) handleChainReplicationRequest(
 	}
 
 	// Config folder is created in AllocateNetwork
+	reactor.runtimesMutex.RLock()
 	newConfDir := reactor.configsPaths[req.ChainID]
+	reactor.runtimesMutex.RUnlock()
+
 	icsGenesisDocSet, err := reactor.InjectGenesisDoc(req.ChainID, newConfDir, genesisDoc)
 	if err != nil {
 		return fmt.Errorf(
@@ -1423,12 +1627,17 @@ func (reactor *Reactor) handleChainReplicationRequest(
 //
 // TODO(midas): TBI whether the server must be restarted.
 func (reactor *Reactor) EnableNewRuntimeRPC(networks []string) error {
-	if reactor.rpcMultiplexer == nil {
+	reactor.networkMutex.RLock()
+	rpcMultiplexer := reactor.rpcMultiplexer
+	reactor.networkMutex.RUnlock()
+	if rpcMultiplexer == nil {
 		return errors.New(
 			"could not enable RPC runtime, missing multiplexer")
 	}
 
+	reactor.envMutex.RLock()
 	nodeCfg := reactor.nodeConfig
+	reactor.envMutex.RUnlock()
 
 	// We configure one RPC environment per running network,
 	// i.e. contains reactors, stores and genesis.
@@ -1465,7 +1674,13 @@ func (reactor *Reactor) EnableNewRuntimeRPC(networks []string) error {
 		}
 	}
 
-	rpcLogger := reactor.logger.With("module", "rpc-server")
-	rpcserver.RegisterAddedRPCFuncs(reactor.rpcMultiplexer, newRoutes, rpcLogger)
+	reactor.networkMutex.Lock()
+	defer reactor.networkMutex.Unlock()
+	rpcserver.RegisterAddedRPCFuncs(
+		rpcMultiplexer,
+		newRoutes,
+		reactor.logger.With("module", "rpc-server"),
+	)
+
 	return nil
 }

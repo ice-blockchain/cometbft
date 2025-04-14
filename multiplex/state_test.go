@@ -58,7 +58,8 @@ func TestMultiplexReactorInitMultiplexStatesEmptyState(t *testing.T) {
 	// mock environment, where odd chain indexes *do not* have a hash in db
 	// and where even chain indexes *do* have a *valid* hash in db.
 	// This permits to test the Checksum validation feature.
-	for index, chainID := range reactor.GetNetworks() {
+	testChainIds := reactor.GetNetworks()
+	for index, chainID := range testChainIds {
 		// odd indexes do NOT have genesisDocHashKey set
 		// this means that InitMultiplexStates will set it
 		if index%2 != 0 {
@@ -74,12 +75,13 @@ func TestMultiplexReactorInitMultiplexStatesEmptyState(t *testing.T) {
 		// even indexes do have genesisDocHashKey set
 		// it must match the genesisDoc`s SHA256 hash
 		genesisDocProvider := reactor.GetGenesisProvider()
-		genesisDoc := genesisDocProvider(chainID)
+		genesisDoc, err := genesisDocProvider(chainID)
+		assert.NoError(t, err, "should return genesis doc per ChainID")
 		genesisDocJSON, err := cmtjson.Marshal(genesisDoc)
-		assert.NoError(t, err)
+		assert.NoError(t, err, "should marshal genesis doc to JSON")
 		genesisDocHash := tmhash.Sum(genesisDocJSON)
 		err = stateDB.DB.SetSync(genesisDocHashKey, genesisDocHash)
-		assert.NoError(t, err)
+		assert.NoError(t, err, "should store genesis doc hash in db")
 	}
 
 	// Execute the method being tested
@@ -90,7 +92,7 @@ func TestMultiplexReactorInitMultiplexStatesEmptyState(t *testing.T) {
 	assert.NotNil(t, statesProvider, "should not error getting states provider")
 
 	// Do we have all state instances, with correct ChainID?
-	for _, chainID := range reactor.GetNetworks() {
+	for _, chainID := range testChainIds {
 		chainState := statesProvider(chainID).(sm.State)
 		assert.NotNil(t, chainState, "state instance per chain must not be nil")
 
@@ -122,8 +124,10 @@ func TestMultiplexReactorInitMultiplexStatesFilledState(t *testing.T) {
 	testChainBlockHeight := int64(123)
 
 	// Pre-populate the State store with some testable data
-	for _, chainID := range reactor.GetNetworks() {
-		genesisDoc := genesisDocProvider(chainID)
+	testChainIds := reactor.GetNetworks()
+	for _, chainID := range testChainIds {
+		genesisDoc, err := genesisDocProvider(chainID)
+		require.NoError(t, err, "should load genesis doc by ChainID")
 		stateDB := databaseProvider(chainID).(*mx.ChainDB)
 		require.NotNil(t, stateDB, "should return valid ChainDB per ChainID")
 
@@ -159,7 +163,7 @@ func TestMultiplexReactorInitMultiplexStatesFilledState(t *testing.T) {
 	assert.NotNil(t, statesProvider, "should not error getting states provider")
 
 	// Do we have all state instances, with correct ChainID?
-	for _, chainID := range reactor.GetNetworks() {
+	for _, chainID := range testChainIds {
 		chainState := statesProvider(chainID).(sm.State)
 		assert.NotNil(t, chainState, "state instance per chain must not be nil")
 
@@ -189,7 +193,8 @@ func TestMultiplexReactorInitMultiplexBlockStores(t *testing.T) {
 	assert.NotNil(t, blockStoresProvider, "should not error getting states provider")
 
 	// Do we have all blockStore databases?
-	for _, chainID := range reactor.GetNetworks() {
+	testChainIds := reactor.GetNetworks()
+	for _, chainID := range testChainIds {
 		// Type-assertion makes sure we have correct type
 		chainBlockStore := blockStoresProvider(chainID).(*bs.BlockStore)
 		assert.NotNil(t, chainBlockStore, "blockStore instance per chain must not be nil")
@@ -214,7 +219,8 @@ func ResetTestMultiplexState(tb testing.TB, numChains int, dbInstanceKey string)
 	reactor := makeTestReactorWithGenesisDocProvider(tb, nodeCfg, mockGenesisProvider)
 
 	// Prepares the database for each network
-	for index, chainID := range reactor.GetNetworks() {
+	testChainIds := reactor.GetNetworks()
+	for index, chainID := range testChainIds {
 		// We create one state database instance per chain
 		dbName := "chaindb-state-" + strconv.Itoa(index)
 		stateDB, err := dbm.NewDB(dbName, dbm.BackendType("memdb"), rootDir)

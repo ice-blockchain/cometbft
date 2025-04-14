@@ -124,7 +124,8 @@ func TestScenarioClientBroadcastHealthyRelays(t *testing.T) {
 
 	// Separate goroutine for client broadcast process
 	numTransactions := 2
-	testChainID := servers[0].GetNetworks()[0]
+	chainIds := servers[0].GetNetworks()
+	testChainID := chainIds[0]
 	notifyCh := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		broadcastCtx,
@@ -394,7 +395,8 @@ func TestScenarioLegacyBroadcastSevenHealthyRelays(t *testing.T) {
 	}
 
 	testReactor := servers[0].GetReactor()
-	testChainID := servers[0].GetNetworks()[0]
+	chainIds := servers[0].GetNetworks()
+	testChainID := chainIds[0]
 	nodesProvider := testReactor.GetServicesProvider()
 
 	nodeInstance := nodesProvider(mx.ServiceKeyNodeRuntime, testChainID).(*node.Node)
@@ -447,9 +449,10 @@ func TestScenarioLegacyBroadcastSevenHealthyRelays(t *testing.T) {
 		defer wgTxes.Done()
 
 		// Then broadcast many transactions
+		chainIds := servers[0].GetNetworks()
 		broadcastRawTxes(
 			t,
-			servers[0].GetNetworks(),
+			chainIds,
 			numChains,
 			1,       // sends all to first relay!
 			numTxes, // numTransactions

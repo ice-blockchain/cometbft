@@ -22,13 +22,14 @@ import (
 // - `state`: the [sm.State] state machine instances.
 // - `stateStore`: the [sm.Store] instance attached to the database.
 func (reactor *Reactor) InitMultiplexStates() error {
-	if len(reactor.GetNetworks()) == 0 {
+	if !reactor.HasNetworks() {
 		// Nothing to do for now
 		return nil
 	}
 
 	// Used for database key layouts
 	globalConfig := reactor.GetNodeConfig()
+	chainIds := reactor.GetNetworks()
 
 	// Used for retrieving GenesisDoc instance by chain
 	genesisDocProvider := reactor.GetGenesisProvider()
@@ -38,9 +39,14 @@ func (reactor *Reactor) InitMultiplexStates() error {
 
 	// Validate genesis configuration
 	// Then get genesis doc set hashes from dbs or update
-	for _, chainID := range reactor.GetNetworks() {
+	for _, chainID := range chainIds {
+		// Load genesis doc
+		genesisDoc, genesisErr := genesisDocProvider(chainID)
+		if genesisErr != nil {
+			return genesisErr
+		}
+
 		// Validate per-chain genesis doc
-		genesisDoc := genesisDocProvider(chainID)
 		if err := genesisDoc.ValidateAndComplete(); err != nil {
 			return fmt.Errorf("error in genesis doc for ChainID %s: %w", chainID, err)
 		}
@@ -79,6 +85,8 @@ func (reactor *Reactor) InitMultiplexStates() error {
 			}
 		}
 
+		// TODO(midas): probably no need to store the state machine in RAM when relay is IDLE
+
 		// Prepare registerable instance mapped to ChainID
 		reactor.RegisterInstance(InstanceKeyState, chainID, stateMachine)
 		reactor.RegisterInstance(InstanceKeyStateStore, chainID, stateStore)
@@ -98,18 +106,19 @@ func (reactor *Reactor) InitMultiplexStates() error {
 // This method also registers instances in the multiplexRegistry:
 // - `blockStore`: the [bs.BlockStore] instance attached to the database.
 func (reactor *Reactor) InitMultiplexBlockStores() error {
-	if len(reactor.GetNetworks()) == 0 {
+	if !reactor.HasNetworks() {
 		// Nothing to do for now
 		return nil
 	}
 
 	// Used for database key layouts
 	globalConfig := reactor.GetNodeConfig()
+	chainIds := reactor.GetNetworks()
 
 	// Used for retrieving blockstore database instance by chain
 	blockStoreProvider := reactor.GetInstanceProvider(InstanceKeyDatabaseBlock)
 
-	for _, chainID := range reactor.GetNetworks() {
+	for _, chainID := range chainIds {
 		// Retrieve this chain's state database instance
 		blockstoreDB := blockStoreProvider(chainID).(*ChainDB)
 
@@ -119,6 +128,9 @@ func (reactor *Reactor) InitMultiplexBlockStores() error {
 			bs.WithCompaction(globalConfig.Storage.Compact, globalConfig.Storage.CompactionInterval),
 			bs.WithDBKeyLayout(globalConfig.Storage.ExperimentalKeyLayout),
 		)
+
+		// TODO(midas): probably no need to store the state machine in RAM when relay is IDLE
+		// TODO(midas): BlockStore instances to be created on-the-fly as well.
 
 		// Prepare registerable instance mapped to ChainID
 		reactor.RegisterInstance(InstanceKeyBlockStore, chainID, blockStore)

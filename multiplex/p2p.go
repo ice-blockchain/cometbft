@@ -49,25 +49,24 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 	)
 
 	var (
-		transport   *p2p.MultiplexTransport
-		eventSwitch *p2p.Switch
+		transport   *p2p.MultiplexTransport = reactor.GetTransportForCometBFT()
+		eventSwitch *p2p.Switch             = reactor.GetEventSwitchForCometBFT()
+		nodeKey     *p2p.NodeKey            = reactor.GetNodeKey()
+		nodeInfo    *MultiNetworkNodeInfo   = reactor.GetMultiNetworkNodeInfo()
 	)
-	if reactor.GetEventSwitchForCometBFT() != nil {
-		eventSwitch = reactor.GetEventSwitchForCometBFT()
-		transport = reactor.transport
-	} else {
+	if eventSwitch == nil {
 		p2pMetricsId := strings.Join([]string{
 			globalConfig.Instrumentation.Namespace,
-			string(reactor.nodeKey.ID()),
+			string(nodeKey.ID()),
 		}, "_")
 		p2pMetricsProvider := p2p.PrometheusMetrics(p2pMetricsId,
-			"node_id", string(reactor.nodeKey.ID()),
+			"node_id", string(nodeKey.ID()),
 		)
 
 		mConnConfig := p2p.MConnConfig(cometbftConfig.P2P)
 		transport = p2p.NewMultiplexTransportWithCustomHandshake(
-			reactor.nodeInfo,
-			*reactor.nodeKey,
+			nodeInfo,
+			*nodeKey,
 			mConnConfig,
 			MultiplexTransportHandshake,
 		)
@@ -77,8 +76,8 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 			p2p.WithMetrics(p2pMetricsProvider),
 		)
 		eventSwitch.SetLogger(p2pLogger)
-		eventSwitch.SetNodeInfo(reactor.nodeInfo)
-		eventSwitch.SetNodeKey(reactor.nodeKey)
+		eventSwitch.SetNodeInfo(nodeInfo)
+		eventSwitch.SetNodeKey(nodeKey)
 
 		// Make sure we accept ChainReplicationRequest messages
 		eventSwitch.AddReactor(conn.SharedChannelsNamespace, "MULTIPLEX", reactor)
@@ -136,13 +135,13 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 		}
 	}
 
-	reactor.cometbftSwitch = eventSwitch
-	reactor.transport = transport
+	reactor.SetEventSwitchForCometBFT(eventSwitch)
+	reactor.SetTransportForCometBFT(transport)
 
 	p2pLogger.Info("P2P Node ID",
-		"ID", reactor.nodeKey.ID(),
+		"ID", nodeKey.ID(),
 		"file", globalConfig.NodeKeyFile(),
-		"info", reactor.nodeInfo,
+		"info", nodeInfo,
 	)
 
 	return nil
@@ -162,18 +161,21 @@ func (reactor *Reactor) CreateAddressBooks(
 ) error {
 	// Used for logging with custom address book
 	p2pLogger := reactor.logger.With("module", "p2p")
+	nodeConfig := reactor.GetNodeConfig()
+	nodeKey := reactor.GetNodeKey()
 
 	// Used to retrieve configuration and state per chain.
 	configProvider := reactor.GetInstanceProvider(InstanceKeyConfig)
-	addressBookPath := filepath.Join(reactor.nodeConfig.RootDir, config.DefaultConfigDir)
+	addressBookPath := filepath.Join(nodeConfig.RootDir, config.DefaultConfigDir)
 	addrBookFile := filepath.Join(addressBookPath, config.DefaultAddrBookName)
 	if _, err := os.Stat(addressBookPath); err != nil {
 		return fmt.Errorf("could not open address book file %s: %w", addrBookFile, err)
 	}
 
-	addrBook := pex.NewAddrBook(addrBookFile, reactor.nodeConfig.P2P.AddrBookStrict)
+	addrBook := pex.NewAddrBook(addrBookFile, nodeConfig.P2P.AddrBookStrict)
 	addrBook.SetLogger(p2pLogger.With("book", addrBookFile))
 
+	cometbftSwitch := reactor.GetEventSwitchForCometBFT()
 	for _, chainID := range networks {
 		// The config overwrite notably contains P2P.Seeds overwrite
 		cfgOverwrite := configProvider(chainID).(*config.Config)
@@ -181,7 +183,7 @@ func (reactor *Reactor) CreateAddressBooks(
 
 		// Add ourselves to addrbook to prevent dialing ourselves
 		if cfgOverwrite.P2P.ExternalAddress != "" {
-			externalAddress := p2p.IDAddressString(reactor.nodeKey.ID(), cfgOverwrite.P2P.ExternalAddress)
+			externalAddress := p2p.IDAddressString(nodeKey.ID(), cfgOverwrite.P2P.ExternalAddress)
 			addr, err := p2p.NewNetAddressString(externalAddress)
 			if err != nil {
 				return fmt.Errorf("p2p.external_address is incorrect: %w", err)
@@ -189,7 +191,7 @@ func (reactor *Reactor) CreateAddressBooks(
 			addrBook.AddOurAddress(addr)
 		}
 		if cfgOverwrite.P2P.ListenAddress != "" {
-			internalAddress := p2p.IDAddressString(reactor.nodeKey.ID(), cfgOverwrite.P2P.ListenAddress)
+			internalAddress := p2p.IDAddressString(nodeKey.ID(), cfgOverwrite.P2P.ListenAddress)
 			addr, err := p2p.NewNetAddressString(internalAddress)
 			if err != nil {
 				return fmt.Errorf("p2p.laddr is incorrect: %w", err)
@@ -213,10 +215,10 @@ func (reactor *Reactor) CreateAddressBooks(
 		pexReactor.SetLogger(pexLogger)
 
 		// Set address book and PEX reactor on Switch
-		reactor.cometbftSwitch.AddReactor(chainID, "PEX", pexReactor)
+		cometbftSwitch.AddReactor(chainID, "PEX", pexReactor)
 	}
 
-	reactor.cometbftSwitch.SetAddrBook(addrBook)
+	cometbftSwitch.SetAddrBook(addrBook)
 	return nil
 }
 
@@ -228,6 +230,9 @@ func (reactor *Reactor) AddConnectionChannels(
 	chainIds []string,
 	channels []byte,
 ) error {
+	reactor.networkMutex.RLock()
+	defer reactor.networkMutex.RUnlock()
+
 	sw.Peers().ForEach(func(peer p2p.Peer) {
 		mconn := peer.MConn()
 

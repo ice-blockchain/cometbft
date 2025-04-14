@@ -77,9 +77,10 @@ func BenchmarkMultiplexRelaysTriggerConsensus(b *testing.B) {
 	// Shutdown routine
 	defer shutdownRoutineFn()
 
+	chainIds := servers[0].GetNetworks()
 	benchmarkRawTxThroughput(
 		b,
-		servers[0].GetNetworks(),
+		chainIds,
 		numChains,
 		numRelays,
 		100000, // SetParallelism()
@@ -107,9 +108,10 @@ func BenchmarkMultiplexRelaysWithThreeChainsAndThreeRelays(b *testing.B) {
 	// Shutdown routine
 	defer shutdownRoutineFn()
 
+	chainIds := servers[0].GetNetworks()
 	benchmarkRawTxThroughput(
 		b,
-		servers[0].GetNetworks(),
+		chainIds,
 		numChains,
 		numRelays,
 		100000, // SetParallelism()
@@ -137,9 +139,10 @@ func BenchmarkMultiplexRelaysWithTenChainsAndThreeRelays(b *testing.B) {
 	// Shutdown routine
 	defer shutdownRoutineFn()
 
+	chainIds := servers[0].GetNetworks()
 	benchmarkRawTxThroughput(
 		b,
-		servers[0].GetNetworks(),
+		chainIds,
 		numChains,
 		numRelays,
 		100000, // SetParallelism()
@@ -167,9 +170,10 @@ func BenchmarkMultiplexRelaysWithHundredChainsAndThreeRelays(b *testing.B) {
 	// Shutdown routine
 	defer shutdownRoutineFn()
 
+	chainIds := servers[0].GetNetworks()
 	benchmarkRawTxThroughput(
 		b,
-		servers[0].GetNetworks(),
+		chainIds,
 		numChains,
 		numRelays,
 		1000000, // SetParallelism()
@@ -197,9 +201,10 @@ func BenchmarkMultiplexRelaysWith1KChains(b *testing.B) {
 	// Shutdown routine
 	defer shutdownRoutineFn()
 
+	chainIds := servers[0].GetNetworks()
 	benchmarkRawTxThroughput(
 		b,
-		servers[0].GetNetworks(),
+		chainIds,
 		numChains,
 		numRelays,
 		1000000, // SetParallelism()
@@ -227,9 +232,10 @@ func BenchmarkMultiplexRelaysWith10KChains(b *testing.B) {
 	// Shutdown routine
 	defer shutdownRoutineFn()
 
+	chainIds := servers[0].GetNetworks()
 	benchmarkRawTxThroughput(
 		b,
-		servers[0].GetNetworks(),
+		chainIds,
 		numChains,
 		numRelays,
 		1000000, // SetParallelism()
@@ -257,9 +263,10 @@ func BenchmarkMultiplexRelaysWith100KChains(b *testing.B) {
 	// Shutdown routine
 	defer shutdownRoutineFn()
 
+	chainIds := servers[0].GetNetworks()
 	benchmarkRawTxThroughput(
 		b,
-		servers[0].GetNetworks(),
+		chainIds,
 		numChains,
 		numRelays,
 		1000000, // SetParallelism()
@@ -287,9 +294,10 @@ func BenchmarkMultiplexRelaysWith1MioChains(b *testing.B) {
 	// Shutdown routine
 	defer shutdownRoutineFn()
 
+	chainIds := servers[0].GetNetworks()
 	benchmarkRawTxThroughput(
 		b,
-		servers[0].GetNetworks(),
+		chainIds,
 		numChains,
 		numRelays,
 		1000000, // SetParallelism()

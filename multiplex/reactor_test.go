@@ -84,11 +84,13 @@ func TestMultiplexReactorNewReactor(t *testing.T) {
 	// NewReactor may not return nil
 	assert.NotNil(t, reactor)
 
+	testChainIds := reactor.GetNetworks()
+
 	// Networks must be ordered
 	// ChainRegistry.GetChains() is tested to produce an ordered slice.
-	assert.NotEmpty(t, reactor.GetNetworks())
+	assert.NotEmpty(t, testChainIds)
 	for i, testChainID := range chainRegistry.GetChains() {
-		actualChainID := reactor.GetNetworks()[i]
+		actualChainID := testChainIds[i]
 		assert.Equal(t, testChainID, actualChainID)
 	}
 
@@ -182,7 +184,8 @@ func TestMultiplexReactorRegisterInstance(t *testing.T) {
 
 	// Create instances per chain
 	// Using ORDERED networks because of ports overwrite content test
-	for index, chainID := range reactor.GetNetworks() {
+	testChainIds := reactor.GetNetworks()
+	for index, chainID := range testChainIds {
 		// 1. We create a mutated config per chain
 		perChainCfg := mx.NewConfigOverwrite(
 			nodeCfg,
@@ -214,7 +217,7 @@ func TestMultiplexReactorRegisterInstance(t *testing.T) {
 	assert.NotNil(t, databaseProvider, "should return multiplex map of database instances")
 
 	// Using ORDERED networks because of ports overwrite content test
-	for _, chainID := range reactor.GetNetworks() {
+	for _, chainID := range testChainIds {
 		// 1. Type-assertion to cast back to actual instance
 		perChainCfg := configProvider(chainID).(*config.Config)
 
@@ -235,11 +238,12 @@ func TestMultiplexReactorRegisterInstance(t *testing.T) {
 	// ------------------------------------------------
 	// RESET reactor
 	otherReactor := makeTestReactor(t, nodeCfg)
+	otherChainIds := otherReactor.GetNetworks()
 
 	// Following tests the mutex for services and makes sure that the service
 	// provider is thread-safe and retrieval of services is always possible.
 	var wg sync.WaitGroup
-	for index, chainID := range otherReactor.GetNetworks() {
+	for index, chainID := range otherChainIds {
 		wg.Add(1)
 		go func(idx int, concurrentChainID string) {
 			// 1. We create a mutated config per chain
@@ -276,7 +280,7 @@ func TestMultiplexReactorRegisterInstance(t *testing.T) {
 
 	otherDatabaseProvider := reactor.GetInstanceProvider(mx.InstanceKeyDatabaseState)
 	assert.NotNil(t, otherDatabaseProvider, "should return multiplex map of database instances")
-	for _, chainID := range otherReactor.GetNetworks() {
+	for _, chainID := range otherChainIds {
 		// 1. Type-assertion to cast back to actual instance
 		perChainCfg := otherConfigProvider(chainID).(*config.Config)
 
@@ -315,7 +319,8 @@ func TestMultiplexReactorRegisterNetwork(t *testing.T) {
 	assert.NoError(t, registerErr, "should register network in running reactor")
 
 	// Test that we injected the ChainID
-	assert.Len(t, testReactor.GetNetworks(), numNetworks+1) // Injected 1
+	testChainIds := testReactor.GetNetworks()
+	assert.Len(t, testChainIds, numNetworks+1) // Injected 1
 	assert.Equal(t, true, testReactor.HasNetwork(testChainID))
 
 	// Also test that we updated MultiNetworkNodeInfo

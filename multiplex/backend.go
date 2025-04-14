@@ -214,7 +214,7 @@ func (b *MultiplexBackend) GetNewChainReadyCh() chan<- string {
 
 // GetRelayID returns the node ID assigned in the reactor.
 func (b *MultiplexBackend) GetRelayID() p2p.ID {
-	return b.reactor.nodeKey.ID()
+	return b.reactor.GetNodeKey().ID()
 }
 
 // GetListenAddress should return the relay's listen address.
@@ -273,13 +273,14 @@ func (b *MultiplexBackend) GetAckResponsePeers(txHash string) []string {
 	return []string{}
 }
 
-// EventSwitch creates a local [p2p.Switch] instance which is used
-// to determine the required channels and connection information.
+// CreateOrLoadDiscoveryEventSwitch creates a local [p2p.Switch] instance
+// which is used to determine the required channels and connection information.
 //
 // The relayMtx is expected to be locked by the caller.
-func (b *MultiplexBackend) EventSwitch() *p2p.Switch {
-	if b.reactor.discoverySwitch != nil {
-		return b.reactor.discoverySwitch
+func (b *MultiplexBackend) CreateOrLoadDiscoveryEventSwitch() *p2p.Switch {
+	discoverySwitch := b.reactor.GetEventSwitchForDiscovery()
+	if discoverySwitch != nil {
+		return discoverySwitch
 	}
 
 	// TODO(midas): remove debug logs
@@ -287,57 +288,72 @@ func (b *MultiplexBackend) EventSwitch() *p2p.Switch {
 		"addr", b.broadcastAddr.String(),
 	)
 
+	nodeConfig := b.reactor.GetNodeConfig()
+
 	// In-place mutation of the listen address so that it always uses
 	// the configured broadcast address.
-	b.multiNodeInfo = NewMultiNetworkNodeInfo(
-		b.reactor.nodeConfig,
-		b.reactor.nodeKey,
+	multiNodeInfo := NewMultiNetworkNodeInfo(
+		nodeConfig,
+		b.reactor.GetNodeKey(),
 		b.broadcastAddr,
 		[]byte{server.ReplicationChannel},
 	)
 
-	mConnConfig := p2p.MConnConfig(b.reactor.nodeConfig.P2P)
+	b.multiNodeInfo = multiNodeInfo
+
+	mConnConfig := p2p.MConnConfig(nodeConfig.P2P)
+	nodeKey := b.reactor.GetNodeKey()
 	localTransport := p2p.NewMultiplexTransportWithCustomHandshake(
-		b.multiNodeInfo, // local nodeInfo
-		*b.reactor.nodeKey,
+		multiNodeInfo, // local nodeInfo
+		*nodeKey,
 		mConnConfig,
 		MultiplexTransportHandshake,
 	)
 
 	sw := p2p.NewSwitch(
-		b.reactor.nodeConfig.P2P,
+		nodeConfig.P2P,
 		localTransport,
 	)
 	sw.SetLogger(b.reactor.logger.With("module", "p2p"))
-	sw.SetNodeInfo(b.multiNodeInfo)
-	sw.SetNodeKey(b.reactor.nodeKey)
+	sw.SetNodeInfo(multiNodeInfo)
+	sw.SetNodeKey(b.reactor.GetNodeKey())
 
 	// Make sure we listen to ChainReplicationRequest messages
 	sw.AddReactor(conn.SharedChannelsNamespace, "MULTIPLEX", b.reactor)
 
-	b.reactor.discoverySwitch = sw
+	b.reactor.SetEventSwitchForDiscovery(sw)
 	return sw
 }
 
 // UpdateAvailableNetworks updates the NodeInfo pointer and event switch
-// to permit communications related to networks.
+// to permit communications related to a given list of ChainIDs.
 //
 // TODO(midas): TBI whether p2p.conn channels must be opened manually.
 func (b *MultiplexBackend) UpdateAvailableNetworks(networks []string) []string {
-	if b.reactor.discoverySwitch == nil {
+	discoverySwitch := b.reactor.GetEventSwitchForDiscovery()
+	cometbftSwitch := b.reactor.GetEventSwitchForCometBFT()
+
+	// If we don't have a discovery switch, return the current list of ChainIDs.
+	if discoverySwitch == nil {
+		b.relayMtx.Lock()
+		defer b.relayMtx.Unlock()
 		return b.multiNodeInfo.Networks
 	}
 
+	b.relayMtx.Lock()
+	multiNodeInfo := b.multiNodeInfo
+	b.relayMtx.Unlock()
+
 	// TODO(midas): remove debug logs
 	b.logger.Debug("Updating available networks",
-		"num_before", len(b.multiNodeInfo.Networks),
+		"num_before", len(multiNodeInfo.Networks),
 		"num_adding", len(networks),
 	)
 
 	for _, chainID := range networks {
-		if !slices.Contains(b.multiNodeInfo.Networks, chainID) {
-			b.multiNodeInfo.Networks = append(b.multiNodeInfo.Networks, chainID)
-			b.multiNodeInfo.ProtocolVersions = append(b.multiNodeInfo.ProtocolVersions,
+		if !slices.Contains(multiNodeInfo.Networks, chainID) {
+			multiNodeInfo.Networks = append(multiNodeInfo.Networks, chainID)
+			multiNodeInfo.ProtocolVersions = append(multiNodeInfo.ProtocolVersions,
 				NewChainProtocolVersion(
 					chainID,
 					DefaultProtocolVersion,
@@ -346,25 +362,29 @@ func (b *MultiplexBackend) UpdateAvailableNetworks(networks []string) []string {
 		}
 	}
 
-	b.reactor.discoverySwitch.SetNodeInfo(b.multiNodeInfo)
+	// Updates the MultiNetworkNodeInfo instance
+	b.relayMtx.Lock()
+	b.multiNodeInfo = multiNodeInfo
+	discoverySwitch.SetNodeInfo(multiNodeInfo)
+	b.relayMtx.Unlock()
 
 	// We must upgrade the mconn channels for P2P discovery peers
 	// for injected networks that were not present at time of creation.
 	b.reactor.AddConnectionChannels(
-		b.reactor.discoverySwitch,
-		b.multiNodeInfo.Networks,
+		discoverySwitch,
+		multiNodeInfo.Networks,
 		[]byte{server.ReplicationChannel},
 	)
 
 	// We must also upgrade the mconn channels for P2P cometbft peers
 	// for injected networks that were not present at time of creation.
 	b.reactor.AddConnectionChannels(
-		b.reactor.cometbftSwitch,
-		b.multiNodeInfo.Networks,
+		cometbftSwitch,
+		multiNodeInfo.Networks,
 		[]byte{}, // all channels
 	)
 
-	return b.multiNodeInfo.Networks
+	return multiNodeInfo.Networks
 }
 
 // MustStart starts a replication backend basically selecting void
@@ -384,7 +404,7 @@ func (b *MultiplexBackend) MustStart() {
 
 	// TODO(midas): remove debug logs
 	b.logger.Debug("Process now starting a node backend",
-		"id", b.reactor.nodeKey.ID(),
+		"id", b.reactor.GetNodeKey().ID(),
 	)
 
 	// We use a wait group to block the process until the transport
@@ -425,8 +445,8 @@ func (b *MultiplexBackend) MustStart() {
 		// node information such as the node ID.
 
 		if _, err := b.StartP2PServerDiscovery(
-			b.reactor.nodeConfig,
-			b.reactor.nodeKey,
+			b.reactor.GetNodeConfig(),
+			b.reactor.GetNodeKey(),
 		); err != nil {
 			wg.Done()
 			b.logger.Error("error with P2P server", "err", err)
@@ -434,8 +454,8 @@ func (b *MultiplexBackend) MustStart() {
 		}
 
 		if _, err := b.StartRPCServerDiscovery(
-			b.reactor.nodeConfig,
-			b.reactor.nodeKey,
+			b.reactor.GetNodeConfig(),
+			b.reactor.GetNodeKey(),
 		); err != nil {
 			wg.Done()
 			b.logger.Error("error with RPC server", "err", err)
@@ -444,41 +464,46 @@ func (b *MultiplexBackend) MustStart() {
 
 		// Start the Prometheus server, if enabled.
 		if err := b.StartPrometheusServer(); err != nil {
+			wg.Done()
 			b.logger.Error("error with Prometheus server", "err", err)
 			return
 		}
 
+		discoverySwitch := b.reactor.GetEventSwitchForDiscovery()
 		b.logger.Info("Process idle, waiting to replicate chains...",
 			"time", cmttime.Now(),
-			"id", b.reactor.nodeKey.ID(),
+			"id", b.reactor.GetNodeKey().ID(),
 			"p2p", b.broadcastAddr.DialString(),
 			"rpc", b.discoveryAddr.DialString(),
 			"mon", b.prometheusAddr.DialString(),
-			"info", b.reactor.discoverySwitch.NodeInfo(),
+			"info", discoverySwitch.NodeInfo(),
 		)
 
 		// Start the RPC server before the P2P server
 		// so we can eg. receive txs for the first block
 		if err := b.StartRPCServerCometBFT(); err != nil {
+			wg.Done()
 			b.logger.Error("error with CometBFT RPC server", "err", err)
 			return
 		}
 
 		// Then start the P2P server
 		if err := b.StartP2PServerCometBFT(); err != nil {
+			wg.Done()
 			b.logger.Error("error with CometBFT P2P server", "err", err)
 			return
 		}
 
+		cometbftSwitch := b.reactor.GetEventSwitchForCometBFT()
 		b.logger.Info("CometBFT RPC and P2P listening",
 			"time", cmttime.Now(),
-			"id", b.reactor.nodeKey.ID(),
+			"id", b.reactor.GetNodeKey().ID(),
 			"p2p", b.cometbftP2PAddr.DialString(),
 			"rpc", b.cometbftRPCAddr.DialString(),
-			"info", b.reactor.cometbftSwitch.NodeInfo(),
+			"info", cometbftSwitch.NodeInfo(),
 		)
 
-		if len(b.reactor.GetNetworks()) > 0 {
+		if b.reactor.Size() > 0 {
 			if err := b.StartNodeInstances(); err != nil {
 				b.errorsCh <- err
 			}
@@ -508,6 +533,10 @@ func (b *MultiplexBackend) MustStart() {
 	wg.Wait()
 }
 
+// Close stops the multiplex reactor and listeners, as well
+// as internal channels.
+// The relayMtx mutex is locked during execution.
+//
 // Close implements io.Closer
 func (b *MultiplexBackend) Close() error {
 	// Lock the mutex to complete shutdown gracefully
@@ -516,11 +545,11 @@ func (b *MultiplexBackend) Close() error {
 
 	// TODO(midas): remove debug logs
 	b.logger.Debug("Shutting down node backend",
-		"id", b.reactor.nodeKey.ID(),
+		"id", b.reactor.GetNodeKey().ID(),
 	)
 
 	// Stop any running node runtime
-	if len(b.reactor.GetNetworks()) > 0 {
+	if b.reactor.Size() > 0 {
 		if err := b.StopNodeInstances(); err != nil {
 			return err
 		}
@@ -776,7 +805,7 @@ func (b *MultiplexBackend) CheckDialCompatibleRelay(
 	relayAddr *server.RelayAddress,
 ) error {
 	// If this is us, nothing to do.
-	if relayAddr.ID() == b.reactor.nodeKey.ID() {
+	if relayAddr.ID() == b.reactor.GetNodeKey().ID() {
 		return nil
 	}
 
@@ -796,8 +825,8 @@ func (b *MultiplexBackend) CheckDialCompatibleRelay(
 	}
 
 	// Note that this events switch uses `DiscoveryPort`.
-	localSwitch := b.EventSwitch()
-	if err := localSwitch.DialPeerWithAddress(relayDiscovery); err != nil {
+	discoverySwitch := b.CreateOrLoadDiscoveryEventSwitch()
+	if err := discoverySwitch.DialPeerWithAddress(relayDiscovery); err != nil {
 		if _, ok := err.(p2p.ErrCurrentlyDialingOrExistingAddress); !ok {
 			return fmt.Errorf(
 				"could not dial relay %s for discovery: %w", relayAddr.String(), err)
@@ -819,7 +848,7 @@ func (b *MultiplexBackend) ApplyFilterReplRequestRelays(
 ) map[string][]*server.RelayAddress {
 	relaysWithoutSelf := []*server.RelayAddress{}
 	for _, relayAddr := range relays {
-		if relayAddr.ID() != b.reactor.nodeKey.ID() {
+		if relayAddr.ID() != b.reactor.GetNodeKey().ID() {
 			relaysWithoutSelf = append(relaysWithoutSelf, relayAddr)
 		}
 	}
@@ -835,7 +864,7 @@ func (b *MultiplexBackend) ApplyFilterReplRequestRelays(
 		// Build a (searchable) slice of relay IDs
 		relayIdsByChain := []string{}
 		for _, relayAddr := range relaysByChain {
-			if relayAddr.ID() != b.reactor.nodeKey.ID() {
+			if relayAddr.ID() != b.reactor.GetNodeKey().ID() {
 				relayIdsByChain = append(relayIdsByChain, string(relayAddr.ID()))
 			}
 		}
@@ -991,7 +1020,7 @@ func (b *MultiplexBackend) StartP2PServerDiscovery(
 
 	// Initializes the local p2p.Switch
 	// Creates a global P2P switch to respond even without chain info.
-	eventSwitch := b.EventSwitch()
+	eventSwitch := b.CreateOrLoadDiscoveryEventSwitch()
 
 	// And start the switch (the P2P server).
 	err = eventSwitch.Start()
@@ -1051,7 +1080,7 @@ func (b *MultiplexBackend) StartRPCServerDiscovery(
 	)
 
 	// Initializes a local RPC server
-	nodeRpc := b.reactor.nodeConfig.RPC
+	nodeRpc := b.reactor.GetNodeConfig().RPC
 	rpcConf := rpcserver.DefaultConfig()
 	rpcConf.MaxRequestBatchSize = nodeRpc.MaxRequestBatchSize
 	rpcConf.MaxBodyBytes = nodeRpc.MaxBodyBytes
@@ -1100,17 +1129,20 @@ func (b *MultiplexBackend) StartRPCServerDiscovery(
 // Creates a transport listening on DiscoveryPort+1.
 // This method sets the listen address in cometbftP2PAddr.
 func (b *MultiplexBackend) StartP2PServerCometBFT() error {
+	nodeConfig := b.reactor.GetNodeConfig()
+
 	// P2P CometBFT Port is always: `discovery_port+1`
 	p2pListenAddr := overwriteListenPort(
-		b.reactor.nodeConfig.P2P.ListenAddress,
-		int(b.reactor.nodeConfig.DiscoveryPort+1), // always DiscoveryPort+1
+		nodeConfig.P2P.ListenAddress,
+		int(nodeConfig.DiscoveryPort+1), // always DiscoveryPort+1
 	)
 
-	sw := b.reactor.cometbftSwitch // uses DiscoveryPort+1
+	// uses DiscoveryPort+1
+	sw := b.reactor.GetEventSwitchForCometBFT()
 
 	// Start the transport.
 	addr, err := p2p.NewNetAddressString(p2p.IDAddressString(
-		b.reactor.nodeKey.ID(),
+		b.reactor.GetNodeKey().ID(),
 		p2pListenAddr,
 	))
 	if err != nil {
@@ -1129,8 +1161,8 @@ func (b *MultiplexBackend) StartP2PServerCometBFT() error {
 	b.cometbftP2PAddr = addr
 
 	// Always connect to chain seed nodes, if any available
-	if len(b.reactor.nodeConfig.P2P.Seeds) > 0 {
-		knownSeeds := splitAndTrimEmpty(b.reactor.nodeConfig.P2P.Seeds, ",", " ")
+	if len(nodeConfig.P2P.Seeds) > 0 {
+		knownSeeds := splitAndTrimEmpty(nodeConfig.P2P.Seeds, ",", " ")
 		seedIds := []string{}
 		for _, seedNodeAddr := range knownSeeds {
 			seedAddr, err := server.NewRelayAddress(seedNodeAddr)
@@ -1165,7 +1197,7 @@ func (b *MultiplexBackend) StartP2PServerCometBFT() error {
 // Creates a transport listening on DiscoveryPort+2.
 // This method sets the listen address in cometbftRPCAddr.
 func (b *MultiplexBackend) StartRPCServerCometBFT() error {
-	nodeCfg := b.reactor.nodeConfig
+	nodeCfg := b.reactor.GetNodeConfig()
 
 	// RPC CometBFT Port is always: `discovery_port+2`
 	rpcListenAddr := overwriteListenPort(
@@ -1177,7 +1209,8 @@ func (b *MultiplexBackend) StartRPCServerCometBFT() error {
 	// i.e. contains reactors, stores and genesis.
 	nodesProvider := b.reactor.GetServicesProvider()
 	chainRoutes := map[string]rpccore.RoutesMap{}
-	for _, chainID := range b.GetNetworks() {
+	chainIds := b.GetNetworks()
+	for _, chainID := range chainIds {
 		nodeRuntime, ok := nodesProvider(ServiceKeyNodeRuntime, chainID).(*node.Node)
 		if !ok {
 			return fmt.Errorf(
@@ -1214,7 +1247,7 @@ func (b *MultiplexBackend) StartRPCServerCometBFT() error {
 			"could not create relay address for RPC: %w", err)
 	}
 
-	relayAddr.SetID(b.reactor.nodeKey.ID())
+	relayAddr.SetID(b.reactor.GetNodeKey().ID())
 	if b.cometbftRPCAddr, err = relayAddr.NetAddress(); err != nil {
 		return fmt.Errorf(
 			"could not create rpc listen address: %w", err)
@@ -1295,7 +1328,6 @@ func (b *MultiplexBackend) StartRPCServerCometBFT() error {
 	}
 
 	b.reactor.SetRPCMultiplexer(rpcMultiplexer)
-
 	b.rpcListeners = append(b.rpcListeners, rpcListener)
 	return nil
 }
@@ -1305,7 +1337,7 @@ func (b *MultiplexBackend) StartRPCServerCometBFT() error {
 // Creates a transport listening on DiscoveryPort+3.
 // This method sets the listen address in prometheusAddr.
 func (b *MultiplexBackend) StartPrometheusServer() error {
-	nodeCfg := b.reactor.nodeConfig
+	nodeCfg := b.reactor.GetNodeConfig()
 	prometheusCfg := nodeCfg.Instrumentation
 
 	// Allows disabling prometheus through legacy config.
@@ -1313,7 +1345,7 @@ func (b *MultiplexBackend) StartPrometheusServer() error {
 		return nil
 	}
 
-	// RPC Discovery Port is always: `discovery_port+3`
+	// Prometheus Port is always: `discovery_port+3`
 	monListenAddr := overwriteListenPort(
 		prometheusCfg.PrometheusListenAddr,
 		int(nodeCfg.DiscoveryPort+3), // always DiscoveryPort+3
@@ -1325,7 +1357,7 @@ func (b *MultiplexBackend) StartPrometheusServer() error {
 			"could not create relay address for Prometheus: %w", err)
 	}
 
-	relayAddr.SetID(b.reactor.nodeKey.ID())
+	relayAddr.SetID(b.reactor.GetNodeKey().ID())
 	if b.prometheusAddr, err = relayAddr.NetAddress(); err != nil {
 		return fmt.Errorf(
 			"could not create Prometheus listen address: %w", err)
@@ -1359,19 +1391,20 @@ func (b *MultiplexBackend) StartPrometheusServer() error {
 // StartNodeInstances calls the Start method of [node.Node] instances that
 // are registered in the services multiplex map of the reactor.
 func (b *MultiplexBackend) StartNodeInstances() error {
-	if len(b.GetNetworks()) == 0 {
+	chainIds := b.GetNetworks()
+	if len(chainIds) == 0 {
 		return nil
 	}
 
 	servicesProvider := b.reactor.GetServicesProvider()
-	for _, chainID := range b.GetNetworks() {
+	for _, chainID := range chainIds {
 		// Type-assertion makes sure we have a [*node.Node]
 		runNode, ok := servicesProvider(ServiceKeyNodeRuntime, chainID).(*node.Node)
 		if !ok {
 			return errors.New("could not get node runtime in StartNodeInstances")
 		}
 
-		// TODO(midas): relax some resources at i % 1000 == 0
+		// TODO(midas): relax some resources at i % 1000 == 0 (set IDLE)
 
 		// Calls the Start method on the node.Node instance.
 		// This goroutine produces a panic in case of errors.
@@ -1399,15 +1432,16 @@ func (b *MultiplexBackend) StartNodeInstances() error {
 // StopNodeInstances calls the Stop method of [node.Node] instances that
 // are registered in the services multiplex map of the reactor.
 func (b *MultiplexBackend) StopNodeInstances() error {
-	if len(b.GetNetworks()) == 0 {
+	chainIds := b.GetNetworks()
+	if len(chainIds) == 0 {
 		return nil
 	}
 
 	var wg sync.WaitGroup
-	wg.Add(len(b.GetNetworks()))
+	wg.Add(len(chainIds))
 
 	servicesProvider := b.reactor.GetServicesProvider()
-	for _, chainID := range b.GetNetworks() {
+	for _, chainID := range chainIds {
 		// Type-assertion makes sure we have a [*node.Node]
 		runNode, ok := servicesProvider(ServiceKeyNodeRuntime, chainID).(*node.Node)
 		if !ok || !runNode.IsRunning() {
@@ -1580,7 +1614,7 @@ func (b *MultiplexBackend) metricsReporter() {
 			}
 
 			prometheusCfg := b.reactor.GetNodeConfig().Instrumentation
-			relayMetricsPrefix := prometheusCfg.Namespace + "_" + string(b.reactor.nodeKey.ID())
+			relayMetricsPrefix := prometheusCfg.Namespace + "_" + string(b.reactor.GetNodeKey().ID())
 
 			// Resources sampling for CPU and RAM
 			collectSampleCPU(b.metrics.ProcessorUsage)()
@@ -1593,12 +1627,14 @@ func (b *MultiplexBackend) metricsReporter() {
 			})()
 
 			// For each network, collect CometBFT metrics (blocks, txes)
-			for _, chainID := range b.GetNetworks() {
+			chainIds := b.GetNetworks()
+			for _, chainID := range chainIds {
 				// See also: multiplex/consensus.go
 				chainMetricsPrefix := relayMetricsPrefix + ":" + strings.ReplaceAll(chainID, "-", "_")
 
+				// TODO(midas): enable user-grouped metrics with ChainID and RelayID.
 				collectSampleCometBFT(
-					// string(b.reactor.nodeKey.ID()),
+					// string(b.reactor.GetNodeKey().ID()),
 					// chainID,
 					chainMetricsPrefix,
 					b.metrics,

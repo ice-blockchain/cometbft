@@ -38,8 +38,9 @@ func TestMultiplexReactorPrepareConsensusInstanceWithReactor(t *testing.T) {
 	assert.NoError(t, err, "should not error while waiting for networks")
 
 	// Start an ABCI client
+	chainIds := reactor.GetNetworks()
 	abciClient := proxy.NewMultiplexAppConn(
-		reactor.GetNetworks(),
+		chainIds,
 		proxy.DefaultClientCreator(globalCfg.ProxyApp, globalCfg.ABCI, globalCfg.DBDir()),
 		proxy.PrometheusMetrics(globalCfg.Instrumentation.Namespace+"_"+string(reactor.GetNodeKey().ID())),
 	)
@@ -51,7 +52,7 @@ func TestMultiplexReactorPrepareConsensusInstanceWithReactor(t *testing.T) {
 	reactor.SetABCIClient(abciClient)
 
 	// Should now be able to do consensus handshake and load state machines
-	for _, chainID := range reactor.GetNetworks() {
+	for _, chainID := range chainIds {
 		err = reactor.PrepareConsensusInstanceWithReactor(context.TODO(), chainID)
 		assert.NoError(t, err, "should not error for consensus handshake")
 	}
@@ -77,8 +78,9 @@ func TestMultiplexReactorCreateConsensusInstanceReactors(t *testing.T) {
 	assert.NoError(t, err, "should not error while waiting for networks")
 
 	// Start an ABCI client
+	chainIds := reactor.GetNetworks()
 	abciClient := proxy.NewMultiplexAppConn(
-		reactor.GetNetworks(),
+		chainIds,
 		proxy.DefaultClientCreator(globalCfg.ProxyApp, globalCfg.ABCI, globalCfg.DBDir()),
 		proxy.NopMetrics(),
 	)
@@ -94,7 +96,7 @@ func TestMultiplexReactorCreateConsensusInstanceReactors(t *testing.T) {
 	require.NotNil(t, servicesProvider, "services provider must not be nil")
 
 	// Should now be able to do consensus handshake and load state machines
-	for _, chainID := range reactor.GetNetworks() {
+	for _, chainID := range chainIds {
 		err = reactor.PrepareConsensusInstanceWithReactor(context.TODO(), chainID)
 		assert.NoError(t, err, "should not error for consensus handshake")
 
