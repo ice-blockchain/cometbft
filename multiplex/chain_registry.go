@@ -205,7 +205,10 @@ type ChainRegistryProvider func(*config.MultiplexConfig) (ChainRegistry, error)
 //
 // This method implementation supports concurrent calls.
 // NewChainRegistry implements ChainRegistryProvider.
-func NewChainRegistry(conf *config.MultiplexConfig, options ...func(ChainRegistry)) (ChainRegistry, error) {
+func NewChainRegistry(
+	conf *config.MultiplexConfig,
+	genesisDocSetFile string,
+) (ChainRegistry, error) {
 	if conf.Strategy == DisableReplicationStrategy() {
 		return &singletonChainRegistry{}, nil
 	}
@@ -226,17 +229,12 @@ func NewChainRegistry(conf *config.MultiplexConfig, options ...func(ChainRegistr
 		registry.userChains = map[string][]string{}
 		registry.ReplicatedChains = []string{}
 
-		// Permits overwrite of client implementation.
-		for _, option := range options {
-			option(registry)
-		}
-
 		// Copy seed nodes and map to ChainID
 		for chainID, seedNodes := range conf.ChainSeeds {
 			registry.ChainSeeds[chainID] = seedNodes
 		}
 
-		// Copy user addresses and ChainIDs
+		// Copy user addresses and ChainIDs from config
 		for userAddress, chainIds := range conf.UserChains {
 			registry.ReplicatedChains = append(registry.ReplicatedChains, chainIds...)
 			registry.userChains[userAddress] = make([]string, len(chainIds))
@@ -245,10 +243,31 @@ func NewChainRegistry(conf *config.MultiplexConfig, options ...func(ChainRegistr
 
 			// Sort user-indexed chains alphabetically by ChainID
 			sort.Strings(registry.userChains[userAddress])
+			registry.userChains[userAddress] = slices.Compact(registry.userChains[userAddress])
 		}
 
-		// Sort ReplicatedChains alphabetically by ChainID
+		// Copy user addresses and ChainIDs from genesisDocs
+		if len(genesisDocSetFile) > 0 {
+			chainsFromGenesis, err := LoadChainsFromGenesisFile(genesisDocSetFile)
+			if err != nil {
+				return returnInstanceWithError{instance: nil, err: err}
+			}
+
+			for userAddress, chainIds := range chainsFromGenesis {
+				registry.ReplicatedChains = append(registry.ReplicatedChains, chainIds...)
+				registry.userChains[userAddress] = make([]string, len(chainIds))
+
+				copy(registry.userChains[userAddress], chainIds)
+
+				// Sort user-indexed chains alphabetically by ChainID
+				sort.Strings(registry.userChains[userAddress])
+				registry.userChains[userAddress] = slices.Compact(registry.userChains[userAddress])
+			}
+		}
+
+		// Sort ReplicatedChains alphabetically by ChainID and compact
 		sort.Strings(registry.ReplicatedChains)
+		registry.ReplicatedChains = slices.Compact(registry.ReplicatedChains)
 		return returnInstanceWithError{instance: registry, err: nil}
 	})
 
@@ -337,7 +356,7 @@ func LoadChainsFromGenesisFile(genFile string) (map[string][]string, error) {
 		}
 
 		// Stores user-indexed ChainID
-		userChains[userAddress] = append(userChains[userAddress], extChainID.String())
+		userChains[userAddress] = append(userChains[userAddress], userGenDoc.ChainID)
 	}
 
 	return userChains, nil

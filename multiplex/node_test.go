@@ -448,8 +448,10 @@ func ResetTestMultiplexNodeWithConfigAndPorts(
 ) (string, *config.Config) {
 	tb.Helper()
 
-	rootDir, err := os.MkdirTemp("", rootDir)
-	require.NoError(tb, err)
+	if !cmtos.FileExists(rootDir) {
+		_, err := os.MkdirTemp("", rootDir)
+		require.NoError(tb, err)
+	}
 
 	nodeCfg := config.TestConfig()
 	nodeCfg.SetRoot(rootDir)
@@ -459,15 +461,15 @@ func ResetTestMultiplexNodeWithConfigAndPorts(
 	nodeCfg.Consensus.CreateEmptyBlocks = true // when using *Node
 
 	// Make sure we have /data and /config
-	_, err = mx.NewMultiplexFS(nodeCfg)
+	_, err := mx.NewMultiplexFS(nodeCfg, makeChainRegistryFromConfig(tb, mxConfig))
 	require.NoError(tb, err, "should create filesystem structure for multiplex")
 
 	// Make sure we have a *multi-doc* genesis file (GenesisDocSet)
 	genesisFilePath := filepath.Join(rootDir, nodeCfg.Genesis)
 
 	// IMPORTANT:
-	// If there is a genesis file at the configured path, we will read it and expect it
-	// to contain a genesis doc set ; otherwise create it with testOneScopedGenesisFmt.
+	// If there is no genesis file at the configured path, we will create it
+	// with testOneScopedGenesisFmt.
 
 	if !cmtos.FileExists(genesisFilePath) {
 		testGenesis := `[`

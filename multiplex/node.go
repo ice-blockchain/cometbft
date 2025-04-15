@@ -115,7 +115,7 @@ func NewNodesMultiplex(
 	genesisDocProvider := MultiplexGenesisDocProviderFunc(globalCfg)
 
 	// Uses a singleton chain registry to interpret multiplex configurations
-	chainRegistry, err := NewChainRegistry(&globalCfg.MultiplexConfig)
+	chainRegistry, err := NewChainRegistry(&globalCfg.MultiplexConfig, globalCfg.GenesisFile())
 	if err != nil {
 		return nil, nil, fmt.Errorf(
 			"failed to create the ChainRegistry: %w", err)

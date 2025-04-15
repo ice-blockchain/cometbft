@@ -110,7 +110,7 @@ func TestScenarioClientBroadcastHealthyRelays(t *testing.T) {
 
 	// Set a custom logger to log all backend messages
 	// For debug, change this logger instance
-	backendLogger := cmtlog.TestingLogger().With("process", "relay-1")
+	backendLogger := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
 	servers[0].SetLogger(backendLogger)
 
 	// Note: relays includes self
@@ -172,7 +172,7 @@ func TestScenarioClientBroadcastEmptyRelays(t *testing.T) {
 
 	// Set a custom logger to log all backend messages
 	// For debug, change this logger instance
-	backendLogger := cmtlog.TestingLogger().With("process", "relay-1")
+	backendLogger := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
 	servers[0].SetLogger(backendLogger)
 
 	// Note: relays includes self
@@ -238,7 +238,7 @@ func TestScenarioClientBroadcastEmptyRelaysProduceBlockWithTx(t *testing.T) {
 
 	// Set a custom logger to log all backend messages
 	// For debug, change this logger instance
-	backendLogger := cmtlog.TestingLogger().With("process", "relay-1")
+	backendLogger := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
 	servers[0].SetLogger(backendLogger)
 
 	// Note: relays includes self
@@ -272,7 +272,9 @@ func TestScenarioClientBroadcastEmptyRelaysProduceBlockWithTx(t *testing.T) {
 	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
 
-	time.Sleep(5 * time.Second)
+	waitDuration := 5 * time.Second
+	t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
 
 	testReactor := servers[0].GetReactor()
 
@@ -299,6 +301,9 @@ func TestScenarioClientBroadcastEmptyRelaysProduceBlockWithTx(t *testing.T) {
 	assert.Len(t, actualBlock.Data.Txs, numTransactions)
 }
 
+// After a complete backend restart, due to a process failure or corruption,
+// the transaction broadcast process must normally resume operations and the
+// broadcast operation(s) must succeed without errors from the relays.
 func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
 	numChains := 0
 	numRelays := 7
@@ -311,13 +316,14 @@ func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
 
 	// Set a custom logger to log all backend messages
 	// For debug, change this logger instance
-	backendLogger := cmtlog.TestingLogger().With("process", "relay-1")
+	backendLogger := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
 	servers[0].SetLogger(backendLogger)
 
 	// Note: relays includes self
+	// Using 0 waitDuration because others have plenty of time due to restart.
 	relays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
 		servers,
-		2*time.Second,  // Time for backend
+		0*time.Second,  // Time for backend
 		20*time.Second, // Time for broadcast
 	)
 
@@ -327,11 +333,15 @@ func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
 	require.NotNil(t, broadcastCtx)
 	require.Len(t, relays, numRelays)
 
+	reuseRootDir := servers[0].GetReactor().GetNodeConfig().RootDir
+
 	// Stop the receiving backend, then start it again.
 	err := servers[0].Close()
 	require.NoError(t, err, "should shutdown server")
 
-	time.Sleep(3 * time.Second)
+	waitDuration := 3 * time.Second
+	t.Logf("Waiting %.0fsec to restart backend...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
 
 	// CAUTION:
 	// We mimic one of the relay shutting down completely, i.e. its process
@@ -340,6 +350,7 @@ func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
 
 	servers[0] = nil // Only for test
 	resetRelay, newShutdownFn := ResetTestSingleCompatibleRelay(t,
+		reuseRootDir,
 		servers[1],
 		0, // indexRelay (resetting relay-1)
 		backendLogger,
@@ -363,6 +374,118 @@ func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
 
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg := waitForClientBroadcastStatus(t,
+		broadcastCtx,
+		notifyCh,
+	)
+	assert.NotNil(t, resultStatusMsg)
+	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
+	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+}
+
+func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
+	numChains := 0
+	numRelays := 7
+
+	servers, shutdownFn := ResetTestScenarioRelays(t, numChains, numRelays)
+	defer shutdownFn()
+
+	require.NotEmpty(t, servers)
+	require.Len(t, servers, numRelays)
+
+	// Set a custom logger to log all backend messages
+	// For debug, change this logger instance
+	backendLogger := cmtlog.TestingLogger().With("process", "relay-1")
+	servers[0].SetLogger(backendLogger)
+
+	// Note: relays includes self
+	// Using 2 seconds waitDuration because we shall broadcast BEFORE shutdown.
+	relays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
+		servers,
+		2*time.Second,  // Time for backend
+		20*time.Second, // Time for broadcast
+	)
+
+	defer cancelCtxFn()
+
+	require.NotEmpty(t, relays)
+	require.NotNil(t, broadcastCtx)
+	require.Len(t, relays, numRelays)
+
+	reuseRootDir := servers[0].GetReactor().GetNodeConfig().RootDir
+
+	// STEP 1:
+	// We execute a complete broadcast process.
+
+	// Separate goroutine for client broadcast process
+	numTransactions := 1
+	testChainID := makeChainID("test chain")
+	notifyCh := make(chan client.BroadcastStatus)
+	go clientBroadcastTx(t,
+		broadcastCtx,
+		servers[0],
+		relays,
+		testChainID,
+		numTransactions,
+		notifyCh,
+	)
+
+	// Blocks the main thread until we consume from notifyCh.
+	resultStatusMsg := waitForClientBroadcastStatus(t,
+		broadcastCtx,
+		notifyCh,
+	)
+	assert.NotNil(t, resultStatusMsg)
+	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
+	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+
+	waitDuration := 5 * time.Second
+	t.Logf("Waiting %.0fsec to shutdown backend...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
+
+	// STEP 2:
+	//
+	// CAUTION:
+	// We mimic one of the relay shutting down completely, i.e. its process
+	// is not managed, corrupted or stopped. Setting nil on the "old" instance
+	// is only necessary during shutdown tests.
+
+	// Stop the receiving backend, then start it again.
+	err := servers[0].Close()
+	require.NoError(t, err, "should shutdown server")
+
+	waitDuration = 3 * time.Second
+	t.Logf("Waiting %.0fsec to restart backend...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
+
+	servers[0] = nil // Only for test
+	resetRelay, newShutdownFn := ResetTestSingleCompatibleRelay(t,
+		reuseRootDir,
+		servers[1],
+		0, // indexRelay (resetting relay-1)
+		backendLogger,
+	)
+	defer newShutdownFn()
+
+	resetRelay.MustStart()
+
+	// STEP 3:
+	//
+	// The relay has been fully restarted and we can use the created
+	// cancelable/expirable context to broadcast *more* transactions.
+
+	// Separate goroutine for client broadcast process
+	numTransactions = 2
+	go clientBroadcastTx(t,
+		broadcastCtx,
+		resetRelay,
+		relays,
+		testChainID,
+		numTransactions,
+		notifyCh, // XXX re-use?
+	)
+
+	// Blocks the main thread until we consume from notifyCh.
+	resultStatusMsg = waitForClientBroadcastStatus(t,
 		broadcastCtx,
 		notifyCh,
 	)
@@ -594,8 +717,11 @@ func StartTestScenarioRelays(
 		servers[i].MustStart()
 	}
 
-	// Give the backend some time before starting broadcast context
-	time.Sleep(waitDuration)
+	if waitDuration.Seconds() > float64(0) {
+		// Give the backend some time before starting broadcast context
+		tb.Logf("Waiting %.0fsec to use node services...", waitDuration.Seconds())
+		time.Sleep(waitDuration)
+	}
 
 	// Prepare the relays addresses
 	relays = make([]string, 0, len(servers))
@@ -610,6 +736,7 @@ func StartTestScenarioRelays(
 
 func ResetTestSingleCompatibleRelay(
 	tb testing.TB,
+	rootDir string,
 	otherRelay *mx.MultiplexBackend,
 	indexRelay int,
 	customLogger cmtlog.Logger,
@@ -623,8 +750,8 @@ func ResetTestSingleCompatibleRelay(
 	rootDirRelayX,
 		globalCfgRelayX := ResetTestMultiplexNodeWithConfigAndPorts(
 		tb,
-		tb.Name()+"-"+strconv.Itoa(indexRelay+1), // rootDir
-		"_"+strconv.Itoa(indexRelay+1),           // metricsSuffix
+		rootDir,
+		"_"+strconv.Itoa(indexRelay+1), // metricsSuffix
 		baseCfg.MultiplexConfig,
 		uint16(50001+(indexRelay*100)), // 50001, 50101, 50201, 50301, 50401
 	)

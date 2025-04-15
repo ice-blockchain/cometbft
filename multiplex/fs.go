@@ -19,7 +19,10 @@ type MultiplexFS map[string]string
 //
 // Note that a separate folder is created for every replicated chain and that
 // it is organized under a user address parent folder in the `data/` folder.
-func NewMultiplexFS(conf *config.Config) (multiplex MultiplexFS, err error) {
+func NewMultiplexFS(
+	conf *config.Config,
+	chainRegistry ChainRegistry,
+) (multiplex MultiplexFS, err error) {
 	// When replication is *disabled*, we will create only one data dir
 	// This mimics the default behavior of CometBFT blockchain nodes' data dir
 	if conf.Strategy == config.DefaultReplicationStrategy() {
@@ -40,22 +43,22 @@ func NewMultiplexFS(conf *config.Config) (multiplex MultiplexFS, err error) {
 	// i.e.: data/%address%/%ChainID%/...
 	baseDataDir := filepath.Join(conf.BaseConfig.RootDir, config.DefaultDataDir)
 	baseConfDir := filepath.Join(conf.BaseConfig.RootDir, config.DefaultConfigDir)
-	for _, chainIds := range conf.UserChains {
+
+	chainIds := chainRegistry.GetChains()
+	for _, chainID := range chainIds {
 		// Uses one subfolder by user in data/ and one in config/
 		// .. and one subfolder by ChainID in the user subfolders
-		for _, chainID := range chainIds {
-			chainID, err := NewExtendedChainIDFromLegacy(chainID)
-			if err != nil {
-				return multiplex, err
-			}
-
-			_, chainDataFolder, err := EnsureNetworkFS(chainID, baseConfDir, baseDataDir)
-			if err != nil {
-				return multiplex, err
-			}
-
-			multiplex[chainID.String()] = chainDataFolder
+		extChainID, err := NewExtendedChainIDFromLegacy(chainID)
+		if err != nil {
+			return multiplex, err
 		}
+
+		_, chainDataFolder, err := EnsureNetworkFS(extChainID, baseConfDir, baseDataDir)
+		if err != nil {
+			return multiplex, err
+		}
+
+		multiplex[extChainID.String()] = chainDataFolder
 	}
 
 	return multiplex, nil

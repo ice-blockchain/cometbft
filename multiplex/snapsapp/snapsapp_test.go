@@ -110,7 +110,7 @@ func prepareMultiplexReactor(t *testing.T) (
 	conf.SetRoot(rootDir)
 
 	nodeKey := makeRandomNodeKey()
-	testChainRegistry, err := mx.NewChainRegistry(&conf.MultiplexConfig)
+	testChainRegistry, err := mx.NewChainRegistry(&conf.MultiplexConfig, "")
 	require.NoError(t, err, "should create chain registry instance")
 
 	// Test Reactor implementation in multiplex package

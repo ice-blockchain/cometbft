@@ -53,7 +53,7 @@ func TestMultiplexReactorNewReactor(t *testing.T) {
 	nodeCfg.SetRoot(rootDir)
 	nodeCfg.MultiplexConfig = makeRandomMultiplexConfig(t, 5, 30001) // 5 distinct networks
 
-	chainRegistry, err := mx.NewChainRegistry(&nodeCfg.MultiplexConfig)
+	chainRegistry, err := mx.NewChainRegistry(&nodeCfg.MultiplexConfig, "")
 	require.NoError(t, err, "should create chain registry instance")
 
 	// ----------------
@@ -428,7 +428,7 @@ func makeTestReactorWithGenesisDocProvider(
 
 	nodeKey := makeRandomNodeKey()
 
-	chainRegistry, err := mx.NewChainRegistry(&nodeCfg.MultiplexConfig)
+	chainRegistry, err := mx.NewChainRegistry(&nodeCfg.MultiplexConfig, "")
 	require.NoError(tb, err, "should create chain registry instance")
 
 	return mx.NewReactor(

@@ -108,7 +108,7 @@ func TestMultiplexChainRegistryLoadChainsFromGenesisFile(t *testing.T) {
 	// see also: randomGenesisDocSet()
 	for _, testGenesisDoc := range genesisDocSet {
 		expectedOwner := testGenesisDoc.Validators[0].Address.String()
-		expectedChainID := formalizeChainID(testGenesisDoc.ChainID)
+		expectedChainID := testGenesisDoc.ChainID
 
 		// Must map ChainIDs to user addresses
 		assert.Contains(t, userChains, expectedOwner)
@@ -123,7 +123,7 @@ func TestMultiplexChainRegistryNewChainRegistry(t *testing.T) {
 	// Errors
 	// Should not do anything given "Disabled" strategy
 	stopConf := config.EmptyMultiplexConfig() // contains ReplicationStrategy{"Disabled"}
-	stopRegistry, err := mx.NewChainRegistry(&stopConf)
+	stopRegistry, err := mx.NewChainRegistry(&stopConf, "")
 	assert.NoError(t, err, "should not error given disabled multiplex configuration")
 	assert.Empty(t, stopRegistry.GetChains())
 
@@ -135,7 +135,7 @@ func TestMultiplexChainRegistryNewChainRegistry(t *testing.T) {
 		map[string]string{},
 		map[string][]string{},
 	)
-	_, err = mx.NewChainRegistry(&misConf.MultiplexConfig)
+	_, err = mx.NewChainRegistry(&misConf.MultiplexConfig, "")
 	assert.NoError(t, err, "should not error given empty replicated chains")
 
 	minimalConf := config.MultiplexTestBaseConfig(
@@ -144,7 +144,7 @@ func TestMultiplexChainRegistryNewChainRegistry(t *testing.T) {
 			"mx-chain-CC8E6555A3F401FF61DA098F94D325E7041BC43A-1A63C0E60122F9BB",
 		}},
 	)
-	minimalRegistry, err := mx.NewChainRegistry(&minimalConf.MultiplexConfig)
+	minimalRegistry, err := mx.NewChainRegistry(&minimalConf.MultiplexConfig, "")
 	assert.NoError(t, err, "should not error given valid minimal multiplex configuration")
 	assert.Len(t, minimalRegistry.GetChains(), 1)
 
@@ -165,7 +165,7 @@ func TestMultiplexChainRegistryNewChainRegistry(t *testing.T) {
 			},
 		},
 	)
-	chainRegistry, err := mx.NewChainRegistry(&exampleConf.MultiplexConfig)
+	chainRegistry, err := mx.NewChainRegistry(&exampleConf.MultiplexConfig, "")
 	assert.NoError(t, err, "should not error given valid example multiplex configuration")
 	assert.Len(t, chainRegistry.GetChains(), 3)
 
@@ -184,7 +184,7 @@ func TestMultiplexChainRegistryGetStateSyncConfig(t *testing.T) {
 	nodeCfg.SetRoot(rootDir)
 	nodeCfg.MultiplexConfig = makeRandomMultiplexConfig(t, 5, 30001) // 5 distinct networks
 
-	testChainRegistry, err := mx.NewChainRegistry(&nodeCfg.MultiplexConfig)
+	testChainRegistry, err := mx.NewChainRegistry(&nodeCfg.MultiplexConfig, "")
 	require.NoError(t, err, "should create chain registry from random multiplex config")
 
 	// We can safely iterate the networks list from registry
@@ -217,7 +217,7 @@ func TestMultiplexChainRegistryGetSeeds(t *testing.T) {
 	nodeCfg.SetRoot(rootDir)
 	nodeCfg.MultiplexConfig = makeRandomMultiplexConfig(t, 5, 30001) // 5 distinct networks
 
-	testChainRegistry, err := mx.NewChainRegistry(&nodeCfg.MultiplexConfig)
+	testChainRegistry, err := mx.NewChainRegistry(&nodeCfg.MultiplexConfig, "")
 	require.NoError(t, err, "should create chain registry from random multiplex config")
 
 	// We can safely iterate the networks list from registry
@@ -250,7 +250,7 @@ func TestMultiplexChainRegistryGetAddress(t *testing.T) {
 	nodeCfg.SetRoot(rootDir)
 	nodeCfg.MultiplexConfig = makeRandomMultiplexConfig(t, 5, 30001) // 5 distinct networks
 
-	testChainRegistry, err := mx.NewChainRegistry(&nodeCfg.MultiplexConfig)
+	testChainRegistry, err := mx.NewChainRegistry(&nodeCfg.MultiplexConfig, "")
 	require.NoError(t, err, "should create chain registry from random multiplex config")
 
 	// Iterate the CONFIG to test for correct addresses retrievals
@@ -283,7 +283,7 @@ func TestMultiplexChainRegistryFindChain(t *testing.T) {
 	nodeCfg.SetRoot(rootDir)
 	nodeCfg.MultiplexConfig = makeRandomMultiplexConfig(t, 5, 30001) // 5 distinct networks
 
-	testChainRegistry, err := mx.NewChainRegistry(&nodeCfg.MultiplexConfig)
+	testChainRegistry, err := mx.NewChainRegistry(&nodeCfg.MultiplexConfig, "")
 	require.NoError(t, err, "should create chain registry from random multiplex config")
 
 	// GetChains is tested to return an alphabetically ordered slice of ChainID
@@ -307,10 +307,71 @@ func TestMultiplexChainRegistryFindChain(t *testing.T) {
 	}
 }
 
+func TestMultiplexChainRegistryUsingGenesisDocSet(t *testing.T) {
+	numChains := 3
+
+	// STEP 1
+	// Create a random genesis doc set.
+	tmpfile, err := os.CreateTemp("", "genesisdocset.json")
+	require.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+
+	genDocSet := randomGenesisDocSet(numChains)
+	require.Len(t, genDocSet, numChains)
+	err = genDocSet.SaveAs(tmpfile.Name())
+	require.NoError(t, err)
+
+	err = tmpfile.Close()
+	require.NoError(t, err)
+
+	// TEST 1
+	// Initialize a chain registry using genesis doc set file.
+
+	emptyConf := config.MultiplexTestBaseConfig(
+		map[string]string{},
+		map[string][]string{},
+	)
+	testChainRegistry, err := mx.NewChainRegistry(&emptyConf.MultiplexConfig, tmpfile.Name())
+	assert.NoError(t, err, "should not error given genesis doc set file")
+	assert.Len(t, testChainRegistry.GetChains(), numChains)
+
+	for i := 0; i < numChains; i++ {
+		assert.Equal(t, true, testChainRegistry.HasChain(genDocSet[i].ChainID),
+			"should contain ChainID: "+genDocSet[i].ChainID)
+	}
+
+	// TEST 2
+	// Initialize a chain registry using config AND genesis doc set file.
+
+	nonEmptyConf := config.MultiplexTestBaseConfig(
+		map[string]string{},
+		map[string][]string{"CC8E6555A3F401FF61DA098F94D325E7041BC43A": {
+			"test-chain-CC8E6555A3F401FF61DA098F94D325E7041BC43A-1A63C0E60122F9BB",
+		}},
+	)
+	mergedNumChains := numChains + 1
+
+	testMergeRegistry, err := mx.NewChainRegistry(&nonEmptyConf.MultiplexConfig, tmpfile.Name())
+	assert.NoError(t, err, "should not error given config and genesis doc set file")
+	assert.Len(t, testMergeRegistry.GetChains(), mergedNumChains)
+
+	for _, userChainIds := range nonEmptyConf.UserChains {
+		for _, testChainID := range userChainIds {
+			assert.Equal(t, true, testMergeRegistry.HasChain(testChainID),
+				"missing config ChainID, should contain ChainID: "+testChainID)
+		}
+	}
+
+	for i := 0; i < len(genDocSet); i++ {
+		assert.Equal(t, true, testMergeRegistry.HasChain(genDocSet[i].ChainID),
+			"missing genesis doc set ChainID, should contain ChainID: "+genDocSet[i].ChainID)
+	}
+}
+
 func makeChainRegistryFromConfig(tb testing.TB, conf config.MultiplexConfig) mx.ChainRegistry {
 	tb.Helper()
 
-	chainRegistry, err := mx.NewChainRegistry(&conf)
+	chainRegistry, err := mx.NewChainRegistry(&conf, "")
 	require.NoError(tb, err, "should create chain registry from config")
 
 	return chainRegistry

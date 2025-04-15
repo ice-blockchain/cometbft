@@ -36,37 +36,40 @@ type MultiplexDB map[string]*ChainDB
 //
 // Note that a separate folder is created for every replicated chain and that
 // it is organized under a user address parent folder in the `data/` folder.
-func NewMultiplexDB(ctx *ChainDBContext) (multiplex MultiplexDB, err error) {
+func NewMultiplexDB(
+	ctx *ChainDBContext,
+	chainRegistry ChainRegistry,
+) (multiplex MultiplexDB, err error) {
 	dbType := dbm.BackendType(ctx.Config.DBBackend)
 
 	// This multiplex maps ChainID to database instances
 	multiplex = MultiplexDB{}
 
 	// Storage is located in ChainID subfolders per each user
-	for userAddress, chainIds := range ctx.Config.UserChains {
+	chainIds := chainRegistry.GetChains()
+	for _, chainID := range chainIds {
+		extChainID, err := NewExtendedChainIDFromLegacy(chainID)
+		if err != nil {
+			return nil, err
+		}
+
 		// Uses one subfolder by user
+		userAddress := extChainID.GetUserAddress()
 		dbStorage := filepath.Join(ctx.Config.DBDir(), userAddress)
 
-		for _, chainID := range chainIds {
-			chainID, err := NewExtendedChainIDFromLegacy(chainID)
-			if err != nil {
-				return nil, err
-			}
-
-			// .. and one subfolder by ChainID
-			dbStorage = filepath.Join(dbStorage, chainID.String())
-			chainDB, err := dbm.NewDB(ctx.ID, dbType, dbStorage)
-			if err != nil {
-				return nil, err
-			}
-
-			db := &ChainDB{
-				ChainID: chainID.String(),
-				DB:      chainDB,
-			}
-
-			multiplex[chainID.String()] = db
+		// .. and one subfolder by ChainID
+		dbStorage = filepath.Join(dbStorage, extChainID.String())
+		chainDB, err := dbm.NewDB(ctx.ID, dbType, dbStorage)
+		if err != nil {
+			return nil, err
 		}
+
+		db := &ChainDB{
+			ChainID: extChainID.String(),
+			DB:      chainDB,
+		}
+
+		multiplex[extChainID.String()] = db
 	}
 
 	return multiplex, nil

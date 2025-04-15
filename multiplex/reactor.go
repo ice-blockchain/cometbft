@@ -1052,7 +1052,7 @@ func (reactor *Reactor) OnStart() error {
 	chainRegistry := reactor.GetChainRegistry()
 
 	// Initialize filesystem directory structure
-	multiplexFS, err := NewMultiplexFS(nodeConfig)
+	multiplexFS, err := NewMultiplexFS(nodeConfig, chainRegistry)
 	if err != nil {
 		return err
 	}
@@ -1306,11 +1306,12 @@ func (reactor *Reactor) initMultiplexProviders(
 // TODO(midas): refactoring with MakeNetworkDatabases.
 func (reactor *Reactor) initMultiplexDatabases() error {
 	nodeConfig := reactor.GetNodeConfig()
+	chainRegistry := reactor.GetChainRegistry()
 
 	// Create blockstore databases
 	bsMultiplexDB, err := NewMultiplexDB(&ChainDBContext{
 		DBContext: config.DBContext{ID: "blockstore", Config: nodeConfig},
-	})
+	}, chainRegistry)
 	if err != nil {
 		return err
 	}
@@ -1318,7 +1319,7 @@ func (reactor *Reactor) initMultiplexDatabases() error {
 	// Create state databases
 	stateMultiplexDB, err := NewMultiplexDB(&ChainDBContext{
 		DBContext: config.DBContext{ID: "state", Config: nodeConfig},
-	})
+	}, chainRegistry)
 	if err != nil {
 		return err
 	}
@@ -1326,7 +1327,7 @@ func (reactor *Reactor) initMultiplexDatabases() error {
 	// Create indexer databases
 	indexerMultiplexDB, err := NewMultiplexDB(&ChainDBContext{
 		DBContext: config.DBContext{ID: "tx_index", Config: nodeConfig},
-	})
+	}, chainRegistry)
 	if err != nil {
 		return err
 	}
@@ -1334,7 +1335,7 @@ func (reactor *Reactor) initMultiplexDatabases() error {
 	// Create evidence databases
 	evidenceMultiplexDB, err := NewMultiplexDB(&ChainDBContext{
 		DBContext: config.DBContext{ID: "evidence", Config: nodeConfig},
-	})
+	}, chainRegistry)
 	if err != nil {
 		return err
 	}
