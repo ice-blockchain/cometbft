@@ -445,12 +445,16 @@ func ResetTestMultiplexNodeWithConfigAndPorts(
 	metricsSuffix string,
 	mxConfig config.MultiplexConfig,
 	discoveryPort uint16,
+	createNewRootDir bool,
 ) (string, *config.Config) {
 	tb.Helper()
 
-	if !cmtos.FileExists(rootDir) {
-		_, err := os.MkdirTemp("", rootDir)
+	// Subsequent calls to MkdirTemp use different name.
+	if createNewRootDir {
+		tmpRootDir, err := os.MkdirTemp("", rootDir)
 		require.NoError(tb, err)
+
+		rootDir = tmpRootDir
 	}
 
 	nodeCfg := config.TestConfig()
@@ -512,6 +516,7 @@ func ResetTestMultiplexNodeWithRootDirAndPorts(
 		"", // metricsSuffix
 		makeRandomMultiplexConfig(tb, numChains, int(discoveryPort)),
 		discoveryPort,
+		true, // create new temp root dir
 	)
 }
 

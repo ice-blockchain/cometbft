@@ -228,7 +228,9 @@ func (b *MultiplexBackend) GetNetworks() []string {
 		return []string{}
 	}
 
-	return b.reactor.GetNetworks()
+	// Unlocks the reactor mutex before returning
+	chainIds := b.reactor.GetNetworks()
+	return chainIds
 }
 
 // GetReplRequestPeers returns a list of node IDs to whom we have previously

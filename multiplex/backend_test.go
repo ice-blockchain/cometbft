@@ -89,9 +89,10 @@ func TestMultiplexBackendGetLocalNetworkHeights(t *testing.T) {
 	// Start the node backend
 	backend.MustStart()
 	testReactor := backend.GetReactor()
+	testChainIds := testReactor.GetNetworks()
 
 	// Read some testables
-	testChainID := testReactor.GetNetworks()[0]
+	testChainID := testChainIds[0]
 	extdChainID, err := mx.NewExtendedChainIDFromLegacy(testChainID)
 	require.NoError(t, err)
 
@@ -519,7 +520,8 @@ func TestMultiplexBackendAddTransactions(t *testing.T) {
 	// Start the node backend
 	server.MustStart()
 
-	testChainID := server.GetReactor().GetNetworks()[0]
+	testChainIds := server.GetReactor().GetNetworks()
+	testChainID := testChainIds[0]
 	testExtChainID, err := mx.NewExtendedChainIDFromLegacy(testChainID)
 	require.NoError(t, err)
 
@@ -552,7 +554,8 @@ func TestMultiplexBackendRemoveTransactions(t *testing.T) {
 	// Start the node backend
 	server.MustStart()
 
-	testChainID := server.GetReactor().GetNetworks()[0]
+	testChainIds := server.GetReactor().GetNetworks()
+	testChainID := testChainIds[0]
 	testExtChainID, err := mx.NewExtendedChainIDFromLegacy(testChainID)
 	require.NoError(t, err)
 
@@ -706,6 +709,7 @@ func ResetTestMultiplexBackendCompatibleRelays(
 			"_"+strconv.Itoa(r+1),           // metricsSuffix
 			globalCfgRelay1.MultiplexConfig,
 			uint16(50001+(r*100)), // 50101, 50201, 50301, 50401
+			true,                  // create new temp root dir
 		)
 
 		// Seeds must be valid (or empty), otherwise dialing will fail

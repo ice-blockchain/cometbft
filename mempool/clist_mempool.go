@@ -416,6 +416,7 @@ func (mem *CListMempool) RemoveTxByKey(txKey types.TxKey) error {
 	mem.txsMap.Delete(txKey)
 	tx := elem.Value.(*mempoolTx).tx
 	mem.txsBytes.Add(int64(-len(tx)))
+	mem.forceRemoveFromCache(tx)
 	mem.logger.Debug("Removed transaction", "tx", log.NewLazySprintf("%X", tx.Hash()), "height", mem.height.Load(), "total", mem.Size())
 	return nil
 }

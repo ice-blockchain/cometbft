@@ -806,7 +806,8 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			// AddConnectionChannels locks networkMutex for read.
 			// Opens any missing CometBFT channels for injected network consensus.
 			chs := []byte{} // all channels
-			if err := r.AddConnectionChannels(r.cometbftSwitch, r.GetNetworks(), chs); err != nil {
+			ids := r.GetNetworks()
+			if err := r.AddConnectionChannels(r.cometbftSwitch, ids, chs); err != nil {
 				r.logger.Error(
 					"ChainReplicationRequest: Error opening MConnection channels",
 					"chain_id", replRequest.ChainID,

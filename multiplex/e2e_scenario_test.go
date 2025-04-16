@@ -754,6 +754,7 @@ func ResetTestSingleCompatibleRelay(
 		"_"+strconv.Itoa(indexRelay+1), // metricsSuffix
 		baseCfg.MultiplexConfig,
 		uint16(50001+(indexRelay*100)), // 50001, 50101, 50201, 50301, 50401
+		false,                          // don't create new root dir
 	)
 
 	// Seeds must be valid (or empty), otherwise dialing will fail

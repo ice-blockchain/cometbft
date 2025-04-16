@@ -71,7 +71,8 @@ func TestMultiplexRoutinesNodeReplRequest(t *testing.T) {
 	require.Len(t, errorRelays, 0) // NO error!
 	require.Len(t, chainRelays, numChains)
 
-	useChainID := servers[0].GetReactor().GetNetworks()[0]
+	testChainIds := servers[0].GetReactor().GetNetworks()
+	useChainID := testChainIds[0]
 	require.Contains(t, chainRelays, useChainID)
 
 	sourceSwitch := servers[0].CreateOrLoadDiscoveryEventSwitch()

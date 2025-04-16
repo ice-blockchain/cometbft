@@ -110,7 +110,7 @@ func (c MultiplexClient) BroadcastTx(
 	currentBroadcastStep := uint16(1)
 	acceptedTxHashes := make([][]byte, 0, len(transactions))
 	minHealthyRelays := (len(relays) / 2) + 1
-	maxFailingRelays := len(relays) - minHealthyRelays - 1
+	maxFailingRelays := len(relays) - minHealthyRelays
 
 	// TODO(midas): remove debug logs
 	c.backend.GetLogger().Debug("Starting consensus instance",
@@ -176,9 +176,10 @@ func (c MultiplexClient) BroadcastTx(
 	// We must have at least 50%+1 healthy relays, otherwise discard the batch.
 	if len(errorRelays) > maxFailingRelays {
 		client.Error(notifyCh, fmt.Errorf(
-			"CONSENSUS FAILURE: not enough healthy relays; expected %d, got %d",
+			"CONSENSUS FAILURE: not enough healthy relays; expected %d, got %d, err %d",
 			minHealthyRelays,
 			numHealthyRelays,
+			len(errorRelays),
 		))
 		return // STOP here
 	}
@@ -379,6 +380,17 @@ func (c MultiplexClient) BroadcastTx(
 		len(transactions),
 	)
 	if acceptErr != nil {
+		// Otherwise broadcast a rollback operation if some of the healthy
+		// relays does not accept this transaction.
+
+		routineCancelBroadcast := c.backend.GetRoutines().CancelBroadcast
+		go routineCancelBroadcast(ctx,
+			userAddress,
+			transactions,
+		)
+
+		c.backend.RemoveTransactions(userAddress, transactions...)
+
 		client.Error(notifyCh, fmt.Errorf(
 			"error waiting for relays acceptance: %w", acceptErr))
 		return // STOP here
