@@ -247,7 +247,7 @@ func NewChainRegistry(
 		}
 
 		// Copy user addresses and ChainIDs from genesisDocs
-		if len(genesisDocSetFile) > 0 {
+		if len(genesisDocSetFile) > 0 && cmtos.FileExists(genesisDocSetFile) {
 			chainsFromGenesis, err := LoadChainsFromGenesisFile(genesisDocSetFile)
 			if err != nil {
 				return returnInstanceWithError{instance: nil, err: err}
