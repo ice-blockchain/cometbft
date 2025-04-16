@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 
@@ -143,14 +145,7 @@ func (c MultiplexClient) BroadcastTx(
 		requiredNetworks = append(requiredNetworks, chainID)
 	}
 
-	// TODO(midas): remove debug logs
-	c.backend.GetLogger().Debug("Fetching exact relay addresses",
-		"num_relays", len(addresses))
-
-	// Determine relay IDs (CometBFT Node ID) and supported networks of each
-	// of the relays and identify potential unhealthy relays.
-	chainRelays, errorRelays := c.GetBackend().GetRelaysByNetwork(addresses)
-
+	// Exclude self, should not be used for dialing/broadcast operations.
 	relaysWithoutSelf := []*server.RelayAddress{}
 	for _, relayAddr := range addresses {
 		if relayAddr.ID() != c.GetBackend().GetRelayID() {
@@ -158,27 +153,64 @@ func (c MultiplexClient) BroadcastTx(
 		}
 	}
 
-	numHealthyRelays := len(relaysWithoutSelf) - len(errorRelays)
+	// TODO(midas): remove debug logs
+	c.backend.GetLogger().Debug("Fetching networks information from relays",
+		"num_relays", len(relaysWithoutSelf))
+
+	// Determine relay IDs (CometBFT Node ID) and supported networks of each
+	// of the relays and identify potential unhealthy relays.
+	startRelaysByNetwork := time.Now()
+	chainRelays, errorRelays := c.GetBackend().GetRelaysByNetwork(relaysWithoutSelf)
+	durationRelaysByNetwork := time.Since(startRelaysByNetwork).Milliseconds()
+
+	// Now we know how many (remote) relays are actually healthy outside "self".
+	numHealthyRemote := len(relaysWithoutSelf) - len(errorRelays)
+	numHealthyRelays := numHealthyRemote + 1
+
+	// TODO(midas): remove debug logs
+	c.backend.GetLogger().Debug("Networks information retrieved from relays",
+		"num_relays", len(relaysWithoutSelf),
+		"num_healthy", numHealthyRemote,
+		"err_relays", len(errorRelays),
+		"time", strconv.Itoa(int(durationRelaysByNetwork))+"ms",
+	)
+
+	// We should work only with healthy relays for the next operations.
+	healthyRemoteRelays := make([]*server.RelayAddress, 0, len(relaysWithoutSelf))
+	for _, relayAddr := range relaysWithoutSelf {
+		if !slices.Contains(errorRelays, string(relayAddr.String())) {
+			healthyRemoteRelays = append(healthyRemoteRelays, relayAddr)
+		}
+	}
+
+	// We must have at least 50%+1 healthy relays, otherwise discard the batch.
+	if numHealthyRelays < minHealthyRelays {
+		client.Error(notifyCh, fmt.Errorf(
+			"CONSENSUS FAILURE: not enough healthy relays; expected %d, got %d",
+			minHealthyRelays,
+			numHealthyRelays,
+		))
+		return // STOP here
+	}
+
+	// TODO(midas): remove debug logs
+	c.backend.GetLogger().Debug("Dialing healthy remote relays",
+		"num_relays", len(healthyRemoteRelays))
 
 	// Next, we dial remote relays to find out about any incompatibility
 	// before counting the number of failing relays.
-	for _, relayAddr := range relaysWithoutSelf {
-		if slices.Contains(errorRelays, string(relayAddr.ID())) {
-			continue
-		}
-
+	for _, relayAddr := range healthyRemoteRelays {
 		// Uses the local P2P switch to dial a remote peer.
 		if err := c.GetBackend().CheckDialCompatibleRelay(relayAddr); err != nil {
 			errorRelays = append(errorRelays, relayAddr.String())
 		}
 	}
 
-	// We must have at least 50%+1 healthy relays, otherwise discard the batch.
+	// Make sure dialing did not error for too many of the healthy relays.
 	if len(errorRelays) > maxFailingRelays {
 		client.Error(notifyCh, fmt.Errorf(
-			"CONSENSUS FAILURE: not enough healthy relays; expected %d, got %d, err %d",
-			minHealthyRelays,
-			numHealthyRelays,
+			"CONSENSUS FAILURE: got errors from too many relays; expected %d, got %d",
+			maxFailingRelays,
 			len(errorRelays),
 		))
 		return // STOP here
@@ -252,7 +284,7 @@ func (c MultiplexClient) BroadcastTx(
 	// to replicate required networks if they did not report some.
 	catchupRelays := c.GetBackend().ApplyFilterReplRequestRelays(
 		requiredNetworks,
-		relaysWithoutSelf,
+		healthyRemoteRelays,
 		chainRelays,
 	)
 
@@ -359,7 +391,7 @@ func (c MultiplexClient) BroadcastTx(
 
 	// TODO(midas): remove debug logs
 	c.backend.GetLogger().Debug("Waiting for remote transaction acceptance",
-		"num_relays", numHealthyRelays,
+		"num_relays", numHealthyRemote,
 		"num_txes", len(transactions),
 		"tx", func() string {
 			h := make([]string, 0, len(transactions))
@@ -373,47 +405,52 @@ func (c MultiplexClient) BroadcastTx(
 	// The RelaysBroadcast routine communicates the tx hash on a
 	// channel to tell this broadcaster about the acceptance of the
 	// transaction by our own mempool.
-	relaysPerTx,
+	ackedRelaysPerTx,
 		totalAckReceived,
 		acceptErr := c.GetBackend().WaitForRelaysAckTransactionBatch(ctx,
-		numHealthyRelays,
+		numHealthyRemote,
 		len(transactions),
 	)
 	if acceptErr != nil {
 		// Otherwise broadcast a rollback operation if some of the healthy
 		// relays does not accept this transaction.
-
-		routineCancelBroadcast := c.backend.GetRoutines().CancelBroadcast
-		go routineCancelBroadcast(ctx,
+		c.backend.CancelBroadcastOperation(ctx,
 			userAddress,
-			transactions,
+			transactions...,
 		)
-
-		c.backend.RemoveTransactions(userAddress, transactions...)
 
 		client.Error(notifyCh, fmt.Errorf(
 			"error waiting for relays acceptance: %w", acceptErr))
 		return // STOP here
 	}
 
-	if totalAckReceived >= numHealthyRelays*len(transactions) {
+	if totalAckReceived >= numHealthyRemote*len(transactions) {
 		// Inform about the readiness of transaction acceptance
 		c.backend.GetLogger().Info("Relays accepted transactions",
-			"num_relays", numHealthyRelays,
+			"num_relays", numHealthyRemote,
+			"num_acks", totalAckReceived,
 			"num_txes", len(transactions))
 	} else {
-		// Just log for now, inform will be more precise in loop
+		// Just log for now, report will be more precise
 		c.backend.GetLogger().Error("Relays did not accept transactions",
+			"num_relays", numHealthyRemote,
 			"num_acks", totalAckReceived,
-			"num_relays", numHealthyRelays,
 			"num_txes", len(transactions))
 	}
 
-	for txHash, ackedRelays := range relaysPerTx {
-		if len(ackedRelays) < numHealthyRelays {
+	for txHash, ackedRelays := range ackedRelaysPerTx {
+		if len(ackedRelays) < numHealthyRemote {
+			// Not all healthy relays acked this transaction.
+			// Broadcast a rollback operation because some of the healthy relays
+			// may have included (some) transactions in their mempool already.
+			c.backend.CancelBroadcastOperation(ctx,
+				userAddress,
+				transactions...,
+			)
+
 			client.Error(notifyCh, fmt.Errorf(
 				"missing relays acceptance for %s, expected %d, got %d",
-				txHash, numHealthyRelays, len(ackedRelays)))
+				txHash, numHealthyRemote, len(ackedRelays)))
 			return // STOP here
 		}
 
@@ -424,6 +461,14 @@ func (c MultiplexClient) BroadcastTx(
 	}
 
 	if len(acceptedTxHashes) < len(transactions) {
+		// Relays did not accept *all* transactions.
+		// Broadcast a rollback operation because some of the healthy relays
+		// may have included transactions in their mempool already.
+		c.backend.CancelBroadcastOperation(ctx,
+			userAddress,
+			transactions...,
+		)
+
 		client.Error(notifyCh, fmt.Errorf(
 			"missing accepted transaction hashes, expected %d, got %d",
 			len(transactions), len(acceptedTxHashes)))

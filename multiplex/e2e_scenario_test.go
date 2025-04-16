@@ -494,6 +494,66 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
 }
 
+func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
+	numChains := 1
+	numRelays := 7
+	numHealthy := (numRelays / 2) + 1
+
+	servers, shutdownFn := ResetTestScenarioRelays(t, numChains, numHealthy)
+	defer shutdownFn()
+
+	require.NotEmpty(t, servers)
+	require.Len(t, servers, numHealthy)
+
+	// Set a custom logger to log all backend messages
+	// For debug, change this logger instance
+	backendLogger := cmtlog.TestingLogger().With("process", "relay-1")
+	servers[0].SetLogger(backendLogger)
+
+	// Note: relays includes self
+	relays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
+		servers,
+		2*time.Second,  // Time for backend
+		20*time.Second, // Time for broadcast
+	)
+
+	defer cancelCtxFn()
+
+	require.NotEmpty(t, relays)
+	require.NotNil(t, broadcastCtx)
+	require.Len(t, relays, numHealthy)
+
+	// Note: this test consists in having *just enough* healthy relays actively
+	// accept a client.BroadcastTx call. If enough healthy relays respond to a
+	// broadcast operation, the operation should get accepted.
+	for i := numHealthy; i < numRelays; i++ {
+		relays = append(relays, "1.2.3.4:"+strconv.Itoa(1000+i))
+	}
+
+	// Separate goroutine for client broadcast process
+	numTransactions := 2
+	chainIds := servers[0].GetNetworks()
+	testChainID := chainIds[0]
+	notifyCh := make(chan client.BroadcastStatus)
+	go clientBroadcastTx(t,
+		broadcastCtx,
+		servers[0],
+		relays,
+		testChainID,
+		numTransactions,
+		notifyCh,
+	)
+
+	// Blocks the main thread until we consume from notifyCh.
+	resultStatusMsg := waitForClientBroadcastStatus(t,
+		broadcastCtx,
+		notifyCh,
+	)
+	assert.NotNil(t, resultStatusMsg)
+	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
+	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+}
+
 // ----------------------------------------------------------------------------
 // LEGACY Broadcast Test (Using CometBFT RPC Server)
 

@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -678,6 +679,23 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 	return results.relaysPerTxes, results.totalReceived, results.err
 }
 
+// CancelBroadcastOperation executes the CancelBroadcast routine
+// and the RemoveTransactions method to remove transactions
+// from the local mempool.
+func (b *MultiplexBackend) CancelBroadcastOperation(
+	ctx context.Context,
+	userAddress string,
+	transactions ...client.Transaction,
+) error {
+	routineCancelBroadcast := b.GetRoutines().CancelBroadcast
+	go routineCancelBroadcast(ctx,
+		userAddress,
+		transactions,
+	)
+
+	return b.RemoveTransactions(userAddress, transactions...)
+}
+
 // getLocalNetworkHeights finds out about the last block height and determines
 // a list of networks that must be created. The list of networks that must be
 // created will also be present in the list of required networks.
@@ -727,9 +745,23 @@ func (b *MultiplexBackend) GetRemoteRelayInfo(
 		return nil, connectErr
 	}
 
+	// TODO(midas): timeoutDuration to be added to method args.
+	ctx, _ := context.WithTimeout(context.Background(), 700*time.Millisecond)
+
 	result := &server.RPCResultRelayInfo{}
 	params := map[string]any{}
-	_, callErr := c.Call(context.TODO(), "info", params, result)
+	_, callErr := c.Call(ctx, "info", params, result)
+
+	select {
+	// context timeout
+	case <-ctx.Done():
+		timeoutErr := fmt.Errorf(
+			"RelayInfo timed out with %s", relayAddress.String())
+		b.logger.Error(timeoutErr.Error())
+		return nil, timeoutErr
+	default:
+	}
+
 	if callErr != nil {
 		return nil, callErr
 	}
@@ -756,6 +788,8 @@ func (b *MultiplexBackend) GetRelaysByNetwork(
 	chainRelays = map[string][]*server.RelayAddress{}
 	errorRelays = []string{}
 	for _, relayAddr := range relayAddresses {
+		startTz := time.Now()
+
 		// Discover this relay's ID (CometBFT Node ID).
 		// This executes a RPC request for RelayInfo.
 		result, err := b.GetRemoteRelayInfo(relayAddr)
@@ -768,10 +802,13 @@ func (b *MultiplexBackend) GetRelaysByNetwork(
 			continue
 		}
 
+		durationMs := time.Since(startTz).Milliseconds()
+
 		// TODO(midas): remove debug logs
 		b.logger.Debug("Retrieved networks information from relay",
 			"relay", relayAddr.String(),
 			"networks", result.Networks,
+			"time", strconv.Itoa(int(durationMs))+"ms",
 		)
 
 		relayAddr.SetID(result.DefaultNodeID)

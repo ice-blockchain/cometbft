@@ -87,6 +87,14 @@ type Backend interface {
 		numTransactions int,
 	) (relaysPerTx map[string][]string, numReceived int, err error)
 
+	// CancelBroadcastOperation should execute the CancelBroadcast routine
+	// and it should remove transactions from the local mempool.
+	CancelBroadcastOperation(
+		ctx context.Context,
+		userAddress string,
+		transactions ...client.Transaction,
+	) error
+
 	// GetLocalNetworkHeights should query the last block height and determine
 	// a list of required networks. Iff the last block height is 1, the network
 	// is considered unknown and may need to be explicitely created.
