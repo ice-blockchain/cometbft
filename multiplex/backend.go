@@ -16,8 +16,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/ice-blockchain/cometbft/config"
-	"github.com/ice-blockchain/cometbft/libs/log"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
+	service "github.com/ice-blockchain/cometbft/libs/service"
 	mempl "github.com/ice-blockchain/cometbft/mempool"
 	"github.com/ice-blockchain/cometbft/node"
 	"github.com/ice-blockchain/cometbft/p2p"
@@ -998,7 +998,7 @@ func (b *MultiplexBackend) RemoveTransactions(
 		memTx := client.TransactionToRawTx(transaction)
 		if err := chainMempool.RemoveTxByKey(memTx.Key()); err != nil {
 			clogger.Debug("Rollback transaction not in local mempool (not an error)",
-				"tx", log.NewLazySprintf("%X", memTx.Hash()),
+				"tx", cmtlog.NewLazySprintf("%X", memTx.Hash()),
 				"error", err.Error())
 		}
 	}
@@ -1493,13 +1493,15 @@ func (b *MultiplexBackend) StopNodeInstances() error {
 		go func(network string, n *node.Node) {
 			b.logger.Info("Stopping node runtime", "chain_id", network)
 
+			defer wg.Done()
 			if n.IsRunning() {
 				if err := n.Stop(); err != nil {
-					panic(fmt.Errorf("failed to stop node: %w", err))
+					if err != service.ErrAlreadyStopped {
+						panic(fmt.Errorf("failed to stop node: %w", err))
+					}
 				}
 			}
 
-			wg.Done()
 			b.logger.Info("Stopped node runtime", "chain_id", network)
 		}(chainID, runNode)
 	}

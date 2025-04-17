@@ -43,8 +43,9 @@ type Reactor struct {
 
 	conS *State
 
-	waitSync atomic.Bool
-	eventBus *types.EventBus
+	waitSync     atomic.Bool
+	eventBus     *types.EventBus
+	pendingPeers sync.Map
 
 	rsMtx         cmtsync.RWMutex
 	rs            *cstypes.RoundState
@@ -63,6 +64,7 @@ func NewReactor(consensusState *State, waitSync bool, options ...ReactorOption) 
 		rs:            consensusState.GetRoundState(),
 		initialHeight: consensusState.state.InitialHeight,
 		Metrics:       NopMetrics(),
+		pendingPeers:  sync.Map{},
 	}
 	conR.BaseReactor = *p2p.NewBaseReactor("Consensus", conR)
 	if waitSync {
@@ -101,6 +103,11 @@ func (conR *Reactor) OnStart() error {
 		}
 	}
 
+	conR.pendingPeers.Range(func(key, value interface{}) bool {
+		conR.AddPeer(value.(p2p.Peer))
+		return true
+	})
+	conR.pendingPeers.Clear()
 	return nil
 }
 
@@ -206,6 +213,7 @@ func (conR *Reactor) InitPeer(peer p2p.Peer) p2p.Peer {
 // peer.
 func (conR *Reactor) AddPeer(peer p2p.Peer) {
 	if !conR.IsRunning() {
+		conR.pendingPeers.Store(peer.ID(), peer)
 		return
 	}
 

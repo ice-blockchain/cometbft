@@ -554,7 +554,7 @@ func TestMultiplexRuntimeInjectNewNetworkCallsRegisterNetwork(t *testing.T) {
 }
 
 func TestMultiplexRuntimeInjectNewRuntime(t *testing.T) {
-	numChains := 1
+	numChains := 0
 
 	// Initialize and START the nodes multiplex
 	// For debug, change the logger to cmtlog.TestingLogger()
