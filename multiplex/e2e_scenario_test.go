@@ -40,10 +40,12 @@ func clientBroadcastTx(
 	chainInfo, err := mx.NewExtendedChainIDFromLegacy(testChainID)
 	require.NoError(tb, err, "should create correctly formatted ChainID")
 
+	randomizer := rand.New(rand.NewSource(time.Now().Unix()))
 	testTransactions := []client.Transaction{}
 	for i := 0; i < numTransactions; i++ {
+		randomData := randomizer.Intn(999999999)
 		testTransactions = append(testTransactions, client.Transaction{
-			Data:        []byte{byte(i), byte(i + 1), byte(i + 2)},
+			Data:        []byte{byte(i), byte(i + 1), byte(i + 2), byte(randomData)},
 			Fingerprint: chainInfo.GetFingerprint(),
 		})
 	}

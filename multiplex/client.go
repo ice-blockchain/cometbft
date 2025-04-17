@@ -202,7 +202,8 @@ func (c MultiplexClient) BroadcastTx(
 	// We should work only with healthy relays for the next operations.
 	healthyRemoteRelays := make([]*server.RelayAddress, 0, len(relaysWithoutSelf))
 	for _, relayAddr := range relaysWithoutSelf {
-		if !slices.Contains(errorRelays, string(relayAddr.String())) {
+		if !slices.Contains(errorRelays, string(relayAddr.String())) &&
+			!slices.Contains(errorRelays, string(relayAddr.StringWithoutId())) {
 			healthyRemoteRelays = append(healthyRemoteRelays, relayAddr)
 		}
 	}
@@ -229,6 +230,11 @@ func (c MultiplexClient) BroadcastTx(
 			errorRelays = append(errorRelays, relayAddr.String())
 		}
 	}
+
+	// Remove any healthy remote relay which errored during dialing process.
+	healthyRemoteRelays = slices.DeleteFunc(healthyRemoteRelays, func(a *server.RelayAddress) bool {
+		return slices.Contains(errorRelays, string(a.String()))
+	})
 
 	// Make sure dialing did not error for too many of the healthy relays.
 	if len(errorRelays) > maxFailingRelays {
