@@ -178,6 +178,8 @@ func (b *MultiplexBackend) DefaultNetworksCreatorRoutine() server.NetworksCreato
 					return err
 				}
 
+				// TODO(midas): possibly needs to wait for injection
+
 				// Inject a *running* node.Node for the new network.
 				// TODO(midas): currently not passing any node options.
 				return b.reactor.InjectNewRuntime(ctx, newChainID)
@@ -242,7 +244,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 				// Note that this events switch uses `DiscoveryPort+1`.
 				sw := b.reactor.GetEventSwitchForCometBFT()
 				if err := sw.DialPeerWithAddress(peerAddr); err != nil {
-					if _, ok := err.(p2p.ErrCurrentlyDialingOrExistingAddress); !ok {
+					if b.reactor.IsDialError(err) {
 						client.Error(notifyCh, fmt.Errorf(
 							"could not dial relay %s: %w", relayAddr.AddressForCometBFT(), err))
 					}

@@ -866,7 +866,7 @@ func (b *MultiplexBackend) CheckDialCompatibleRelay(
 	// Note that this events switch uses `DiscoveryPort`.
 	discoverySwitch := b.CreateOrLoadDiscoveryEventSwitch()
 	if err := discoverySwitch.DialPeerWithAddress(relayDiscovery); err != nil {
-		if b.IsDialError(err) {
+		if b.reactor.IsDialError(err) {
 			return fmt.Errorf(
 				"could not dial relay %s for discovery: %w", relayAddr.String(), err)
 		}
@@ -1004,20 +1004,6 @@ func (b *MultiplexBackend) RemoveTransactions(
 	}
 
 	return nil
-}
-
-// IsDialError returns true given a non-acceptable dial error. Acceptable
-// dial errors include "currently-dialing", "existing-address" and
-// errors marked as duplicates.
-func (b *MultiplexBackend) IsDialError(err error) bool {
-	switch err.(type) {
-	case p2p.ErrCurrentlyDialingOrExistingAddress:
-		return false
-	case p2p.ErrRejected:
-		return !err.(p2p.ErrRejected).IsDuplicate()
-	}
-
-	return true
 }
 
 // StartConsensusInstance calls the Start method of consensus reactors,

@@ -1002,7 +1002,7 @@ func (r *Reactor) DialBackReplicationPartner(
 	r.networkMutex.RLock()
 	defer r.networkMutex.RUnlock()
 	if err := r.cometbftSwitch.DialPeerWithAddress(peerAddr); err != nil {
-		if _, ok := err.(p2p.ErrCurrentlyDialingOrExistingAddress); ok {
+		if !r.IsDialError(err) {
 			// Manually add peers when the switch was already running.
 			dialedPeer := r.cometbftSwitch.Peers().Get(peerAddr.ID)
 			for _, reactor := range r.cometbftSwitch.Reactors(chainID) {
@@ -1019,6 +1019,20 @@ func (r *Reactor) DialBackReplicationPartner(
 	}
 
 	return nil
+}
+
+// IsDialError returns true given a non-acceptable dial error. Acceptable
+// dial errors include "currently-dialing", "existing-address" and
+// errors marked as duplicates.
+func (r *Reactor) IsDialError(err error) bool {
+	switch err.(type) {
+	case p2p.ErrCurrentlyDialingOrExistingAddress:
+		return false
+	case p2p.ErrRejected:
+		return !err.(p2p.ErrRejected).IsDuplicate()
+	}
+
+	return true
 }
 
 // ----------------------------------------------------------------------------
