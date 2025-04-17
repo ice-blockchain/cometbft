@@ -97,8 +97,8 @@ func (c MultiplexClient) BroadcastTx(
 	// Format/parse relay addresses to validate each and permit
 	// working with the static multi-port convention for multiplex.
 	//
-	// IMPORTANT: addresses contains the port associated with P2P discovery.
-	addresses := make([]*server.RelayAddress, len(relays))
+	// IMPORTANT: relayAddresses contains the port associated with P2P discovery.
+	relayAddresses := make([]*server.RelayAddress, len(relays))
 	for i, relay := range relays {
 		relayAddr, err := server.NewRelayAddress(relay)
 		if err != nil {
@@ -106,18 +106,20 @@ func (c MultiplexClient) BroadcastTx(
 			return // STOP here
 		}
 
-		addresses[i] = relayAddr
+		relayAddresses[i] = relayAddr
 	}
 
 	currentBroadcastStep := uint16(1)
 	acceptedTxHashes := make([][]byte, 0, len(transactions))
-	minHealthyRelays := (len(relays) / 2) + 1
-	maxFailingRelays := len(relays) - minHealthyRelays
+
+	numConsensusRelays := len(relayAddresses)
+	minHealthyRelays := (numConsensusRelays / 2) + 1
+	maxFailingRelays := numConsensusRelays - minHealthyRelays
 
 	// TODO(midas): remove debug logs
 	c.backend.GetLogger().Debug("Starting consensus instance",
 		"address", userAddress,
-		"num_relays", len(relays),
+		"num_relays", numConsensusRelays,
 		"min_healthy", minHealthyRelays,
 		"max_failing", maxFailingRelays,
 		"num_txes", len(transactions),
@@ -145,32 +147,54 @@ func (c MultiplexClient) BroadcastTx(
 		requiredNetworks = append(requiredNetworks, chainID)
 	}
 
-	// Exclude self, should not be used for dialing/broadcast operations.
-	relaysWithoutSelf := []*server.RelayAddress{}
-	for _, relayAddr := range addresses {
-		if relayAddr.ID() != c.GetBackend().GetRelayID() {
-			relaysWithoutSelf = append(relaysWithoutSelf, relayAddr)
-		}
-	}
-
 	// TODO(midas): remove debug logs
 	c.backend.GetLogger().Debug("Fetching networks information from relays",
-		"num_relays", len(relaysWithoutSelf))
+		"num_relays", len(relayAddresses))
 
 	// Determine relay IDs (CometBFT Node ID) and supported networks of each
 	// of the relays and identify potential unhealthy relays.
 	startRelaysByNetwork := time.Now()
-	chainRelays, errorRelays := c.GetBackend().GetRelaysByNetwork(relaysWithoutSelf)
+	chainRelays, errorRelays := c.GetBackend().GetRelaysByNetwork(relayAddresses)
 	durationRelaysByNetwork := time.Since(startRelaysByNetwork).Milliseconds()
 
-	// Now we know how many (remote) relays are actually healthy outside "self".
-	numHealthyRemote := len(relaysWithoutSelf) - len(errorRelays)
-	numHealthyRelays := numHealthyRemote + 1
+	// Now we know how many (remote) relays are actually healthy.
+	numHealthyRelays := len(relayAddresses) - len(errorRelays)
+	numHealthyRemote := numHealthyRelays
+
+	// Exclude self, should not be used for dialing/broadcast operations.
+	relaysWithoutSelf := []*server.RelayAddress{}
+	relaysContainSelf := false
+	for _, relayAddr := range relayAddresses {
+		if !relayAddr.HasID() {
+			continue // GetRemoteRelayInfo did not respond.
+		}
+
+		if relayAddr.ID() == c.GetBackend().GetRelayID() {
+			numHealthyRemote = numHealthyRemote - 1
+			relaysContainSelf = true
+			continue
+		}
+
+		relaysWithoutSelf = append(relaysWithoutSelf, relayAddr)
+	}
+
+	// When "self" is not present in relays, we set it healthy and we
+	// update this consensus instance to count "self" in required relays.
+	if !relaysContainSelf && len(relaysWithoutSelf) > 0 {
+		numHealthyRelays = numHealthyRelays + 1
+		numConsensusRelays = numConsensusRelays + 1
+
+		minHealthyRelays = (numConsensusRelays / 2) + 1
+		maxFailingRelays = numConsensusRelays - minHealthyRelays
+	}
 
 	// TODO(midas): remove debug logs
 	c.backend.GetLogger().Debug("Networks information retrieved from relays",
-		"num_relays", len(relaysWithoutSelf),
-		"num_healthy", numHealthyRemote,
+		"num_relays", numConsensusRelays,
+		"num_remote", len(relaysWithoutSelf),
+		"num_healthy", numHealthyRelays,
+		"min_healthy", minHealthyRelays,
+		"max_failing", maxFailingRelays,
 		"err_relays", len(errorRelays),
 		"time", strconv.Itoa(int(durationRelaysByNetwork))+"ms",
 	)
@@ -369,7 +393,7 @@ func (c MultiplexClient) BroadcastTx(
 
 	// TODO(midas): remove debug logs
 	c.backend.GetLogger().Debug("Broadcasting transaction batch to relays",
-		"num_txes", len(transactions), "num_relays", len(relays))
+		"num_txes", len(transactions), "num_relays", numHealthyRemote)
 
 	// Pushes the transaction to other relays mempool to trigger
 	// the call to client.AcceptBroadcastTx by the other relays.
