@@ -26,6 +26,20 @@ import (
 // ----------------------------------------------------------------------------
 // MultiplexClient Broadcast Test (Using client.BroadcastTx)
 
+// NOTE: this removes the Relay ID from relays addresses.
+func useRelaysWithoutIds(tb testing.TB, relays []string) []string {
+	tb.Helper()
+
+	relaysWithoutIds := []string{}
+	for _, relayAddrStr := range relays {
+		ra, err := server.NewRelayAddress(relayAddrStr)
+		require.NoError(tb, err, "expected valid relay address, got: "+relayAddrStr)
+
+		relaysWithoutIds = append(relaysWithoutIds, ra.StringWithoutId())
+	}
+	return relaysWithoutIds
+}
+
 // Uses MultiplexClient to broadcast transactions.
 func clientBroadcastTx(
 	tb testing.TB,
@@ -478,7 +492,7 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 
 	// Set a custom logger to log all backend messages
 	// For debug, change this logger instance
-	backendLogger := cmtlog.TestingLogger().With("process", "relay-1")
+	backendLogger := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
 	servers[0].SetLogger(backendLogger)
 
 	// Note: relays contains only self for this test
@@ -494,13 +508,7 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 	require.NotNil(t, broadcastCtx)
 
 	// NOTE: this removes the Relay ID from relays addresses.
-	healthyRelaysWithoutIds := []string{}
-	for _, relayAddrStr := range healthyRelays {
-		ra, err := server.NewRelayAddress(relayAddrStr)
-		require.NoError(t, err)
-
-		healthyRelaysWithoutIds = append(healthyRelaysWithoutIds, ra.StringWithoutId())
-	}
+	healthyRelaysWithoutIds := useRelaysWithoutIds(t, healthyRelays)
 
 	// TEST 1 - Success
 	//
@@ -799,6 +807,11 @@ func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
 }
 
+// After a complete backend restart, due to a process failure or corruption,
+// the transaction broadcast process must normally resume operations and the
+// broadcast operation(s) must succeed without errors from the relays. This
+// test executes a broadcast operation before shutting down the backend and
+// one after having restarted the backend to ensure that continuation works.
 func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	numChains := 0
 	numRelays := 7
@@ -911,6 +924,10 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
 }
 
+// With a list of healthy relays, i.e. just enough, the transactions will be added
+// locally and then shared with healthy relays using a message on mempool channel,
+// to which the relays respond with a AckTransactionBroadcast message before we
+// proceed to accepting the transaction.
 func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 	numChains := 1
 	numRelays := 7
@@ -940,12 +957,21 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 	require.NotNil(t, broadcastCtx)
 	require.Len(t, relays, numHealthy)
 
+	// NOTE: this removes the Relay ID from relays addresses.
+	relays = useRelaysWithoutIds(t, relays)
+
 	// Note: this test consists in having *just enough* healthy relays actively
 	// accept a client.BroadcastTx call. If enough healthy relays respond to a
 	// broadcast operation, the operation should get accepted.
 	for i := numHealthy; i < numRelays; i++ {
 		relays = append(relays, "1.2.3.4:"+strconv.Itoa(1000+i))
 	}
+
+	// TEST 1 - Success
+	//
+	// Added 3 unavailable relay to the list with self,
+	// and remove relay IDs, should broadcast successfully.
+	// numRelays=7;numHealthy=4;numErrors=3;withSelf=true
 
 	// Separate goroutine for client broadcast process
 	numTransactions := 2
@@ -969,6 +995,186 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 	assert.NotNil(t, resultStatusMsg)
 	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+
+	// Test that AckTransactionBroadcast messages were received.
+	for _, bzTxHash := range resultStatusMsg.TxHashes {
+		testTxHash := fmt.Sprintf("%X", bzTxHash)
+
+		expectedResponseCnt := numHealthy - 1 // -1 for self
+		actualResponsesRcvd := servers[0].GetAckResponsePeers(testTxHash)
+		assert.NotEmpty(t, actualResponsesRcvd)
+		assert.Len(t, actualResponsesRcvd, expectedResponseCnt)
+	}
+
+	// TEST 2 - Success
+	//
+	// Added 3 unavailable relay to the list and remove self,
+	// and remove relay IDs, should broadcast successfully.
+	// numRelays=7;numHealthy=4;numErrors=3;withSelf=false
+	relays = relays[1:] // removes self
+
+	// Separate goroutine for client broadcast process
+	numTransactions = 2
+	go clientBroadcastTx(t,
+		broadcastCtx,
+		servers[0],
+		relays,
+		testChainID,
+		numTransactions,
+		notifyCh,
+	)
+
+	// Blocks the main thread until we consume from notifyCh.
+	resultStatusMsg = waitForClientBroadcastStatus(t,
+		broadcastCtx,
+		notifyCh,
+	)
+	assert.NotNil(t, resultStatusMsg)
+	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
+	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+
+	// Test that AckTransactionBroadcast messages were received.
+	for _, bzTxHash := range resultStatusMsg.TxHashes {
+		testTxHash := fmt.Sprintf("%X", bzTxHash)
+
+		expectedResponseCnt := numHealthy - 1 // -1 for self
+		actualResponsesRcvd := servers[0].GetAckResponsePeers(testTxHash)
+		assert.NotEmpty(t, actualResponsesRcvd)
+		assert.Len(t, actualResponsesRcvd, expectedResponseCnt)
+	}
+}
+
+// With a list of empty relays, i.e. just enough that are healthy,
+// a ChainReplicationRequest must be sent, and a ChainReplicationResponse
+// is expected before sharing transactions using a message on mempool channel,
+// to which the relays respond with a AckTransactionBroadcast message
+// before we proceed to accepting the transaction.
+func TestScenarioClientBroadcastEnoughEmptyRelays(t *testing.T) {
+	numChains := 0
+	numRelays := 7
+	numHealthy := (numRelays / 2) + 1
+
+	servers, shutdownFn := ResetTestScenarioRelays(t, numChains, numHealthy)
+	defer shutdownFn()
+
+	require.NotEmpty(t, servers)
+	require.Len(t, servers, numHealthy)
+
+	// Set a custom logger to log all backend messages
+	// For debug, change this logger instance
+	backendLogger := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
+	servers[0].SetLogger(backendLogger)
+
+	// Note: relays includes self
+	relays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
+		servers,
+		2*time.Second,  // Time for backend
+		20*time.Second, // Time for broadcast
+	)
+
+	defer cancelCtxFn()
+
+	require.NotEmpty(t, relays)
+	require.NotNil(t, broadcastCtx)
+	require.Len(t, relays, numHealthy)
+
+	// NOTE: this removes the Relay ID from relays addresses.
+	relays = useRelaysWithoutIds(t, relays)
+
+	// Note: this test consists in having *just enough* healthy relays actively
+	// accept a client.BroadcastTx call. If enough healthy relays respond to a
+	// broadcast operation, the operation should get accepted.
+	for i := numHealthy; i < numRelays; i++ {
+		relays = append(relays, "1.2.3.4:"+strconv.Itoa(1000+i))
+	}
+
+	// TEST 1 - Success
+	//
+	// Added 3 unavailable relays to the list with self,
+	// and remove relay IDs, should broadcast successfully.
+	// numRelays=7;numHealthy=4;numErrors=3;withSelf=true
+
+	// Separate goroutine for client broadcast process
+	numTransactions := 2
+	testChainID := makeChainID("test chain")
+	notifyCh := make(chan client.BroadcastStatus)
+	go clientBroadcastTx(t,
+		broadcastCtx,
+		servers[0],
+		relays,
+		testChainID,
+		numTransactions,
+		notifyCh,
+	)
+
+	// Blocks the main thread until we consume from notifyCh.
+	resultStatusMsg := waitForClientBroadcastStatus(t,
+		broadcastCtx,
+		notifyCh,
+	)
+	assert.NotNil(t, resultStatusMsg)
+	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
+	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+
+	// Test that ChainReplicationRequest were sent
+	expectedRequestCnt := numHealthy - 1 // -1 for self
+	actualRequestsSent := servers[0].GetReplRequestPeers(testChainID)
+	assert.NotEmpty(t, actualRequestsSent)
+	assert.Len(t, actualRequestsSent, expectedRequestCnt)
+
+	// Test that AckTransactionBroadcast messages were received.
+	for _, bzTxHash := range resultStatusMsg.TxHashes {
+		testTxHash := fmt.Sprintf("%X", bzTxHash)
+
+		expectedResponseCnt := numHealthy - 1 // -1 for self
+		actualResponsesRcvd := servers[0].GetAckResponsePeers(testTxHash)
+		assert.NotEmpty(t, actualResponsesRcvd)
+		assert.Len(t, actualResponsesRcvd, expectedResponseCnt)
+	}
+
+	// TEST 2 - Success
+	//
+	// This second pass does not send ChainReplicationRequest!
+	// Added 3 unavailable relay to the list and remove self,
+	// and remove relay IDs, should broadcast successfully.
+	// numRelays=7;numHealthy=4;numErrors=3;withSelf=false
+	relays = relays[1:] // removes self
+
+	// Separate goroutine for client broadcast process
+	numTransactions = 2
+	go clientBroadcastTx(t,
+		broadcastCtx,
+		servers[0],
+		relays,
+		testChainID,
+		numTransactions,
+		notifyCh,
+	)
+
+	// Blocks the main thread until we consume from notifyCh.
+	resultStatusMsg = waitForClientBroadcastStatus(t,
+		broadcastCtx,
+		notifyCh,
+	)
+	assert.NotNil(t, resultStatusMsg)
+	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
+	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+
+	// Test that ChainReplicationRequest were NOT sent! (due to TEST 1)
+	expectedRequestCnt = 0
+	actualRequestsSent = servers[0].GetReplRequestPeers(testChainID)
+	assert.Empty(t, actualRequestsSent, "should not need to send ChainReplicationRequest")
+	assert.Len(t, actualRequestsSent, expectedRequestCnt)
+
+	// Test that AckTransactionBroadcast messages were received.
+	for _, bzTxHash := range resultStatusMsg.TxHashes {
+		testTxHash := fmt.Sprintf("%X", bzTxHash)
+
+		expectedResponseCnt := numHealthy - 1 // -1 for self
+		actualResponsesRcvd := servers[0].GetAckResponsePeers(testTxHash)
+		assert.NotEmpty(t, actualResponsesRcvd)
+		assert.Len(t, actualResponsesRcvd, expectedResponseCnt)
+	}
 }
 
 // ----------------------------------------------------------------------------
