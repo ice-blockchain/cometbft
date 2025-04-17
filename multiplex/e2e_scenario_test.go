@@ -17,6 +17,7 @@ import (
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	mx "github.com/ice-blockchain/cometbft/multiplex"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
+	"github.com/ice-blockchain/cometbft/multiplex/server"
 	"github.com/ice-blockchain/cometbft/node"
 	sm "github.com/ice-blockchain/cometbft/state"
 	"github.com/ice-blockchain/cometbft/store"
@@ -240,7 +241,7 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 
 	// Set a custom logger to log all backend messages
 	// For debug, change this logger instance
-	backendLogger := cmtlog.TestingLogger().With("process", "relay-1")
+	backendLogger := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
 	servers[0].SetLogger(backendLogger)
 
 	// Note: relays contains only self for this test
@@ -462,6 +463,183 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 	assert.Contains(t, resultStatusMsg.Error.Error(), expectedMessage)
 }
 
+// We further test the healthy relays counter process when relying on relay
+// address that DO NOT contain a relay ID. Namely, calls to GetRemoteRelayInfo
+// should be successful and fill the healthyRemoteRelays slice correctly.
+func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
+	numChains := 0
+	numHealthy := 2
+
+	servers, shutdownFn := ResetTestScenarioRelays(t, numChains, numHealthy)
+	defer shutdownFn()
+
+	require.NotEmpty(t, servers)
+	require.Len(t, servers, numHealthy)
+
+	// Set a custom logger to log all backend messages
+	// For debug, change this logger instance
+	backendLogger := cmtlog.TestingLogger().With("process", "relay-1")
+	servers[0].SetLogger(backendLogger)
+
+	// Note: relays contains only self for this test
+	healthyRelays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
+		servers,
+		2*time.Second,  // Time for backend
+		20*time.Second, // Time for broadcast
+	)
+
+	defer cancelCtxFn()
+
+	require.NotEmpty(t, healthyRelays)
+	require.NotNil(t, broadcastCtx)
+
+	// NOTE: this removes the Relay ID from relays addresses.
+	healthyRelaysWithoutIds := []string{}
+	for _, relayAddrStr := range healthyRelays {
+		ra, err := server.NewRelayAddress(relayAddrStr)
+		require.NoError(t, err)
+
+		healthyRelaysWithoutIds = append(healthyRelaysWithoutIds, ra.StringWithoutId())
+	}
+
+	// TEST 1 - Success
+	//
+	// Add 1 unavailable relay to the list WITH self, and removed relay IDs,
+	// and should broadcast successfully.
+	// numRelays=3;numHealthy=2;numErrors=1;withSelf=true
+	relaysForTestCase := healthyRelaysWithoutIds[:]
+	numHealthy = len(relaysForTestCase)
+	numRelaysForTestCase := 3
+	for i := numHealthy; i < numRelaysForTestCase; i++ {
+		relaysForTestCase = append(relaysForTestCase, "1.2.3.4:"+strconv.Itoa(1000+i))
+	}
+
+	// Separate goroutine for client broadcast process
+	numTransactions := 1
+	testChainID := makeChainID("test chain")
+	notifyCh := make(chan client.BroadcastStatus)
+	go clientBroadcastTx(t,
+		broadcastCtx,
+		servers[0],
+		relaysForTestCase,
+		testChainID,
+		numTransactions,
+		notifyCh,
+	)
+
+	// Blocks the main thread until we consume from notifyCh.
+	resultStatusMsg := waitForClientBroadcastStatus(t,
+		broadcastCtx,
+		notifyCh,
+	)
+	assert.NotNil(t, resultStatusMsg)
+	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
+	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+
+	// TEST 2 - Success
+	//
+	// Add 1 unavailable relay to the list and remove self from relays,
+	// and remove relay IDs, should broadcast successfully.
+	// numRelays=3;numHealthy=2;numErrors=1;withSelf=false
+	relaysForTestCase = healthyRelaysWithoutIds[1:]
+	numHealthy = len(relaysForTestCase)
+	numRelaysForTestCase = 3
+	for i := numHealthy; i < numRelaysForTestCase-1; i++ {
+		relaysForTestCase = append(relaysForTestCase, "1.2.3.4:"+strconv.Itoa(1000+i))
+	}
+
+	// Separate goroutine for client broadcast process
+	go clientBroadcastTx(t,
+		broadcastCtx,
+		servers[0],
+		relaysForTestCase,
+		testChainID,
+		numTransactions,
+		notifyCh,
+	)
+
+	// Blocks the main thread until we consume from notifyCh.
+	resultStatusMsg = waitForClientBroadcastStatus(t,
+		broadcastCtx,
+		notifyCh,
+	)
+	assert.NotNil(t, resultStatusMsg)
+	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
+	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+
+	// TEST 3 - Errors
+	//
+	// Add 5 unavailable relays to the list WITH self, and removed relay IDs.
+	// numRelays=7;numHealthy=2;numErrors=5;withSelf=true
+	relaysForErrCase := healthyRelaysWithoutIds[:]
+	numHealthy = len(relaysForErrCase)
+	numRelaysForErrCase := 7
+	for i := numHealthy; i < numRelaysForErrCase; i++ {
+		relaysForErrCase = append(relaysForErrCase, "1.2.3.4:"+strconv.Itoa(1000+i))
+	}
+
+	// Separate goroutine for client broadcast process
+	go clientBroadcastTx(t,
+		broadcastCtx,
+		servers[0],
+		relaysForErrCase,
+		testChainID,
+		numTransactions,
+		notifyCh,
+	)
+
+	// Blocks the main thread until we consume from notifyCh.
+	resultStatusMsg = waitForClientBroadcastStatus(t,
+		broadcastCtx,
+		notifyCh,
+	)
+	assert.NotNil(t, resultStatusMsg)
+	assert.NotNil(t, resultStatusMsg.Error)
+	assert.Error(t, resultStatusMsg.Error)
+	assert.Contains(t, resultStatusMsg.Error.Error(), "not enough healthy relays")
+
+	numExpected := (numRelaysForErrCase / 2) + 1
+	expectedMessage := fmt.Sprintf("expected %d, got %d", numExpected, numHealthy)
+	assert.Contains(t, resultStatusMsg.Error.Error(), expectedMessage)
+
+	// TEST 4 - Errors
+	//
+	// Add 5 unavailable relays to the list and remove self from relays,
+	// and removed relay IDs.
+	// numRelays=7;numHealthy=2;numErrors=5;withSelf=false
+	relaysForErrCase = healthyRelaysWithoutIds[1:]
+	numHealthy = len(relaysForErrCase)
+	numRelaysForErrCase = 7
+	for i := numHealthy; i < numRelaysForErrCase-1; i++ {
+		relaysForErrCase = append(relaysForErrCase, "1.2.3.4:"+strconv.Itoa(1000+i))
+	}
+
+	// Separate goroutine for client broadcast process
+	go clientBroadcastTx(t,
+		broadcastCtx,
+		servers[0],
+		relaysForErrCase,
+		testChainID,
+		numTransactions,
+		notifyCh,
+	)
+
+	// Blocks the main thread until we consume from notifyCh.
+	resultStatusMsg = waitForClientBroadcastStatus(t,
+		broadcastCtx,
+		notifyCh,
+	)
+	assert.NotNil(t, resultStatusMsg)
+	assert.NotNil(t, resultStatusMsg.Error)
+	assert.Error(t, resultStatusMsg.Error)
+	assert.Contains(t, resultStatusMsg.Error.Error(), "not enough healthy relays")
+
+	numExpected = (numRelaysForErrCase / 2) + 1
+	numHealthy = numHealthy + 1 // "self" is healthy also if not in relays.
+	expectedMessage = fmt.Sprintf("expected %d, got %d", numExpected, numHealthy)
+	assert.Contains(t, resultStatusMsg.Error.Error(), expectedMessage)
+}
+
 // With a list of empty relays, a first block of the network will be created,
 // which includes the broadcast transactions data (using client.BroadcastTx),
 // and the state machine and blocks store are updated with transactions data.
@@ -633,7 +811,7 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 
 	// Set a custom logger to log all backend messages
 	// For debug, change this logger instance
-	backendLogger := cmtlog.TestingLogger().With("process", "relay-1")
+	backendLogger := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
 	servers[0].SetLogger(backendLogger)
 
 	// Note: relays includes self
@@ -746,7 +924,7 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 
 	// Set a custom logger to log all backend messages
 	// For debug, change this logger instance
-	backendLogger := cmtlog.TestingLogger().With("process", "relay-1")
+	backendLogger := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
 	servers[0].SetLogger(backendLogger)
 
 	// Note: relays includes self
