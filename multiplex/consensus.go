@@ -28,16 +28,7 @@ func (reactor *Reactor) PrepareConsensusInstanceWithReactor(
 	ctx context.Context,
 	chainID string,
 ) error {
-	// First make sure the ABCI is setup correctly
-	abciClient := reactor.GetABCIClient()
-	if abciClient == nil {
-		return errors.New("missing ABCI client (proxyApp) for consensus handshake")
-	}
-
 	clogger := reactor.logger.With("chain_id", chainID)
-
-	// Get this network's app connections for consensus
-	proxyApp := abciClient.ToAppConns(chainID)
 
 	// Used for retrieving GenesisDoc instance by chain
 	genesisDocProvider := reactor.GetGenesisProvider()
@@ -63,7 +54,14 @@ func (reactor *Reactor) PrepareConsensusInstanceWithReactor(
 			"could not get event bus in PrepareConsensusInstanceWithReactor with ChainID %s", chainID)
 	}
 
+	// First make sure the ABCI is setup correctly
+	abciClient := reactor.GetABCIClient()
+	if abciClient == nil {
+		return errors.New("missing ABCI client (proxyApp) for consensus handshake")
+	}
+
 	// 1) Consensus handshake with ABCI
+	proxyApp := abciClient.ToAppConns(chainID)
 	handshaker := cs.NewHandshaker(
 		stateStore,
 		stateMachine,

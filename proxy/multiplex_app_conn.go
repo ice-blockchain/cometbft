@@ -24,23 +24,29 @@ type sharedConnClients struct {
 	snapshot  abcicli.Client
 }
 
-// multiplexAppConn implements AppConns.
+// multiplexAppConn implements ChainConns.
 type multiplexAppConn struct {
 	service.BaseService
 
+	// Thread-safe slice of ChainIDs
+	chainMtx *cmtsync.RWMutex
 	chainIds []string
 
-	metrics *Metrics
-
+	// Implements ChainConns interface
 	connsMutex     *cmtsync.RWMutex
 	consensusConns map[string]AppConnConsensus
 	mempoolConns   map[string]AppConnMempool
 	queryConns     map[string]AppConnQuery
 	snapshotConns  map[string]AppConnSnapshot
 
-	sharedClients *sharedConnClients
+	// Bridges to legacy AppConns interface
+	proxyMutex    *cmtsync.RWMutex
+	proxyAppConns *multiAppConn
 
+	// ABCI Client using the above conns
+	sharedClients *sharedConnClients
 	clientCreator ClientCreator
+	metrics       *Metrics
 }
 
 var _ ChainConns = (*multiplexAppConn)(nil)
@@ -53,35 +59,51 @@ func NewMultiplexAppConn(
 	metrics *Metrics,
 ) ChainConns {
 	mac := &multiplexAppConn{
-		chainIds:       chainIds,
-		metrics:        metrics,
+		chainMtx: new(cmtsync.RWMutex),
+		chainIds: chainIds,
+
 		connsMutex:     new(cmtsync.RWMutex),
 		consensusConns: map[string]AppConnConsensus{},
 		mempoolConns:   map[string]AppConnMempool{},
 		queryConns:     map[string]AppConnQuery{},
 		snapshotConns:  map[string]AppConnSnapshot{},
 
+		proxyMutex:    new(cmtsync.RWMutex),
+		proxyAppConns: nil,
+
 		clientCreator: clientCreator,
 		sharedClients: &sharedConnClients{
 			mtx: new(cmtsync.Mutex),
 		},
+		metrics: metrics,
 	}
 	mac.BaseService = *service.NewBaseService(nil, "multiplexAppConn", mac)
 	return mac
 }
 
+// ChainIds locks the chainMtx for read.
+func (conn *multiplexAppConn) ChainIds() []string {
+	conn.chainMtx.RLock()
+	defer conn.chainMtx.RUnlock()
+	return conn.chainIds
+}
+
 // AddNetwork implements [ChainConns].
 func (conn *multiplexAppConn) AddNetwork(chainID string) {
-	if slices.Contains(conn.chainIds, chainID) {
+	chainIds := conn.ChainIds()
+	if slices.Contains(chainIds, chainID) {
 		return
 	}
+
+	cli := conn.sharedClients
+
+	conn.chainMtx.Lock()
+	conn.chainIds = append(conn.chainIds, chainID)
+	conn.chainMtx.Unlock()
 
 	conn.connsMutex.Lock()
 	defer conn.connsMutex.Unlock()
 
-	cli := conn.sharedClients
-
-	conn.chainIds = append(conn.chainIds, chainID)
 	conn.queryConns[chainID] = NewChainConnQuery(chainID, cli.query, conn.metrics)
 	conn.snapshotConns[chainID] = NewChainConnSnapshot(chainID, cli.snapshot, conn.metrics)
 	conn.mempoolConns[chainID] = NewChainConnMempool(chainID, cli.mempool, conn.metrics)
@@ -121,24 +143,34 @@ func (conn *multiplexAppConn) Snapshot(chainID string) AppConnSnapshot {
 //
 // ToAppConns implements [ChainConns].
 func (conn *multiplexAppConn) ToAppConns(chainID string) AppConns {
-	conn.connsMutex.RLock()
-	defer conn.connsMutex.RUnlock()
+	conn.proxyMutex.RLock()
+	appConns := conn.proxyAppConns
+	conn.proxyMutex.RUnlock()
 
-	// Note: this instance uses the legacy AppConns implementation
-	return &multiAppConn{
-		metrics:       conn.metrics,
-		consensusConn: conn.consensusConns[chainID],
-		mempoolConn:   conn.mempoolConns[chainID],
-		queryConn:     conn.queryConns[chainID],
-		snapshotConn:  conn.snapshotConns[chainID],
+	if appConns == nil {
+		// Note: this instance uses the legacy AppConns implementation
+		// Mutex connsMutex is locked for read through method calls.
+		appConns = &multiAppConn{
+			metrics:       conn.metrics,
+			consensusConn: conn.Consensus(chainID),
+			mempoolConn:   conn.Mempool(chainID),
+			queryConn:     conn.Query(chainID),
+			snapshotConn:  conn.Snapshot(chainID),
 
-		consensusConnClient: conn.sharedClients.consensus,
-		mempoolConnClient:   conn.sharedClients.mempool,
-		queryConnClient:     conn.sharedClients.query,
-		snapshotConnClient:  conn.sharedClients.snapshot,
+			consensusConnClient: conn.sharedClients.consensus,
+			mempoolConnClient:   conn.sharedClients.mempool,
+			queryConnClient:     conn.sharedClients.query,
+			snapshotConnClient:  conn.sharedClients.snapshot,
 
-		clientCreator: conn.clientCreator,
+			clientCreator: conn.clientCreator,
+		}
+
+		conn.proxyMutex.Lock()
+		conn.proxyAppConns = appConns
+		conn.proxyMutex.Unlock()
 	}
+
+	return appConns
 }
 
 // OnStart implements [service.Service].
@@ -179,12 +211,14 @@ func (conn *multiplexAppConn) startQueryClient() error {
 		shouldStart = true
 	}
 
+	chainIds := conn.ChainIds()
+
 	// .. But we create x connections with the client, one per replicated chain
-	for _, chainID := range conn.chainIds {
-		conn.connsMutex.Lock()
+	conn.connsMutex.Lock()
+	for _, chainID := range chainIds {
 		conn.queryConns[chainID] = NewChainConnQuery(chainID, conn.sharedClients.query, conn.metrics)
-		conn.connsMutex.Unlock()
 	}
+	conn.connsMutex.Unlock()
 
 	// Start only on thread that creates the ABCI client
 	if shouldStart {
@@ -208,12 +242,14 @@ func (conn *multiplexAppConn) startSnapshotClient() error {
 		shouldStart = true
 	}
 
+	chainIds := conn.ChainIds()
+
 	// .. But we create x connections with the client, one per replicated chain
-	for _, chainID := range conn.chainIds {
-		conn.connsMutex.Lock()
+	conn.connsMutex.Lock()
+	for _, chainID := range chainIds {
 		conn.snapshotConns[chainID] = NewChainConnSnapshot(chainID, conn.sharedClients.snapshot, conn.metrics)
-		conn.connsMutex.Unlock()
 	}
+	conn.connsMutex.Unlock()
 
 	// Start only on thread that created the ABCI client
 	if shouldStart {
@@ -237,12 +273,14 @@ func (conn *multiplexAppConn) startMempoolClient() error {
 		shouldStart = true
 	}
 
+	chainIds := conn.ChainIds()
+
 	// .. But we create x connections with the client, one per replicated chain
-	for _, chainID := range conn.chainIds {
-		conn.connsMutex.Lock()
+	conn.connsMutex.Lock()
+	for _, chainID := range chainIds {
 		conn.mempoolConns[chainID] = NewChainConnMempool(chainID, conn.sharedClients.mempool, conn.metrics)
-		conn.connsMutex.Unlock()
 	}
+	conn.connsMutex.Unlock()
 
 	// Start only on thread that created the ABCI client
 	if shouldStart {
@@ -267,12 +305,14 @@ func (conn *multiplexAppConn) startConsensusClient() error {
 		shouldStart = true
 	}
 
+	chainIds := conn.ChainIds()
+
 	// .. But we create x connections with the client, one per replicated chain
-	for _, chainID := range conn.chainIds {
-		conn.connsMutex.Lock()
+	conn.connsMutex.Lock()
+	for _, chainID := range chainIds {
 		conn.consensusConns[chainID] = NewChainConnConsensus(chainID, conn.sharedClients.consensus, conn.metrics)
-		conn.connsMutex.Unlock()
 	}
+	conn.connsMutex.Unlock()
 
 	// Start only on thread that created the ABCI client
 	if shouldStart {

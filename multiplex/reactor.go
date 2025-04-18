@@ -660,7 +660,9 @@ func (reactor *Reactor) RegisterNetwork(
 
 	// Injects new AppConns in MultiplexAppConn for ABCI.
 	if abciClient != nil {
-		abciClient.AddNetwork(chainID)
+		reactor.envMutex.Lock()
+		reactor.abciClient.AddNetwork(chainID)
+		reactor.envMutex.Unlock()
 	}
 
 	// Update the MultiNetworkNodeInfo instance (just a re-make).
