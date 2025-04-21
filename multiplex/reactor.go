@@ -789,7 +789,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 
 			// A ChainReplicationResponse will be sent to the source peer.
 			r.networkMutex.RLock()
-			sourcePeer := r.discoverySwitch.Peers().Get(sourceAddr.ID)
+			sourcePeer := r.discoverySwitch.UniquePeers().Get(sourceAddr.ID)
 			r.networkMutex.RUnlock()
 
 			// After having acknowledged the chain replication, process it.
@@ -1006,9 +1006,10 @@ func (r *Reactor) DialBackReplicationPartner(
 	if err := r.cometbftSwitch.DialPeerWithAddress(peerAddr); err != nil {
 		if !r.IsDialError(err) {
 			// Manually add peers when the switch was already running.
-			dialedPeer := r.cometbftSwitch.Peers().Get(peerAddr.ID)
+			dialedPeer := r.cometbftSwitch.Peers(chainID).Get(peerAddr.ID)
 			for _, reactor := range r.cometbftSwitch.Reactors(chainID) {
-				reactor.AddPeer(dialedPeer)
+				peerForReactor := reactor.InitPeer(dialedPeer)
+				reactor.AddPeer(peerForReactor)
 			}
 
 			err = nil

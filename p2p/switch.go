@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
 	"time"
 
 	"github.com/cosmos/gogoproto/proto"
@@ -12,6 +13,7 @@ import (
 	"github.com/ice-blockchain/cometbft/internal/cmap"
 	"github.com/ice-blockchain/cometbft/internal/rand"
 	"github.com/ice-blockchain/cometbft/libs/service"
+	cmtsync "github.com/ice-blockchain/cometbft/libs/sync"
 	"github.com/ice-blockchain/cometbft/p2p/conn"
 )
 
@@ -57,6 +59,7 @@ type AddrBook interface {
 	RemoveAddress(addr *NetAddress)
 	HasAddress(addr *NetAddress) bool
 	Save()
+	Size() int
 }
 
 // PeerFilterFunc to be implemented by filter hooks after a new Peer has been
@@ -77,7 +80,6 @@ type Switch struct {
 	chDescs       map[string][]*conn.ChannelDescriptor
 	reactorsByCh  map[string]map[byte]Reactor
 	msgTypeByChID map[string]map[byte]proto.Message
-	peers         *PeerSet
 	dialing       *cmap.CMap
 	reconnecting  *cmap.CMap
 	nodeInfo      NodeInfo // our node info
@@ -95,6 +97,10 @@ type Switch struct {
 	rng *rand.Rand // seed for randomizing dial times and orders
 
 	metrics *Metrics
+
+	peersMtx     *cmtsync.RWMutex
+	peersByChain map[string]*PeerSet
+	uniquePeers  *PeerSet
 }
 
 // NetAddress returns the address the switch is listening on.
@@ -118,7 +124,9 @@ func NewSwitch(
 		chDescs:              make(map[string][]*conn.ChannelDescriptor),
 		reactorsByCh:         make(map[string]map[byte]Reactor),
 		msgTypeByChID:        make(map[string]map[byte]proto.Message),
-		peers:                NewPeerSet(),
+		peersMtx:             new(cmtsync.RWMutex),
+		peersByChain:         map[string]*PeerSet{"": NewPeerSet()},
+		uniquePeers:          NewPeerSet(),
 		dialing:              cmap.NewCMap(),
 		reconnecting:         cmap.NewCMap(),
 		metrics:              NopMetrics(),
@@ -166,6 +174,18 @@ func WithMetrics(metrics *Metrics) SwitchOption {
 // AddReactor adds the given reactor to the switch.
 // NOTE: Not goroutine safe.
 func (sw *Switch) AddReactor(chainID string, name string, reactor Reactor) Reactor {
+	// JiT initialize the map of peers by ChainID because when the switch
+	// is created, we may not know about all (or any) ChainID.
+	sw.peersMtx.RLock()
+	_, hasPeerSet := sw.peersByChain[chainID]
+	sw.peersMtx.RUnlock()
+
+	if !hasPeerSet {
+		sw.peersMtx.Lock()
+		sw.peersByChain[chainID] = NewPeerSet()
+		sw.peersMtx.Unlock()
+	}
+
 	if _, ok := sw.reactors[chainID]; !ok {
 		sw.reactors[chainID] = make(map[string]Reactor)
 	}
@@ -297,8 +317,13 @@ func (sw *Switch) OnStart() error {
 
 // OnStop implements BaseService. It stops all peers and reactors.
 func (sw *Switch) OnStop() {
-	// Stop peers
-	for _, p := range sw.peers.Copy() {
+	// Stop all peers
+	sw.peersMtx.RLock()
+	peers := sw.uniquePeers.Copy()
+	sw.peersMtx.RUnlock()
+
+	// stopAndRemove locks the mutex
+	for _, p := range peers {
 		sw.stopAndRemovePeer(p, nil)
 	}
 
@@ -322,37 +347,94 @@ func (sw *Switch) OnStop() {
 // to send for defaultSendTimeoutSeconds.
 //
 // NOTE: Broadcast uses goroutines, so order of broadcast may not be preserved.
+// NOTE(midas): Uses the PeerSet instance corresponding to chainID.
 func (sw *Switch) Broadcast(chainID string, e Envelope) {
-	sw.peers.ForEach(func(p Peer) {
-		go func(peer Peer) {
-			success := peer.Send(chainID, e)
-			_ = success
-		}(p)
-	})
+	sw.peersMtx.RLock()
+	defer sw.peersMtx.RUnlock()
+
+	if peerSet, ok := sw.peersByChain[chainID]; ok {
+		peerSet.ForEach(func(p Peer) {
+			go func(peer Peer) {
+				success := peer.Send(chainID, e)
+				_ = success
+			}(p)
+		})
+	}
 }
 
 // TryBroadcast runs a go routine for each attempted send.
 // If the send queue of the destination channel and peer are full, the message will not be sent. To make sure that messages are indeed sent to all destination, use `Broadcast`.
 //
 // NOTE: TryBroadcast uses goroutines, so order of broadcast may not be preserved.
+// NOTE(midas): Uses the PeerSet instance corresponding to chainID.
 func (sw *Switch) TryBroadcast(chainID string, e Envelope) {
-	sw.peers.ForEach(func(p Peer) {
-		go func(peer Peer) {
-			peer.TrySend(chainID, e)
-		}(p)
-	})
+	sw.peersMtx.RLock()
+	defer sw.peersMtx.RUnlock()
+
+	if peerSet, ok := sw.peersByChain[chainID]; ok {
+		peerSet.ForEach(func(p Peer) {
+			go func(peer Peer) {
+				peer.TrySend(chainID, e)
+			}(p)
+		})
+	}
 }
 
 // NumPeers returns the count of outbound/inbound and outbound-dialing peers.
 // unconditional peers are not counted here.
-func (sw *Switch) NumPeers() (outbound, inbound, dialing int) {
-	sw.peers.ForEach(func(peer Peer) {
+// NOTE(midas): Uses the PeerSet instance corresponding to chainID.
+func (sw *Switch) NumPeers(chainID string) (outbound, inbound, dialing int) {
+	sw.peersMtx.RLock()
+	defer sw.peersMtx.RUnlock()
+
+	if peerSet, ok := sw.peersByChain[chainID]; ok {
+		peerSet.ForEach(func(peer Peer) {
+			if peer.IsOutbound() && !sw.IsPeerUnconditional(peer.ID()) {
+				outbound++
+			} else if !sw.IsPeerUnconditional(peer.ID()) {
+				inbound++
+			}
+		})
+	}
+
+	dialing = sw.dialing.Size()
+	return outbound, inbound, dialing
+}
+
+// TotalNumPeers returns the total count of outbound/inbound and outbound-dialing
+// peers across all ChainIDs. Unconditional peers are not counted here.
+func (sw *Switch) TotalNumPeers() (outbound, inbound, dialing int) {
+	sw.peersMtx.RLock()
+	defer sw.peersMtx.RUnlock()
+
+	for _, peerSet := range sw.peersByChain {
+		peerSet.ForEach(func(peer Peer) {
+			if peer.IsOutbound() && !sw.IsPeerUnconditional(peer.ID()) {
+				outbound++
+			} else if !sw.IsPeerUnconditional(peer.ID()) {
+				inbound++
+			}
+		})
+	}
+
+	dialing = sw.dialing.Size()
+	return outbound, inbound, dialing
+}
+
+// NumUniquePeers returns the count of unique outbound/inbound and outbound-dialing
+// peers across all ChainIDs. Unconditional peers are not counted here.
+func (sw *Switch) NumUniquePeers() (outbound, inbound, dialing int) {
+	sw.peersMtx.RLock()
+	defer sw.peersMtx.RUnlock()
+
+	sw.uniquePeers.ForEach(func(peer Peer) {
 		if peer.IsOutbound() && !sw.IsPeerUnconditional(peer.ID()) {
 			outbound++
 		} else if !sw.IsPeerUnconditional(peer.ID()) {
 			inbound++
 		}
 	})
+
 	dialing = sw.dialing.Size()
 	return outbound, inbound, dialing
 }
@@ -368,8 +450,42 @@ func (sw *Switch) MaxNumOutboundPeers() int {
 }
 
 // Peers returns the set of peers that are connected to the switch.
-func (sw *Switch) Peers() IPeerSet {
-	return sw.peers
+// Requires a chainID to filter the returned peers instances.
+func (sw *Switch) Peers(chainID string) IPeerSet {
+	sw.peersMtx.RLock()
+	_, hasChainPeers := sw.peersByChain[chainID]
+	sw.peersMtx.RUnlock()
+
+	if !hasChainPeers {
+		sw.peersMtx.Lock()
+		sw.peersByChain[chainID] = NewPeerSet()
+		sw.peersMtx.Unlock()
+	}
+
+	sw.peersMtx.RLock()
+	defer sw.peersMtx.RUnlock()
+	return sw.peersByChain[chainID]
+}
+
+// UniquePeers returns the set of unique peer that are connected to the switch.
+func (sw *Switch) UniquePeers() IPeerSet {
+	sw.peersMtx.RLock()
+	defer sw.peersMtx.RUnlock()
+	return sw.uniquePeers
+}
+
+// HasPeerID iterates peersByChain to find a peer by its ID.
+func (sw *Switch) HasPeerID(id ID) bool {
+	sw.peersMtx.RLock()
+	defer sw.peersMtx.RUnlock()
+	return sw.uniquePeers.Has(id)
+}
+
+// HasPeerIP iterates peersByChain to find a peer by its IP.
+func (sw *Switch) HasPeerIP(peerIP net.IP) bool {
+	sw.peersMtx.RLock()
+	defer sw.peersMtx.RUnlock()
+	return sw.uniquePeers.HasIP(peerIP)
 }
 
 // StopPeerForError disconnects from a peer due to external error.
@@ -407,12 +523,13 @@ func (sw *Switch) StopPeerGracefully(peer Peer) {
 	sw.stopAndRemovePeer(peer, nil)
 }
 
-func (sw *Switch) stopAndRemovePeer(peer Peer, reason any) {
-	// Returning early if the peer is already stopped prevents data races because
-	// this function may be called from multiple places at once.
+// stopPeer calls the Stop method on a peer, then cleans up
+// the transport instance and removes the peer from all reactors.
+func (sw *Switch) stopPeer(peer Peer, reason any) error {
 	if err := peer.Stop(); err != nil {
-		sw.Logger.Error("error stopping peer", "peer", peer.ID(), "err", err)
-		return
+		return fmt.Errorf(
+			"error stopping peer for ID %s", string(peer.ID()),
+		)
 	}
 
 	sw.transport.Cleanup(peer)
@@ -422,11 +539,48 @@ func (sw *Switch) stopAndRemovePeer(peer Peer, reason any) {
 		}
 	}
 
+	return nil
+}
+
+// removePeer removes the peer from all PeerSet instances.
+func (sw *Switch) removePeer(peer Peer) error {
+	sw.peersMtx.Lock()
+	defer sw.peersMtx.Unlock()
+
+	if !sw.uniquePeers.Remove(peer) {
+		return fmt.Errorf(
+			"error on unique peer removal for ID %s", string(peer.ID()),
+		)
+	}
+
+	for _, peerSet := range sw.peersByChain {
+		if peerSet.Has(peer.ID()) {
+			if !peerSet.Remove(peer) {
+				return fmt.Errorf(
+					"error on peer removal for ID %s", string(peer.ID()),
+				)
+			}
+		}
+	}
+
+	return nil
+}
+
+// stopAndRemovePeer first stops the peer, then removes it from all PeerSet
+// instances. Returns early from stopping the peer in case it errors.
+func (sw *Switch) stopAndRemovePeer(peer Peer, reason any) {
+	// Returning early if the peer is already stopped prevents data races because
+	// this function may be called from multiple places at once.
+	if err := sw.stopPeer(peer, reason); err != nil {
+		sw.Logger.Error("error stopping peer", "peer", peer.ID(), "err", err)
+		return
+	}
+
 	// Removing a peer should go last to avoid a situation where a peer
 	// reconnect to our node and the switch calls InitPeer before
 	// RemovePeer is finished.
 	// https://github.com/tendermint/tendermint/issues/3338
-	if !sw.peers.Remove(peer) {
+	if err := sw.removePeer(peer); err != nil {
 		// Removal of the peer has failed. The function above sets a flag within the peer to mark this.
 		// We keep this message here as information to the developer.
 		sw.Logger.Debug("error on peer removal", "peer", peer.ID())
@@ -623,8 +777,8 @@ func (sw *Switch) randomSleep(interval time.Duration) {
 // address or dialing it at the moment.
 func (sw *Switch) IsDialingOrExistingAddress(addr *NetAddress) bool {
 	return sw.dialing.Has(string(addr.ID)) ||
-		sw.peers.Has(addr.ID) ||
-		(!sw.config.AllowDuplicateIP && sw.peers.HasIP(addr.IP))
+		sw.HasPeerID(addr.ID) ||
+		(!sw.config.AllowDuplicateIP && sw.HasPeerIP(addr.IP))
 }
 
 // AddPersistentPeers allows you to set persistent peers. It ignores
@@ -685,6 +839,8 @@ func (sw *Switch) IsPeerPersistent(na *NetAddress) bool {
 }
 
 func (sw *Switch) acceptRoutine() {
+	outbound, inbound, _ := sw.NumUniquePeers()
+	numPeers := outbound + inbound
 	for {
 		p, err := sw.transport.Accept(peerConfig{
 			chDescs:       sw.chDescs,
@@ -713,7 +869,7 @@ func (sw *Switch) acceptRoutine() {
 				sw.Logger.Info(
 					"Inbound Peer rejected",
 					"err", err,
-					"numPeers", sw.peers.Size(),
+					"numPeers", numPeers,
 				)
 
 				continue
@@ -727,13 +883,13 @@ func (sw *Switch) acceptRoutine() {
 			case ErrTransportClosed:
 				sw.Logger.Error(
 					"Stopped accept routine, as transport is closed",
-					"numPeers", sw.peers.Size(),
+					"numPeers", numPeers,
 				)
 			default:
 				sw.Logger.Error(
 					"Accept on transport errored",
 					"err", err,
-					"numPeers", sw.peers.Size(),
+					"numPeers", numPeers,
 				)
 				// We could instead have a retry loop around the acceptRoutine,
 				// but that would need to stop and let the node shutdown eventually.
@@ -746,9 +902,13 @@ func (sw *Switch) acceptRoutine() {
 			break
 		}
 
+		// BREAKING:
+		// NOTE(midas): We disable MaxNumInboundPeers here because a limit on the
+		// number of peers is undesired for a multiplex of nodes with many ChainIDs.
+
 		if !sw.IsPeerUnconditional(p.NodeInfo().ID()) {
 			// Ignore connection if we already have enough peers.
-			_, in, _ := sw.NumPeers()
+			_, in, _ := sw.NumUniquePeers()
 			if in >= sw.config.MaxNumInboundPeers {
 				sw.Logger.Info(
 					"Ignoring inbound connection: already have enough inbound peers",
@@ -843,13 +1003,17 @@ func (sw *Switch) filterPeer(p Peer) error {
 	// 	return ErrRejected{id: p.ID(), isDuplicate: true}
 	// }
 
-	errc := make(chan error, len(sw.peerFilters))
+	errc := make(chan error, len(sw.peersByChain)*len(sw.peerFilters))
 
-	for _, f := range sw.peerFilters {
-		go func(f PeerFilterFunc, p Peer, errc chan<- error) {
-			errc <- f(sw.peers, p)
-		}(f, p, errc)
+	sw.peersMtx.RLock()
+	for _, peerSet := range sw.peersByChain {
+		for _, f := range sw.peerFilters {
+			go func(f PeerFilterFunc, p Peer, errc chan<- error) {
+				errc <- f(peerSet, p)
+			}(f, p, errc)
+		}
 	}
+	sw.peersMtx.RUnlock()
 
 	for i := 0; i < cap(errc); i++ {
 		select {
@@ -899,17 +1063,40 @@ func (sw *Switch) addPeer(p Peer) error {
 		return err
 	}
 
-	// Add the peer to PeerSet. Do this before starting the reactors
-	// so that if Receive errors, we will find the peer and remove it.
-	// Add should not err since we already checked peers.Has().
-	if err := sw.peers.Add(p); err != nil {
-		if _, ok := err.(ErrPeerRemoval); ok {
-			sw.Logger.Error("Error starting peer ",
-				" err ", "Peer has already errored and removal was attempted.",
-				"peer", p.ID())
+	// First we add it to the unique peers if necessary
+	sw.peersMtx.Lock()
+	if !sw.uniquePeers.Has(p.ID()) {
+		if err := sw.uniquePeers.Add(p); err != nil {
+			if _, ok := err.(ErrPeerRemoval); ok {
+				sw.Logger.Error("Error starting peer ",
+					" err ", "Peer has already errored and removal was attempted.",
+					"peer", p.ID())
+			}
+			sw.peersMtx.Unlock()
+			return err
 		}
-		return err
 	}
+	sw.peersMtx.Unlock()
+
+	// Then we add it to all internal peersets by ChainID.
+	// TODO(midas): should filter and add only for ChainIDs supported by peer.
+	sw.peersMtx.Lock()
+	for _, peerSet := range sw.peersByChain {
+		// Add the peer to PeerSet. Do this before starting the reactors
+		// so that if Receive errors, we will find the peer and remove it.
+		// Add should not err since we already checked peers.Has().
+		if err := peerSet.Add(p); err != nil {
+			if _, ok := err.(ErrPeerRemoval); ok {
+				sw.Logger.Error("Error starting peer ",
+					" err ", "Peer has already errored and removal was attempted.",
+					"peer", p.ID())
+			}
+			sw.peersMtx.Unlock()
+			return err
+		}
+	}
+	sw.peersMtx.Unlock()
+
 	sw.metrics.Peers.Add(float64(1))
 
 	// Start all the reactor protocols on the peer.

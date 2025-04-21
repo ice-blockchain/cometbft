@@ -580,6 +580,39 @@ func TestMultiplexRuntimeInjectNewRuntime(t *testing.T) {
 	assert.NoError(t, runtimeErr, "should spawn parallel process for node runtime")
 }
 
+func TestMultiplexRuntimeInjectNewRuntimeWithOthers(t *testing.T) {
+	numChains := 1
+
+	// Initialize and START the nodes multiplex
+	// For debug, change the logger to cmtlog.TestingLogger()
+	globalCfg, _,
+		testReactor := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), false) // startServers=false
+
+	// Shutdown routine
+	defer func() {
+		defer os.RemoveAll(globalCfg.RootDir)
+
+		if testReactor.IsRunning() {
+			err := testReactor.Stop()
+			require.NoError(t, err)
+		}
+	}()
+
+	// Inject testChainID
+	injectErr := testReactor.InjectNewNetwork(testChainID)
+	require.NoError(t, injectErr)
+
+	// For debug, change the logger cmtlog.TestingLogger()
+	// i.e.: testReactor.SetLogger(cmtlog.TestingLogger())
+
+	// Act
+	runtimeErr := testReactor.InjectNewRuntime(context.Background(), testChainID)
+	assert.NoError(t, runtimeErr, "should spawn parallel process for node runtime")
+
+	err := testReactor.Stop()
+	assert.NoError(t, err, "should stop the reactor including new network")
+}
+
 // ----------------------------------------------------------------------------
 // Helpers
 

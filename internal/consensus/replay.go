@@ -244,6 +244,8 @@ func (h *Handshaker) Handshake(ctx context.Context, proxyApp proxy.AppConns) err
 	// Inject the ChainID for access in ABCI
 	ctx = context.WithValue(ctx, client.KeyChainID, h.genDoc.ChainID)
 
+	h.logger.Debug("Executing ABCI Handshake", "chain_id", h.genDoc.ChainID)
+
 	// Handshake is done via ABCI Info on the query conn.
 	res, err := proxyApp.Query().Info(ctx, proxy.InfoRequest)
 	if err != nil {

@@ -202,10 +202,15 @@ func (*Reactor) GetChannels() []*p2p.ChannelDescriptor {
 	}
 }
 
+// PeerStateKey returns the peer state key with a ChainID scope.
+func (conR *Reactor) PeerStateKey() string {
+	return types.PeerStateKey + "_" + conR.conS.state.ChainID
+}
+
 // InitPeer implements Reactor by creating a state for the peer.
 func (conR *Reactor) InitPeer(peer p2p.Peer) p2p.Peer {
 	peerState := NewPeerState(peer).SetLogger(conR.Logger)
-	peer.Set(types.PeerStateKey, peerState)
+	peer.Set(conR.PeerStateKey(), peerState)
 	return peer
 }
 
@@ -217,7 +222,7 @@ func (conR *Reactor) AddPeer(peer p2p.Peer) {
 		return
 	}
 
-	peerState, ok := peer.Get(types.PeerStateKey).(*PeerState)
+	peerState, ok := peer.Get(conR.PeerStateKey()).(*PeerState)
 	if !ok {
 		panic(fmt.Sprintf("peer %v has no state", peer))
 	}
@@ -273,7 +278,7 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 	conR.Logger.Debug("Receive", "src", e.Src, "chId", e.ChannelID, "msg", msg)
 
 	// Get peer states
-	ps, ok := e.Src.Get(types.PeerStateKey).(*PeerState)
+	ps, ok := e.Src.Get(conR.PeerStateKey()).(*PeerState)
 	if !ok {
 		panic(fmt.Sprintf("Peer %v has no state", e.Src))
 	}
@@ -1033,14 +1038,14 @@ func (conR *Reactor) peerStatsRoutine() {
 		select {
 		case msg := <-conR.conS.statsMsgQueue:
 			// Get peer
-			peer := conR.Switch.Peers().Get(msg.PeerID)
+			peer := conR.Switch.Peers(conR.conS.state.ChainID).Get(msg.PeerID)
 			if peer == nil {
 				conR.Logger.Debug("Attempt to update stats for non-existent peer",
 					"peer", msg.PeerID)
 				continue
 			}
 			// Get peer state
-			ps, ok := peer.Get(types.PeerStateKey).(*PeerState)
+			ps, ok := peer.Get(conR.PeerStateKey()).(*PeerState)
 			if !ok {
 				panic(fmt.Sprintf("Peer %v has no state", peer))
 			}
@@ -1075,8 +1080,8 @@ func (*Reactor) String() string {
 func (conR *Reactor) StringIndented(indent string) string {
 	s := "ConsensusReactor{\n"
 	s += indent + "  " + conR.conS.StringIndented(indent+"  ") + "\n"
-	conR.Switch.Peers().ForEach(func(peer p2p.Peer) {
-		ps, ok := peer.Get(types.PeerStateKey).(*PeerState)
+	conR.Switch.Peers(conR.conS.state.ChainID).ForEach(func(peer p2p.Peer) {
+		ps, ok := peer.Get(conR.PeerStateKey()).(*PeerState)
 		if !ok {
 			panic(fmt.Sprintf("Peer %v has no state", peer))
 		}

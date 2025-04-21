@@ -233,10 +233,10 @@ func (reactor *Reactor) AddConnectionChannels(
 	reactor.networkMutex.RLock()
 	defer reactor.networkMutex.RUnlock()
 
-	sw.Peers().ForEach(func(peer p2p.Peer) {
-		mconn := peer.MConn()
+	for _, chainID := range chainIds {
+		sw.Peers(chainID).ForEach(func(peer p2p.Peer) {
+			mconn := peer.MConn()
 
-		for _, chainID := range chainIds {
 			for name, r := range sw.Reactors(chainID) {
 				for _, chDesc := range r.GetChannels() {
 					if len(channels) > 0 && !slices.Contains(channels, chDesc.ID) {
@@ -254,8 +254,8 @@ func (reactor *Reactor) AddConnectionChannels(
 					mconn.AddChannel(chainID, *chDesc)
 				}
 			}
-		}
-	})
+		})
+	}
 
 	return nil
 }

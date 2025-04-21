@@ -54,7 +54,7 @@ type peers interface {
 	AddUnconditionalPeerIDs(peerIDs []string) error
 	AddPrivatePeerIDs(peerIDs []string) error
 	DialPeersAsync(peers []string) error
-	Peers() p2p.IPeerSet
+	Peers(chainID string) p2p.IPeerSet
 }
 
 // A reactor that transitions from block sync or state sync to consensus mode.

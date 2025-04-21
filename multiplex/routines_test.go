@@ -53,6 +53,10 @@ func TestMultiplexRoutinesNodeReplRequest(t *testing.T) {
 		servers[i].MustStart()
 	}
 
+	// To debug the service execution (excluding startup) change this logger
+	backendLogger := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "backend-1")
+	servers[0].SetLogger(backendLogger)
+
 	testRelayAddrs := []*server.RelayAddress{}
 	for i := 1; i < len(servers); i++ {
 		testReactor := servers[i].GetReactor()
@@ -75,16 +79,10 @@ func TestMultiplexRoutinesNodeReplRequest(t *testing.T) {
 	useChainID := testChainIds[0]
 	require.Contains(t, chainRelays, useChainID)
 
-	sourceSwitch := servers[0].CreateOrLoadDiscoveryEventSwitch()
-	sourceReactor := servers[0].GetReactor()
-	sourceRelayID := string(sourceReactor.GetNodeKey().ID())
 	for i := 1; i < len(servers); i++ {
-		recipientSwitch := servers[i].CreateOrLoadDiscoveryEventSwitch()
+		//recipientSwitch := servers[i].CreateOrLoadDiscoveryEventSwitch()
 		recipientReactor := servers[i].GetReactor()
 		recipientRelayID := string(recipientReactor.GetNodeKey().ID())
-
-		sourceSwitch.AddUnconditionalPeerIDs([]string{recipientRelayID})
-		recipientSwitch.AddUnconditionalPeerIDs([]string{sourceRelayID})
 
 		// Relay 1 communicates with Relay X
 		testBroadcastPort := strconv.Itoa(50001 + (i * 100)) // 50101, 50201, etc.

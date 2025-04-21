@@ -147,7 +147,7 @@ func TestPEXReactorRequestMessageAbuse(t *testing.T) {
 	peer := mock.NewPeer(nil)
 	peerAddr := peer.SocketAddr()
 	p2p.AddPeerToSwitchPeerSet(sw, peer)
-	assert.True(t, sw.Peers().Has(peer.ID()))
+	assert.True(t, sw.Peers("").Has(peer.ID()))
 	err := book.AddAddress(peerAddr, peerAddr)
 	require.NoError(t, err)
 	require.True(t, book.HasAddress(peerAddr))
@@ -157,17 +157,17 @@ func TestPEXReactorRequestMessageAbuse(t *testing.T) {
 	// first time creates the entry
 	r.Receive(p2p.Envelope{ChannelID: PexChannel, Src: peer, Message: &tmp2p.PexRequest{}})
 	assert.True(t, r.lastReceivedRequests.Has(id))
-	assert.True(t, sw.Peers().Has(peer.ID()))
+	assert.True(t, sw.Peers("").Has(peer.ID()))
 
 	// next time sets the last time value
 	r.Receive(p2p.Envelope{ChannelID: PexChannel, Src: peer, Message: &tmp2p.PexRequest{}})
 	assert.True(t, r.lastReceivedRequests.Has(id))
-	assert.True(t, sw.Peers().Has(peer.ID()))
+	assert.True(t, sw.Peers("").Has(peer.ID()))
 
 	// third time is too many too soon - peer is removed
 	r.Receive(p2p.Envelope{ChannelID: PexChannel, Src: peer, Message: &tmp2p.PexRequest{}})
 	assert.False(t, r.lastReceivedRequests.Has(id))
-	assert.False(t, sw.Peers().Has(peer.ID()))
+	assert.False(t, sw.Peers("").Has(peer.ID()))
 	assert.True(t, book.IsBanned(peerAddr))
 }
 
@@ -180,25 +180,25 @@ func TestPEXReactorAddrsMessageAbuse(t *testing.T) {
 
 	peer := mock.NewPeer(nil)
 	p2p.AddPeerToSwitchPeerSet(sw, peer)
-	assert.True(t, sw.Peers().Has(peer.ID()))
+	assert.True(t, sw.Peers("").Has(peer.ID()))
 
 	id := string(peer.ID())
 
 	// request addrs from the peer
 	r.RequestAddrs(peer)
 	assert.True(t, r.requestsSent.Has(id))
-	assert.True(t, sw.Peers().Has(peer.ID()))
+	assert.True(t, sw.Peers("").Has(peer.ID()))
 
 	msg := &tmp2p.PexAddrs{Addrs: []tmp2p.NetAddress{peer.SocketAddr().ToProto()}}
 
 	// receive some addrs. should clear the request
 	r.Receive(p2p.Envelope{ChannelID: PexChannel, Src: peer, Message: msg})
 	assert.False(t, r.requestsSent.Has(id))
-	assert.True(t, sw.Peers().Has(peer.ID()))
+	assert.True(t, sw.Peers("").Has(peer.ID()))
 
 	// receiving more unsolicited addrs causes a disconnect and ban
 	r.Receive(p2p.Envelope{ChannelID: PexChannel, Src: peer, Message: msg})
-	assert.False(t, sw.Peers().Has(peer.ID()))
+	assert.False(t, sw.Peers("").Has(peer.ID()))
 	assert.True(t, book.IsBanned(peer.SocketAddr()))
 }
 
@@ -309,7 +309,7 @@ func TestConnectionSpeedForPeerReceivedFromSeed(t *testing.T) {
 
 	// 6. Assert that the configured maximum number of inbound/outbound peers
 	// are respected, see https://github.com/ice-blockchain/cometbft/issues/486
-	outbound, inbound, dialing := node.NumPeers()
+	outbound, inbound, dialing := node.NumPeers("") // empty ChainID
 	assert.LessOrEqual(t, inbound, cfg.MaxNumInboundPeers)
 	assert.LessOrEqual(t, outbound, cfg.MaxNumOutboundPeers)
 	assert.Zero(t, dialing)
@@ -331,7 +331,7 @@ func TestPEXReactorSeedMode(t *testing.T) {
 	require.NoError(t, err)
 	defer sw.Stop() //nolint:errcheck // ignore for tests
 
-	assert.Zero(t, sw.Peers().Size())
+	assert.Zero(t, sw.Peers("").Size())
 
 	peerSwitch := testCreateDefaultPeer(dir, 1)
 	require.NoError(t, peerSwitch.Start())
@@ -339,19 +339,19 @@ func TestPEXReactorSeedMode(t *testing.T) {
 
 	// 1. Test crawlPeers dials the peer
 	pexR.crawlPeers([]*p2p.NetAddress{peerSwitch.NetAddress()})
-	assert.Equal(t, 1, sw.Peers().Size())
-	assert.True(t, sw.Peers().Has(peerSwitch.NodeInfo().ID()))
+	assert.Equal(t, 1, sw.Peers("").Size())
+	assert.True(t, sw.Peers("").Has(peerSwitch.NodeInfo().ID()))
 
 	// 2. attemptDisconnects should not disconnect because of wait period
 	pexR.attemptDisconnects()
-	assert.Equal(t, 1, sw.Peers().Size())
+	assert.Equal(t, 1, sw.Peers("").Size())
 
 	// sleep for SeedDisconnectWaitPeriod
 	time.Sleep(pexRConfig.SeedDisconnectWaitPeriod + 1*time.Millisecond)
 
 	// 3. attemptDisconnects should disconnect after wait period
 	pexR.attemptDisconnects()
-	assert.Equal(t, 0, sw.Peers().Size())
+	assert.Equal(t, 0, sw.Peers("").Size())
 }
 
 func TestPEXReactorDoesNotDisconnectFromPersistentPeerInSeedMode(t *testing.T) {
@@ -370,7 +370,7 @@ func TestPEXReactorDoesNotDisconnectFromPersistentPeerInSeedMode(t *testing.T) {
 	require.NoError(t, err)
 	defer sw.Stop() //nolint:errcheck // ignore for tests
 
-	assert.Zero(t, sw.Peers().Size())
+	assert.Zero(t, sw.Peers("").Size())
 
 	peerSwitch := testCreateDefaultPeer(dir, 1)
 	require.NoError(t, peerSwitch.Start())
@@ -381,15 +381,15 @@ func TestPEXReactorDoesNotDisconnectFromPersistentPeerInSeedMode(t *testing.T) {
 
 	// 1. Test crawlPeers dials the peer
 	pexR.crawlPeers([]*p2p.NetAddress{peerSwitch.NetAddress()})
-	assert.Equal(t, 1, sw.Peers().Size())
-	assert.True(t, sw.Peers().Has(peerSwitch.NodeInfo().ID()))
+	assert.Equal(t, 1, sw.Peers("").Size())
+	assert.True(t, sw.Peers("").Has(peerSwitch.NodeInfo().ID()))
 
 	// sleep for SeedDisconnectWaitPeriod
 	time.Sleep(pexRConfig.SeedDisconnectWaitPeriod + 1*time.Millisecond)
 
 	// 2. attemptDisconnects should not disconnect because the peer is persistent
 	pexR.attemptDisconnects()
-	assert.Equal(t, 1, sw.Peers().Size())
+	assert.Equal(t, 1, sw.Peers("").Size())
 }
 
 func TestPEXReactorDialsPeerUpToMaxAttemptsInSeedMode(t *testing.T) {
@@ -484,7 +484,7 @@ func TestPEXReactorSeedModeFlushStop(t *testing.T) {
 
 	// by now the FlushStop should have happened. Try stopping the peer.
 	// it should be safe to do this.
-	peers := switches[0].Peers().Copy()
+	peers := switches[0].Peers("").Copy()
 	for _, peer := range peers {
 		err := peer.Stop()
 		require.NoError(t, err)
@@ -576,7 +576,7 @@ func assertPeersWithTimeout(
 			// check peers are connected
 			allGood := true
 			for _, s := range switches {
-				outbound, inbound, _ := s.NumPeers()
+				outbound, inbound, _ := s.NumPeers("") // empty ChainID
 				if outbound+inbound < nPeers {
 					allGood = false
 					break
@@ -592,7 +592,7 @@ func assertPeersWithTimeout(
 		case <-time.After(remaining):
 			numPeersStr := ""
 			for i, s := range switches {
-				outbound, inbound, _ := s.NumPeers()
+				outbound, inbound, _ := s.NumPeers("") // empty ChainID
 				numPeersStr += fmt.Sprintf("%d => {outbound: %d, inbound: %d}, ", i, outbound, inbound)
 			}
 			t.Errorf(

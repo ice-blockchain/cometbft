@@ -481,7 +481,7 @@ func (r *Reactor) ensurePeersRoutine() {
 // already connected or not.
 func (r *Reactor) ensurePeers() {
 	var (
-		out, in, dial = r.Switch.NumPeers()
+		out, in, dial = r.Switch.NumPeers(r.ChainID)
 		numToDial     = r.Switch.MaxNumOutboundPeers() - (out + dial)
 	)
 
@@ -559,7 +559,7 @@ func (r *Reactor) ensurePeers() {
 
 	// 1) Pick a random peer and ask for more.
 	if r.book.NeedMoreAddrs() && len(toDial) > 0 {
-		peer := r.Switch.Peers().Random()
+		peer := r.Switch.Peers(r.ChainID).Random()
 		if peer != nil {
 			r.Logger.Info("We need more addresses. Sending pexRequest to random peer", "peer", peer)
 			r.RequestAddrs(peer)
@@ -724,7 +724,7 @@ func (r *Reactor) crawlPeersRoutine() {
 // nodeHasSomePeersOrDialingAny returns true if the node is connected to some
 // peers or dialing them currently.
 func (r *Reactor) nodeHasSomePeersOrDialingAny() bool {
-	out, in, dial := r.Switch.NumPeers()
+	out, in, dial := r.Switch.NumPeers(r.ChainID)
 	return out+in+dial > 0
 }
 
@@ -765,7 +765,7 @@ func (r *Reactor) crawlPeers(addrs []*p2p.NetAddress) {
 			continue
 		}
 
-		peer := r.Switch.Peers().Get(addr.ID)
+		peer := r.Switch.Peers(r.ChainID).Get(addr.ID)
 		if peer != nil {
 			r.RequestAddrs(peer)
 		}
@@ -788,7 +788,7 @@ func (r *Reactor) cleanupCrawlPeerInfos() {
 
 // attemptDisconnects checks if we've been with each peer long enough to disconnect.
 func (r *Reactor) attemptDisconnects() {
-	for _, peer := range r.Switch.Peers().Copy() {
+	for _, peer := range r.Switch.Peers(r.ChainID).Copy() {
 		if peer.Status().Duration < r.config.SeedDisconnectWaitPeriod {
 			continue
 		}

@@ -119,16 +119,11 @@ func TestScenarioClientBroadcastHealthyRelays(t *testing.T) {
 	numChains := 1
 	numRelays := 7
 
-	servers, shutdownFn := ResetTestScenarioRelays(t, numChains, numRelays)
+	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
 	defer shutdownFn()
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
-
-	// Set a custom logger to log all backend messages
-	// For debug, change this logger instance
-	backendLogger := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
-	servers[0].SetLogger(backendLogger)
 
 	// Note: relays includes self
 	relays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
@@ -181,16 +176,11 @@ func TestScenarioClientBroadcastEmptyRelays(t *testing.T) {
 	numChains := 0
 	numRelays := 7
 
-	servers, shutdownFn := ResetTestScenarioRelays(t, numChains, numRelays)
+	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
 	defer shutdownFn()
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
-
-	// Set a custom logger to log all backend messages
-	// For debug, change this logger instance
-	backendLogger := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
-	servers[0].SetLogger(backendLogger)
 
 	// Note: relays includes self
 	relays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
@@ -247,16 +237,11 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 	numChains := 0
 	numHealthy := 3
 
-	servers, shutdownFn := ResetTestScenarioRelays(t, numChains, numHealthy)
+	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numHealthy)
 	defer shutdownFn()
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numHealthy)
-
-	// Set a custom logger to log all backend messages
-	// For debug, change this logger instance
-	backendLogger := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
-	servers[0].SetLogger(backendLogger)
 
 	// Note: relays contains only self for this test
 	healthyRelays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
@@ -484,16 +469,11 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 	numChains := 0
 	numHealthy := 2
 
-	servers, shutdownFn := ResetTestScenarioRelays(t, numChains, numHealthy)
+	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numHealthy)
 	defer shutdownFn()
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numHealthy)
-
-	// Set a custom logger to log all backend messages
-	// For debug, change this logger instance
-	backendLogger := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
-	servers[0].SetLogger(backendLogger)
 
 	// Note: relays contains only self for this test
 	healthyRelays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
@@ -655,16 +635,11 @@ func TestScenarioClientBroadcastEmptyRelaysProduceBlockWithTx(t *testing.T) {
 	numChains := 0
 	numRelays := 7
 
-	servers, shutdownFn := ResetTestScenarioRelays(t, numChains, numRelays)
+	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
 	defer shutdownFn()
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
-
-	// Set a custom logger to log all backend messages
-	// For debug, change this logger instance
-	backendLogger := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
-	servers[0].SetLogger(backendLogger)
 
 	// Note: relays includes self
 	relays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
@@ -733,16 +708,11 @@ func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
 	numChains := 0
 	numRelays := 7
 
-	servers, shutdownFn := ResetTestScenarioRelays(t, numChains, numRelays)
+	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
 	defer shutdownFn()
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
-
-	// Set a custom logger to log all backend messages
-	// For debug, change this logger instance
-	backendLogger := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
-	servers[0].SetLogger(backendLogger)
 
 	// Note: relays includes self
 	// Using 0 waitDuration because others have plenty of time due to restart.
@@ -778,7 +748,7 @@ func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
 		reuseRootDir,
 		servers[1],
 		0, // indexRelay (resetting relay-1)
-		backendLogger,
+		cmtlog.NewNopLogger(),
 	)
 	defer newShutdownFn()
 
@@ -816,16 +786,11 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	numChains := 0
 	numRelays := 7
 
-	servers, shutdownFn := ResetTestScenarioRelays(t, numChains, numRelays)
+	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
 	defer shutdownFn()
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
-
-	// Set a custom logger to log all backend messages
-	// For debug, change this logger instance
-	backendLogger := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
-	servers[0].SetLogger(backendLogger)
 
 	// Note: relays includes self
 	// Using 2 seconds waitDuration because we shall broadcast BEFORE shutdown.
@@ -892,7 +857,7 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 		reuseRootDir,
 		servers[1],
 		0, // indexRelay (resetting relay-1)
-		backendLogger,
+		cmtlog.NewNopLogger(),
 	)
 	defer newShutdownFn()
 
@@ -933,16 +898,11 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 	numRelays := 7
 	numHealthy := (numRelays / 2) + 1
 
-	servers, shutdownFn := ResetTestScenarioRelays(t, numChains, numHealthy)
+	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numHealthy)
 	defer shutdownFn()
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numHealthy)
-
-	// Set a custom logger to log all backend messages
-	// For debug, change this logger instance
-	backendLogger := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
-	servers[0].SetLogger(backendLogger)
 
 	// Note: relays includes self
 	relays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
@@ -1054,16 +1014,11 @@ func TestScenarioClientBroadcastEnoughEmptyRelays(t *testing.T) {
 	numRelays := 7
 	numHealthy := (numRelays / 2) + 1
 
-	servers, shutdownFn := ResetTestScenarioRelays(t, numChains, numHealthy)
+	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numHealthy)
 	defer shutdownFn()
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numHealthy)
-
-	// Set a custom logger to log all backend messages
-	// For debug, change this logger instance
-	backendLogger := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
-	servers[0].SetLogger(backendLogger)
 
 	// Note: relays includes self
 	relays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
@@ -1177,6 +1132,18 @@ func TestScenarioClientBroadcastEnoughEmptyRelays(t *testing.T) {
 	}
 }
 
+func TestScenarioClientBroadcastNotEnoughHealthyRelays(t *testing.T) {
+
+}
+
+func TestScenarioClientBroadcastNotEnoughEmptyRelays(t *testing.T) {
+
+}
+
+func TestScenarioClientBroadcastRandomRelaysFailure(t *testing.T) {
+
+}
+
 // ----------------------------------------------------------------------------
 // LEGACY Broadcast Test (Using CometBFT RPC Server)
 
@@ -1257,7 +1224,7 @@ func TestScenarioLegacyBroadcastSevenHealthyRelays(t *testing.T) {
 	numChains := 1
 	numRelays := 7
 
-	servers, shutdownFn := ResetTestScenarioRelays(t, numChains, numRelays)
+	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
 	defer shutdownFn()
 
 	require.NotEmpty(t, servers)
@@ -1343,19 +1310,38 @@ func TestScenarioLegacyBroadcastSevenHealthyRelays(t *testing.T) {
 // ----------------------------------------------------------------------------
 // Helpers
 
+func ResetTestScenarioRelaysWithLogs(
+	tb testing.TB,
+	numChains int,
+	numRelays int,
+) ([]*mx.MultiplexBackend, func()) {
+	tb.Helper()
+	return ResetTestScenarioRelays(tb, numChains, numRelays, cmtlog.TestingLogger())
+}
+
+func ResetTestScenarioRelaysWithoutLogs(
+	tb testing.TB,
+	numChains int,
+	numRelays int,
+) ([]*mx.MultiplexBackend, func()) {
+	tb.Helper()
+	return ResetTestScenarioRelays(tb, numChains, numRelays, cmtlog.NewNopLogger())
+}
+
 // Initializes numChains on a number of relays. This helper returns a list of
 // configured multiplex backend instances and a shutdown functor.
 func ResetTestScenarioRelays(
 	tb testing.TB,
 	numChains int,
 	numRelays int,
+	withLogger cmtlog.Logger,
 ) ([]*mx.MultiplexBackend, func()) {
 	tb.Helper()
 
 	// For debug, change the loggers to cmtlog.TestingLogger()
 	customLoggers := make([]cmtlog.Logger, numRelays)
 	for i := 0; i < numRelays; i++ {
-		customLoggers[i] = cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-" + strconv.Itoa(i+1))
+		customLoggers[i] = withLogger.With("process", "relay-"+strconv.Itoa(i+1))
 	}
 
 	// Uses config.TestConfig() and random MultiplexConfig

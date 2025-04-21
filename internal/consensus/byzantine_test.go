@@ -147,19 +147,19 @@ func TestByzantinePrevoteEquivocation(t *testing.T) {
 			require.NoError(t, err)
 			prevote2, err := bcs.signVote(types.PrevoteType, nil, types.PartSetHeader{}, nil)
 			require.NoError(t, err)
-			peerList := reactors[byzantineNode].Switch.Peers().Copy()
+			peerList := reactors[byzantineNode].Switch.Peers(bcs.state.ChainID).Copy()
 			bcs.Logger.Info("Getting peer list", "peers", peerList)
 			// send two votes to all peers (1st to one half, 2nd to another half)
 			for i, peer := range peerList {
 				if i < len(peerList)/2 {
 					bcs.Logger.Info("Signed and pushed vote", "vote", prevote1, "peer", peer)
-					peer.Send(p2p.Envelope{
+					peer.Send(bcs.state.ChainID, p2p.Envelope{
 						Message:   &cmtcons.Vote{Vote: prevote1.ToProto()},
 						ChannelID: VoteChannel,
 					})
 				} else {
 					bcs.Logger.Info("Signed and pushed vote", "vote", prevote2, "peer", peer)
-					peer.Send(p2p.Envelope{
+					peer.Send(bcs.state.ChainID, p2p.Envelope{
 						Message:   &cmtcons.Vote{Vote: prevote2.ToProto()},
 						ChannelID: VoteChannel,
 					})
@@ -405,7 +405,7 @@ func TestByzantineConflictingProposalsWithPartition(t *testing.T) {
 	// byz proposer sends one block to peers[0]
 	// and the other block to peers[1] and peers[2].
 	// note peers and switches order don't match.
-	peers := switches[0].Peers().Copy()
+	peers := switches[0].Peers(s.ChainID).Copy()
 
 	// partition A
 	ind0 := getSwitchIndex(switches, peers[0])
@@ -489,7 +489,7 @@ func byzantineDecideProposalFunc(_ context.Context, t *testing.T, height int64, 
 	require.NotEqual(t, block1Hash, block2Hash)
 
 	// broadcast conflicting proposals/block parts to peers
-	peers := sw.Peers().Copy()
+	peers := sw.Peers(block1.ChainID).Copy()
 	t.Logf("Byzantine: broadcasting conflicting proposals to %d peers", len(peers))
 	for i, peer := range peers {
 		if i < len(peers)/2 {
@@ -511,7 +511,7 @@ func sendProposalAndParts(
 	parts *types.PartSet,
 ) {
 	// proposal
-	peer.Send(p2p.Envelope{
+	peer.Send(cs.state.ChainID, p2p.Envelope{
 		ChannelID: DataChannel,
 		Message:   &cmtcons.Proposal{Proposal: *proposal.ToProto()},
 	})
@@ -523,7 +523,7 @@ func sendProposalAndParts(
 		if err != nil {
 			panic(err) // TODO: wbanfield better error handling
 		}
-		peer.Send(p2p.Envelope{
+		peer.Send(cs.state.ChainID, p2p.Envelope{
 			ChannelID: DataChannel,
 			Message: &cmtcons.BlockPart{
 				Height: height, // This tells peer that this part applies to us.
@@ -538,11 +538,11 @@ func sendProposalAndParts(
 	prevote, _ := cs.signVote(types.PrevoteType, blockHash, parts.Header(), nil)
 	precommit, _ := cs.signVote(types.PrecommitType, blockHash, parts.Header(), block)
 	cs.mtx.Unlock()
-	peer.Send(p2p.Envelope{
+	peer.Send(cs.state.ChainID, p2p.Envelope{
 		ChannelID: VoteChannel,
 		Message:   &cmtcons.Vote{Vote: prevote.ToProto()},
 	})
-	peer.Send(p2p.Envelope{
+	peer.Send(cs.state.ChainID, p2p.Envelope{
 		ChannelID: VoteChannel,
 		Message:   &cmtcons.Vote{Vote: precommit.ToProto()},
 	})
@@ -572,7 +572,7 @@ func (br *ByzantineReactor) AddPeer(peer p2p.Peer) {
 
 	// Create peerState for peer
 	peerState := NewPeerState(peer).SetLogger(br.reactor.Logger)
-	peer.Set(types.PeerStateKey, peerState)
+	peer.Set(br.reactor.PeerStateKey(), peerState)
 
 	// Send our state to peer.
 	// If we're syncing, broadcast a RoundStepMessage later upon SwitchToConsensus().

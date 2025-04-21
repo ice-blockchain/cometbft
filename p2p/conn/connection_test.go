@@ -19,6 +19,12 @@ import (
 
 const maxPingPongPacketSize = 1024 // bytes
 
+func CreateTestMConnection(tb testing.TB) *MConnection {
+	tb.Helper()
+	_, c := NetPipe()
+	return createTestMConnection(c)
+}
+
 func createTestMConnection(conn net.Conn) *MConnection {
 	onReceive := func(_ string, _ byte, _ []byte) {
 	}

@@ -35,7 +35,10 @@ func (mockNodeInfo) Validate() error                     { return nil }
 func (mockNodeInfo) CompatibleWith(NodeInfo) error       { return nil }
 
 func AddPeerToSwitchPeerSet(sw *Switch, peer Peer) {
-	sw.peers.Add(peer) //nolint:errcheck // ignore error
+	sw.peersMtx.RLock()
+	defer sw.peersMtx.RUnlock()
+
+	sw.peersByChain[""].Add(peer) //nolint:errcheck // ignore error
 }
 
 func CreateRandomPeer(outbound bool) Peer {
@@ -365,6 +368,9 @@ func (book *AddrBookMock) RemoveAddress(addr *NetAddress) {
 	delete(book.Addrs, addr.String())
 }
 func (*AddrBookMock) Save() {}
+func (book *AddrBookMock) Size() int {
+	return len(book.Addrs)
+}
 func (book *AddrBookMock) AddPrivateIDs(addrs []string) {
 	for _, addr := range addrs {
 		book.PrivateAddrs[addr] = struct{}{}

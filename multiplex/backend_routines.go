@@ -85,7 +85,13 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 		// Broadcast the ChainReplicationRequest.
 		// Note that this events switch uses `DiscoveryPort`.
 		eventsSwitch := b.CreateOrLoadDiscoveryEventSwitch()
-		eventsSwitch.Peers().ForEach(func(peer p2p.Peer) {
+		uniquePeerSet := eventsSwitch.UniquePeers()
+		requestsWg := sync.WaitGroup{}
+		requestsWg.Add(uniquePeerSet.Size())
+
+		uniquePeerSet.ForEach(func(peer p2p.Peer) {
+			defer requestsWg.Done()
+
 			// Send only to relays we are interested in.
 			peerID := string(peer.ID())
 			if !slices.Contains(knownPeers, peerID) {
@@ -112,6 +118,9 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 
 			replRequestPeers = append(replRequestPeers, peerID)
 		})
+
+		// Waits to have sent all ChainReplicationRequest.
+		requestsWg.Wait()
 
 		// Keep track of node IDs
 		b.replRequestsMtx.Lock()
@@ -292,12 +301,8 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 				"chain_id", chainID,
 				"tx_hash", txHash,
 				"num_relays", len(chainHealthyPeers),
-				"num_peers", eventsSwitch.Peers().Size(),
+				"num_peers", eventsSwitch.Peers(chainID).Size(),
 			)
-
-			// Waits to make sure we reached enough of the healthy relays.
-			sentWg := sync.WaitGroup{}
-			sentWg.Add(eventsSwitch.Peers().Size())
 
 			// Reset the sent requests cache for this txHash
 			b.reactor.poolRequestsMtx.Lock()
@@ -309,13 +314,23 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 			// Broadcast the transaction to all healthy relays.
 			poolRequestPeers := []string{}
 			relaysAccepted := 0
-			eventsSwitch.Peers().ForEach(func(peer p2p.Peer) {
+			chainPeerSet := eventsSwitch.Peers(chainID)
+
+			sentWg := sync.WaitGroup{}
+			sentWg.Add(chainPeerSet.Size())
+			chainPeerSet.ForEach(func(peer p2p.Peer) {
 				defer sentWg.Done()
 
 				// Send only to relays we are interested in (healthy relays).
 				// Skip unhealthy relays because they would produce an error.
 				peerID := string(peer.ID())
 				if !slices.Contains(chainHealthyPeers, peerID) {
+					// TODO(midas): remove debug logs
+					b.logger.Debug("Skipping broadcast to unhealthy relay",
+						"chain_id", chainID,
+						"tx_hash", txHash,
+						"peer", peerID,
+					)
 					return
 				}
 

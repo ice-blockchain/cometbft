@@ -84,6 +84,11 @@ func (*Reactor) GetChannels() []*p2p.ChannelDescriptor {
 	}
 }
 
+// PeerStateKey returns the peer state key with a ChainID scope.
+func (evR *Reactor) PeerStateKey() string {
+	return types.PeerStateKey + "_" + evR.ChainID
+}
+
 // AddPeer implements Reactor.
 func (evR *Reactor) AddPeer(peer p2p.Peer) {
 	go evR.broadcastEvidenceRoutine(peer)
@@ -191,7 +196,7 @@ func (evR Reactor) prepareEvidenceMessage(
 ) (evis []types.Evidence) {
 	// make sure the peer is up to date
 	evHeight := ev.Height()
-	peerState, ok := peer.Get(types.PeerStateKey).(PeerState)
+	peerState, ok := peer.Get(evR.PeerStateKey()).(PeerState)
 	if !ok {
 		// Peer does not have a state yet. We set it in the consensus reactor, but
 		// when we add peer in Switch, the order we call reactors#AddPeer is

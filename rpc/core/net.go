@@ -15,7 +15,7 @@ import (
 func (env *Environment) NetInfo(*rpctypes.Context) (*ctypes.ResultNetInfo, error) {
 	peers := make([]ctypes.Peer, 0)
 	var err error
-	env.P2PPeers.Peers().ForEach(func(peer p2p.Peer) {
+	env.P2PPeers.Peers(env.GenDoc.ChainID).ForEach(func(peer p2p.Peer) {
 		nodeInfo, ok := peer.NodeInfo().(p2p.DefaultNodeInfo)
 		if !ok {
 			err = fmt.Errorf("peer %v has the invalid node info type: %T ", peer.ID(), peer.NodeInfo())

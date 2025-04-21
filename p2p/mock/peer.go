@@ -42,9 +42,9 @@ func NewPeer(ip net.IP) *Peer {
 	return mp
 }
 
-func (mp *Peer) FlushStop()               { mp.Stop() } //nolint:errcheck //ignore error
-func (*Peer) TrySend(_ p2p.Envelope) bool { return true }
-func (*Peer) Send(_ p2p.Envelope) bool    { return true }
+func (mp *Peer) FlushStop()                         { mp.Stop() } //nolint:errcheck //ignore error
+func (*Peer) TrySend(_ string, _ p2p.Envelope) bool { return true }
+func (*Peer) Send(_ string, _ p2p.Envelope) bool    { return true }
 func (mp *Peer) NodeInfo() p2p.NodeInfo {
 	return p2p.DefaultNodeInfo{
 		DefaultNodeID: mp.addr.ID,
@@ -71,3 +71,4 @@ func (mp *Peer) RemoteAddr() net.Addr        { return &net.TCPAddr{IP: mp.ip, Po
 func (*Peer) CloseConn() error               { return nil }
 func (*Peer) SetRemovalFailed()              {}
 func (*Peer) GetRemovalFailed() bool         { return false }
+func (*Peer) MConn() *conn.MConnection       { return &conn.MConnection{} }

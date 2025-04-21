@@ -51,12 +51,14 @@ func TestReactorBroadcastEvidence(t *testing.T) {
 
 	// make reactors from statedb
 	reactors, pools := makeAndConnectReactorsAndPools(config, stateDBs)
+	state, err := stateDBs[0].Load()
+	require.NoError(t, err)
 
 	// set the peer height on each reactor
 	for _, r := range reactors {
-		for _, peer := range r.Switch.Peers().Copy() {
+		for _, peer := range r.Switch.Peers(state.ChainID).Copy() {
 			ps := peerState{height}
-			peer.Set(types.PeerStateKey, ps)
+			peer.Set(r.PeerStateKey(), ps)
 		}
 	}
 
@@ -82,19 +84,21 @@ func TestReactorSelectiveBroadcast(t *testing.T) {
 
 	// make reactors from statedb
 	reactors, pools := makeAndConnectReactorsAndPools(config, []sm.Store{stateDB1, stateDB2})
+	state, err := stateDB1.Load()
+	require.NoError(t, err)
 
 	// set the peer height on each reactor
 	for _, r := range reactors {
-		for _, peer := range r.Switch.Peers().Copy() {
+		for _, peer := range r.Switch.Peers(state.ChainID).Copy() {
 			ps := peerState{height1}
-			peer.Set(types.PeerStateKey, ps)
+			peer.Set(r.PeerStateKey(), ps)
 		}
 	}
 
 	// update the first reactor peer's height to be very small
-	peer := reactors[0].Switch.Peers().Copy()[0]
+	peer := reactors[0].Switch.Peers(state.ChainID).Copy()[0]
 	ps := peerState{height2}
-	peer.Set(types.PeerStateKey, ps)
+	peer.Set(reactors[0].PeerStateKey(), ps)
 
 	// send a bunch of valid evidence to the first reactor's evpool
 	evList := sendEvidence(t, pools[0], val, numEvidence)
@@ -103,7 +107,7 @@ func TestReactorSelectiveBroadcast(t *testing.T) {
 	waitForEvidence(t, evList[:numEvidence/2-1], []*evidence.Pool{pools[1]})
 
 	// peers should still be connected
-	peers := reactors[1].Switch.Peers().Copy()
+	peers := reactors[1].Switch.Peers(state.ChainID).Copy()
 	assert.Len(t, peers, 1)
 }
 
@@ -134,13 +138,13 @@ func TestReactorsGossipNoCommittedEvidence(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	peer := reactors[0].Switch.Peers().Copy()[0]
+	peer := reactors[0].Switch.Peers(state.ChainID).Copy()[0]
 	ps := peerState{height - 2}
-	peer.Set(types.PeerStateKey, ps)
+	peer.Set(reactors[0].PeerStateKey(), ps)
 
-	peer = reactors[1].Switch.Peers().Copy()[0]
+	peer = reactors[1].Switch.Peers(state.ChainID).Copy()[0]
 	ps = peerState{height}
-	peer.Set(types.PeerStateKey, ps)
+	peer.Set(reactors[1].PeerStateKey(), ps)
 
 	// wait to see that no evidence comes through
 	time.Sleep(300 * time.Millisecond)
@@ -176,9 +180,9 @@ func TestReactorsGossipNoCommittedEvidence(t *testing.T) {
 
 	// now update the state of the second reactor
 	pools[1].Update(state, types.EvidenceList{})
-	peer = reactors[0].Switch.Peers().Copy()[0]
+	peer = reactors[0].Switch.Peers(state.ChainID).Copy()[0]
 	ps = peerState{height}
-	peer.Set(types.PeerStateKey, ps)
+	peer.Set(reactors[0].PeerStateKey(), ps)
 
 	// wait to see that only two evidence is sent
 	time.Sleep(300 * time.Millisecond)

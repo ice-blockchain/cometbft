@@ -125,11 +125,11 @@ func TestSwitches(t *testing.T) {
 		}
 	})
 
-	if s1.Peers().Size() != 1 {
-		t.Errorf("expected exactly 1 peer in s1, got %v", s1.Peers().Size())
+	if s1.Peers("").Size() != 1 {
+		t.Errorf("expected exactly 1 peer in s1, got %v", s1.Peers("").Size())
 	}
-	if s2.Peers().Size() != 1 {
-		t.Errorf("expected exactly 1 peer in s2, got %v", s2.Peers().Size())
+	if s2.Peers("").Size() != 1 {
+		t.Errorf("expected exactly 1 peer in s2, got %v", s2.Peers("").Size())
 	}
 
 	// Lets send some messages
@@ -365,8 +365,8 @@ func TestSwitchPeerFilterDuplicate(t *testing.T) {
 func assertNoPeersAfterTimeout(t *testing.T, sw *Switch, timeout time.Duration) {
 	t.Helper()
 	time.Sleep(timeout)
-	if sw.Peers().Size() != 0 {
-		t.Fatalf("Expected %v to not connect to some peers, got %d", sw, sw.Peers().Size())
+	if sw.Peers("").Size() != 0 {
+		t.Fatalf("Expected %v to not connect to some peers, got %d", sw, sw.Peers("").Size())
 	}
 }
 
@@ -400,7 +400,7 @@ func TestSwitchStopsNonPersistentPeerOnError(t *testing.T) {
 	err = sw.addPeer(p)
 	require.NoError(err)
 
-	require.NotNil(sw.Peers().Get(rp.ID()))
+	require.NotNil(sw.Peers("").Get(rp.ID()))
 
 	// simulate failure by closing connection
 	err = p.(*peer).CloseConn()
@@ -442,11 +442,11 @@ func TestSwitchStopPeerForError(t *testing.T) {
 		return initSwitchFunc(i, sw)
 	})
 
-	assert.Len(t, sw1.Peers().Copy(), 1)
+	assert.Len(t, sw1.Peers("").Copy(), 1)
 	assert.EqualValues(t, 1, peersMetricValue())
 
 	// send messages to the peer from sw1
-	p := sw1.Peers().Copy()[0]
+	p := sw1.Peers("").Copy()[0]
 	p.Send(Envelope{
 		ChannelID: 0x1,
 		Message:   &p2pproto.Message{},
@@ -463,7 +463,7 @@ func TestSwitchStopPeerForError(t *testing.T) {
 	// now call StopPeerForError explicitly, eg. from a reactor
 	sw1.StopPeerForError(p, errors.New("some err"))
 
-	require.Empty(t, len(sw1.Peers().Copy()), 0)
+	require.Empty(t, len(sw1.Peers("").Copy()), 0)
 	assert.EqualValues(t, 0, peersMetricValue())
 }
 
@@ -487,15 +487,15 @@ func TestSwitchReconnectsToOutboundPersistentPeer(t *testing.T) {
 
 	err = sw.DialPeerWithAddress(rp.Addr())
 	require.NoError(t, err)
-	require.NotNil(t, sw.Peers().Get(rp.ID()))
+	require.NotNil(t, sw.Peers("").Get(rp.ID()))
 
-	p := sw.Peers().Copy()[0]
+	p := sw.Peers("").Copy()[0]
 	err = p.(*peer).CloseConn()
 	require.NoError(t, err)
 
 	waitUntilSwitchHasAtLeastNPeers(sw, 1)
-	assert.False(t, p.IsRunning())        // old peer instance
-	assert.Equal(t, 1, sw.Peers().Size()) // new peer instance
+	assert.False(t, p.IsRunning())          // old peer instance
+	assert.Equal(t, 1, sw.Peers("").Size()) // new peer instance
 
 	// 2. simulate first time dial failure
 	rp = &remotePeer{
@@ -514,7 +514,7 @@ func TestSwitchReconnectsToOutboundPersistentPeer(t *testing.T) {
 	require.Error(t, err)
 	// DialPeerWithAddres - sw.peerConfig resets the dialer
 	waitUntilSwitchHasAtLeastNPeers(sw, 2)
-	assert.Equal(t, 2, sw.Peers().Size())
+	assert.Equal(t, 2, sw.Peers("").Size())
 }
 
 func TestSwitchReconnectsToInboundPersistentPeer(t *testing.T) {
@@ -538,12 +538,12 @@ func TestSwitchReconnectsToInboundPersistentPeer(t *testing.T) {
 	conn, err := rp.Dial(sw.NetAddress())
 	require.NoError(t, err)
 	time.Sleep(50 * time.Millisecond)
-	require.NotNil(t, sw.Peers().Get(rp.ID()))
+	require.NotNil(t, sw.Peers("").Get(rp.ID()))
 
 	conn.Close()
 
 	waitUntilSwitchHasAtLeastNPeers(sw, 1)
-	assert.Equal(t, 1, sw.Peers().Size())
+	assert.Equal(t, 1, sw.Peers("").Size())
 }
 
 func TestSwitchDialPeersAsync(t *testing.T) {
@@ -567,13 +567,13 @@ func TestSwitchDialPeersAsync(t *testing.T) {
 	err = sw.DialPeersAsync([]string{rp.Addr().String()})
 	require.NoError(t, err)
 	time.Sleep(dialRandomizerIntervalMilliseconds * time.Millisecond)
-	require.NotNil(t, sw.Peers().Get(rp.ID()))
+	require.NotNil(t, sw.Peers("").Get(rp.ID()))
 }
 
 func waitUntilSwitchHasAtLeastNPeers(sw *Switch, n int) {
 	for i := 0; i < 20; i++ {
 		time.Sleep(250 * time.Millisecond)
-		has := sw.Peers().Size()
+		has := sw.Peers("").Size()
 		if has >= n {
 			break
 		}
@@ -593,8 +593,8 @@ func TestSwitchFullConnectivity(t *testing.T) {
 	}()
 
 	for i, sw := range switches {
-		if sw.Peers().Size() != 2 {
-			t.Fatalf("Expected each switch to be connected to 2 other, but %d switch only connected to %d", sw.Peers().Size(), i)
+		if sw.Peers("").Size() != 2 {
+			t.Fatalf("Expected each switch to be connected to 2 other, but %d switch only connected to %d", sw.Peers("").Size(), i)
 		}
 	}
 }
@@ -627,7 +627,7 @@ func TestSwitchAcceptRoutine(t *testing.T) {
 	})
 
 	// 0. check there are no peers
-	assert.Equal(t, 0, sw.Peers().Size())
+	assert.Equal(t, 0, sw.Peers("").Size())
 
 	// 1. check we connect up to MaxNumInboundPeers
 	peers := make([]*remotePeer, 0)
@@ -649,7 +649,7 @@ func TestSwitchAcceptRoutine(t *testing.T) {
 		}(c)
 	}
 	time.Sleep(100 * time.Millisecond)
-	assert.Equal(t, cfg.MaxNumInboundPeers, sw.Peers().Size())
+	assert.Equal(t, cfg.MaxNumInboundPeers, sw.Peers("").Size())
 
 	// 2. check we close new connections if we already have MaxNumInboundPeers peers
 	peer := &remotePeer{PrivKey: ed25519.GenPrivKey(), Config: cfg}
@@ -661,7 +661,7 @@ func TestSwitchAcceptRoutine(t *testing.T) {
 	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
 	_, err = conn.Read(one)
 	require.Error(t, err)
-	assert.Equal(t, cfg.MaxNumInboundPeers, sw.Peers().Size())
+	assert.Equal(t, cfg.MaxNumInboundPeers, sw.Peers("").Size())
 	peer.Stop()
 
 	// 3. check we connect to unconditional peers despite the limit.
@@ -680,7 +680,7 @@ func TestSwitchAcceptRoutine(t *testing.T) {
 		}(c)
 	}
 	time.Sleep(10 * time.Millisecond)
-	assert.Equal(t, cfg.MaxNumInboundPeers+unconditionalPeersNum, sw.Peers().Size())
+	assert.Equal(t, cfg.MaxNumInboundPeers+unconditionalPeersNum, sw.Peers("").Size())
 
 	for _, peer := range peers {
 		peer.Stop()
@@ -794,7 +794,7 @@ func TestSwitchInitPeerIsNotCalledBeforeRemovePeer(t *testing.T) {
 	// wait till the switch adds rp to the peer set, then stop the peer asynchronously
 	for {
 		time.Sleep(20 * time.Millisecond)
-		if peer := sw.Peers().Get(rp.ID()); peer != nil {
+		if peer := sw.Peers("").Get(rp.ID()); peer != nil {
 			go sw.StopPeerForError(peer, "test")
 			break
 		}
@@ -868,10 +868,10 @@ func TestSwitchRemovalErr(t *testing.T) {
 	sw1, sw2 := MakeSwitchPair(func(i int, sw *Switch) *Switch {
 		return initSwitchFunc(i, sw)
 	})
-	require.Len(t, sw1.Peers().Copy(), 1)
-	p := sw1.Peers().Copy()[0]
+	require.Len(t, sw1.Peers("").Copy(), 1)
+	p := sw1.Peers("").Copy()[0]
 
 	sw2.StopPeerForError(p, errors.New("peer should error"))
 
-	assert.Equal(t, sw2.peers.Add(p).Error(), ErrPeerRemoval{}.Error())
+	assert.Equal(t, sw2.Peers("").Add(p).Error(), ErrPeerRemoval{}.Error())
 }

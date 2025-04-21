@@ -182,7 +182,7 @@ func newReactor(
 	// As the tests only support one validator in the valSet, we pass a different address to bypass the `localNodeBlocksTheChain` check. Namely, the tested node is not an active validator.
 	bcReactor := NewByzantineReactor(incorrectBlock, NewReactor(state.Copy(), blockExec, blockStore, blockSync, []byte("anotherAddress"), NopMetrics(), 0))
 	bcReactor.SetLogger(logger.With("module", "blocksync"))
-
+	bcReactor.SetChainID(state.ChainID)
 	return ReactorPair{bcReactor, proxyApp}
 }
 
@@ -300,8 +300,10 @@ func TestBadBlockStopsPeer(t *testing.T) {
 		}
 	}
 
+	testChainID := reactorPairs[1].reactor.ChainID()
+
 	// at this time, reactors[0-3] is the newest
-	assert.Equal(t, 3, reactorPairs[1].reactor.Switch.Peers().Size())
+	assert.Equal(t, 3, reactorPairs[1].reactor.Switch.Peers(testChainID).Size())
 
 	// Mark reactorPairs[3] as an invalid peer. Fiddling with .store without a mutex is a data
 	// race, but can't be easily avoided.
@@ -321,14 +323,14 @@ func TestBadBlockStopsPeer(t *testing.T) {
 
 	for {
 		isCaughtUp, _, _ := lastReactorPair.reactor.pool.IsCaughtUp()
-		if isCaughtUp || lastReactorPair.reactor.Switch.Peers().Size() == 0 {
+		if isCaughtUp || lastReactorPair.reactor.Switch.Peers(testChainID).Size() == 0 {
 			break
 		}
 
 		time.Sleep(1 * time.Second)
 	}
 
-	assert.Less(t, lastReactorPair.reactor.Switch.Peers().Size(), len(reactorPairs)-1)
+	assert.Less(t, lastReactorPair.reactor.Switch.Peers(testChainID).Size(), len(reactorPairs)-1)
 }
 
 func TestCheckSwitchToConsensusLastHeightZero(t *testing.T) {
@@ -431,6 +433,8 @@ func ExtendedCommitNetworkHelper(t *testing.T, maxBlockHeight int64, enableVoteE
 	// Connect both switches
 	p2p.Connect2Switches(switches, 0, 1)
 
+	testChainID := reactorPairs[1].reactor.ChainID()
+
 	startTime := time.Now()
 	for {
 		time.Sleep(20 * time.Millisecond)
@@ -439,8 +443,8 @@ func ExtendedCommitNetworkHelper(t *testing.T, maxBlockHeight int64, enableVoteE
 		require.False(t, c, "node caught up when it should not have")
 		// After 5 seconds, the test should have executed.
 		if time.Since(startTime) > 5*time.Second {
-			assert.Equal(t, 0, reactorPairs[0].reactor.Switch.Peers().Size(), "node should have disconnected but didn't")
-			assert.Equal(t, 0, reactorPairs[1].reactor.Switch.Peers().Size(), "node should have disconnected but didn't")
+			assert.Equal(t, 0, reactorPairs[0].reactor.Switch.Peers(testChainID).Size(), "node should have disconnected but didn't")
+			assert.Equal(t, 0, reactorPairs[1].reactor.Switch.Peers(testChainID).Size(), "node should have disconnected but didn't")
 			break
 		}
 	}
@@ -487,7 +491,7 @@ func (bcR *ByzantineReactor) respondToPeer(msg *bcproto.BlockRequest, src p2p.Pe
 	block, _ := bcR.store.LoadBlock(msg.Height)
 	if block == nil {
 		bcR.Logger.Info("Peer asking for a block we don't have", "src", src, "height", msg.Height)
-		return src.TrySend(p2p.Envelope{
+		return src.TrySend(bcR.ChainID(), p2p.Envelope{
 			ChannelID: BlocksyncChannel,
 			Message:   &bcproto.NoBlockResponse{Height: msg.Height},
 		})
@@ -515,7 +519,7 @@ func (bcR *ByzantineReactor) respondToPeer(msg *bcproto.BlockRequest, src p2p.Pe
 		return false
 	}
 
-	return src.TrySend(p2p.Envelope{
+	return src.TrySend(bcR.ChainID(), p2p.Envelope{
 		ChannelID: BlocksyncChannel,
 		Message: &bcproto.BlockResponse{
 			Block:     bl,
@@ -563,7 +567,7 @@ func (bcR *ByzantineReactor) Receive(e p2p.Envelope) {
 		}
 	case *bcproto.StatusRequest:
 		// Send peer our state.
-		e.Src.TrySend(p2p.Envelope{
+		e.Src.TrySend(bcR.ChainID(), p2p.Envelope{
 			ChannelID: BlocksyncChannel,
 			Message: &bcproto.StatusResponse{
 				Height: bcR.store.Height(),

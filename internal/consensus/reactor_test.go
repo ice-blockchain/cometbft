@@ -432,9 +432,9 @@ func TestReactorRecordsVotesAndBlockParts(t *testing.T) {
 	})
 
 	// Get peer
-	peer := reactors[1].Switch.Peers().Copy()[0]
+	peer := reactors[1].Switch.Peers(css[0].state.ChainID).Copy()[0]
 	// Get peer state
-	ps := peer.Get(types.PeerStateKey).(*PeerState)
+	ps := peer.Get(reactors[1].PeerStateKey()).(*PeerState)
 
 	assert.Greater(t, ps.VotesSent(), 0, "number of votes sent should have increased")
 	assert.Greater(t, ps.BlockPartsSent(), 0, "number of votes sent should have increased")

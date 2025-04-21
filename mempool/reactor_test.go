@@ -54,8 +54,8 @@ func TestReactorBroadcastTxsMessage(t *testing.T) {
 		}
 	}()
 	for _, r := range reactors {
-		for _, peer := range r.Switch.Peers().Copy() {
-			peer.Set(types.PeerStateKey, peerState{1})
+		for _, peer := range r.Switch.Peers("test-chain").Copy() {
+			peer.Set(r.PeerStateKey(), peerState{1})
 		}
 	}
 
@@ -78,8 +78,8 @@ func TestReactorConcurrency(t *testing.T) {
 		}
 	}()
 	for _, r := range reactors {
-		for _, peer := range r.Switch.Peers().Copy() {
-			peer.Set(types.PeerStateKey, peerState{1})
+		for _, peer := range r.Switch.Peers("test-chain").Copy() {
+			peer.Set(r.PeerStateKey(), peerState{1})
 		}
 	}
 	var wg sync.WaitGroup
@@ -137,8 +137,8 @@ func TestReactorNoBroadcastToSender(t *testing.T) {
 		}
 	}()
 	for _, r := range reactors {
-		for _, peer := range r.Switch.Peers().Copy() {
-			peer.Set(types.PeerStateKey, peerState{1})
+		for _, peer := range r.Switch.Peers("test-chain").Copy() {
+			peer.Set(r.PeerStateKey(), peerState{1})
 		}
 	}
 
@@ -195,14 +195,14 @@ func TestMempoolReactorSendLaggingPeer(t *testing.T) {
 	// First reactor is at height 10 and knows that its peer is lagging at height 1.
 	reactors[0].mempool.height.Store(10)
 	peerID := reactors[1].Switch.NodeInfo().ID()
-	reactors[0].Switch.Peers().Get(peerID).Set(types.PeerStateKey, peerState{1})
+	reactors[0].Switch.Peers("test-chain").Get(peerID).Set(reactors[1].PeerStateKey(), peerState{1})
 
 	// Add a bunch of txs to the first reactor. The second reactor should not receive any tx.
 	txs1 := addRandomTxs(t, reactors[0].mempool, numTxs)
 	ensureNoTxs(t, reactors[1], 5*PeerCatchupSleepIntervalMS*time.Millisecond)
 
 	// Now we know that the second reactor has advanced to height 9, so it should receive all txs.
-	reactors[0].Switch.Peers().Get(peerID).Set(types.PeerStateKey, peerState{9})
+	reactors[0].Switch.Peers("test-chain").Get(peerID).Set(reactors[0].PeerStateKey(), peerState{9})
 	waitForReactors(t, txs1, reactors, checkTxsInOrder)
 
 	// Add a bunch of txs to first reactor. The second reactor should receive them all.
@@ -223,8 +223,8 @@ func TestMempoolReactorMaxTxBytes(t *testing.T) {
 		}
 	}()
 	for _, r := range reactors {
-		for _, peer := range r.Switch.Peers().Copy() {
-			peer.Set(types.PeerStateKey, peerState{1})
+		for _, peer := range r.Switch.Peers("test-chain").Copy() {
+			peer.Set(r.PeerStateKey(), peerState{1})
 		}
 	}
 
@@ -265,7 +265,7 @@ func TestBroadcastTxForPeerStopsWhenPeerStops(t *testing.T) {
 
 	// stop peer
 	sw := reactors[1].Switch
-	sw.StopPeerForError(sw.Peers().Copy()[0], errors.New("some reason"))
+	sw.StopPeerForError(sw.Peers("test-chain").Copy()[0], errors.New("some reason"))
 
 	// check that we are not leaking any go-routines
 	// i.e. broadcastTxRoutine finishes when peer is stopped
@@ -308,8 +308,8 @@ func TestMempoolFIFOWithParallelCheckTx(t *testing.T) {
 		}
 	}()
 	for _, r := range reactors {
-		for _, peer := range r.Switch.Peers().Copy() {
-			peer.Set(types.PeerStateKey, peerState{1})
+		for _, peer := range r.Switch.Peers("test-chain").Copy() {
+			peer.Set(r.PeerStateKey(), peerState{1})
 		}
 	}
 
@@ -439,8 +439,8 @@ func TestMempoolReactorMaxActiveOutboundConnectionsStar(t *testing.T) {
 		}
 	}()
 	for _, r := range reactors {
-		for _, peer := range r.Switch.Peers().Copy() {
-			peer.Set(types.PeerStateKey, peerState{1})
+		for _, peer := range r.Switch.Peers("test-chain").Copy() {
+			peer.Set(r.PeerStateKey(), peerState{1})
 		}
 	}
 	// Add a bunch transactions to the first reactor.
@@ -457,7 +457,7 @@ func TestMempoolReactorMaxActiveOutboundConnectionsStar(t *testing.T) {
 	}
 
 	// Disconnect the second reactor from the first reactor.
-	firstPeer := reactors[0].Switch.Peers().Copy()[0]
+	firstPeer := reactors[0].Switch.Peers("test-chain").Copy()[0]
 	reactors[0].Switch.StopPeerGracefully(firstPeer)
 
 	// Now the third reactor should start receiving transactions from the first reactor; the fourth
@@ -506,6 +506,7 @@ func makeReactors(config *cfg.Config, n int, logger *log.Logger) []*Reactor {
 
 		reactors[i] = NewReactor(config.Mempool, mempool, false) // so we dont start the consensus states
 		reactors[i].SetLogger((*logger).With("validator", i))
+		reactors[i].SetChainID("test-chain")
 	}
 	return reactors
 }

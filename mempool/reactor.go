@@ -113,6 +113,11 @@ func (memR *Reactor) SetLogger(l log.Logger) {
 	memR.mempool.SetLogger(l)
 }
 
+// SetChainID sets a custom chainID.
+func (memR *Reactor) SetChainID(chainID string) {
+	memR.ChainID = chainID
+}
+
 // OnStart implements p2p.BaseReactor.
 func (memR *Reactor) OnStart() error {
 	if memR.WaitSync() {
@@ -142,6 +147,11 @@ func (memR *Reactor) GetChannels() []*p2p.ChannelDescriptor {
 			MessageType:         &protomem.Message{},
 		},
 	}
+}
+
+// PeerStateKey returns the peer state key with a ChainID scope.
+func (memR *Reactor) PeerStateKey() string {
+	return types.PeerStateKey + "_" + memR.ChainID
 }
 
 // AddPeer implements Reactor.
@@ -378,7 +388,7 @@ func (memR *Reactor) broadcastTxRoutine(peer p2p.Peer) {
 			// every time due to us using a map. Sometimes other reactors will
 			// be initialized before the consensus reactor. We should wait a few
 			// milliseconds and retry.
-			peerState, ok := peer.Get(types.PeerStateKey).(PeerState)
+			peerState, ok := peer.Get(memR.PeerStateKey()).(PeerState)
 			if ok && peerState.GetHeight()+1 >= entry.Height() {
 				break
 			}
