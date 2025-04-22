@@ -305,9 +305,13 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 		relaysForErrCase = append(relaysForErrCase, "1.2.3.4:"+strconv.Itoa(1000+i))
 	}
 
+	secondTimeoutAfter := 10 * time.Second // Time for broadcast
+	secondBroadcastCtx, secondCancelCtxFn := context.WithTimeout(context.TODO(), secondTimeoutAfter)
+	defer secondCancelCtxFn()
+
 	// Separate goroutine for client broadcast process
 	go clientBroadcastTx(t,
-		broadcastCtx,
+		secondBroadcastCtx,
 		servers[0],
 		relaysForErrCase,
 		testChainID,
@@ -317,7 +321,7 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
-		broadcastCtx,
+		secondBroadcastCtx,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -341,9 +345,13 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 		relaysForErrCase = append(relaysForErrCase, "1.2.3.4:"+strconv.Itoa(1000+i))
 	}
 
+	thirdTimeoutAfter := 10 * time.Second // Time for broadcast
+	thirdBroadcastCtx, thirdCancelCtxFn := context.WithTimeout(context.TODO(), thirdTimeoutAfter)
+	defer thirdCancelCtxFn()
+
 	// Separate goroutine for client broadcast process
 	go clientBroadcastTx(t,
-		broadcastCtx,
+		thirdBroadcastCtx,
 		servers[0],
 		relaysForErrCase, // does not contain self!
 		testChainID,
@@ -353,7 +361,7 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
-		broadcastCtx,
+		thirdBroadcastCtx,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -377,9 +385,13 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 		relaysForTestCase = append(relaysForTestCase, "1.2.3.4:"+strconv.Itoa(1000+i))
 	}
 
+	fourthTimeoutAfter := 10 * time.Second // Time for broadcast
+	fourthBroadcastCtx, fourthCancelCtxFn := context.WithTimeout(context.TODO(), fourthTimeoutAfter)
+	defer fourthCancelCtxFn()
+
 	// Separate goroutine for client broadcast process
 	go clientBroadcastTx(t,
-		broadcastCtx,
+		fourthBroadcastCtx,
 		servers[0],
 		relaysForTestCase,
 		testChainID,
@@ -389,7 +401,7 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
-		broadcastCtx,
+		fourthBroadcastCtx,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -407,9 +419,13 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 		relaysForTestCase = append(relaysForTestCase, "1.2.3.4:"+strconv.Itoa(1000+i))
 	}
 
+	fifthTimeoutAfter := 10 * time.Second // Time for broadcast
+	fifthBroadcastCtx, fifthCancelCtxFn := context.WithTimeout(context.TODO(), fifthTimeoutAfter)
+	defer fifthCancelCtxFn()
+
 	// Separate goroutine for client broadcast process
 	go clientBroadcastTx(t,
-		broadcastCtx,
+		fifthBroadcastCtx,
 		servers[0],
 		relaysForTestCase,
 		testChainID,
@@ -419,7 +435,7 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
-		broadcastCtx,
+		fifthBroadcastCtx,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -438,9 +454,13 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 		relaysForErrCase = append(relaysForErrCase, "1.2.3.4:"+strconv.Itoa(1000+i))
 	}
 
+	sixthTimeoutAfter := 10 * time.Second // Time for broadcast
+	sixthBroadcastCtx, sixthCancelCtxFn := context.WithTimeout(context.TODO(), sixthTimeoutAfter)
+	defer sixthCancelCtxFn()
+
 	// Separate goroutine for client broadcast process
 	go clientBroadcastTx(t,
-		broadcastCtx,
+		sixthBroadcastCtx,
 		servers[0],
 		relaysForErrCase,
 		testChainID,
@@ -450,7 +470,7 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
-		broadcastCtx,
+		sixthBroadcastCtx,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -538,9 +558,13 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 		relaysForTestCase = append(relaysForTestCase, "1.2.3.4:"+strconv.Itoa(1000+i))
 	}
 
+	secondTimeoutAfter := 10 * time.Second // Time for broadcast
+	secondBroadcastCtx, secondCancelCtxFn := context.WithTimeout(context.TODO(), secondTimeoutAfter)
+	defer secondCancelCtxFn()
+
 	// Separate goroutine for client broadcast process
 	go clientBroadcastTx(t,
-		broadcastCtx,
+		secondBroadcastCtx,
 		servers[0],
 		relaysForTestCase,
 		testChainID,
@@ -550,7 +574,7 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
-		broadcastCtx,
+		secondBroadcastCtx,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -568,9 +592,13 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 		relaysForErrCase = append(relaysForErrCase, "1.2.3.4:"+strconv.Itoa(1000+i))
 	}
 
+	thirdTimeoutAfter := 10 * time.Second // Time for broadcast
+	thirdBroadcastCtx, thirdCancelCtxFn := context.WithTimeout(context.TODO(), thirdTimeoutAfter)
+	defer thirdCancelCtxFn()
+
 	// Separate goroutine for client broadcast process
 	go clientBroadcastTx(t,
-		broadcastCtx,
+		thirdBroadcastCtx,
 		servers[0],
 		relaysForErrCase,
 		testChainID,
@@ -580,7 +608,7 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
-		broadcastCtx,
+		thirdBroadcastCtx,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -604,9 +632,13 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 		relaysForErrCase = append(relaysForErrCase, "1.2.3.4:"+strconv.Itoa(1000+i))
 	}
 
+	fourthTimeoutAfter := 10 * time.Second // Time for broadcast
+	fourthBroadcastCtx, fourthCancelCtxFn := context.WithTimeout(context.TODO(), fourthTimeoutAfter)
+	defer fourthCancelCtxFn()
+
 	// Separate goroutine for client broadcast process
 	go clientBroadcastTx(t,
-		broadcastCtx,
+		fourthBroadcastCtx,
 		servers[0],
 		relaysForErrCase,
 		testChainID,
@@ -616,7 +648,7 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
-		broadcastCtx,
+		fourthBroadcastCtx,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -787,10 +819,14 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 	// numRelays=7;numHealthy=4;numErrors=3;withSelf=false
 	relays = relays[1:] // removes self
 
+	secondTimeoutAfter := 10 * time.Second // Time for broadcast
+	secondBroadcastCtx, secondCancelCtxFn := context.WithTimeout(context.TODO(), secondTimeoutAfter)
+	defer secondCancelCtxFn()
+
 	// Separate goroutine for client broadcast process
 	numTransactions = 2
 	go clientBroadcastTx(t,
-		broadcastCtx,
+		secondBroadcastCtx,
 		servers[0],
 		relays,
 		testChainID,
@@ -800,7 +836,7 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
-		broadcastCtx,
+		secondBroadcastCtx,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -909,10 +945,14 @@ func TestScenarioClientBroadcastEnoughEmptyRelays(t *testing.T) {
 	// numRelays=7;numHealthy=4;numErrors=3;withSelf=false
 	relays = relays[1:] // removes self
 
+	secondTimeoutAfter := 10 * time.Second // Time for broadcast
+	secondBroadcastCtx, secondCancelCtxFn := context.WithTimeout(context.TODO(), secondTimeoutAfter)
+	defer secondCancelCtxFn()
+
 	// Separate goroutine for client broadcast process
 	numTransactions = 2
 	go clientBroadcastTx(t,
-		broadcastCtx,
+		secondBroadcastCtx,
 		servers[0],
 		relays,
 		testChainID,
@@ -922,7 +962,7 @@ func TestScenarioClientBroadcastEnoughEmptyRelays(t *testing.T) {
 
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
-		broadcastCtx,
+		secondBroadcastCtx,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -1017,9 +1057,13 @@ func TestScenarioClientBroadcastNotEnoughHealthyRelays(t *testing.T) {
 		relaysForErrCase = append(relaysForErrCase, "1.2.3.4:"+strconv.Itoa(1000+i))
 	}
 
+	secondTimeoutAfter := 10 * time.Second // Time for broadcast
+	secondBroadcastCtx, secondCancelCtxFn := context.WithTimeout(context.TODO(), secondTimeoutAfter)
+	defer secondCancelCtxFn()
+
 	// Separate goroutine for client broadcast process
 	go clientBroadcastTx(t,
-		broadcastCtx,
+		secondBroadcastCtx,
 		servers[0],
 		relaysForErrCase,
 		testChainID,
@@ -1029,7 +1073,7 @@ func TestScenarioClientBroadcastNotEnoughHealthyRelays(t *testing.T) {
 
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
-		broadcastCtx,
+		secondBroadcastCtx,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -1511,10 +1555,14 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	// The relay has been fully restarted and we can use the created
 	// cancelable/expirable context to broadcast *more* transactions.
 
+	secondTimeoutAfter := 10 * time.Second // Time for broadcast
+	secondBroadcastCtx, secondCancelCtxFn := context.WithTimeout(context.TODO(), secondTimeoutAfter)
+	defer secondCancelCtxFn()
+
 	// Separate goroutine for client broadcast process
 	numTransactions = 2
 	go clientBroadcastTx(t,
-		broadcastCtx,
+		secondBroadcastCtx,
 		resetRelay,
 		relays,
 		testChainID,
@@ -1524,7 +1572,7 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
-		broadcastCtx,
+		secondBroadcastCtx,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -1535,11 +1583,15 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	//
 	// Also try to broadcast using a different ChainID.
 
+	thirdTimeoutAfter := 10 * time.Second // Time for broadcast
+	thirdBroadcastCtx, thirdCancelCtxFn := context.WithTimeout(context.TODO(), thirdTimeoutAfter)
+	defer thirdCancelCtxFn()
+
 	// Separate goroutine for client broadcast process
 	numTransactions = 2
 	testChainID = makeChainID("test-chain-2")
 	go clientBroadcastTx(t,
-		broadcastCtx,
+		thirdBroadcastCtx,
 		resetRelay,
 		relays,
 		testChainID,
@@ -1549,12 +1601,16 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
-		broadcastCtx,
+		thirdBroadcastCtx,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
 	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+}
+
+func TestScenarioClientBroadcastConcurrentNewChains(t *testing.T) {
+
 }
 
 // ----------------------------------------------------------------------------
