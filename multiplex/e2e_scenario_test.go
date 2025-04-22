@@ -701,220 +701,6 @@ func TestScenarioClientBroadcastEmptyRelaysProduceBlockWithTx(t *testing.T) {
 	assert.Len(t, actualBlock.Data.Txs, numTransactions)
 }
 
-// After a complete backend restart, due to a process failure or corruption,
-// the transaction broadcast process must normally resume operations and the
-// broadcast operation(s) must succeed without errors from the relays.
-func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
-	numChains := 0
-	numRelays := 7
-
-	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
-	defer shutdownFn()
-
-	require.NotEmpty(t, servers)
-	require.Len(t, servers, numRelays)
-
-	// Note: relays includes self
-	// Using 0 waitDuration because others have plenty of time due to restart.
-	relays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
-		servers,
-		0*time.Second,  // Time for backend
-		20*time.Second, // Time for broadcast
-	)
-
-	defer cancelCtxFn()
-
-	require.NotEmpty(t, relays)
-	require.NotNil(t, broadcastCtx)
-	require.Len(t, relays, numRelays)
-
-	reuseRootDir := servers[0].GetReactor().GetNodeConfig().RootDir
-
-	// Stop the receiving backend, then start it again.
-	err := servers[0].Close()
-	require.NoError(t, err, "should shutdown server")
-
-	waitDuration := 3 * time.Second
-	t.Logf("Waiting %.0fsec to restart backend...", waitDuration.Seconds())
-	time.Sleep(waitDuration)
-
-	// CAUTION:
-	// We mimic one of the relay shutting down completely, i.e. its process
-	// is not managed, corrupted or stopped. Setting nil on the "old" instance
-	// is only necessary during shutdown tests.
-
-	servers[0] = nil // Only for test
-	resetRelay, newShutdownFn := ResetTestSingleCompatibleRelay(t,
-		reuseRootDir,
-		servers[1],
-		0, // indexRelay (resetting relay-1)
-		cmtlog.NewNopLogger(),
-	)
-	defer newShutdownFn()
-
-	resetRelay.MustStart()
-
-	// Separate goroutine for client broadcast process
-	numTransactions := 2
-	testChainID := makeChainID("test chain")
-	notifyCh := make(chan client.BroadcastStatus)
-	go clientBroadcastTx(t,
-		broadcastCtx,
-		resetRelay,
-		relays,
-		testChainID,
-		numTransactions,
-		notifyCh,
-	)
-
-	// Blocks the main thread until we consume from notifyCh.
-	resultStatusMsg := waitForClientBroadcastStatus(t,
-		broadcastCtx,
-		notifyCh,
-	)
-	assert.NotNil(t, resultStatusMsg)
-	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
-	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
-}
-
-// After a complete backend restart, due to a process failure or corruption,
-// the transaction broadcast process must normally resume operations and the
-// broadcast operation(s) must succeed without errors from the relays. This
-// test executes a broadcast operation before shutting down the backend and
-// one after having restarted the backend to ensure that continuation works.
-// Finally, it also broadcasts one more transaction using a different ChainID.
-func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
-	numChains := 0
-	numRelays := 7
-
-	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
-	defer shutdownFn()
-
-	require.NotEmpty(t, servers)
-	require.Len(t, servers, numRelays)
-
-	// Note: relays includes self
-	// Using 2 seconds waitDuration because we shall broadcast BEFORE shutdown.
-	relays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
-		servers,
-		2*time.Second,  // Time for backend
-		20*time.Second, // Time for broadcast
-	)
-
-	defer cancelCtxFn()
-
-	require.NotEmpty(t, relays)
-	require.NotNil(t, broadcastCtx)
-	require.Len(t, relays, numRelays)
-
-	reuseRootDir := servers[0].GetReactor().GetNodeConfig().RootDir
-
-	// STEP 1:
-	// We execute a complete broadcast process.
-
-	// Separate goroutine for client broadcast process
-	numTransactions := 1
-	testChainID := makeChainID("test chain")
-	notifyCh := make(chan client.BroadcastStatus)
-	go clientBroadcastTx(t,
-		broadcastCtx,
-		servers[0],
-		relays,
-		testChainID,
-		numTransactions,
-		notifyCh,
-	)
-
-	// Blocks the main thread until we consume from notifyCh.
-	resultStatusMsg := waitForClientBroadcastStatus(t,
-		broadcastCtx,
-		notifyCh,
-	)
-	assert.NotNil(t, resultStatusMsg)
-	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
-	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
-
-	waitDuration := 5 * time.Second
-	t.Logf("Waiting %.0fsec to shutdown backend...", waitDuration.Seconds())
-	time.Sleep(waitDuration)
-
-	// STEP 2:
-	//
-	// CAUTION:
-	// We mimic one of the relay shutting down completely, i.e. its process
-	// is not managed, corrupted or stopped. Setting nil on the "old" instance
-	// is only necessary during shutdown tests.
-
-	// Stop the receiving backend, then start it again.
-	err := servers[0].Close()
-	require.NoError(t, err, "should shutdown server")
-
-	waitDuration = 3 * time.Second
-	t.Logf("Waiting %.0fsec to restart backend...", waitDuration.Seconds())
-	time.Sleep(waitDuration)
-
-	servers[0] = nil // Only for test
-	resetRelay, newShutdownFn := ResetTestSingleCompatibleRelay(t,
-		reuseRootDir,
-		servers[1],
-		0, // indexRelay (resetting relay-1)
-		cmtlog.NewNopLogger(),
-	)
-	defer newShutdownFn()
-
-	resetRelay.MustStart()
-
-	// STEP 3:
-	//
-	// The relay has been fully restarted and we can use the created
-	// cancelable/expirable context to broadcast *more* transactions.
-
-	// Separate goroutine for client broadcast process
-	numTransactions = 2
-	go clientBroadcastTx(t,
-		broadcastCtx,
-		resetRelay,
-		relays,
-		testChainID,
-		numTransactions,
-		notifyCh,
-	)
-
-	// Blocks the main thread until we consume from notifyCh.
-	resultStatusMsg = waitForClientBroadcastStatus(t,
-		broadcastCtx,
-		notifyCh,
-	)
-	assert.NotNil(t, resultStatusMsg)
-	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
-	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
-
-	// STEP 4:
-	//
-	// Also try to broadcast using a different ChainID.
-
-	// Separate goroutine for client broadcast process
-	numTransactions = 2
-	testChainID = makeChainID("test-chain-2")
-	go clientBroadcastTx(t,
-		broadcastCtx,
-		resetRelay,
-		relays,
-		testChainID,
-		numTransactions,
-		notifyCh,
-	)
-
-	// Blocks the main thread until we consume from notifyCh.
-	resultStatusMsg = waitForClientBroadcastStatus(t,
-		broadcastCtx,
-		notifyCh,
-	)
-	assert.NotNil(t, resultStatusMsg)
-	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
-	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
-}
-
 // With a list of healthy relays, i.e. just enough, the transactions will be added
 // locally and then shared with healthy relays using a message on mempool channel,
 // to which the relays respond with a AckTransactionBroadcast message before we
@@ -1159,7 +945,99 @@ func TestScenarioClientBroadcastEnoughEmptyRelays(t *testing.T) {
 }
 
 func TestScenarioClientBroadcastNotEnoughHealthyRelays(t *testing.T) {
+	numChains := 0
+	numHealthy := 2
 
+	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numHealthy)
+	defer shutdownFn()
+
+	require.NotEmpty(t, servers)
+	require.Len(t, servers, numHealthy)
+
+	// Note: relays contains only self for this test
+	healthyRelays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
+		servers,
+		2*time.Second,  // Time for backend
+		20*time.Second, // Time for broadcast
+	)
+
+	defer cancelCtxFn()
+
+	require.NotEmpty(t, healthyRelays)
+	require.NotNil(t, broadcastCtx)
+
+	// NOTE: this removes the Relay ID from relays addresses.
+	healthyRelaysWithoutIds := useRelaysWithoutIds(t, healthyRelays)
+
+	// TEST 1 - Success
+	//
+	// Add 1 unavailable relay to the list WITH self, and removed relay IDs,
+	// and should broadcast successfully.
+	// Makes sure successful response is possible given less required relays.
+	// numRelays=3;numHealthy=2;numErrors=1;withSelf=true
+	relaysForTestCase := healthyRelaysWithoutIds[:]
+	numHealthy = len(relaysForTestCase)
+	numRelaysForTestCase := 3
+	for i := numHealthy; i < numRelaysForTestCase; i++ {
+		relaysForTestCase = append(relaysForTestCase, "1.2.3.4:"+strconv.Itoa(1000+i))
+	}
+
+	// Separate goroutine for client broadcast process
+	numTransactions := 1
+	testChainID := makeChainID("test chain")
+	notifyCh := make(chan client.BroadcastStatus)
+	go clientBroadcastTx(t,
+		broadcastCtx,
+		servers[0],
+		relaysForTestCase,
+		testChainID,
+		numTransactions,
+		notifyCh,
+	)
+
+	// Blocks the main thread until we consume from notifyCh.
+	resultStatusMsg := waitForClientBroadcastStatus(t,
+		broadcastCtx,
+		notifyCh,
+	)
+	assert.NotNil(t, resultStatusMsg)
+	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
+	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+
+	// TEST 2 - Errors
+	//
+	// Add 5 unavailable relays to the list WITH self, and removed relay IDs.
+	// numRelays=7;numHealthy=2;numErrors=5;withSelf=true
+	relaysForErrCase := healthyRelaysWithoutIds[:]
+	numHealthy = len(relaysForErrCase)
+	numRelaysForErrCase := 7
+	for i := numHealthy; i < numRelaysForErrCase; i++ {
+		relaysForErrCase = append(relaysForErrCase, "1.2.3.4:"+strconv.Itoa(1000+i))
+	}
+
+	// Separate goroutine for client broadcast process
+	go clientBroadcastTx(t,
+		broadcastCtx,
+		servers[0],
+		relaysForErrCase,
+		testChainID,
+		numTransactions,
+		notifyCh,
+	)
+
+	// Blocks the main thread until we consume from notifyCh.
+	resultStatusMsg = waitForClientBroadcastStatus(t,
+		broadcastCtx,
+		notifyCh,
+	)
+	assert.NotNil(t, resultStatusMsg)
+	assert.NotNil(t, resultStatusMsg.Error)
+	assert.Error(t, resultStatusMsg.Error)
+	assert.Contains(t, resultStatusMsg.Error.Error(), "not enough healthy relays")
+
+	numExpected := (numRelaysForErrCase / 2) + 1
+	expectedMessage := fmt.Sprintf("expected %d, got %d", numExpected, numHealthy)
+	assert.Contains(t, resultStatusMsg.Error.Error(), expectedMessage)
 }
 
 func TestScenarioClientBroadcastNotEnoughEmptyRelays(t *testing.T) {
@@ -1168,6 +1046,220 @@ func TestScenarioClientBroadcastNotEnoughEmptyRelays(t *testing.T) {
 
 func TestScenarioClientBroadcastRandomRelaysFailure(t *testing.T) {
 
+}
+
+// After a complete backend restart, due to a process failure or corruption,
+// the transaction broadcast process must normally resume operations and the
+// broadcast operation(s) must succeed without errors from the relays.
+func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
+	numChains := 0
+	numRelays := 7
+
+	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
+	defer shutdownFn()
+
+	require.NotEmpty(t, servers)
+	require.Len(t, servers, numRelays)
+
+	// Note: relays includes self
+	// Using 0 waitDuration because others have plenty of time due to restart.
+	relays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
+		servers,
+		0*time.Second,  // Time for backend
+		20*time.Second, // Time for broadcast
+	)
+
+	defer cancelCtxFn()
+
+	require.NotEmpty(t, relays)
+	require.NotNil(t, broadcastCtx)
+	require.Len(t, relays, numRelays)
+
+	reuseRootDir := servers[0].GetReactor().GetNodeConfig().RootDir
+
+	// Stop the receiving backend, then start it again.
+	err := servers[0].Close()
+	require.NoError(t, err, "should shutdown server")
+
+	waitDuration := 3 * time.Second
+	t.Logf("Waiting %.0fsec to restart backend...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
+
+	// CAUTION:
+	// We mimic one of the relay shutting down completely, i.e. its process
+	// is not managed, corrupted or stopped. Setting nil on the "old" instance
+	// is only necessary during shutdown tests.
+
+	servers[0] = nil // Only for test
+	resetRelay, newShutdownFn := ResetTestSingleCompatibleRelay(t,
+		reuseRootDir,
+		servers[1],
+		0, // indexRelay (resetting relay-1)
+		cmtlog.NewNopLogger(),
+	)
+	defer newShutdownFn()
+
+	resetRelay.MustStart()
+
+	// Separate goroutine for client broadcast process
+	numTransactions := 2
+	testChainID := makeChainID("test chain")
+	notifyCh := make(chan client.BroadcastStatus)
+	go clientBroadcastTx(t,
+		broadcastCtx,
+		resetRelay,
+		relays,
+		testChainID,
+		numTransactions,
+		notifyCh,
+	)
+
+	// Blocks the main thread until we consume from notifyCh.
+	resultStatusMsg := waitForClientBroadcastStatus(t,
+		broadcastCtx,
+		notifyCh,
+	)
+	assert.NotNil(t, resultStatusMsg)
+	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
+	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+}
+
+// After a complete backend restart, due to a process failure or corruption,
+// the transaction broadcast process must normally resume operations and the
+// broadcast operation(s) must succeed without errors from the relays. This
+// test executes a broadcast operation before shutting down the backend and
+// one after having restarted the backend to ensure that continuation works.
+// Finally, it also broadcasts one more transaction using a different ChainID.
+func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
+	numChains := 0
+	numRelays := 7
+
+	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
+	defer shutdownFn()
+
+	require.NotEmpty(t, servers)
+	require.Len(t, servers, numRelays)
+
+	// Note: relays includes self
+	// Using 2 seconds waitDuration because we shall broadcast BEFORE shutdown.
+	relays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
+		servers,
+		2*time.Second,  // Time for backend
+		20*time.Second, // Time for broadcast
+	)
+
+	defer cancelCtxFn()
+
+	require.NotEmpty(t, relays)
+	require.NotNil(t, broadcastCtx)
+	require.Len(t, relays, numRelays)
+
+	reuseRootDir := servers[0].GetReactor().GetNodeConfig().RootDir
+
+	// STEP 1:
+	// We execute a complete broadcast process.
+
+	// Separate goroutine for client broadcast process
+	numTransactions := 1
+	testChainID := makeChainID("test chain")
+	notifyCh := make(chan client.BroadcastStatus)
+	go clientBroadcastTx(t,
+		broadcastCtx,
+		servers[0],
+		relays,
+		testChainID,
+		numTransactions,
+		notifyCh,
+	)
+
+	// Blocks the main thread until we consume from notifyCh.
+	resultStatusMsg := waitForClientBroadcastStatus(t,
+		broadcastCtx,
+		notifyCh,
+	)
+	assert.NotNil(t, resultStatusMsg)
+	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
+	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+
+	waitDuration := 5 * time.Second
+	t.Logf("Waiting %.0fsec to shutdown backend...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
+
+	// STEP 2:
+	//
+	// CAUTION:
+	// We mimic one of the relay shutting down completely, i.e. its process
+	// is not managed, corrupted or stopped. Setting nil on the "old" instance
+	// is only necessary during shutdown tests.
+
+	// Stop the receiving backend, then start it again.
+	err := servers[0].Close()
+	require.NoError(t, err, "should shutdown server")
+
+	waitDuration = 3 * time.Second
+	t.Logf("Waiting %.0fsec to restart backend...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
+
+	servers[0] = nil // Only for test
+	resetRelay, newShutdownFn := ResetTestSingleCompatibleRelay(t,
+		reuseRootDir,
+		servers[1],
+		0, // indexRelay (resetting relay-1)
+		cmtlog.NewNopLogger(),
+	)
+	defer newShutdownFn()
+
+	resetRelay.MustStart()
+
+	// STEP 3:
+	//
+	// The relay has been fully restarted and we can use the created
+	// cancelable/expirable context to broadcast *more* transactions.
+
+	// Separate goroutine for client broadcast process
+	numTransactions = 2
+	go clientBroadcastTx(t,
+		broadcastCtx,
+		resetRelay,
+		relays,
+		testChainID,
+		numTransactions,
+		notifyCh,
+	)
+
+	// Blocks the main thread until we consume from notifyCh.
+	resultStatusMsg = waitForClientBroadcastStatus(t,
+		broadcastCtx,
+		notifyCh,
+	)
+	assert.NotNil(t, resultStatusMsg)
+	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
+	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+
+	// STEP 4:
+	//
+	// Also try to broadcast using a different ChainID.
+
+	// Separate goroutine for client broadcast process
+	numTransactions = 2
+	testChainID = makeChainID("test-chain-2")
+	go clientBroadcastTx(t,
+		broadcastCtx,
+		resetRelay,
+		relays,
+		testChainID,
+		numTransactions,
+		notifyCh,
+	)
+
+	// Blocks the main thread until we consume from notifyCh.
+	resultStatusMsg = waitForClientBroadcastStatus(t,
+		broadcastCtx,
+		notifyCh,
+	)
+	assert.NotNil(t, resultStatusMsg)
+	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
+	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
 }
 
 // ----------------------------------------------------------------------------

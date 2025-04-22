@@ -1670,11 +1670,17 @@ func (b *MultiplexBackend) localAckTransactionConsumer(
 				"is_tx", isRelevantTxHash,
 			)
 
+			b.ackResponsesMtx.RLock()
+			ackResponsesRcvdForTx, hasAckResponsesForTx := b.ackResponsesRcvd[txHash]
+			b.ackResponsesMtx.RUnlock()
+
 			b.ackResponsesMtx.Lock()
-			if _, ok := b.ackResponsesRcvd[txHash]; !ok {
+			if !hasAckResponsesForTx {
 				b.ackResponsesRcvd[txHash] = make([]string, 0, numExpected)
+				b.ackResponsesRcvd[txHash] = append(b.ackResponsesRcvd[txHash], relayId)
+			} else if !slices.Contains(ackResponsesRcvdForTx, relayId) {
+				b.ackResponsesRcvd[txHash] = append(b.ackResponsesRcvd[txHash], relayId)
 			}
-			b.ackResponsesRcvd[txHash] = append(b.ackResponsesRcvd[txHash], relayId)
 			b.ackResponsesMtx.Unlock()
 
 			if _, ok := relaysPerTx[txHash]; !ok {
