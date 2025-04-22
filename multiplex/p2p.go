@@ -229,12 +229,13 @@ func (reactor *Reactor) AddConnectionChannels(
 	sw *p2p.Switch,
 	chainIds []string,
 	channels []byte,
+	initChainPeerSet bool,
 ) error {
 	reactor.networkMutex.RLock()
 	defer reactor.networkMutex.RUnlock()
 
-	for _, chainID := range chainIds {
-		sw.Peers(chainID).ForEach(func(peer p2p.Peer) {
+	sw.UniquePeers().ForEach(func(peer p2p.Peer) {
+		for _, chainID := range chainIds {
 			mconn := peer.MConn()
 
 			for name, r := range sw.Reactors(chainID) {
@@ -254,8 +255,37 @@ func (reactor *Reactor) AddConnectionChannels(
 					mconn.AddChannel(chainID, *chDesc)
 				}
 			}
-		})
+		}
+	})
+
+	if !initChainPeerSet {
+		return nil
 	}
 
-	return nil
+	// Also, make sure that peers are available in per-chain-PeerSet instances
+	// as these are used internally in CometBFT reactors (e.g. mempool).
+	err := func() (err error) {
+		sw.UniquePeers().ForEach(func(peer p2p.Peer) {
+			for _, chainID := range chainIds {
+				// In case we have not yet added this peer to the cometbft peerset,
+				// we must add it here so that reactors use correct peer objects.
+				chainPeerSet := sw.Peers(chainID)
+				if !chainPeerSet.Has(peer.ID()) {
+					if err = chainPeerSet.Add(peer); err != nil {
+						if _, ok := err.(p2p.ErrPeerRemoval); ok {
+							sw.Logger.Error("Error starting peer ",
+								" err ", "Peer has already errored and removal was attempted.",
+								"peer", peer.ID())
+						}
+						return // err
+					}
+				}
+			}
+		})
+
+		return err
+	}()
+
+	// Contains last error or nil
+	return err
 }

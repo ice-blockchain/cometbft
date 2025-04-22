@@ -461,7 +461,7 @@ func (sw *Switch) MaxNumOutboundPeers() int {
 
 // Peers returns the set of peers that are connected to the switch.
 // Requires a chainID to filter the returned peers instances.
-func (sw *Switch) Peers(chainID string) IPeerSet {
+func (sw *Switch) Peers(chainID string) *PeerSet {
 	sw.peersMtx.RLock()
 	if peerSet, ok := sw.peersByChain[chainID]; ok {
 		defer sw.peersMtx.RUnlock()
@@ -478,7 +478,7 @@ func (sw *Switch) Peers(chainID string) IPeerSet {
 }
 
 // UniquePeers returns the set of unique peer that are connected to the switch.
-func (sw *Switch) UniquePeers() IPeerSet {
+func (sw *Switch) UniquePeers() *PeerSet {
 	sw.peersMtx.RLock()
 	defer sw.peersMtx.RUnlock()
 	return sw.uniquePeers

@@ -782,6 +782,7 @@ func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
 // broadcast operation(s) must succeed without errors from the relays. This
 // test executes a broadcast operation before shutting down the backend and
 // one after having restarted the backend to ensure that continuation works.
+// Finally, it also broadcasts one more transaction using a different ChainID.
 func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	numChains := 0
 	numRelays := 7
@@ -870,6 +871,31 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 
 	// Separate goroutine for client broadcast process
 	numTransactions = 2
+	go clientBroadcastTx(t,
+		broadcastCtx,
+		resetRelay,
+		relays,
+		testChainID,
+		numTransactions,
+		notifyCh,
+	)
+
+	// Blocks the main thread until we consume from notifyCh.
+	resultStatusMsg = waitForClientBroadcastStatus(t,
+		broadcastCtx,
+		notifyCh,
+	)
+	assert.NotNil(t, resultStatusMsg)
+	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
+	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+
+	// STEP 4:
+	//
+	// Also try to broadcast using a different ChainID.
+
+	// Separate goroutine for client broadcast process
+	numTransactions = 2
+	testChainID = makeChainID("test-chain-2")
 	go clientBroadcastTx(t,
 		broadcastCtx,
 		resetRelay,

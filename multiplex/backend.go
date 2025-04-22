@@ -377,6 +377,7 @@ func (b *MultiplexBackend) UpdateAvailableNetworks(networks []string) []string {
 		discoverySwitch,
 		multiNodeInfo.Networks,
 		[]byte{server.ReplicationChannel},
+		false,
 	)
 
 	// We must also upgrade the mconn channels for P2P cometbft peers
@@ -385,6 +386,7 @@ func (b *MultiplexBackend) UpdateAvailableNetworks(networks []string) []string {
 		cometbftSwitch,
 		multiNodeInfo.Networks,
 		[]byte{}, // all channels
+		true,
 	)
 
 	return multiNodeInfo.Networks

@@ -809,7 +809,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			// Opens any missing CometBFT channels for injected network consensus.
 			chs := []byte{} // all channels
 			ids := r.GetNetworks()
-			if err := r.AddConnectionChannels(r.cometbftSwitch, ids, chs); err != nil {
+			if err := r.AddConnectionChannels(r.cometbftSwitch, ids, chs, true); err != nil {
 				r.logger.Error(
 					"ChainReplicationRequest: Error opening MConnection channels",
 					"chain_id", replRequest.ChainID,
