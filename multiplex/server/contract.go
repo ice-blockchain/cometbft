@@ -83,9 +83,10 @@ type Backend interface {
 	// Use this method to wait for a transaction batch to be accepted *remotely*.
 	WaitForRelaysAckTransactionBatch(
 		ctx context.Context,
-		numRelays int,
-		numTransactions int,
-	) (relaysPerTx map[string][]string, numReceived int, err error)
+		chainRelays map[string][]*RelayAddress,
+		catchupRelays map[string][]*RelayAddress,
+		transactions []client.Transaction,
+	) (relaysPerTx map[string][]string, numExpected int, numReceived int, err error)
 
 	// CancelBroadcastOperation should execute the CancelBroadcast routine
 	// and it should remove transactions from the local mempool.

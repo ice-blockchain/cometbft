@@ -23,6 +23,11 @@ type Transaction struct {
 	Fingerprint string
 }
 
+// Hash returns the raw transaction hash as a byte slice.
+func (tx Transaction) Hash() []byte {
+	return TransactionToRawTx(tx).Hash()
+}
+
 // BroadcastStatus defines a wrapper for transaction broadcast status
 // which may contain an error and metadata about the current step.
 type BroadcastStatus struct {

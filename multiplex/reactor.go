@@ -913,14 +913,6 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 				txHashes = append(txHashes, fmt.Sprintf("%X", bzHash))
 			}
 
-			r.logger.Debug("[AckTransactionBroadcast] Relay received a transaction",
-				"num_txs", len(txHashes),
-				"relay_id", ackTxBroadcast.NodeId,
-				"txes", txHashes,
-				"node", r.nodeKey.ID(),
-				"from", sourceAddr,
-			)
-
 			relayId := ackTxBroadcast.NodeId
 
 			// AckTransactionBroadcast is sent from mempool which always
@@ -940,7 +932,23 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			r.poolRequestsMtx.Unlock()
 
 			if shouldProcessAckTx {
+				r.logger.Debug("[AckTransactionBroadcast] Relay received a transaction",
+					"num_txs", len(txHashes),
+					"relay_id", ackTxBroadcast.NodeId,
+					"txes", txHashes,
+					"node", r.nodeKey.ID(),
+					"from", sourceAddr,
+				)
+
 				r.ackTxAcceptCh <- ackTxBroadcast
+			} else {
+				r.logger.Debug("Skipping already processed AckTransactionBroadcast",
+					"num_txs", len(txHashes),
+					"relay_id", ackTxBroadcast.NodeId,
+					"txes", txHashes,
+					"node", r.nodeKey.ID(),
+					"from", sourceAddr,
+				)
 			}
 			// Done.
 			return
@@ -1003,7 +1011,7 @@ func (r *Reactor) DialBackReplicationPartner(
 
 	r.networkMutex.RLock()
 	defer r.networkMutex.RUnlock()
-	if err := r.cometbftSwitch.DialPeerWithAddress(peerAddr); err != nil {
+	if err := r.cometbftSwitch.DialPeerWithAddressAndChainID(peerAddr, chainID); err != nil {
 		if !r.IsDialError(err) {
 			// Manually add peers when the switch was already running.
 			dialedPeer := r.cometbftSwitch.Peers(chainID).Get(peerAddr.ID)

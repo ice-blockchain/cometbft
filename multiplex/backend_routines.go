@@ -224,10 +224,13 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 	) {
 		broadcastTxHashes := make([][]byte, len(transactions))
 
+		// Note that this events switch uses `DiscoveryPort+1`.
+		cometbftSwitch := b.reactor.GetEventSwitchForCometBFT()
+
 		// (1)
 		// First dial the CometBFT P2P addresses to make sure
 		// communication with this relay is possible using mempool.
-		minRelaysByChain := make(map[string]int, len(relaysByChain))
+		numRemotesByChain := make(map[string]int, len(relaysByChain))
 		for chainID, relays := range relaysByChain {
 			relaysWithoutSelf := []*server.RelayAddress{}
 			for _, relayAddr := range relays {
@@ -236,12 +239,32 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 				}
 			}
 
-			minRelaysByChain[chainID] = len(relaysWithoutSelf)
+			numRemotesByChain[chainID] = len(relaysWithoutSelf)
 
-			// Excludes "self" and replication partners (already dialed).
+			replRequestPeerIds := make([]string, 0, len(relaysWithoutSelf))
+			if partnerRelays, ok := replReqRelays[chainID]; ok {
+				copy(replRequestPeerIds, func() []string {
+					partnerIds := []string{}
+					for _, relayAddr := range partnerRelays {
+						partnerIds = append(partnerIds, string(relayAddr.ID()))
+					}
+					return partnerIds
+				}())
+			}
+
+			// Excludes replication partners (already dialed).
 			relaysToDial := slices.DeleteFunc(relaysWithoutSelf, func(address *server.RelayAddress) bool {
-				return slices.Contains(replReqRelays[chainID], address)
+				return slices.Contains(replRequestPeerIds, string(address.ID()))
 			})
+
+			// TODO(midas): remove debug logs
+			b.logger.Debug("Dialing relevant relays before broadcast",
+				"chain_id", chainID,
+				"num_relays", len(relays),
+				"num_repl", len(replRequestPeerIds),
+				"num_dial", len(relaysToDial),
+			)
+
 			for _, relayAddr := range relaysToDial {
 				peerAddr, err := relayAddr.NetAddressForCometBFT()
 				if err != nil {
@@ -251,8 +274,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 				}
 
 				// Note that this events switch uses `DiscoveryPort+1`.
-				sw := b.reactor.GetEventSwitchForCometBFT()
-				if err := sw.DialPeerWithAddress(peerAddr); err != nil {
+				if err := cometbftSwitch.DialPeerWithAddressAndChainID(peerAddr, chainID); err != nil {
 					if b.reactor.IsDialError(err) {
 						client.Error(notifyCh, fmt.Errorf(
 							"could not dial relay %s: %w", relayAddr.AddressForCometBFT(), err))
@@ -263,8 +285,6 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 
 		// (2)
 		// Iterate through transaction and broadcast each of them to other relays
-		// Note that this events switch uses `DiscoveryPort+1`.
-		eventsSwitch := b.reactor.GetEventSwitchForCometBFT()
 		for i, transaction := range transactions {
 			chainID := client.GetChainID(userAddress, transaction.Fingerprint)
 
@@ -290,18 +310,22 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 			}
 
 			// Force the execution of mempool broadcast to *all* healthy relays.
-			minHealthyRelays := minRelaysByChain[chainID]
+			minHealthyRelays := numRemotesByChain[chainID]
 			chainHealthyPeers := []string{}
 			for _, relayAddr := range relaysByChain[chainID] {
-				chainHealthyPeers = append(chainHealthyPeers, string(relayAddr.ID()))
+				if relayAddr.ID() != b.GetRelayID() {
+					chainHealthyPeers = append(chainHealthyPeers, string(relayAddr.ID()))
+				}
 			}
+
+			chainPeerSet := cometbftSwitch.Peers(chainID)
 
 			// TODO(midas): remove debug logs
 			b.logger.Debug("Keeping only healthy relays for broadcast",
 				"chain_id", chainID,
 				"tx_hash", txHash,
 				"num_relays", len(chainHealthyPeers),
-				"num_peers", eventsSwitch.Peers(chainID).Size(),
+				"num_peers", chainPeerSet.Size(),
 			)
 
 			// Reset the sent requests cache for this txHash
@@ -314,10 +338,10 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 			// Broadcast the transaction to all healthy relays.
 			poolRequestPeers := []string{}
 			relaysAccepted := 0
-			chainPeerSet := eventsSwitch.Peers(chainID)
 
 			sentWg := sync.WaitGroup{}
 			sentWg.Add(chainPeerSet.Size())
+
 			chainPeerSet.ForEach(func(peer p2p.Peer) {
 				defer sentWg.Done()
 
@@ -365,7 +389,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 				relaysAccepted++
 			})
 
-			// Waits to process all healthy relays' acknowledgments.
+			// Waits until we have sent to all required peers
 			sentWg.Wait()
 
 			b.reactor.poolRequestsMtx.Lock()

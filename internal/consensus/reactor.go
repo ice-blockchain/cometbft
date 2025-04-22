@@ -278,9 +278,14 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 	conR.Logger.Debug("Receive", "src", e.Src, "chId", e.ChannelID, "msg", msg)
 
 	// Get peer states
+	// NOTE(midas): In case the peer has no state, we try to send it some
+	// data through initialization and then read the state once more.
 	ps, ok := e.Src.Get(conR.PeerStateKey()).(*PeerState)
 	if !ok {
-		panic(fmt.Sprintf("Peer %v has no state", e.Src))
+		e.Src = conR.InitPeer(e.Src)
+		if ps, ok = e.Src.Get(conR.PeerStateKey()).(*PeerState); !ok {
+			panic(fmt.Sprintf("Peer %v has no state", e.Src))
+		}
 	}
 
 	switch e.ChannelID {

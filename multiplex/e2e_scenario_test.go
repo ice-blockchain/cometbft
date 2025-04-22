@@ -876,7 +876,7 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 		relays,
 		testChainID,
 		numTransactions,
-		notifyCh, // XXX re-use?
+		notifyCh,
 	)
 
 	// Blocks the main thread until we consume from notifyCh.

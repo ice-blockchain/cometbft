@@ -301,6 +301,22 @@ OUTER_LOOP:
 	return nil
 }
 
+// GetCommonChains returns the ChainIDs that we have in common with otherInfo.
+func (info MultiNetworkNodeInfo) GetCommonChains(otherInfo p2p.NodeInfo) ([]string, error) {
+	other, ok := otherInfo.(MultiNetworkNodeInfo)
+	if !ok {
+		return nil, fmt.Errorf(
+			"wrong NodeInfo type. Expected MultiNetworkNodeInfo, got %v", reflect.TypeOf(otherInfo))
+	}
+
+	commonChains := make([]string, 0, len(info.Networks))
+	commonChains = append(commonChains, info.Networks...)
+	commonChains = slices.DeleteFunc(commonChains, func(network string) bool {
+		return !slices.Contains(other.Networks, network)
+	})
+	return commonChains, nil
+}
+
 // NetAddress returns a NetAddress derived from the MultiNetworkNodeInfo -
 // it includes the authenticated peer ID and the self-reported
 // ListenAddr. Note that the ListenAddr is not authenticated and

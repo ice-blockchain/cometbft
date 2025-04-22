@@ -49,6 +49,7 @@ type nodeInfoAddress interface {
 type nodeInfoTransport interface {
 	Validate() error
 	CompatibleWith(other NodeInfo) error
+	GetCommonChains(other NodeInfo) ([]string, error)
 }
 
 // -------------------------------------------------------------
@@ -223,6 +224,19 @@ OUTER_LOOP:
 		return fmt.Errorf("peer has no common channels. Our channels: %v ; Peer channels: %v", info.Channels, other.Channels)
 	}
 	return nil
+}
+
+// GetCommonChains returns the ChainID that we have in common with otherInfo.
+func (info DefaultNodeInfo) GetCommonChains(otherInfo NodeInfo) ([]string, error) {
+	other, ok := otherInfo.(DefaultNodeInfo)
+	if !ok {
+		return nil, fmt.Errorf("wrong NodeInfo type. Expected DefaultNodeInfo, got %v", reflect.TypeOf(otherInfo))
+	}
+	if other.Network == info.Network {
+		return []string{info.Network}, nil
+	}
+	return []string{}, nil
+
 }
 
 // NetAddress returns a NetAddress derived from the DefaultNodeInfo -

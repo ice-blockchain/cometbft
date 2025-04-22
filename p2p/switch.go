@@ -103,6 +103,16 @@ type Switch struct {
 	uniquePeers  *PeerSet
 }
 
+type peerOption = func(p Peer)
+
+const runtimeChainKey = "runtimeChainID"
+
+func PeerWithChainID(chainID string) func(p Peer) {
+	return func(p Peer) {
+		p.Set(runtimeChainKey, chainID)
+	}
+}
+
 // NetAddress returns the address the switch is listening on.
 func (sw *Switch) NetAddress() *NetAddress {
 	addr := sw.transport.NetAddress()
@@ -453,18 +463,18 @@ func (sw *Switch) MaxNumOutboundPeers() int {
 // Requires a chainID to filter the returned peers instances.
 func (sw *Switch) Peers(chainID string) IPeerSet {
 	sw.peersMtx.RLock()
-	_, hasChainPeers := sw.peersByChain[chainID]
+	if peerSet, ok := sw.peersByChain[chainID]; ok {
+		defer sw.peersMtx.RUnlock()
+		return peerSet
+	}
 	sw.peersMtx.RUnlock()
 
-	if !hasChainPeers {
-		sw.peersMtx.Lock()
-		sw.peersByChain[chainID] = NewPeerSet()
-		sw.peersMtx.Unlock()
-	}
+	peerSet := NewPeerSet()
+	sw.peersMtx.Lock()
+	defer sw.peersMtx.Unlock()
+	sw.peersByChain[chainID] = peerSet
 
-	sw.peersMtx.RLock()
-	defer sw.peersMtx.RUnlock()
-	return sw.peersByChain[chainID]
+	return peerSet
 }
 
 // UniquePeers returns the set of unique peer that are connected to the switch.
@@ -767,6 +777,22 @@ func (sw *Switch) DialPeerWithAddress(addr *NetAddress) error {
 	return sw.addOutboundPeerWithConfig(addr, sw.config)
 }
 
+// DialPeerWithAddressAndChainID dials the given peer and adds a runtimeChainID
+// to its configuration before it runs sw.addPeer if it connects and
+// authenticates successfully.
+// If we're currently dialing this address or it belongs to an existing peer,
+// ErrCurrentlyDialingOrExistingAddress is returned.
+func (sw *Switch) DialPeerWithAddressAndChainID(addr *NetAddress, chainID string) error {
+	if sw.IsDialingOrExistingAddress(addr) {
+		return ErrCurrentlyDialingOrExistingAddress{addr.String()}
+	}
+
+	sw.dialing.Set(string(addr.ID), addr)
+	defer sw.dialing.Delete(string(addr.ID))
+
+	return sw.addOutboundPeerWithConfig(addr, sw.config, PeerWithChainID(chainID))
+}
+
 // sleep for interval plus some random amount of ms on [0, dialRandomizerIntervalMilliseconds].
 func (sw *Switch) randomSleep(interval time.Duration) {
 	r := time.Duration(sw.rng.Int63n(dialRandomizerIntervalMilliseconds)) * time.Millisecond
@@ -945,6 +971,7 @@ func (sw *Switch) acceptRoutine() {
 func (sw *Switch) addOutboundPeerWithConfig(
 	addr *NetAddress,
 	cfg *config.P2PConfig,
+	options ...peerOption,
 ) error {
 	sw.Logger.Debug("Dialing peer", "address", addr)
 
@@ -981,6 +1008,11 @@ func (sw *Switch) addOutboundPeerWithConfig(
 		}
 
 		return err
+	}
+
+	// Applies custom options to Peer object
+	for _, option := range options {
+		option(p)
 	}
 
 	if err := sw.addPeer(p); err != nil {
@@ -1046,8 +1078,24 @@ func (sw *Switch) addPeer(p Peer) error {
 		return nil
 	}
 
+	relevantChainIds, err := sw.nodeInfo.GetCommonChains(p.NodeInfo())
+	if err != nil {
+		sw.Logger.Error("Won't start a peer - error with common chains",
+			"peer", p,
+			"err", err,
+		)
+		return nil
+	}
+
+	// If we don't have common chains with p,
+	runtimeChainID := p.Get(runtimeChainKey)
+	if len(relevantChainIds) == 0 && runtimeChainID != nil {
+		relevantChainIds = []string{runtimeChainID.(string)}
+	}
+
 	// Add some data to the peer, which is required by reactors.
-	for _, reactors := range sw.reactors {
+	for _, chainID := range relevantChainIds {
+		reactors := sw.Reactors(chainID)
 		for _, reactor := range reactors {
 			p = reactor.InitPeer(p)
 		}
@@ -1056,8 +1104,7 @@ func (sw *Switch) addPeer(p Peer) error {
 	// Start the peer's send/recv routines.
 	// Must start it before adding it to the peer set
 	// to prevent Start and Stop from being called concurrently.
-	err := p.Start()
-	if err != nil {
+	if err := p.Start(); err != nil {
 		// Should never happen
 		sw.Logger.Error("Error starting peer", "err", err, "peer", p)
 		return err
@@ -1100,7 +1147,8 @@ func (sw *Switch) addPeer(p Peer) error {
 	sw.metrics.Peers.Add(float64(1))
 
 	// Start all the reactor protocols on the peer.
-	for _, reactors := range sw.reactors {
+	for _, chainID := range relevantChainIds {
+		reactors := sw.Reactors(chainID)
 		for _, reactor := range reactors {
 			reactor.AddPeer(p)
 		}

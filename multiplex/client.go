@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -236,6 +237,13 @@ func (c MultiplexClient) BroadcastTx(
 		return slices.Contains(errorRelays, string(a.String()))
 	})
 
+	// As relays may own ChainID that we are not interested in, here we remove
+	// any undesired ChainID to avoid dialing relays that we are not interested in.
+	maps.DeleteFunc(chainRelays, func(network string, addresses []*server.RelayAddress) bool {
+		_, networkContainedByBroadcast := networksLocalHeights[network]
+		return !networkContainedByBroadcast
+	})
+
 	// Make sure dialing did not error for too many of the healthy relays.
 	if len(errorRelays) > maxFailingRelays {
 		client.Error(notifyCh, fmt.Errorf(
@@ -436,10 +444,12 @@ func (c MultiplexClient) BroadcastTx(
 	// channel to tell this broadcaster about the acceptance of the
 	// transaction by our own mempool.
 	ackedRelaysPerTx,
+		numExpectedAcks,
 		totalAckReceived,
 		acceptErr := c.GetBackend().WaitForRelaysAckTransactionBatch(ctx,
-		numHealthyRemote,
-		len(transactions),
+		chainRelays,
+		catchupRelays,
+		transactions,
 	)
 	if acceptErr != nil {
 		// Otherwise broadcast a rollback operation if some of the healthy
@@ -454,7 +464,7 @@ func (c MultiplexClient) BroadcastTx(
 		return // STOP here
 	}
 
-	if totalAckReceived >= numHealthyRemote*len(transactions) {
+	if totalAckReceived >= numExpectedAcks {
 		// Inform about the readiness of transaction acceptance
 		c.backend.GetLogger().Info("Relays accepted transactions",
 			"num_relays", numHealthyRemote,

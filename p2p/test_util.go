@@ -28,11 +28,12 @@ func NewMockNodeInfo(addr *NetAddress) mockNodeInfo {
 	return mockNodeInfo{addr: addr}
 }
 
-func (ni mockNodeInfo) ID() ID                           { return ni.addr.ID }
-func (ni mockNodeInfo) GetChannels() cmtbytes.HexBytes   { return cmtbytes.HexBytes{} }
-func (ni mockNodeInfo) NetAddress() (*NetAddress, error) { return ni.addr, nil }
-func (mockNodeInfo) Validate() error                     { return nil }
-func (mockNodeInfo) CompatibleWith(NodeInfo) error       { return nil }
+func (ni mockNodeInfo) ID() ID                                  { return ni.addr.ID }
+func (ni mockNodeInfo) GetChannels() cmtbytes.HexBytes          { return cmtbytes.HexBytes{} }
+func (ni mockNodeInfo) NetAddress() (*NetAddress, error)        { return ni.addr, nil }
+func (mockNodeInfo) Validate() error                            { return nil }
+func (mockNodeInfo) CompatibleWith(NodeInfo) error              { return nil }
+func (mockNodeInfo) GetCommonChains(NodeInfo) ([]string, error) { return []string{}, nil }
 
 func AddPeerToSwitchPeerSet(sw *Switch, peer Peer) {
 	sw.peersMtx.RLock()
