@@ -932,16 +932,19 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			r.poolRequestsMtx.Unlock()
 
 			if shouldProcessAckTx {
-				r.logger.Debug("[AckTransactionBroadcast] Relay received a transaction",
-					"num_txs", len(txHashes),
+				// TODO(midas): remove debug logs
+				r.logger.Debug("Received AckTransactionBroadcast from remote relay",
 					"relay_id", ackTxBroadcast.NodeId,
+					"num_txes", len(txHashes),
 					"txes", txHashes,
-					"node", r.nodeKey.ID(),
-					"from", sourceAddr,
+					"node_self", r.nodeKey.ID(),
+					"from_peer", sourceAddr,
 				)
 
+				// TODO(midas): channel mapped by tx hash r.ackTxAcceptCh[txHash] <- ackTxBroadcast
 				r.ackTxAcceptCh <- ackTxBroadcast
 			} else {
+				// TODO(midas): remove debug logs
 				r.logger.Debug("Skipping already processed AckTransactionBroadcast",
 					"num_txs", len(txHashes),
 					"relay_id", ackTxBroadcast.NodeId,

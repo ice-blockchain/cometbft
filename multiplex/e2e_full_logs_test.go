@@ -55,6 +55,7 @@ func TestScenarioFullLogsClientBroadcastEmptyRelaysWithWait(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg := waitForClientBroadcastStatus(t,
 		broadcastCtx,
+		testChainID,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -127,6 +128,7 @@ func TestScenarioFullLogsClientBroadcastEmptyRelaysWithSecondBroadcastAndWait(t 
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg := waitForClientBroadcastStatus(t,
 		broadcastCtx,
+		testChainID,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -171,6 +173,7 @@ func TestScenarioFullLogsClientBroadcastEmptyRelaysWithSecondBroadcastAndWait(t 
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
 		broadcastCtx,
+		testChainID,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)

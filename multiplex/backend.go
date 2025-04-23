@@ -610,6 +610,7 @@ func (b *MultiplexBackend) WaitForRelayReplResponse(
 	case res := <-b.reactor.ackReplResCh:
 		b.logger.Debug("[ChainReplicationResponse] Relay responded to ChainReplicationRequest",
 			"relay_id", res.NodeId,
+			"chain_id", res.ChainID,
 		)
 		return res.NodeId, nil
 
@@ -641,56 +642,6 @@ func (b *MultiplexBackend) WaitForRelaysReplResponse(
 	return responsePeers, nil
 }
 
-// getRelevantRelaysForAckTransaction is a private RelayID filter function
-// which fills a relevantRelays slice that contains only relay IDs that must
-// be waited for. In case a relay ID does not appear in the resulting slice,
-// it means that they must first handle a replication and we should not wait.
-func (b *MultiplexBackend) getRelevantRelaysForAckTransaction(
-	chainRelays map[string][]*server.RelayAddress,
-	catchupRelays map[string][]*server.RelayAddress,
-) (relevantRelays []string) {
-	relevantRelays = []string{}
-
-	// Any healthy relay should be waited for initially.
-	for _, relaysForChain := range chainRelays {
-		healthyRelayIds := func() (relayIds []string) {
-			relayIds = make([]string, 0, len(relaysForChain))
-			for _, relayAddr := range relaysForChain {
-				relayIds = append(relayIds, string(relayAddr.ID()))
-			}
-			return relayIds
-		}()
-		relevantRelays = slices.DeleteFunc(healthyRelayIds, func(relayId string) bool {
-			return relayId == string(b.GetRelayID())
-		})
-	}
-
-	// ... but make sure that if only some of them have to replicate, and others
-	// don't have to replicate, we won't wait for the relays that need replication.
-	for _, catchupForChain := range catchupRelays {
-		catchupRelayIds := func() (relayIds []string) {
-			relayIds = make([]string, 0, len(catchupForChain))
-			for _, relayAddr := range catchupForChain {
-				relayIds = append(relayIds, string(relayAddr.ID()))
-			}
-			return relayIds
-		}()
-		if len(chainRelays) > 0 {
-			// Some have chain, some don't. The ones that are missing it
-			// will replicate, but we shouldn't be waiting for them.
-			relevantRelays = slices.DeleteFunc(relevantRelays, func(relayId string) bool {
-				return slices.Contains(catchupRelayIds, relayId)
-			})
-		} else {
-			// All relays must replicate first. We should be waiting for all.
-			relevantRelays = append(relevantRelays, catchupRelayIds...)
-		}
-	}
-
-	slices.Compact(relevantRelays)
-	return relevantRelays
-}
-
 // WaitForRelaysAckTransactionBatch waits for a number of healthy relays
 // to ack a complete transaction batch. For this we use a combination of
 // the reactor's `ackTxAcceptCh` which receives updates upon processing
@@ -708,7 +659,7 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 	numReceived = 0
 
 	// Contains only relay IDs for which we must wait
-	relevantRelays := b.getRelevantRelaysForAckTransaction(
+	relevantRelays := b.ApplyFilterAckTransactionRelayIds(
 		chainRelays,   // Healthy relays
 		catchupRelays, // Relays received ReplRequest
 	)
@@ -716,6 +667,13 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 	b.logger.Debug("Waiting only for relevant relays to respond",
 		"num_relays", len(relevantRelays),
 		"relay_ids", relevantRelays,
+		"tx_hashes", func() []string {
+			txHashes := []string{}
+			for _, tx := range transactions {
+				txHashes = append(txHashes, fmt.Sprintf("%X", tx.Hash()))
+			}
+			return txHashes
+		}(),
 	)
 
 	maxAcceptMsgs := len(relevantRelays) * len(transactions)
@@ -726,13 +684,19 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 	remoteRelayTxCh := make(chan string, maxAcceptMsgs)
 
 	// Collects AckTransactionBroadcast messages and proxy to remoteRelayTxCh.
-	// Stopped on shutdownWaitCh. And we consume asyncResultsCh before end.
-	go b.remoteAckTransactionConsumer(ctx, remoteRelayTxCh, asyncResultsCh, shutdownWaitCh)
+	// Stopped on shutdownWaitCh.
+	go b.remoteAckTransactionConsumer(ctx,
+		relevantRelays, // Accept ACK only from these relays
+		transactions,   // ... and for these transactions
+		remoteRelayTxCh,
+		asyncResultsCh,
+		shutdownWaitCh,
+	)
 
 	// Collects remoteRelayTxCh messages and create result object.
-	// Stopped on shutdownWaitCh. And we consume asyncResultsCh before end.
+	// Stopped on shutdownWaitCh.
 	go b.localAckTransactionConsumer(ctx,
-		relevantRelays, // Wait only for these relays
+		relevantRelays, // Wait for ACK only for these relays
 		transactions,   // ... and for these transactions
 		remoteRelayTxCh,
 		asyncResultsCh,
@@ -943,6 +907,63 @@ func (b *MultiplexBackend) CheckDialCompatibleRelay(
 	}
 
 	return nil
+}
+
+// ApplyFilterAckTransactionRelayIds is a RelayID filter function which
+// fills a relevantRelays slice that contains only relay IDs that must
+// be waited for during the AckTransaction process. In case a relay ID does not
+// appear in the resulting slice, it means that they must first handle a
+// replication and we should not wait for their acknowledgement.
+//
+// TODO(midas): TBI if more than 2/3 relays must replicate. Transactions won't
+// broadcast because of dependency on successfull remote replications by too
+// many relays. Note that this is an edge case and the current response of this
+// implementation to those conditions is to *deny the transaction broadcast*,
+// because too many healthy (required) relays are failing (not syncd).
+func (b *MultiplexBackend) ApplyFilterAckTransactionRelayIds(
+	chainRelays map[string][]*server.RelayAddress,
+	catchupRelays map[string][]*server.RelayAddress,
+) []string {
+	relevantRelays := []string{}
+
+	// Any healthy relay should be waited for initially.
+	for _, relaysForChain := range chainRelays {
+		healthyRelayIds := func() (relayIds []string) {
+			relayIds = make([]string, 0, len(relaysForChain))
+			for _, relayAddr := range relaysForChain {
+				relayIds = append(relayIds, string(relayAddr.ID()))
+			}
+			return relayIds
+		}()
+		relevantRelays = slices.DeleteFunc(healthyRelayIds, func(relayId string) bool {
+			return relayId == string(b.GetRelayID())
+		})
+	}
+
+	// ... but make sure that if only some of them have to replicate, and others
+	// don't have to replicate, we won't wait for the relays that need replication.
+	for _, catchupForChain := range catchupRelays {
+		catchupRelayIds := func() (relayIds []string) {
+			relayIds = make([]string, 0, len(catchupForChain))
+			for _, relayAddr := range catchupForChain {
+				relayIds = append(relayIds, string(relayAddr.ID()))
+			}
+			return relayIds
+		}()
+		if len(chainRelays) > 0 {
+			// Some have chain, some don't. The ones that are missing it
+			// will replicate, but we shouldn't be waiting for them.
+			relevantRelays = slices.DeleteFunc(relevantRelays, func(relayId string) bool {
+				return slices.Contains(catchupRelayIds, relayId)
+			})
+		} else {
+			// All relays must replicate first. We should be waiting for all.
+			relevantRelays = append(relevantRelays, catchupRelayIds...)
+		}
+	}
+
+	slices.Compact(relevantRelays)
+	return relevantRelays
 }
 
 // ApplyFilterReplRequestRelays filters relays and returns a map of relays
@@ -1587,10 +1608,20 @@ func (b *MultiplexBackend) StopNodeInstances() error {
 // in a message formatted to contain relay ID and tx hash.
 func (b *MultiplexBackend) remoteAckTransactionConsumer(
 	ctx context.Context,
+	relevantRelays []string,
+	relevantTxes []client.Transaction,
 	remoteRelayTxCh chan string,
 	resultsCh chan AckTransactionResult,
 	shutdownCh chan struct{},
 ) {
+	relevantTxHashes := func() (txHashes []string) {
+		txHashes = make([]string, 0, len(relevantTxes))
+		for _, tx := range relevantTxes {
+			txHashes = append(txHashes, fmt.Sprintf("%X", tx.Hash()))
+		}
+		return txHashes
+	}()
+
 	for {
 		select {
 		// Note: AckTransactionBroadcast always contains exactly one tx hash
@@ -1598,18 +1629,25 @@ func (b *MultiplexBackend) remoteAckTransactionConsumer(
 		case ackResponse := <-b.reactor.ackTxAcceptCh:
 			relayId := ackResponse.NodeId
 			txHash := fmt.Sprintf("%X", ackResponse.TxHashes[0])
-			acceptMsg := fmt.Sprintf("%s:%s", relayId, txHash)
 
-			b.logger.Debug("[remoteAckTransaction] Relay received a transaction",
+			isRelevantRelay := slices.Contains(relevantRelays, relayId)
+			isRelevantTxHash := slices.Contains(relevantTxHashes, txHash)
+			if !isRelevantRelay || !isRelevantTxHash {
+				continue
+			}
+
+			// TODO(midas): remove debug logs
+			b.logger.Debug("Intercepted relevant AckTransactionBroadcast",
 				"relay_id", relayId,
 				"tx_hash", txHash,
 			)
 
+			acceptMsg := fmt.Sprintf("%s:%s", relayId, txHash)
 			remoteRelayTxCh <- acceptMsg
 
 		case <-ctx.Done():
-			err := errors.New(
-				"process timed out waiting for relay replication")
+			err := fmt.Errorf(
+				"process timed out waiting for remote ack messages for txes: %v", relevantTxHashes)
 
 			resultsCh <- AckTransactionResult{err: err}
 			return
@@ -1634,10 +1672,6 @@ func (b *MultiplexBackend) localAckTransactionConsumer(
 	resultsCh chan AckTransactionResult,
 	shutdownCh chan struct{},
 ) {
-	relaysPerTx := map[string][]string{}
-	numExpected := len(relevantRelays) * len(relevantTxes)
-	numReceived := 0
-
 	relevantTxHashes := func() (txHashes []string) {
 		txHashes = make([]string, 0, len(relevantTxes))
 		for _, tx := range relevantTxes {
@@ -1645,6 +1679,10 @@ func (b *MultiplexBackend) localAckTransactionConsumer(
 		}
 		return txHashes
 	}()
+
+	relaysPerTx := make(map[string][]string, len(relevantTxHashes))
+	numExpected := len(relevantRelays) * len(relevantTxes)
+	numReceived := 0
 
 	for {
 		select {
@@ -1663,7 +1701,8 @@ func (b *MultiplexBackend) localAckTransactionConsumer(
 			isRelevantRelay := slices.Contains(relevantRelays, relayId)
 			isRelevantTxHash := slices.Contains(relevantTxHashes, txHash)
 
-			b.logger.Debug("[localTransactionAccept] Processing incoming ack",
+			// TODO(midas): remove debug logs
+			b.logger.Debug("Processing remote transaction ACK",
 				"relay_id", relayId,
 				"tx_hash", txHash,
 				"is_relay", isRelevantRelay,
@@ -1674,26 +1713,48 @@ func (b *MultiplexBackend) localAckTransactionConsumer(
 			ackResponsesRcvdForTx, hasAckResponsesForTx := b.ackResponsesRcvd[txHash]
 			b.ackResponsesMtx.RUnlock()
 
+			relayAlreadyAckedTx := false
 			b.ackResponsesMtx.Lock()
 			if !hasAckResponsesForTx {
 				b.ackResponsesRcvd[txHash] = make([]string, 0, numExpected)
 				b.ackResponsesRcvd[txHash] = append(b.ackResponsesRcvd[txHash], relayId)
 			} else if !slices.Contains(ackResponsesRcvdForTx, relayId) {
 				b.ackResponsesRcvd[txHash] = append(b.ackResponsesRcvd[txHash], relayId)
+			} else { // already acked
+				relayAlreadyAckedTx = true
 			}
 			b.ackResponsesMtx.Unlock()
 
-			if _, ok := relaysPerTx[txHash]; !ok {
-				relaysPerTx[txHash] = []string{}
-			}
-
-			relayAlreadyAckedTx := slices.Contains(relaysPerTx[txHash], relayId)
 			if isRelevantRelay && isRelevantTxHash && !relayAlreadyAckedTx {
-				relaysPerTx[txHash] = append(relaysPerTx[txHash], relayId)
 				numReceived++
+
+				// TODO(midas): remove debug logs
+				b.logger.Debug("Processed relevant AckTransactionBroadcast",
+					"relay_id", relayId,
+					"tx_hash", txHash,
+					"num_rcvd", numReceived,
+					"num_expect", numExpected,
+				)
 			}
 
 			if numReceived >= numExpected {
+				// TODO(midas): remove debug logs
+				b.logger.Debug("Processed enough AckTransactionBroadcast",
+					"tx_hash", txHash,
+					"num_rcvd", numReceived,
+					"num_expect", numExpected,
+				)
+
+				// Result should contain only relevant transactions
+				b.ackResponsesMtx.RLock()
+				for txHash, relayIds := range b.ackResponsesRcvd {
+					if slices.Contains(relevantTxHashes, txHash) {
+						relaysPerTx[txHash] = make([]string, 0, len(relayIds))
+						relaysPerTx[txHash] = append(relaysPerTx[txHash], relayIds...)
+					}
+				}
+				b.ackResponsesMtx.RUnlock()
+
 				resultsCh <- AckTransactionResult{
 					totalReceived: numReceived,
 					relaysPerTxes: relaysPerTx,
@@ -1702,8 +1763,8 @@ func (b *MultiplexBackend) localAckTransactionConsumer(
 			}
 
 		case <-ctx.Done():
-			err := errors.New(
-				"process timed out waiting for relay replication")
+			err := fmt.Errorf(
+				"process timed out waiting for incoming ack messages for txes: %v", relevantTxHashes)
 
 			resultsCh <- AckTransactionResult{err: err}
 			return

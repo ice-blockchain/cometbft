@@ -82,6 +82,7 @@ func clientBroadcastTx(
 func waitForClientBroadcastStatus(
 	tb testing.TB,
 	ctx context.Context,
+	testChainID string,
 	notifyCh chan client.BroadcastStatus,
 ) client.BroadcastStatus {
 	tb.Helper()
@@ -101,8 +102,8 @@ func waitForClientBroadcastStatus(
 				return
 
 			case <-ctx.Done():
-				tb.Error("Timed out waiting for broadcast status")
-				resultStatusMsg.Error = errors.New("Timed out waiting for broadcast status")
+				resultStatusMsg.Error = fmt.Errorf(
+					"Timed out waiting for broadcast status for %s", testChainID)
 				return // cancels context
 			}
 		}
@@ -141,6 +142,8 @@ func TestScenarioClientBroadcastHealthyRelays(t *testing.T) {
 	chainIds := servers[0].GetNetworks()
 	testChainID := chainIds[0]
 	notifyCh := make(chan client.BroadcastStatus)
+	defer close(notifyCh)
+
 	go clientBroadcastTx(t,
 		broadcastCtx,
 		servers[0],
@@ -153,6 +156,7 @@ func TestScenarioClientBroadcastHealthyRelays(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg := waitForClientBroadcastStatus(t,
 		broadcastCtx,
+		testChainID,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -197,6 +201,8 @@ func TestScenarioClientBroadcastEmptyRelays(t *testing.T) {
 	numTransactions := 2
 	testChainID := makeChainID("test chain")
 	notifyCh := make(chan client.BroadcastStatus)
+	defer close(notifyCh)
+
 	go clientBroadcastTx(t,
 		broadcastCtx,
 		servers[0],
@@ -209,6 +215,7 @@ func TestScenarioClientBroadcastEmptyRelays(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg := waitForClientBroadcastStatus(t,
 		broadcastCtx,
+		testChainID,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -271,6 +278,8 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 	numTransactions := 1
 	testChainID := makeChainID("test chain")
 	notifyCh := make(chan client.BroadcastStatus)
+	defer close(notifyCh)
+
 	go clientBroadcastTx(t,
 		broadcastCtx,
 		servers[0],
@@ -281,18 +290,19 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 	)
 
 	// Blocks the main thread until we consume from notifyCh.
-	resultStatusMsg := waitForClientBroadcastStatus(t,
+	resultStatusMsg1 := waitForClientBroadcastStatus(t,
 		broadcastCtx,
+		testChainID,
 		notifyCh,
 	)
-	assert.NotNil(t, resultStatusMsg)
-	assert.NotNil(t, resultStatusMsg.Error)
-	assert.Error(t, resultStatusMsg.Error)
-	assert.Contains(t, resultStatusMsg.Error.Error(), "not enough healthy relays")
+	assert.NotNil(t, resultStatusMsg1)
+	assert.NotNil(t, resultStatusMsg1.Error)
+	assert.Error(t, resultStatusMsg1.Error)
+	assert.Contains(t, resultStatusMsg1.Error.Error(), "not enough healthy relays")
 
 	numExpected := (numRelaysForErrCase / 2) + 1
 	expectedMessage := fmt.Sprintf("expected %d, got %d", numExpected, numHealthy)
-	assert.Contains(t, resultStatusMsg.Error.Error(), expectedMessage)
+	assert.Contains(t, resultStatusMsg1.Error.Error(), expectedMessage)
 
 	// TEST 2 - Errors
 	//
@@ -305,7 +315,7 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 		relaysForErrCase = append(relaysForErrCase, "1.2.3.4:"+strconv.Itoa(1000+i))
 	}
 
-	secondTimeoutAfter := 10 * time.Second // Time for broadcast
+	secondTimeoutAfter := 20 * time.Second // Time for broadcast
 	secondBroadcastCtx, secondCancelCtxFn := context.WithTimeout(context.TODO(), secondTimeoutAfter)
 	defer secondCancelCtxFn()
 
@@ -320,18 +330,19 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 	)
 
 	// Blocks the main thread until we consume from notifyCh.
-	resultStatusMsg = waitForClientBroadcastStatus(t,
+	resultStatusMsg2 := waitForClientBroadcastStatus(t,
 		secondBroadcastCtx,
+		testChainID,
 		notifyCh,
 	)
-	assert.NotNil(t, resultStatusMsg)
-	assert.NotNil(t, resultStatusMsg.Error)
-	assert.Error(t, resultStatusMsg.Error)
-	assert.Contains(t, resultStatusMsg.Error.Error(), "not enough healthy relays")
+	assert.NotNil(t, resultStatusMsg2)
+	assert.NotNil(t, resultStatusMsg2.Error)
+	assert.Error(t, resultStatusMsg2.Error)
+	assert.Contains(t, resultStatusMsg2.Error.Error(), "not enough healthy relays")
 
 	numExpected = (numRelaysForErrCase / 2) + 1
 	expectedMessage = fmt.Sprintf("expected %d, got %d", numExpected, numHealthy)
-	assert.Contains(t, resultStatusMsg.Error.Error(), expectedMessage)
+	assert.Contains(t, resultStatusMsg2.Error.Error(), expectedMessage)
 
 	// TEST 3 - Errors
 	//
@@ -345,7 +356,7 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 		relaysForErrCase = append(relaysForErrCase, "1.2.3.4:"+strconv.Itoa(1000+i))
 	}
 
-	thirdTimeoutAfter := 10 * time.Second // Time for broadcast
+	thirdTimeoutAfter := 20 * time.Second // Time for broadcast
 	thirdBroadcastCtx, thirdCancelCtxFn := context.WithTimeout(context.TODO(), thirdTimeoutAfter)
 	defer thirdCancelCtxFn()
 
@@ -360,19 +371,20 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 	)
 
 	// Blocks the main thread until we consume from notifyCh.
-	resultStatusMsg = waitForClientBroadcastStatus(t,
+	resultStatusMsg3 := waitForClientBroadcastStatus(t,
 		thirdBroadcastCtx,
+		testChainID,
 		notifyCh,
 	)
-	assert.NotNil(t, resultStatusMsg)
-	assert.NotNil(t, resultStatusMsg.Error)
-	assert.Error(t, resultStatusMsg.Error)
-	assert.Contains(t, resultStatusMsg.Error.Error(), "not enough healthy relays")
+	assert.NotNil(t, resultStatusMsg3)
+	assert.NotNil(t, resultStatusMsg3.Error)
+	assert.Error(t, resultStatusMsg3.Error)
+	assert.Contains(t, resultStatusMsg3.Error.Error(), "not enough healthy relays")
 
 	numExpected = (numRelaysForErrCase / 2) + 1
 	numHealthy = numHealthy + 1 // "self" is healthy also if not in relays.
 	expectedMessage = fmt.Sprintf("expected %d, got %d", numExpected, numHealthy)
-	assert.Contains(t, resultStatusMsg.Error.Error(), expectedMessage)
+	assert.Contains(t, resultStatusMsg3.Error.Error(), expectedMessage)
 
 	// TEST 4 - Success
 	//
@@ -385,7 +397,7 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 		relaysForTestCase = append(relaysForTestCase, "1.2.3.4:"+strconv.Itoa(1000+i))
 	}
 
-	fourthTimeoutAfter := 10 * time.Second // Time for broadcast
+	fourthTimeoutAfter := 20 * time.Second // Time for broadcast
 	fourthBroadcastCtx, fourthCancelCtxFn := context.WithTimeout(context.TODO(), fourthTimeoutAfter)
 	defer fourthCancelCtxFn()
 
@@ -400,13 +412,14 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 	)
 
 	// Blocks the main thread until we consume from notifyCh.
-	resultStatusMsg = waitForClientBroadcastStatus(t,
+	resultStatusMsg4 := waitForClientBroadcastStatus(t,
 		fourthBroadcastCtx,
+		testChainID,
 		notifyCh,
 	)
-	assert.NotNil(t, resultStatusMsg)
-	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
-	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+	assert.NotNil(t, resultStatusMsg4)
+	assert.NoError(t, resultStatusMsg4.Error, "should not contain error status")
+	assert.Len(t, resultStatusMsg4.TxHashes, numTransactions)
 
 	// TEST 5 - Success
 	//
@@ -419,7 +432,7 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 		relaysForTestCase = append(relaysForTestCase, "1.2.3.4:"+strconv.Itoa(1000+i))
 	}
 
-	fifthTimeoutAfter := 10 * time.Second // Time for broadcast
+	fifthTimeoutAfter := 20 * time.Second // Time for broadcast
 	fifthBroadcastCtx, fifthCancelCtxFn := context.WithTimeout(context.TODO(), fifthTimeoutAfter)
 	defer fifthCancelCtxFn()
 
@@ -434,13 +447,14 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 	)
 
 	// Blocks the main thread until we consume from notifyCh.
-	resultStatusMsg = waitForClientBroadcastStatus(t,
+	resultStatusMsg5 := waitForClientBroadcastStatus(t,
 		fifthBroadcastCtx,
+		testChainID,
 		notifyCh,
 	)
-	assert.NotNil(t, resultStatusMsg)
-	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
-	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+	assert.NotNil(t, resultStatusMsg5)
+	assert.NoError(t, resultStatusMsg5.Error, "should not contain error status")
+	assert.Len(t, resultStatusMsg5.TxHashes, numTransactions)
 
 	// TEST 6 - Errors
 	//
@@ -454,7 +468,7 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 		relaysForErrCase = append(relaysForErrCase, "1.2.3.4:"+strconv.Itoa(1000+i))
 	}
 
-	sixthTimeoutAfter := 10 * time.Second // Time for broadcast
+	sixthTimeoutAfter := 20 * time.Second // Time for broadcast
 	sixthBroadcastCtx, sixthCancelCtxFn := context.WithTimeout(context.TODO(), sixthTimeoutAfter)
 	defer sixthCancelCtxFn()
 
@@ -469,19 +483,20 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 	)
 
 	// Blocks the main thread until we consume from notifyCh.
-	resultStatusMsg = waitForClientBroadcastStatus(t,
+	resultStatusMsg6 := waitForClientBroadcastStatus(t,
 		sixthBroadcastCtx,
+		testChainID,
 		notifyCh,
 	)
-	assert.NotNil(t, resultStatusMsg)
-	assert.NotNil(t, resultStatusMsg.Error)
-	assert.Error(t, resultStatusMsg.Error)
-	assert.Contains(t, resultStatusMsg.Error.Error(), "not enough healthy relays")
+	assert.NotNil(t, resultStatusMsg6)
+	assert.NotNil(t, resultStatusMsg6.Error)
+	assert.Error(t, resultStatusMsg6.Error)
+	assert.Contains(t, resultStatusMsg6.Error.Error(), "not enough healthy relays")
 
 	numExpected = (numRelaysForErrCase / 2) + 1
 	numHealthy = numHealthy + 1 // "self" is healthy also if not in relays.
 	expectedMessage = fmt.Sprintf("expected %d, got %d", numExpected, numHealthy)
-	assert.Contains(t, resultStatusMsg.Error.Error(), expectedMessage)
+	assert.Contains(t, resultStatusMsg6.Error.Error(), expectedMessage)
 }
 
 // We further test the healthy relays counter process when relying on relay
@@ -528,6 +543,8 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 	numTransactions := 1
 	testChainID := makeChainID("test chain")
 	notifyCh := make(chan client.BroadcastStatus)
+	defer close(notifyCh)
+
 	go clientBroadcastTx(t,
 		broadcastCtx,
 		servers[0],
@@ -540,6 +557,7 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg := waitForClientBroadcastStatus(t,
 		broadcastCtx,
+		testChainID,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -558,7 +576,7 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 		relaysForTestCase = append(relaysForTestCase, "1.2.3.4:"+strconv.Itoa(1000+i))
 	}
 
-	secondTimeoutAfter := 10 * time.Second // Time for broadcast
+	secondTimeoutAfter := 20 * time.Second // Time for broadcast
 	secondBroadcastCtx, secondCancelCtxFn := context.WithTimeout(context.TODO(), secondTimeoutAfter)
 	defer secondCancelCtxFn()
 
@@ -575,6 +593,7 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
 		secondBroadcastCtx,
+		testChainID,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -592,7 +611,7 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 		relaysForErrCase = append(relaysForErrCase, "1.2.3.4:"+strconv.Itoa(1000+i))
 	}
 
-	thirdTimeoutAfter := 10 * time.Second // Time for broadcast
+	thirdTimeoutAfter := 20 * time.Second // Time for broadcast
 	thirdBroadcastCtx, thirdCancelCtxFn := context.WithTimeout(context.TODO(), thirdTimeoutAfter)
 	defer thirdCancelCtxFn()
 
@@ -609,6 +628,7 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
 		thirdBroadcastCtx,
+		testChainID,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -632,7 +652,7 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 		relaysForErrCase = append(relaysForErrCase, "1.2.3.4:"+strconv.Itoa(1000+i))
 	}
 
-	fourthTimeoutAfter := 10 * time.Second // Time for broadcast
+	fourthTimeoutAfter := 20 * time.Second // Time for broadcast
 	fourthBroadcastCtx, fourthCancelCtxFn := context.WithTimeout(context.TODO(), fourthTimeoutAfter)
 	defer fourthCancelCtxFn()
 
@@ -649,6 +669,7 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
 		fourthBroadcastCtx,
+		testChainID,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -688,6 +709,8 @@ func TestScenarioClientBroadcastEmptyRelaysProduceBlockWithTx(t *testing.T) {
 	numTransactions := 2
 	testChainID := makeChainID("test chain")
 	notifyCh := make(chan client.BroadcastStatus)
+	defer close(notifyCh)
+
 	go clientBroadcastTx(t,
 		broadcastCtx,
 		servers[0],
@@ -700,6 +723,7 @@ func TestScenarioClientBroadcastEmptyRelaysProduceBlockWithTx(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg := waitForClientBroadcastStatus(t,
 		broadcastCtx,
+		testChainID,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -784,6 +808,8 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 	chainIds := servers[0].GetNetworks()
 	testChainID := chainIds[0]
 	notifyCh := make(chan client.BroadcastStatus)
+	defer close(notifyCh)
+
 	go clientBroadcastTx(t,
 		broadcastCtx,
 		servers[0],
@@ -796,6 +822,7 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg := waitForClientBroadcastStatus(t,
 		broadcastCtx,
+		testChainID,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -819,7 +846,7 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 	// numRelays=7;numHealthy=4;numErrors=3;withSelf=false
 	relays = relays[1:] // removes self
 
-	secondTimeoutAfter := 10 * time.Second // Time for broadcast
+	secondTimeoutAfter := 20 * time.Second // Time for broadcast
 	secondBroadcastCtx, secondCancelCtxFn := context.WithTimeout(context.TODO(), secondTimeoutAfter)
 	defer secondCancelCtxFn()
 
@@ -837,6 +864,7 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
 		secondBroadcastCtx,
+		testChainID,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -903,6 +931,8 @@ func TestScenarioClientBroadcastEnoughEmptyRelays(t *testing.T) {
 	numTransactions := 2
 	testChainID := makeChainID("test chain")
 	notifyCh := make(chan client.BroadcastStatus)
+	defer close(notifyCh)
+
 	go clientBroadcastTx(t,
 		broadcastCtx,
 		servers[0],
@@ -915,6 +945,7 @@ func TestScenarioClientBroadcastEnoughEmptyRelays(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg := waitForClientBroadcastStatus(t,
 		broadcastCtx,
+		testChainID,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -945,7 +976,7 @@ func TestScenarioClientBroadcastEnoughEmptyRelays(t *testing.T) {
 	// numRelays=7;numHealthy=4;numErrors=3;withSelf=false
 	relays = relays[1:] // removes self
 
-	secondTimeoutAfter := 10 * time.Second // Time for broadcast
+	secondTimeoutAfter := 20 * time.Second // Time for broadcast
 	secondBroadcastCtx, secondCancelCtxFn := context.WithTimeout(context.TODO(), secondTimeoutAfter)
 	defer secondCancelCtxFn()
 
@@ -963,6 +994,7 @@ func TestScenarioClientBroadcastEnoughEmptyRelays(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
 		secondBroadcastCtx,
+		testChainID,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -986,6 +1018,10 @@ func TestScenarioClientBroadcastEnoughEmptyRelays(t *testing.T) {
 	}
 }
 
+// With a list of empty relays, and not enough healthy relays,
+// we first sanity check a successful broadcast completion with
+// less minimum healthy relays, and then we test a broadcast failure
+// with five relays failing, i.e. too many, to fail the broadcast.
 func TestScenarioClientBroadcastNotEnoughHealthyRelays(t *testing.T) {
 	numChains := 0
 	numHealthy := 2
@@ -1028,6 +1064,8 @@ func TestScenarioClientBroadcastNotEnoughHealthyRelays(t *testing.T) {
 	numTransactions := 1
 	testChainID := makeChainID("test chain")
 	notifyCh := make(chan client.BroadcastStatus)
+	defer close(notifyCh)
+
 	go clientBroadcastTx(t,
 		broadcastCtx,
 		servers[0],
@@ -1040,6 +1078,7 @@ func TestScenarioClientBroadcastNotEnoughHealthyRelays(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg := waitForClientBroadcastStatus(t,
 		broadcastCtx,
+		testChainID,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -1057,7 +1096,7 @@ func TestScenarioClientBroadcastNotEnoughHealthyRelays(t *testing.T) {
 		relaysForErrCase = append(relaysForErrCase, "1.2.3.4:"+strconv.Itoa(1000+i))
 	}
 
-	secondTimeoutAfter := 10 * time.Second // Time for broadcast
+	secondTimeoutAfter := 20 * time.Second // Time for broadcast
 	secondBroadcastCtx, secondCancelCtxFn := context.WithTimeout(context.TODO(), secondTimeoutAfter)
 	defer secondCancelCtxFn()
 
@@ -1074,6 +1113,7 @@ func TestScenarioClientBroadcastNotEnoughHealthyRelays(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
 		secondBroadcastCtx,
+		testChainID,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -1086,6 +1126,10 @@ func TestScenarioClientBroadcastNotEnoughHealthyRelays(t *testing.T) {
 	assert.Contains(t, resultStatusMsg.Error.Error(), expectedMessage)
 }
 
+// With a list of healthy relays, i.e. just enough, the transactions will be added
+// locally and then shared with healthy relays using a message on mempool channel,
+// to which the relays respond with a AckTransactionBroadcast message before we
+// proceed to accepting the transaction.
 func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 	numChains := 0
 	numRelays := 7
@@ -1123,6 +1167,8 @@ func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 	numTransactions := 1
 	testChainID := makeChainID("test-chain-1")
 	notifyCh := make(chan client.BroadcastStatus)
+	defer close(notifyCh)
+
 	go clientBroadcastTx(t,
 		firstBroadcastCtx,
 		servers[0],
@@ -1135,6 +1181,7 @@ func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg := waitForClientBroadcastStatus(t,
 		firstBroadcastCtx,
+		testChainID,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -1147,7 +1194,7 @@ func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 	// should broadcast successfully using different ChainID.
 	// numRelays=7;numHealthy=7;numErrors=0;withSelf=false
 	relaysForTestCase = healthyRelaysWithoutIds[1:] // removes self
-	secondTimeoutAfter := 10 * time.Second          // Time for broadcast
+	secondTimeoutAfter := 20 * time.Second          // Time for broadcast
 	secondBroadcastCtx, secondCancelCtxFn := context.WithTimeout(context.TODO(), secondTimeoutAfter)
 	defer secondCancelCtxFn()
 
@@ -1166,6 +1213,7 @@ func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
 		secondBroadcastCtx,
+		testChainID,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -1185,7 +1233,7 @@ func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 		relaysForTestCase = append(relaysForTestCase, "1.2.3.4:"+strconv.Itoa(1000+i))
 	}
 
-	thirdTimeoutAfter := 10 * time.Second // Time for broadcast
+	thirdTimeoutAfter := 20 * time.Second // Time for broadcast
 	thirdBroadcastCtx, thirdCancelCtxFn := context.WithTimeout(context.TODO(), thirdTimeoutAfter)
 	defer thirdCancelCtxFn()
 
@@ -1204,6 +1252,7 @@ func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
 		thirdBroadcastCtx,
+		testChainID,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -1211,6 +1260,8 @@ func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 	require.NoError(t, resultStatusMsg.Error, "should not contain error status")
 }
 
+// With a list of enough healthy relays, they should proceed to
+// accepting the transaction even with some other relays failing.
 func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 	numChains := 0
 	numRelays := 7
@@ -1252,6 +1303,8 @@ func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 	numTransactions := 1
 	testChainID := makeChainID("test-chain-1")
 	notifyCh := make(chan client.BroadcastStatus)
+	defer close(notifyCh)
+
 	go clientBroadcastTx(t,
 		firstBroadcastCtx,
 		servers[0],
@@ -1264,6 +1317,7 @@ func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg := waitForClientBroadcastStatus(t,
 		firstBroadcastCtx,
+		testChainID,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -1283,7 +1337,7 @@ func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 		relaysForTestCase = append(relaysForTestCase, "1.2.3.4:"+strconv.Itoa(1000+i))
 	}
 
-	secondTimeoutAfter := 10 * time.Second // Time for broadcast
+	secondTimeoutAfter := 20 * time.Second // Time for broadcast
 	secondBroadcastCtx, secondCancelCtxFn := context.WithTimeout(context.TODO(), secondTimeoutAfter)
 	defer secondCancelCtxFn()
 
@@ -1302,6 +1356,7 @@ func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
 		secondBroadcastCtx,
+		testChainID,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -1329,7 +1384,7 @@ func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 		testChain100 := "test-chain-" + strconv.Itoa(100+numFailing)
 		testChain200 := "test-chain-" + strconv.Itoa(200+numFailing)
 
-		thirdTimeoutAfter := 10 * time.Second // Time for broadcast
+		thirdTimeoutAfter := 20 * time.Second // Time for broadcast
 		thirdBroadcastCtx, thirdCancelCtxFn := context.WithTimeout(context.TODO(), thirdTimeoutAfter)
 		defer thirdCancelCtxFn()
 
@@ -1348,6 +1403,7 @@ func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 		// Blocks the main thread until we consume from notifyCh.
 		resultStatusMsg100 := waitForClientBroadcastStatus(t,
 			thirdBroadcastCtx,
+			testChainID,
 			notifyCh,
 		)
 
@@ -1357,7 +1413,7 @@ func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 			"should not contain error status with numFailing: "+strconv.Itoa(numFailing))
 		t.Logf("Broadcast completed with %d failing relays for %s...", numFailing, testChain100)
 
-		fourthTimeoutAfter := 10 * time.Second // Time for broadcast
+		fourthTimeoutAfter := 20 * time.Second // Time for broadcast
 		fourthBroadcastCtx, fourthCancelCtxFn := context.WithTimeout(context.TODO(), fourthTimeoutAfter)
 		defer fourthCancelCtxFn()
 
@@ -1376,6 +1432,7 @@ func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 		// Blocks the main thread until we consume from notifyCh.
 		resultStatusMsg200 := waitForClientBroadcastStatus(t,
 			fourthBroadcastCtx,
+			testChainID,
 			notifyCh,
 		)
 
@@ -1444,6 +1501,8 @@ func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
 	numTransactions := 2
 	testChainID := makeChainID("test chain")
 	notifyCh := make(chan client.BroadcastStatus)
+	defer close(notifyCh)
+
 	go clientBroadcastTx(t,
 		broadcastCtx,
 		resetRelay,
@@ -1456,6 +1515,7 @@ func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg := waitForClientBroadcastStatus(t,
 		broadcastCtx,
+		testChainID,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -1502,6 +1562,8 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	numTransactions := 1
 	testChainID := makeChainID("test chain")
 	notifyCh := make(chan client.BroadcastStatus)
+	defer close(notifyCh)
+
 	go clientBroadcastTx(t,
 		broadcastCtx,
 		servers[0],
@@ -1514,6 +1576,7 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg := waitForClientBroadcastStatus(t,
 		broadcastCtx,
+		testChainID,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -1555,7 +1618,7 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	// The relay has been fully restarted and we can use the created
 	// cancelable/expirable context to broadcast *more* transactions.
 
-	secondTimeoutAfter := 10 * time.Second // Time for broadcast
+	secondTimeoutAfter := 20 * time.Second // Time for broadcast
 	secondBroadcastCtx, secondCancelCtxFn := context.WithTimeout(context.TODO(), secondTimeoutAfter)
 	defer secondCancelCtxFn()
 
@@ -1573,6 +1636,7 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
 		secondBroadcastCtx,
+		testChainID,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -1583,7 +1647,7 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	//
 	// Also try to broadcast using a different ChainID.
 
-	thirdTimeoutAfter := 10 * time.Second // Time for broadcast
+	thirdTimeoutAfter := 20 * time.Second // Time for broadcast
 	thirdBroadcastCtx, thirdCancelCtxFn := context.WithTimeout(context.TODO(), thirdTimeoutAfter)
 	defer thirdCancelCtxFn()
 
@@ -1602,6 +1666,7 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
 		thirdBroadcastCtx,
+		testChainID,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)

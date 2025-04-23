@@ -130,6 +130,14 @@ type Backend interface {
 		chainRelays map[string][]*RelayAddress,
 	) map[string][]*RelayAddress
 
+	// ApplyFilterAckTransactionRelayIds should filter relay IDs and return a
+	// slice of relays IDs with only relays that must be waited for during the
+	// AckTransactionBroadcast process.
+	ApplyFilterAckTransactionRelayIds(
+		chainRelays map[string][]*RelayAddress,
+		catchupRelays map[string][]*RelayAddress,
+	) []string
+
 	// AddTransactions should execute the CheckTx call to add individual
 	// transactions to the mempool by ChainID.
 	AddTransactions(
