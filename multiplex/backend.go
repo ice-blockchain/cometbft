@@ -15,6 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
 	"github.com/ice-blockchain/cometbft/config"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	service "github.com/ice-blockchain/cometbft/libs/service"
@@ -44,6 +45,18 @@ const (
 
 // Assert that our implementation satisfies the [server.Backend] interface.
 var _ server.Backend = (*MultiplexBackend)(nil)
+
+// AckTransactionResult describes a remote transaction receipt.
+type AckTransactionResult struct {
+	// Contains relay IDs of relays that acknowledged TxHash.
+	Relays []string
+
+	// Contains a transaction hash in hexadecimal.
+	TxHash string
+
+	// May contain an error
+	Error error
+}
 
 // ----------------------------------------------------------------------------
 // MultiplexBackend defines a multiplex backend adapter implementation
@@ -117,14 +130,6 @@ func WithLogger(
 	return func(b *MultiplexBackend) {
 		b.logger = logger
 	}
-}
-
-// AckTransactionResult describes a remote transaction receipt.
-type AckTransactionResult struct {
-	totalReceived int
-	relaysPerTxes map[string][]string
-
-	err error
 }
 
 // NewServer initializes a new [MultiplexBackend] around an empty multiplex
@@ -664,53 +669,106 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 		catchupRelays, // Relays received ReplRequest
 	)
 
-	b.logger.Debug("Waiting only for relevant relays to respond",
-		"num_relays", len(relevantRelays),
-		"relay_ids", relevantRelays,
-		"tx_hashes", func() []string {
-			txHashes := []string{}
-			for _, tx := range transactions {
-				txHashes = append(txHashes, fmt.Sprintf("%X", tx.Hash()))
-			}
-			return txHashes
-		}(),
-	)
+	// Each relevant (healthy) relay should acknowledge each transaction once.
+	totalAcksExpected := len(relevantRelays) * len(transactions)
 
-	maxAcceptMsgs := len(relevantRelays) * len(transactions)
-	asyncResultsCh := make(chan AckTransactionResult, 1)
-	shutdownWaitCh := make(chan struct{}, 1)
+	// Written on at the end of this method, when results are returned.
+	// Consumed and closed in deferral process of this method.
+	shutdownWaitChs := make(map[string]chan struct{}, len(transactions))
 
-	// Resets the ack channel to expect the correct number of Acks.
-	remoteRelayTxCh := make(chan string, maxAcceptMsgs)
+	// Written on by [multiplex.Reactor#Receive] when it intercepts
+	// a relevant AckTransactionBroadcast message from a relevant relay.
+	// Consumed by [remoteAckTransactionConsumer].
+	ackAcceptTxChs := make(map[string]chan *mxp2p.AckTransactionBroadcast, len(transactions))
 
-	// Collects AckTransactionBroadcast messages and proxy to remoteRelayTxCh.
-	// Stopped on shutdownWaitCh.
-	go b.remoteAckTransactionConsumer(ctx,
-		relevantRelays, // Accept ACK only from these relays
-		transactions,   // ... and for these transactions
-		remoteRelayTxCh,
-		asyncResultsCh,
-		shutdownWaitCh,
-	)
+	// Written on by [remoteAckTransactionConsumer] when it processes
+	// a relevant AckTransactionBroadcast message from a relevant relay.
+	// Consumed by [localAckTransactionConsumer].
+	remoteRelayTxChs := make(map[string]chan string, len(transactions))
 
-	// Collects remoteRelayTxCh messages and create result object.
-	// Stopped on shutdownWaitCh.
-	go b.localAckTransactionConsumer(ctx,
-		relevantRelays, // Wait for ACK only for these relays
-		transactions,   // ... and for these transactions
-		remoteRelayTxCh,
-		asyncResultsCh,
-		shutdownWaitCh,
-	)
+	// Written on by [remoteAckTransactionConsumer] when it errors, and also
+	// written on by [localAckTransactionConsumer] when it errors and when it
+	// is done processing (enough) transaction acknowledgments for this batch.
+	// Consumed at the end of this method.
+	asyncResultsCh := make(chan AckTransactionResult, len(transactions))
 
-	defer func() {
-		shutdownWaitCh <- struct{}{}
-		close(remoteRelayTxCh)
-	}()
+	// For every transaction that must be acknowledged, we open a channel
+	// that will be used by [multiplex.Reactor#Receive] when it intercepts
+	// a [AckTransactionBroadcast] message on the [server.AckBroadcastChannel].
+	for _, transaction := range transactions {
+		txHash := fmt.Sprintf("%X", transaction.Hash())
 
-	// Waits until we have any kind of result.
-	results := <-asyncResultsCh
-	return results.relaysPerTxes, maxAcceptMsgs, results.totalReceived, results.err
+		// TODO(midas): remove debug logs
+		b.logger.Debug("Waiting only for relevant relays to respond",
+			"num_relays", len(relevantRelays),
+			"relay_ids", relevantRelays,
+			"total_ack", totalAcksExpected,
+			"tx_hash", txHash,
+		)
+
+		// Used to permit expiration of context or forcing shutdown of goroutines.
+		shutdownWaitChs[txHash] = make(chan struct{}, 1)
+
+		// Used to share acceptance message `id:tx_hash_hex` internally
+		// and forward the acknowledgment to [localAckTransactionConsumer].
+		remoteRelayTxChs[txHash] = make(chan string, len(relevantRelays))
+
+		// Used to intercept AckTransactionBroadcast messages.
+		ackAcceptTxChs[txHash] = b.reactor.ChannelForAckTransaction(txHash)
+
+		// NOTE(midas): The order of execution of the following goroutines
+		// does not matter, because the local consumer reads messages that
+		// are issued by the remote consumer, i.e. if the local consumer is
+		// started first, it will lock its goroutine until consuming.
+
+		// Collects AckTransactionBroadcast messages and proxy to remoteRelayTxCh.
+		// Stopped on shutdownWaitCh.
+		go b.remoteAckTransactionConsumer(ctx,
+			relevantRelays,           // Accept ACK only from these relays
+			transaction,              // ... and for this transaction
+			ackAcceptTxChs[txHash],   // Consuming this channel
+			remoteRelayTxChs[txHash], // Forwarding to local consumer
+			asyncResultsCh,
+			shutdownWaitChs[txHash],
+		)
+
+		// Collects remoteRelayTxCh messages and create result object.
+		// Stopped on shutdownWaitCh.
+		go b.localAckTransactionConsumer(ctx,
+			relevantRelays,           // Wait for ACK only for these relays
+			transaction,              // ... and for these transactions
+			remoteRelayTxChs[txHash], // Consuming this channel
+			asyncResultsCh,
+			shutdownWaitChs[txHash],
+		)
+	}
+
+	// Waits until we have all required results (or errors).
+	for i := 0; i < len(transactions); i++ {
+		// Wait for one result (it doesn't matter which)
+		txResult := <-asyncResultsCh
+		if txResult.Error != nil {
+			// We stop waiting at first error that occurs.
+			err = txResult.Error
+			return
+		}
+
+		relaysPerTx[txResult.TxHash] = make([]string, 0, len(txResult.Relays))
+		relaysPerTx[txResult.TxHash] = append(relaysPerTx[txResult.TxHash], txResult.Relays...)
+		numReceived += len(txResult.Relays)
+
+		// Shutdown any living goroutine for this txHash
+		defer func(txHash string) {
+			shutdownWaitChs[txHash] <- struct{}{}
+			b.reactor.CloseAckTransactionChannel(txHash)
+
+			close(remoteRelayTxChs[txHash])
+			close(shutdownWaitChs[txHash])
+
+		}(txResult.TxHash)
+	}
+
+	return
 }
 
 // CancelBroadcastOperation executes the CancelBroadcast routine
@@ -1603,53 +1661,51 @@ func (b *MultiplexBackend) StopNodeInstances() error {
 	return nil
 }
 
-// remoteAckTransactionConsumer reacts to AckTransactionBroadcast messages.
-// Consumes AckTransactionBroadcast messages and proxies to remoteRelayTxCh
-// in a message formatted to contain relay ID and tx hash.
+// remoteAckTransactionConsumer reacts to AckTransactionBroadcast messages
+// about transaction and proxies remoteRelayTxCh in a message formatted to
+// contain the relay ID and tx hash: `id:tx_hash_hex`.
 func (b *MultiplexBackend) remoteAckTransactionConsumer(
 	ctx context.Context,
 	relevantRelays []string,
-	relevantTxes []client.Transaction,
+	transaction client.Transaction,
+	ackAcceptTxCh chan *mxp2p.AckTransactionBroadcast,
 	remoteRelayTxCh chan string,
 	resultsCh chan AckTransactionResult,
 	shutdownCh chan struct{},
 ) {
-	relevantTxHashes := func() (txHashes []string) {
-		txHashes = make([]string, 0, len(relevantTxes))
-		for _, tx := range relevantTxes {
-			txHashes = append(txHashes, fmt.Sprintf("%X", tx.Hash()))
-		}
-		return txHashes
-	}()
+	consumerTxHash := fmt.Sprintf("%X", transaction.Hash())
 
 	for {
 		select {
 		// Note: AckTransactionBroadcast always contains exactly one tx hash
 		// because the remote mempool processes one transaction at a time.
-		case ackResponse := <-b.reactor.ackTxAcceptCh:
-			relayId := ackResponse.NodeId
-			txHash := fmt.Sprintf("%X", ackResponse.TxHashes[0])
-
-			isRelevantRelay := slices.Contains(relevantRelays, relayId)
-			isRelevantTxHash := slices.Contains(relevantTxHashes, txHash)
-			if !isRelevantRelay || !isRelevantTxHash {
-				continue
+		case ackResponse := <-ackAcceptTxCh:
+			// In case of channel closing early.
+			if ackResponse == nil {
+				// TODO(midas): remove debug logs
+				b.logger.Debug("CAUTION: Intercepted nil AckTransactionBroadcast",
+					"consumer_tx", consumerTxHash,
+				)
+				return
 			}
+
+			relayId := ackResponse.NodeId
+			ackTxHash := fmt.Sprintf("%X", ackResponse.TxHashes[0])
 
 			// TODO(midas): remove debug logs
 			b.logger.Debug("Intercepted relevant AckTransactionBroadcast",
 				"relay_id", relayId,
-				"tx_hash", txHash,
+				"tx_hash", ackTxHash,
 			)
 
-			acceptMsg := fmt.Sprintf("%s:%s", relayId, txHash)
+			acceptMsg := fmt.Sprintf("%s:%s", relayId, ackTxHash)
 			remoteRelayTxCh <- acceptMsg
 
 		case <-ctx.Done():
 			err := fmt.Errorf(
-				"process timed out waiting for remote ack messages for txes: %v", relevantTxHashes)
+				"process timed out waiting for remote ack messages for tx: %s", consumerTxHash)
 
-			resultsCh <- AckTransactionResult{err: err}
+			resultsCh <- AckTransactionResult{Error: err}
 			return
 
 		case <-b.reactor.Quit():
@@ -1667,21 +1723,15 @@ func (b *MultiplexBackend) remoteAckTransactionConsumer(
 func (b *MultiplexBackend) localAckTransactionConsumer(
 	ctx context.Context,
 	relevantRelays []string,
-	relevantTxes []client.Transaction,
+	transaction client.Transaction,
 	remoteRelayTxCh chan string,
 	resultsCh chan AckTransactionResult,
 	shutdownCh chan struct{},
 ) {
-	relevantTxHashes := func() (txHashes []string) {
-		txHashes = make([]string, 0, len(relevantTxes))
-		for _, tx := range relevantTxes {
-			txHashes = append(txHashes, fmt.Sprintf("%X", tx.Hash()))
-		}
-		return txHashes
-	}()
+	consumerTxHash := fmt.Sprintf("%X", transaction.Hash())
 
-	relaysPerTx := make(map[string][]string, len(relevantTxHashes))
-	numExpected := len(relevantRelays) * len(relevantTxes)
+	relaysPerTx := make(map[string][]string, 1)
+	numExpected := len(relevantRelays)
 	numReceived := 0
 
 	for {
@@ -1693,20 +1743,16 @@ func (b *MultiplexBackend) localAckTransactionConsumer(
 				err := fmt.Errorf(
 					"could not parse ack transaction message: '%s'", acceptTxMsg)
 
-				resultsCh <- AckTransactionResult{err: err}
+				resultsCh <- AckTransactionResult{Error: err}
 				return
 			}
 
 			relayId, txHash := parts[0], parts[1]
-			isRelevantRelay := slices.Contains(relevantRelays, relayId)
-			isRelevantTxHash := slices.Contains(relevantTxHashes, txHash)
 
 			// TODO(midas): remove debug logs
-			b.logger.Debug("Processing remote transaction ACK",
+			b.logger.Debug("Locally processing remote transaction ACK",
 				"relay_id", relayId,
 				"tx_hash", txHash,
-				"is_relay", isRelevantRelay,
-				"is_tx", isRelevantTxHash,
 			)
 
 			b.ackResponsesMtx.RLock()
@@ -1725,11 +1771,11 @@ func (b *MultiplexBackend) localAckTransactionConsumer(
 			}
 			b.ackResponsesMtx.Unlock()
 
-			if isRelevantRelay && isRelevantTxHash && !relayAlreadyAckedTx {
+			if !relayAlreadyAckedTx {
 				numReceived++
 
 				// TODO(midas): remove debug logs
-				b.logger.Debug("Processed relevant AckTransactionBroadcast",
+				b.logger.Debug("Done processing relevant AckTransactionBroadcast",
 					"relay_id", relayId,
 					"tx_hash", txHash,
 					"num_rcvd", numReceived,
@@ -1747,26 +1793,22 @@ func (b *MultiplexBackend) localAckTransactionConsumer(
 
 				// Result should contain only relevant transactions
 				b.ackResponsesMtx.RLock()
-				for txHash, relayIds := range b.ackResponsesRcvd {
-					if slices.Contains(relevantTxHashes, txHash) {
-						relaysPerTx[txHash] = make([]string, 0, len(relayIds))
-						relaysPerTx[txHash] = append(relaysPerTx[txHash], relayIds...)
-					}
-				}
+				relaysPerTx[txHash] = make([]string, 0, len(b.ackResponsesRcvd[txHash]))
+				relaysPerTx[txHash] = append(relaysPerTx[txHash], b.ackResponsesRcvd[txHash]...)
 				b.ackResponsesMtx.RUnlock()
 
 				resultsCh <- AckTransactionResult{
-					totalReceived: numReceived,
-					relaysPerTxes: relaysPerTx,
+					Relays: relaysPerTx[txHash],
+					TxHash: txHash,
 				}
 				return
 			}
 
 		case <-ctx.Done():
 			err := fmt.Errorf(
-				"process timed out waiting for incoming ack messages for txes: %v", relevantTxHashes)
+				"process timed out waiting for incoming ack messages for tx: %s", consumerTxHash)
 
-			resultsCh <- AckTransactionResult{err: err}
+			resultsCh <- AckTransactionResult{Error: err}
 			return
 
 		case <-b.reactor.Quit():

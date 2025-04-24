@@ -155,10 +155,27 @@ type Reactor struct {
 	multiplexRegistry NamedMultiplexMap[any]
 	multiplexMetrics  NamedMultiplexMap[any]
 
-	// Internal channels
-	chainReadyCh  chan string
-	ackReplResCh  chan *mxp2p.ChainReplicationResponse
-	ackTxAcceptCh chan *mxp2p.AckTransactionBroadcast
+	// chainReadyCh is written on when node instances have started, inside
+	// the [OnStart] method. This channel is consumed by [WaitForNetworks],
+	// and by [NewNodesMultiplex].
+	// This channel is closed by the [OnStop] method.
+	chainReadyCh chan string
+
+	// ackReplResCh is written on when we intercept a [ChainReplicationResponse]
+	// message on the [server.ReplicationChannel].
+	// Consumed by [MultiplexBackend#WaitForRelayReplResponse].
+	// This channel is closed by the [OnStop] method.
+	ackReplResCh chan *mxp2p.ChainReplicationResponse
+
+	// ackAcceptTxChs contains channels that are opened on-demand, when the
+	// application expects to receive [AckTransactionBroadcast] messages from
+	// relevant relays. Keys are transaction hashes. Messages forwarded on this
+	// channel must contain a [mxp2p.AckTransactionBroadcast].
+	// Channels are consumed by [MultiplexBackend#WaitForRelaysAckTransactionBatch].
+	// These channels are closed by the [OnStop] method in case they were not yet
+	// closed by the deferral process in [MultiplexBackend#WaitForRelaysAckTransactionBatch].
+	ackAcceptTxMtx sync.RWMutex
+	ackAcceptTxChs map[string]chan *mxp2p.AckTransactionBroadcast
 
 	// Internal
 	logger cmtlog.Logger
@@ -224,9 +241,9 @@ func NewReactor(
 		configsPaths:      MultiplexFS{},
 
 		// Internal channels
-		chainReadyCh:  make(chan string),
-		ackReplResCh:  make(chan *mxp2p.ChainReplicationResponse),
-		ackTxAcceptCh: make(chan *mxp2p.AckTransactionBroadcast),
+		chainReadyCh:   make(chan string),
+		ackReplResCh:   make(chan *mxp2p.ChainReplicationResponse),
+		ackAcceptTxChs: make(map[string]chan *mxp2p.AckTransactionBroadcast),
 
 		// Internals
 		logger: logger,
@@ -504,6 +521,47 @@ func (reactor *Reactor) SetRPCMultiplexer(mux *http.ServeMux) {
 	reactor.networkMutex.Lock()
 	defer reactor.networkMutex.Unlock()
 	reactor.rpcMultiplexer = mux
+}
+
+// ChannelForAckTransaction creates or returns a buffered channel that accepts
+// numUpdates messages for txHash.
+//
+// ackAcceptTxChs contains channels that are opened on-demand, when the
+// application expects to receive [AckTransactionBroadcast] messages from
+// relevant relays, about one transaction hash.
+func (reactor *Reactor) ChannelForAckTransaction(txHash string) chan *mxp2p.AckTransactionBroadcast {
+	reactor.ackAcceptTxMtx.RLock()
+	acceptChForTxHash, hasChannel := reactor.ackAcceptTxChs[txHash]
+	reactor.ackAcceptTxMtx.RUnlock()
+
+	if !hasChannel {
+		acceptChForTxHash = make(chan *mxp2p.AckTransactionBroadcast)
+
+		reactor.ackAcceptTxMtx.Lock()
+		reactor.ackAcceptTxChs[txHash] = acceptChForTxHash
+		reactor.ackAcceptTxMtx.Unlock()
+	}
+
+	return acceptChForTxHash
+}
+
+// CloseAckTransactionChannel closes the transaction acceptance channel
+// for txHash and deletes it gracefully from the registry.
+func (reactor *Reactor) CloseAckTransactionChannel(txHash string) {
+	reactor.ackAcceptTxMtx.RLock()
+	acceptCh, hasChannel := reactor.ackAcceptTxChs[txHash]
+	reactor.ackAcceptTxMtx.RUnlock()
+	if !hasChannel {
+		return
+	}
+
+	// Close the channel first
+	close(acceptCh)
+
+	// And free memory space
+	reactor.ackAcceptTxMtx.Lock()
+	delete(reactor.ackAcceptTxChs, txHash)
+	reactor.ackAcceptTxMtx.Unlock()
 }
 
 // ----------------------------------------------------------------------------
@@ -941,8 +999,9 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 					"from_peer", sourceAddr,
 				)
 
-				// TODO(midas): channel mapped by tx hash r.ackTxAcceptCh[txHash] <- ackTxBroadcast
-				r.ackTxAcceptCh <- ackTxBroadcast
+				// Channel is mapped by transaction hash
+				acceptChForTxHash := r.ChannelForAckTransaction(txHash)
+				acceptChForTxHash <- ackTxBroadcast
 			} else {
 				// TODO(midas): remove debug logs
 				r.logger.Debug("Skipping already processed AckTransactionBroadcast",
@@ -1236,8 +1295,12 @@ func (reactor *Reactor) OnStop() {
 		close(reactor.ackReplResCh)
 	}
 
-	if reactor.ackTxAcceptCh != nil {
-		close(reactor.ackTxAcceptCh)
+	reactor.ackAcceptTxMtx.RLock()
+	remainingChannels := reactor.ackAcceptTxChs
+	reactor.ackAcceptTxMtx.RUnlock()
+
+	for txHash, _ := range remainingChannels {
+		reactor.CloseAckTransactionChannel(txHash)
 	}
 }
 
