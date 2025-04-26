@@ -13,6 +13,7 @@ type ConnSet interface {
 	Set(conn net.Conn, ip []net.IP)
 	Remove(conn net.Conn)
 	RemoveAddr(addr net.Addr)
+	ForEach(func(conn net.Conn))
 }
 
 type connSetItem struct {
@@ -69,6 +70,14 @@ func (cs *connSet) RemoveAddr(addr net.Addr) {
 	defer cs.Unlock()
 
 	delete(cs.conns, addr.String())
+}
+
+func (cs *connSet) ForEach(fn func(c net.Conn)) {
+	cs.Lock()
+	defer cs.Unlock()
+	for _, c := range cs.conns {
+		fn(c.conn)
+	}
 }
 
 func (cs *connSet) Set(c net.Conn, ips []net.IP) {

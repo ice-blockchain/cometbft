@@ -3,9 +3,9 @@ package multiplex
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -74,7 +74,11 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 			cometbftConfig.P2P,
 			transport,
 			p2p.WithMetrics(p2pMetricsProvider),
+			func(s *p2p.Switch) {
+				s.Typ = "cometBFT"
+			},
 		)
+		transport.SetSwitch(eventSwitch)
 		eventSwitch.SetLogger(p2pLogger)
 		eventSwitch.SetNodeInfo(nodeInfo)
 		eventSwitch.SetNodeKey(nodeKey)
@@ -234,27 +238,10 @@ func (reactor *Reactor) AddConnectionChannels(
 	reactor.networkMutex.RLock()
 	defer reactor.networkMutex.RUnlock()
 
-	sw.UniquePeers().ForEach(func(peer p2p.Peer) {
-		for _, chainID := range chainIds {
-			mconn := peer.MConn()
-
-			for name, r := range sw.Reactors(chainID) {
-				for _, chDesc := range r.GetChannels() {
-					if len(channels) > 0 && !slices.Contains(channels, chDesc.ID) {
-						continue
-					}
-
-					// TODO(midas): remove debug logs
-					reactor.logger.Debug("Adding connection channel",
-						"chain_id", chainID,
-						"reactor", name,
-						"chID", chDesc.ID,
-						"peer", peer.SocketAddr().String(),
-					)
-
-					mconn.AddChannel(chainID, *chDesc)
-				}
-			}
+	sw.Transport().Conns().ForEach(func(c net.Conn) {
+		peer := sw.UniquePeers().GetByAddr(c.RemoteAddr())
+		if peer != nil {
+			sw.UpdateChannelsForMConn(chainIds, channels)(peer.MConn())
 		}
 	})
 

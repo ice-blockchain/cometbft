@@ -85,6 +85,7 @@ type Transport interface {
 
 	// Flags when transport is being closed.
 	IsClosing() bool
+	SetSwitch(sw *Switch)
 }
 
 // transportLifecycle bundles the methods for callers to control start and stop
@@ -183,6 +184,8 @@ type MultiplexTransport struct {
 
 	// Permits to overwrite the handshake handler
 	handshakeFn TransportHandshakeFn
+
+	sw *Switch
 }
 
 // Test multiplexTransport for interface completeness.
@@ -234,6 +237,9 @@ func NewMultiplexTransportWithCustomHandshake(
 		handshakeFn:      handshakeFn,
 	}
 }
+func (mt *MultiplexTransport) SetSwitch(sw *Switch) {
+	mt.sw = sw
+}
 
 // NetAddress implements Transport.
 func (mt *MultiplexTransport) NetAddress() NetAddress {
@@ -252,7 +258,7 @@ func (mt *MultiplexTransport) Accept(cfg peerConfig) (Peer, error) {
 
 		cfg.outbound = false
 
-		return mt.wrapPeer(a.conn, a.nodeInfo, cfg, a.netAddr), nil
+		return mt.wrapPeer(a.conn, a.nodeInfo, cfg, a.netAddr, mt.sw), nil
 	case <-mt.closec:
 		return nil, ErrTransportClosed{}
 	}
@@ -285,7 +291,7 @@ func (mt *MultiplexTransport) Dial(
 
 	cfg.outbound = true
 
-	p := mt.wrapPeer(secretConn, nodeInfo, cfg, &addr)
+	p := mt.wrapPeer(secretConn, nodeInfo, cfg, &addr, mt.sw)
 
 	return p, nil
 }
@@ -599,6 +605,7 @@ func (mt *MultiplexTransport) wrapPeer(
 	ni NodeInfo,
 	cfg peerConfig,
 	socketAddr *NetAddress,
+	sw *Switch,
 ) Peer {
 	persistent := false
 	if cfg.isPersistent != nil {
@@ -628,9 +635,16 @@ func (mt *MultiplexTransport) wrapPeer(
 		cfg.chDescs,
 		cfg.onPeerError,
 		PeerMetrics(cfg.metrics),
+		func(p *peer) {
+			p.mconn.Sw = mt.sw
+		},
 	)
 
 	return p
+}
+
+func (mt *MultiplexTransport) Conns() ConnSet {
+	return mt.conns
 }
 
 func handshake(

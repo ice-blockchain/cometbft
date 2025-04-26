@@ -1,11 +1,21 @@
 package p2p
 
 import (
+	"fmt"
 	"net"
+	"strconv"
 
 	cmtrand "github.com/ice-blockchain/cometbft/internal/rand"
 	cmtsync "github.com/ice-blockchain/cometbft/libs/sync"
 )
+
+type ErrHasExtraPeer struct {
+	Peer Peer
+}
+
+func (e ErrHasExtraPeer) Error() string {
+	return fmt.Sprintf("has same peer inbound / outbound conn (%v)", e.Peer.String())
+}
 
 // IPeerSet has a (immutable) subset of the methods of PeerSet.
 type IPeerSet interface {
@@ -15,6 +25,7 @@ type IPeerSet interface {
 	HasIP(ip net.IP) bool
 	// Get returns the peer with the given key, or nil if not found.
 	Get(key ID) Peer
+	GetByAddr(key net.Addr) Peer
 	// Copy returns a copy of the peers list.
 	Copy() []Peer
 	// Size returns the number of peers in the PeerSet.
@@ -29,9 +40,10 @@ type IPeerSet interface {
 
 // PeerSet is a special thread-safe structure for keeping a table of peers.
 type PeerSet struct {
-	mtx    cmtsync.Mutex
-	lookup map[ID]*peerSetItem
-	list   []Peer
+	mtx        cmtsync.Mutex
+	lookup     map[string]*peerSetItem
+	addrLookup map[string]*peerSetItem
+	list       []Peer
 }
 
 type peerSetItem struct {
@@ -42,8 +54,9 @@ type peerSetItem struct {
 // NewPeerSet creates a new peerSet with a list of initial capacity of 256 items.
 func NewPeerSet() *PeerSet {
 	return &PeerSet{
-		lookup: make(map[ID]*peerSetItem),
-		list:   make([]Peer, 0, 256),
+		lookup:     make(map[string]*peerSetItem),
+		list:       make([]Peer, 0, 256),
+		addrLookup: make(map[string]*peerSetItem),
 	}
 }
 
@@ -53,11 +66,13 @@ func (ps *PeerSet) Add(peer Peer) error {
 	ps.mtx.Lock()
 	defer ps.mtx.Unlock()
 
-	if ps.lookup[peer.ID()] != nil {
+	if ps.lookup[ps.peerLookupKey(peer)] != nil {
 		// NOTE(midas):
 		// In a multiplex environment, it is common to discover peers with IDs
 		// that we already know about because we are using AddrBook with the
 		// same NodeID. Note that these AddrBook may contain different peers.
+		index := len(ps.list)
+		ps.addrLookup[peer.RemoteAddr().String()] = &peerSetItem{peer, index}
 		return nil
 	}
 	if peer.GetRemovalFailed() {
@@ -68,7 +83,8 @@ func (ps *PeerSet) Add(peer Peer) error {
 	// Appending is safe even with other goroutines
 	// iterating over the ps.list slice.
 	ps.list = append(ps.list, peer)
-	ps.lookup[peer.ID()] = &peerSetItem{peer, index}
+	ps.lookup[ps.peerLookupKey(peer)] = &peerSetItem{peer, index}
+	ps.addrLookup[peer.RemoteAddr().String()] = &peerSetItem{peer, index}
 	return nil
 }
 
@@ -76,9 +92,10 @@ func (ps *PeerSet) Add(peer Peer) error {
 // peerKey, otherwise false.
 func (ps *PeerSet) Has(peerKey ID) bool {
 	ps.mtx.Lock()
-	_, ok := ps.lookup[peerKey]
+	_, ok1 := ps.lookup[ps.lookupKey(peerKey, true)]
+	_, ok2 := ps.lookup[ps.lookupKey(peerKey, false)]
 	ps.mtx.Unlock()
-	return ok
+	return ok1 || ok2
 }
 
 // HasIP returns true if the set contains the peer referred to by this IP
@@ -102,20 +119,41 @@ func (ps *PeerSet) Get(peerKey ID) Peer {
 	ps.mtx.Lock()
 	defer ps.mtx.Unlock()
 
-	item, ok := ps.lookup[peerKey]
+	item, ok := ps.lookup[ps.lookupKey(peerKey, true)]
+	if ok {
+		return item.peer
+	}
+	item, ok = ps.lookup[ps.lookupKey(peerKey, false)]
 	if ok {
 		return item.peer
 	}
 	return nil
 }
 
-// Remove removes the peer from the PeerSet.
-func (ps *PeerSet) Remove(peer Peer) bool {
+func (ps *PeerSet) GetByAddr(addr net.Addr) Peer {
 	ps.mtx.Lock()
 	defer ps.mtx.Unlock()
 
-	item, ok := ps.lookup[peer.ID()]
-	if !ok || len(ps.list) == 0 {
+	item, ok := ps.addrLookup[addr.String()]
+	if ok {
+		return item.peer
+	}
+	return nil
+}
+
+func (ps *PeerSet) lookupKey(id ID, outbound bool) string {
+	return string(id) + strconv.FormatBool(outbound)
+}
+
+func (ps *PeerSet) peerLookupKey(p Peer) string {
+	return ps.lookupKey(p.ID(), p.IsOutbound())
+}
+
+// Remove removes the peer from the PeerSet.
+func (ps *PeerSet) Remove(peer Peer) bool {
+	ok1 := ps.remove(peer.ID(), peer.IsOutbound())
+	ok2 := ps.remove(peer.ID(), !peer.IsOutbound())
+	if (!(ok1 || ok2)) || len(ps.list) == 0 {
 		// Removing the peer has failed so we set a flag to mark that a removal was attempted.
 		// This can happen when the peer add routine from the switch is running in
 		// parallel to the receive routine of MConn.
@@ -124,16 +162,42 @@ func (ps *PeerSet) Remove(peer Peer) bool {
 		peer.SetRemovalFailed()
 		return false
 	}
+	return ok1 || ok2
+}
+
+func (ps *PeerSet) RemoveByAddr(addr net.Addr) error {
+	p := ps.GetByAddr(addr)
+	removed := ps.remove(p.ID(), p.IsOutbound())
+	extraPeer := ps.Get(p.ID())
+	if extraPeer != nil {
+		return ErrHasExtraPeer{Peer: extraPeer}
+	}
+	if !removed {
+		p.SetRemovalFailed()
+		return ErrPeerRemoval{}
+	}
+	return nil
+}
+
+func (ps *PeerSet) remove(id ID, outbound bool) bool {
+	ps.mtx.Lock()
+	defer ps.mtx.Unlock()
+
+	item, ok := ps.lookup[ps.lookupKey(id, outbound)]
+	if !ok || len(ps.list) == 0 {
+		return false
+	}
+
 	index := item.index
 
 	// Remove from ps.lookup.
-	delete(ps.lookup, peer.ID())
+	delete(ps.lookup, ps.lookupKey(id, outbound))
 
 	// If it's not the last item.
 	if index != len(ps.list)-1 {
 		// Swap it with the last item.
 		lastPeer := ps.list[len(ps.list)-1]
-		item := ps.lookup[lastPeer.ID()]
+		item := ps.lookup[ps.peerLookupKey(lastPeer)]
 		item.index = index
 		ps.list[index] = item.peer
 	}

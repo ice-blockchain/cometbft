@@ -3,8 +3,10 @@ package p2p
 import (
 	"errors"
 	"fmt"
+	"github.com/ice-blockchain/cometbft/libs/log"
 	"math"
 	"net"
+	"slices"
 	"time"
 
 	"github.com/cosmos/gogoproto/proto"
@@ -101,6 +103,7 @@ type Switch struct {
 	peersMtx     *cmtsync.RWMutex
 	peersByChain map[string]*PeerSet
 	uniquePeers  *PeerSet
+	Typ          string
 }
 
 type peerOption = func(p Peer)
@@ -159,8 +162,13 @@ func NewSwitch(
 	for _, option := range options {
 		option(sw)
 	}
-
+	sw.Transport().SetLogger(sw.Logger)
 	return sw
+}
+
+func (sw *Switch) SetLogger(l log.Logger) {
+	sw.Logger = l.With("typ", sw.Typ)
+	sw.Transport().SetLogger(sw.Logger)
 }
 
 // SwitchFilterTimeout sets the timeout used for peer filters.
@@ -553,22 +561,32 @@ func (sw *Switch) stopPeer(peer Peer, reason any) error {
 }
 
 // removePeer removes the peer from all PeerSet instances.
-func (sw *Switch) removePeer(peer Peer) error {
+func (sw *Switch) removePeer(peer Peer, reason any) error {
 	sw.peersMtx.Lock()
 	defer sw.peersMtx.Unlock()
 
-	if !sw.uniquePeers.Remove(peer) {
-		return fmt.Errorf(
-			"error on unique peer removal for ID %s", string(peer.ID()),
-		)
+	if err := sw.uniquePeers.RemoveByAddr(peer.RemoteAddr()); err != nil {
+		if extra, ok := err.(ErrHasExtraPeer); ok {
+			err = sw.stopPeer(extra.Peer, reason)
+		}
+		if err != nil {
+			return fmt.Errorf(
+				"error on unique peer removal for ID %s", string(peer.ID()),
+			)
+		}
 	}
 
 	for _, peerSet := range sw.peersByChain {
 		if peerSet.Has(peer.ID()) {
-			if !peerSet.Remove(peer) {
-				return fmt.Errorf(
-					"error on peer removal for ID %s", string(peer.ID()),
-				)
+			if err := peerSet.RemoveByAddr(peer.RemoteAddr()); err != nil {
+				if extra, ok := err.(ErrHasExtraPeer); ok {
+					err = sw.stopPeer(extra.Peer, reason)
+				}
+				if err != nil {
+					return fmt.Errorf(
+						"error on peer removal for ID %s", string(peer.ID()),
+					)
+				}
 			}
 		}
 	}
@@ -590,7 +608,7 @@ func (sw *Switch) stopAndRemovePeer(peer Peer, reason any) {
 	// reconnect to our node and the switch calls InitPeer before
 	// RemovePeer is finished.
 	// https://github.com/tendermint/tendermint/issues/3338
-	if err := sw.removePeer(peer); err != nil {
+	if err := sw.removePeer(peer, reason); err != nil {
 		// Removal of the peer has failed. The function above sets a flag within the peer to mark this.
 		// We keep this message here as information to the developer.
 		sw.Logger.Debug("error on peer removal", "peer", peer.ID())
@@ -1101,6 +1119,12 @@ func (sw *Switch) addPeer(p Peer) error {
 		}
 	}
 
+	chains := []string{}
+	for chainID := range sw.chDescs {
+		chains = append(chains, chainID)
+	}
+	sw.UpdateChannelsForMConn(chains, []byte{})(p.MConn())
+
 	// Start the peer's send/recv routines.
 	// Must start it before adding it to the peer set
 	// to prevent Start and Stop from being called concurrently.
@@ -1157,4 +1181,28 @@ func (sw *Switch) addPeer(p Peer) error {
 	sw.Logger.Debug("Added peer", "peer", p)
 
 	return nil
+}
+
+func (sw *Switch) UpdateChannelsForMConn(chainIds []string, channels []byte) func(mconn *conn.MConnection) {
+	return func(mconn *conn.MConnection) {
+		for _, chainID := range chainIds {
+			for name, r := range sw.Reactors(chainID) {
+				for _, chDesc := range r.GetChannels() {
+					if len(channels) > 0 && !slices.Contains(channels, chDesc.ID) {
+						continue
+					}
+
+					// TODO(midas): remove debug logs
+					sw.Logger.Debug("Adding connection channel",
+						"chain_id", chainID,
+						"reactor", name,
+						"chID", chDesc.ID,
+						"peer", mconn.SocketAddr().String(),
+					)
+
+					mconn.AddChannel(chainID, *chDesc)
+				}
+			}
+		}
+	}
 }

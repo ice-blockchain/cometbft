@@ -506,6 +506,7 @@ func createSwitch(config *cfg.Config,
 		p2p.WithMetrics(p2pMetrics),
 		p2p.SwitchPeerFilters(peerFilters...),
 	)
+	transport.SetSwitch(sw)
 	sw.SetLogger(p2pLogger)
 	if config.Mempool.Type != cfg.MempoolTypeNop {
 		sw.AddReactor("", "MEMPOOL", mempoolReactor)

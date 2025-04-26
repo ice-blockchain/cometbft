@@ -340,54 +340,56 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 			relaysAccepted := 0
 
 			sentWg := sync.WaitGroup{}
-			sentWg.Add(chainPeerSet.Size())
+			s := chainPeerSet.Copy()
+			sentWg.Add(len(s))
+			for _, peer := range s {
+				func(peer p2p.Peer) {
+					defer sentWg.Done()
 
-			chainPeerSet.ForEach(func(peer p2p.Peer) {
-				defer sentWg.Done()
+					// Send only to relays we are interested in (healthy relays).
+					// Skip unhealthy relays because they would produce an error.
+					peerID := string(peer.ID())
+					if !slices.Contains(chainHealthyPeers, peerID) {
+						// TODO(midas): remove debug logs
+						b.logger.Debug("Skipping broadcast to unhealthy relay",
+							"chain_id", chainID,
+							"tx_hash", txHash,
+							"peer", peerID,
+						)
+						return
+					}
 
-				// Send only to relays we are interested in (healthy relays).
-				// Skip unhealthy relays because they would produce an error.
-				peerID := string(peer.ID())
-				if !slices.Contains(chainHealthyPeers, peerID) {
 					// TODO(midas): remove debug logs
-					b.logger.Debug("Skipping broadcast to unhealthy relay",
-						"chain_id", chainID,
-						"tx_hash", txHash,
-						"peer", peerID,
-					)
-					return
-				}
-
-				// TODO(midas): remove debug logs
-				b.logger.Debug("Sending transaction to remote mempool",
-					"chain_id", chainID,
-					"tx_hash", txHash,
-					"peer", peerID,
-				)
-
-				// Send transaction to relay mempool, after checks the mempool
-				// reactor shall send a AckTransactionBroadcast back to us which
-				// sends a AckTransactionBroadcast object on ackTxAcceptCh
-				if success := peer.Send(chainID, p2p.Envelope{
-					ChannelID: mempl.MempoolChannel,
-					Message:   &memp2p.Txs{Txs: [][]byte{rawTx}},
-				}); !success {
-					b.logger.Error("could not send message on mempool channel",
+					b.logger.Debug("Sending transaction to remote mempool",
 						"chain_id", chainID,
 						"tx_hash", txHash,
 						"peer", peerID,
 					)
 
-					// Note: we do not push an error on the notifyCh channel
-					// because a failure in sending to one relay must not
-					// prevent the transaction broadcast operation.
+					// Send transaction to relay mempool, after checks the mempool
+					// reactor shall send a AckTransactionBroadcast back to us which
+					// sends a AckTransactionBroadcast object on ackTxAcceptCh
+					if success := peer.Send(chainID, p2p.Envelope{
+						ChannelID: mempl.MempoolChannel,
+						Message:   &memp2p.Txs{Txs: [][]byte{rawTx}},
+					}); !success {
+						b.logger.Error("could not send message on mempool channel",
+							"chain_id", chainID,
+							"tx_hash", txHash,
+							"peer", peerID,
+						)
 
-					return
-				}
+						// Note: we do not push an error on the notifyCh channel
+						// because a failure in sending to one relay must not
+						// prevent the transaction broadcast operation.
 
-				poolRequestPeers = append(poolRequestPeers, peerID)
-				relaysAccepted++
-			})
+						return
+					}
+
+					poolRequestPeers = append(poolRequestPeers, peerID)
+					relaysAccepted++
+				}(peer)
+			}
 
 			// Waits until we have sent to all required peers
 			sentWg.Wait()

@@ -321,7 +321,11 @@ func (b *MultiplexBackend) CreateOrLoadDiscoveryEventSwitch() *p2p.Switch {
 	sw := p2p.NewSwitch(
 		nodeConfig.P2P,
 		localTransport,
+		func(s *p2p.Switch) {
+			s.Typ = "discovery"
+		},
 	)
+	localTransport.SetSwitch(sw)
 	sw.SetLogger(b.reactor.logger.With("module", "p2p"))
 	sw.SetNodeInfo(multiNodeInfo)
 	sw.SetNodeKey(b.reactor.GetNodeKey())

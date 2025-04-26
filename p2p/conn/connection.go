@@ -52,6 +52,10 @@ const (
 type (
 	receiveCbFunc func(chainID string, chID byte, msgBytes []byte)
 	errorCbFunc   func(any)
+
+	connUpdater interface {
+		UpdateChannelsForMConn(chainIds []string, channels []byte) func(mconn *MConnection)
+	}
 )
 
 /*
@@ -120,6 +124,8 @@ type MConnection struct {
 	created time.Time // time of creation
 
 	_maxPacketMsgSize int
+
+	Sw connUpdater
 }
 
 // MConnConfig is a MConnection configuration.
@@ -231,6 +237,10 @@ func (c *MConnection) SetLogger(l log.Logger) {
 	for _, ch := range c.channels {
 		ch.SetLogger(l)
 	}
+}
+
+func (c *MConnection) SocketAddr() net.Addr {
+	return c.conn.RemoteAddr()
 }
 
 // AddChannel registers a ChannelDescriptor in a running mconn for chainID,
@@ -730,10 +740,14 @@ FOR_LOOP:
 			channelID := byte(pkt.PacketMsg.ChannelID)
 			channel, ok := c.channelsIdx[chainID][channelID]
 			if pkt.PacketMsg.ChannelID < 0 || pkt.PacketMsg.ChannelID > math.MaxUint8 || !ok || channel == nil {
-				err := fmt.Errorf("unknown channel %X", pkt.PacketMsg.ChannelID)
-				c.Logger.Debug("Connection failed @ recvRoutine", "conn", c, "err", err)
-				c.stopForError(err)
-				break FOR_LOOP
+				c.Sw.UpdateChannelsForMConn([]string{pkt.PacketMsg.ChainID}, []byte{byte(pkt.PacketMsg.ChannelID)})(c)
+				channel, ok = c.channelsIdx[chainID][channelID]
+				if pkt.PacketMsg.ChannelID < 0 || pkt.PacketMsg.ChannelID > math.MaxUint8 || !ok || channel == nil {
+					err := fmt.Errorf("unknown channel %X", pkt.PacketMsg.ChannelID)
+					c.Logger.Debug("Connection failed @ recvRoutine", "conn", c, "err", err)
+					c.stopForError(err)
+					break FOR_LOOP
+				}
 			}
 
 			msgBytes, err := channel.recvPacketMsg(*pkt.PacketMsg)
