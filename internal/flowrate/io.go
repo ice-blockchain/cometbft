@@ -70,6 +70,7 @@ func (r *Reader) Close() error {
 	if c, ok := r.Reader.(io.Closer); ok {
 		return c.Close()
 	}
+	r.Monitor.Stop()
 	return nil
 }
 
@@ -128,5 +129,6 @@ func (w *Writer) Close() error {
 	if c, ok := w.Writer.(io.Closer); ok {
 		return c.Close()
 	}
+	w.Monitor.Stop()
 	return nil
 }

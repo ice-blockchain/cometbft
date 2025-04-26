@@ -342,7 +342,8 @@ func (c *MConnection) FlushStop() {
 	}
 
 	c.conn.Close()
-
+	c.recvMonitor.Stop()
+	c.sendMonitor.Stop()
 	// We can't close pong safely here because
 	// recvRoutine may write to it after we've stopped.
 	// Though it doesn't need to get closed at all,

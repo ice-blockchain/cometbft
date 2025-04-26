@@ -16,6 +16,8 @@ const clockRate = 20 * time.Millisecond
 
 var (
 	hasInitializedClock = atomic.Bool{}
+	stopped             = atomic.Bool{}
+	shutdown            chan struct{}
 	currentClockValue   = atomic.Int64{}
 	clockStartTime      = time.Time{}
 )
@@ -23,23 +25,29 @@ var (
 // checks if the clock update timer is running. If not, sets clockStartTime and starts it.
 func ensureClockRunning() {
 	firstRun := hasInitializedClock.CompareAndSwap(false, true)
-	if !firstRun {
+	st := stopped.Load()
+	if !firstRun || st {
 		return
 	}
 	clockStartTime = time.Now().Round(clockRate)
-	go runClockUpdates()
+	shutdown = make(chan struct{}, 10000000)
+	go runClockUpdates(shutdown)
 }
 
 // increments the current clock value every clockRate interval.
-func runClockUpdates() {
+func runClockUpdates(shutdown chan struct{}) {
 	// Create a ticker that sends the current time on the channel every clockRate interval
 	ticker := time.Tick(clockRate)
-
 	// First tick happens after clockrate, therefore initial value is 0.
-	for t := range ticker {
-		delta := t.Sub(clockStartTime)
-		rounded := clockRound(delta)
-		currentClockValue.Store(int64(rounded))
+	for {
+		select {
+		case t := <-ticker:
+			delta := t.Sub(clockStartTime)
+			rounded := clockRound(delta)
+			currentClockValue.Store(int64(rounded))
+		case <-shutdown:
+			return
+		}
 	}
 }
 

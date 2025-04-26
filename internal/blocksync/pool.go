@@ -393,6 +393,7 @@ func (pool *BlockPool) removePeer(peerID p2p.ID) {
 
 	peer, ok := pool.peers[peerID]
 	if ok {
+		peer.recvMonitor.Stop()
 		if peer.timeout != nil {
 			peer.timeout.Stop()
 		}

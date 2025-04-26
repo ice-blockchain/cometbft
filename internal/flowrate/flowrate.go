@@ -8,6 +8,8 @@ package flowrate
 
 import (
 	"math"
+	"runtime"
+	"sync/atomic"
 	"time"
 
 	cmtsync "github.com/ice-blockchain/cometbft/libs/sync"
@@ -46,8 +48,12 @@ type Monitor struct {
 //
 // The default values for sampleRate and windowSize (if <= 0) are 100ms and 1s,
 // respectively.
+var instances int64
+
 func New(sampleRate, windowSize time.Duration) *Monitor {
 	ensureClockRunning()
+	atomic.AddInt64(&instances, 1)
+
 	if sampleRate = clockRound(sampleRate); sampleRate <= 0 {
 		sampleRate = 5 * clockRate
 	}
@@ -55,7 +61,7 @@ func New(sampleRate, windowSize time.Duration) *Monitor {
 		windowSize = 1 * time.Second
 	}
 	now := clock()
-	return &Monitor{
+	m := &Monitor{
 		active:  true,
 		start:   now,
 		rWindow: windowSize.Seconds(),
@@ -63,6 +69,10 @@ func New(sampleRate, windowSize time.Duration) *Monitor {
 		sRate:   sampleRate,
 		tLast:   now,
 	}
+	runtime.SetFinalizer(m, func(m *Monitor) {
+		m.Stop()
+	})
+	return m
 }
 
 // Update records the transfer of n bytes and returns n. It should be called
@@ -162,6 +172,15 @@ func (m *Monitor) Status() Status {
 	}
 	m.mu.Unlock()
 	return s
+}
+
+func (m *Monitor) Stop() {
+	if atomic.AddInt64(&instances, -1) <= 0 {
+		if st := stopped.CompareAndSwap(false, true); st {
+			//shutdown <- struct{}{}
+			close(shutdown)
+		}
+	}
 }
 
 // Limit restricts the instantaneous (per-sample) data flow to rate bytes per
