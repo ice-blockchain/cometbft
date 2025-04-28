@@ -30,7 +30,7 @@ func ensureClockRunning() {
 		return
 	}
 	clockStartTime = time.Now().Round(clockRate)
-	shutdown = make(chan struct{}, 10000000)
+	shutdown = make(chan struct{}, 1)
 	go runClockUpdates(shutdown)
 }
 

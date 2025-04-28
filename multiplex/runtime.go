@@ -274,6 +274,10 @@ func (reactor *Reactor) InjectNewRuntime(
 	// ------------------------------------------------------------------------
 	// Step 1: Create runtime environment
 
+	reactor.chainReadyMtx.Lock()
+	reactor.chainReadyChs[chainID] = make(chan bool, 1)
+	reactor.chainReadyMtx.Unlock()
+
 	// Creates an event bus and loads the priv validator service.
 	// This goroutine produces a panic in case of errors.
 	go func(network string) {
@@ -286,12 +290,21 @@ func (reactor *Reactor) InjectNewRuntime(
 			panic(err)
 		}
 
+		reactor.chainReadyMtx.RLock()
+		chainReadyCh := reactor.chainReadyChs[chainID]
+		reactor.chainReadyMtx.RUnlock()
+
 		// Done starting node listeners
-		reactor.chainReadyCh <- network
+		chainReadyCh <- true
 	}(chainID)
 
+	reactor.chainReadyMtx.RLock()
+	chainReadyCh := reactor.chainReadyChs[chainID]
+	reactor.chainReadyMtx.RUnlock()
+
 	// Waits until the reactor started the required node listeners
-	<-reactor.chainReadyCh
+	// Blocks the main thread intentionally to wait for node services.
+	<-chainReadyCh
 
 	clogger := reactor.logger.With("chain_id", chainID)
 

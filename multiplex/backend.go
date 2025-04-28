@@ -339,8 +339,6 @@ func (b *MultiplexBackend) CreateOrLoadDiscoveryEventSwitch() *p2p.Switch {
 
 // UpdateAvailableNetworks updates the NodeInfo pointer and event switch
 // to permit communications related to a given list of ChainIDs.
-//
-// TODO(midas): TBI whether p2p.conn channels must be opened manually.
 func (b *MultiplexBackend) UpdateAvailableNetworks(networks []string) []string {
 	discoverySwitch := b.reactor.GetEventSwitchForDiscovery()
 	cometbftSwitch := b.reactor.GetEventSwitchForCometBFT()
@@ -354,6 +352,7 @@ func (b *MultiplexBackend) UpdateAvailableNetworks(networks []string) []string {
 
 	b.relayMtx.Lock()
 	multiNodeInfo := b.multiNodeInfo
+	availableNetworks := multiNodeInfo.Networks
 	b.relayMtx.Unlock()
 
 	// TODO(midas): remove debug logs
@@ -363,7 +362,7 @@ func (b *MultiplexBackend) UpdateAvailableNetworks(networks []string) []string {
 	)
 
 	for _, chainID := range networks {
-		if !slices.Contains(multiNodeInfo.Networks, chainID) {
+		if !slices.Contains(availableNetworks, chainID) {
 			multiNodeInfo.Networks = append(multiNodeInfo.Networks, chainID)
 			multiNodeInfo.ProtocolVersions = append(multiNodeInfo.ProtocolVersions,
 				NewChainProtocolVersion(

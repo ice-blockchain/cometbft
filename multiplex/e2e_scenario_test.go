@@ -1691,8 +1691,6 @@ func TestScenarioClientBroadcastConcurrentNewChains(t *testing.T) {
 	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
 	defer shutdownFn()
 
-	servers[0].SetLogger(cmtlog.TestingLogger().With("process", "relay-1"))
-
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
 
@@ -1707,7 +1705,7 @@ func TestScenarioClientBroadcastConcurrentNewChains(t *testing.T) {
 	healthyRelaysWithoutIds := useRelaysWithoutIds(t, healthyRelays)
 
 	numConcurrent := 2
-	testDoneCh := make(chan struct{}, 1)
+	testDoneCh := make(chan struct{}, numConcurrent)
 	relaysForTestCase := healthyRelaysWithoutIds[:]
 
 	// Executes first transaction broadcast
@@ -1718,7 +1716,6 @@ func TestScenarioClientBroadcastConcurrentNewChains(t *testing.T) {
 	numTransactions1 := 1
 	testChainID1 := makeChainID("test-chain-1")
 	notifyCh1 := make(chan client.BroadcastStatus)
-	defer close(notifyCh1)
 
 	go clientBroadcastTx(t,
 		firstBroadcastCtx,
@@ -1728,7 +1725,7 @@ func TestScenarioClientBroadcastConcurrentNewChains(t *testing.T) {
 		numTransactions1,
 		notifyCh1,
 	)
-	t.Logf("Broadcast goroutine started with %d relays and test-chain-1: %s...", len(relaysForTestCase), testChainID1)
+	// t.Logf("Broadcast goroutine started with %d relays and test-chain-1: %s...", len(relaysForTestCase), testChainID1)
 
 	// Executes second transaction broadcast
 	secondTimeoutAfter := 20 * time.Second // Time for broadcast
@@ -1738,7 +1735,6 @@ func TestScenarioClientBroadcastConcurrentNewChains(t *testing.T) {
 	numTransactions2 := 1
 	testChainID2 := makeChainID("test-chain-2")
 	notifyCh2 := make(chan client.BroadcastStatus)
-	defer close(notifyCh2)
 
 	go clientBroadcastTx(t,
 		secondBroadcastCtx,
@@ -1748,12 +1744,13 @@ func TestScenarioClientBroadcastConcurrentNewChains(t *testing.T) {
 		numTransactions2,
 		notifyCh2,
 	)
-	t.Logf("Broadcast goroutine started with %d relays and test-chain-2: %s...", len(relaysForTestCase), testChainID2)
+	// t.Logf("Broadcast goroutine started with %d relays and test-chain-2: %s...", len(relaysForTestCase), testChainID2)
 
 	go func(ch chan struct{}) {
-		t.Logf("Waiting for broadcast status on test-chain-1: %s...", testChainID1)
+		defer close(notifyCh1)
+		// t.Logf("Waiting for broadcast status on test-chain-1: %s...", testChainID1)
 
-		// Blocks the main thread until we consume from notifyCh1.
+		// Blocks this thread until we consume from notifyCh1.
 		resultStatusMsg := waitForClientBroadcastStatus(t,
 			firstBroadcastCtx,
 			testChainID1,
@@ -1767,9 +1764,10 @@ func TestScenarioClientBroadcastConcurrentNewChains(t *testing.T) {
 	}(testDoneCh)
 
 	go func(ch chan struct{}) {
-		t.Logf("Waiting for broadcast status on test-chain-2: %s...", testChainID2)
+		defer close(notifyCh2)
+		// t.Logf("Waiting for broadcast status on test-chain-2: %s...", testChainID2)
 
-		// Blocks the main thread until we consume from notifyCh2.
+		// Blocks this thread until we consume from notifyCh2.
 		resultStatusMsg := waitForClientBroadcastStatus(t,
 			secondBroadcastCtx,
 			testChainID2,
@@ -1781,6 +1779,261 @@ func TestScenarioClientBroadcastConcurrentNewChains(t *testing.T) {
 
 		ch <- struct{}{}
 	}(testDoneCh)
+
+	// t.Log("Waiting to consume from testDoneCh or timeout globally...")
+
+	// Waits to consume from testDoneCh or timeout after 30 seconds
+	var (
+		wg           sync.WaitGroup
+		cntDone      int
+		errBroadcast error
+	)
+	wg.Add(1)
+	go func(ch chan struct{}) {
+		defer wg.Done()
+		for {
+			select {
+			case <-ch:
+				cntDone++
+				if cntDone == numConcurrent {
+					return
+				}
+
+			case <-testCaseCtx.Done():
+				errBroadcast = errors.New("Timed out waiting for concurrent broadcasts to end")
+				return
+			}
+		}
+	}(testDoneCh)
+	wg.Wait()
+
+	// t.Log("Test case done running, evaluating results...")
+
+	assert.Equal(t, numConcurrent, cntDone)
+	assert.NoError(t, errBroadcast, "concurrent broadcasts should not error")
+}
+
+func TestScenarioClientBroadcastConcurrentNewChainsAndExistingChains(t *testing.T) {
+	timeoutGlobal := 60 * time.Second // Time for full test round
+	testCaseCtx, globalCancelFn := context.WithTimeout(context.TODO(), timeoutGlobal)
+	defer globalCancelFn()
+
+	numChains := 0
+	numRelays := 7
+
+	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
+	defer shutdownFn()
+
+	require.NotEmpty(t, servers)
+	require.Len(t, servers, numRelays)
+
+	// Note: healthyRelays includes self
+	healthyRelays, _, _ := StartTestScenarioRelays(t,
+		servers,
+		2*time.Second,  // Time for backend
+		20*time.Second, // Time for broadcast
+	)
+
+	// NOTE: this removes the Relay ID from relays addresses.
+	healthyRelaysWithoutIds := useRelaysWithoutIds(t, healthyRelays)
+	relaysForTestCase := healthyRelaysWithoutIds[:]
+
+	// STEP 1
+	// ----------------
+	// Creates a ChainID that will be reused in concurrent scenario.
+	// Note that we wait for the broadcast to be done before next step.
+
+	// Executes first transaction broadcast
+	firstTimeoutAfter := 20 * time.Second // Time for broadcast
+	firstBroadcastCtx, firstCancelCtxFn := context.WithTimeout(context.TODO(), firstTimeoutAfter)
+	defer firstCancelCtxFn()
+
+	numTransactions1 := 1
+	testChainID1 := makeChainID("test-chain-1")
+	notifyCh1 := make(chan client.BroadcastStatus)
+
+	go clientBroadcastTx(t,
+		firstBroadcastCtx,
+		servers[0],
+		relaysForTestCase,
+		testChainID1,
+		numTransactions1,
+		notifyCh1,
+	)
+	// t.Logf("Broadcast goroutine started with %d relays and test-chain-1: %s...", len(relaysForTestCase), testChainID1)
+
+	// Blocks the main thread until we consume from notifyCh1.
+	resultStatusMsg := waitForClientBroadcastStatus(t,
+		firstBroadcastCtx,
+		testChainID1,
+		notifyCh1,
+	)
+	assert.NotNil(t, resultStatusMsg)
+	assert.Len(t, resultStatusMsg.TxHashes, numTransactions1)
+	assert.NoError(t, resultStatusMsg.Error, "first broadcast should not contain error status")
+	close(notifyCh1)
+
+	// STEP 2
+	// ----------------
+	// Concurrently broadcast transactions using a mix of the existing
+	// test-chain-1 and multiple new chains.
+
+	numConcurrent := 5
+	testDoneCh := make(chan struct{}, numConcurrent)
+
+	for i := 0; i < numConcurrent; i++ {
+		timeoutAfter := 20 * time.Second // Time for broadcast
+		broadcastCtx, cancelCtxFn := context.WithTimeout(context.TODO(), timeoutAfter)
+		defer cancelCtxFn()
+
+		numTransactions := 1
+		testChainName := "test-chain-" + strconv.Itoa(i)
+		testChainID := makeChainID(testChainName)
+		notifyCh := make(chan client.BroadcastStatus)
+
+		go clientBroadcastTx(t,
+			broadcastCtx,
+			servers[0],
+			relaysForTestCase,
+			testChainID,
+			numTransactions,
+			notifyCh,
+		)
+
+		// t.Logf("Broadcast goroutine started with %d relays and %s: %s...",
+		// 	len(relaysForTestCase), testChainName, testChainID)
+
+		// Wait in a separate goroutine.
+		go func(ch chan struct{}) {
+			defer close(notifyCh)
+			// t.Logf("Waiting for broadcast status on %s: %s...",
+			// 	testChainName, testChainID)
+
+			// Blocks this thread until we consume from notifyCh1.
+			resultStatusMsg := waitForClientBroadcastStatus(t,
+				broadcastCtx,
+				testChainID,
+				notifyCh,
+			)
+			assert.NotNil(t, resultStatusMsg)
+			assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+			assert.NoError(t, resultStatusMsg.Error,
+				"broadcast at "+strconv.Itoa(i)+" should not contain error status")
+
+			ch <- struct{}{}
+		}(testDoneCh)
+	}
+
+	// t.Log("Waiting to consume from testDoneCh or timeout globally...")
+
+	// Waits to consume from testDoneCh or timeout after 30 seconds
+	var (
+		wg           sync.WaitGroup
+		cntDone      int
+		errBroadcast error
+	)
+	wg.Add(1)
+	go func(ch chan struct{}) {
+		defer wg.Done()
+		for {
+			select {
+			case <-ch:
+				cntDone++
+				if cntDone == numConcurrent {
+					return
+				}
+
+			case <-testCaseCtx.Done():
+				errBroadcast = errors.New("Timed out waiting for concurrent broadcasts to end")
+				return
+			}
+		}
+	}(testDoneCh)
+	wg.Wait()
+
+	// t.Log("Test case done running, evaluating results...")
+
+	assert.Equal(t, numConcurrent, cntDone)
+	assert.NoError(t, errBroadcast, "concurrent broadcasts should not error")
+}
+
+func TestScenarioClientBroadcastConcurrentTransactionsMany(t *testing.T) {
+	timeoutGlobal := 60 * time.Second // Time for full test round
+	testCaseCtx, globalCancelFn := context.WithTimeout(context.TODO(), timeoutGlobal)
+	defer globalCancelFn()
+
+	numChains := 0
+	numRelays := 7
+
+	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
+	defer shutdownFn()
+
+	require.NotEmpty(t, servers)
+	require.Len(t, servers, numRelays)
+
+	servers[0].SetLogger(cmtlog.TestingLogger().With("process", "relay-1"))
+
+	// Note: healthyRelays includes self
+	healthyRelays, _, _ := StartTestScenarioRelays(t,
+		servers,
+		2*time.Second,  // Time for backend
+		20*time.Second, // Time for broadcast
+	)
+
+	// NOTE: this removes the Relay ID from relays addresses.
+	healthyRelaysWithoutIds := useRelaysWithoutIds(t, healthyRelays)
+	relaysForTestCase := healthyRelaysWithoutIds[:]
+
+	// Concurrently broadcast transactions using new chains.
+	numConcurrent := 10
+	testDoneCh := make(chan struct{}, numConcurrent)
+
+	for i := 0; i < numConcurrent; i++ {
+		timeoutAfter := 20 * time.Second // Time for broadcast
+		broadcastCtx, cancelCtxFn := context.WithTimeout(context.TODO(), timeoutAfter)
+		defer cancelCtxFn()
+
+		numTransactions := 1
+		testChainName := "test-chain-" + strconv.Itoa(i)
+		testChainID := makeChainID(testChainName)
+		notifyCh := make(chan client.BroadcastStatus)
+
+		// Note we broadcast using the main thread to make sure broadcasting
+		// happens before waiting for an update on notifyCh, as it is not
+		// possible to force the order of execution of goroutines.
+		go clientBroadcastTx(t,
+			broadcastCtx,
+			servers[0],
+			relaysForTestCase,
+			testChainID,
+			numTransactions,
+			notifyCh,
+		)
+
+		t.Logf("Broadcast started with %d relays and %s: %s...",
+			len(relaysForTestCase), testChainName, testChainID)
+
+		// Wait in a separate goroutine.
+		go func(ch chan struct{}) {
+			defer close(notifyCh)
+
+			t.Logf("Waiting for broadcast status on %s: %s...",
+				testChainName, testChainID)
+
+			// Blocks this thread until we consume from notifyCh1.
+			resultStatusMsg := waitForClientBroadcastStatus(t,
+				broadcastCtx,
+				testChainID,
+				notifyCh,
+			)
+			assert.NotNil(t, resultStatusMsg)
+			assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+			assert.NoError(t, resultStatusMsg.Error,
+				"broadcast at "+strconv.Itoa(i)+" should not contain error status")
+
+			ch <- struct{}{}
+		}(testDoneCh)
+	}
 
 	t.Log("Waiting to consume from testDoneCh or timeout globally...")
 

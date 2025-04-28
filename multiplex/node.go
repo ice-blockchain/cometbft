@@ -3,6 +3,7 @@ package multiplex
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/crypto"
@@ -182,72 +183,101 @@ func NewNodesMultiplex(
 	reactor.SetSnapsApp(localSnapsApp)
 	reactor.SetABCIClient(abciClient)
 
+	// We shall wait until all networks are ready.
+	reactor.chainReadyMtx.RLock()
+	chainReadyChs := reactor.chainReadyChs
+	reactor.chainReadyMtx.RUnlock()
+
+	// We will be *blocking* until all nodes are up.
+	var (
+		nodesWg sync.WaitGroup
+		nodeErr error
+	)
+	nodesWg.Add(len(chainReadyChs))
+
 	// Select a limited number of listeners message updates from
 	// the multiplex reactor channel. This loop forbids duplicate
-	// node initializations.
-	for i := 0; i < len(knownNetworks); i++ {
-		// The multiplex reactor communicates the ChainID on a channel
-		// to tell this bootstrapper about the readiness of a node config
-		chainID := <-reactor.chainReadyCh
-		clogger := logger.With("chain_id", chainID)
+	// node initializations by consuming from individual channels.
+	for cid, cch := range chainReadyChs {
+		// Consumes the channel in a separate goroutine to avoid blocking
+		// the main thread about a slower ChainID.
+		go func(chainID string, chainReadyCh chan bool, wg *sync.WaitGroup, err *error) {
+			defer wg.Done()
 
-		// Inform about the readiness of this chain
-		clogger.Info("Network configuration done", "chain_id", chainID)
+			// Block this goroutine until this network is ready.
+			<-chainReadyCh
 
-		// Used to retrieve configuration and state per chain.
-		statesProvider := reactor.GetInstanceProvider(InstanceKeyState)
-		privvalProvider := reactor.GetInstanceProvider(InstanceKeyPrivValidator)
+			clogger := logger.With("chain_id", chainID)
 
-		// The node config contains the configuration overwrite.
-		stateMachine := statesProvider(chainID).(sm.State)
-		privValidator := privvalProvider(chainID).(types.PrivValidator)
+			// Inform about the readiness of this chain
+			clogger.Info("Network configuration done", "chain_id", chainID)
 
-		// Make sure we can access the priv validator
-		privValPubKey, err := privValidator.GetPubKey()
-		if err != nil {
-			return nil, nil, fmt.Errorf(
-				"could not read public key from priv validator: %w", err)
-		}
+			// Used to retrieve configuration and state per chain.
+			statesProvider := reactor.GetInstanceProvider(InstanceKeyState)
+			privvalProvider := reactor.GetInstanceProvider(InstanceKeyPrivValidator)
 
-		// Since we do not run state-sync, we must execute a ABCI handshake
-		// And following a successful handshake, we may load the state machine.
-		//
-		// e.g. This also happens on restart of a node.
-		if err := reactor.PrepareConsensusInstanceWithReactor(ctx, chainID); err != nil {
-			return nil, nil, fmt.Errorf(
-				"error preparing consensus instance: %w", err)
-		}
+			// The node config contains the configuration overwrite.
+			stateMachine := statesProvider(chainID).(sm.State)
+			privValidator := privvalProvider(chainID).(types.PrivValidator)
 
-		// Inform about the state machine block height
-		clogger.Info(
-			"State machine loaded",
-			"chain_id", stateMachine.ChainID,
-			"height", stateMachine.LastBlockHeight,
-		)
+			// Make sure we can access the priv validator
+			privValPubKey, pvErr := privValidator.GetPubKey()
+			if pvErr != nil {
+				*err = fmt.Errorf(
+					"could not read public key from priv validator: %w", pvErr)
+				return
+			}
 
-		// Determine whether we should do block sync. This must happen after
-		// the handshake, since the app may modify the validator set,
-		// e.g. specifying ourself as the only validator.
-		blockSync := !onlyValidatorIsUs(stateMachine.Copy(), privValPubKey)
-		waitSyncd := blockSync
+			// Since we do not run state-sync, we must execute a ABCI handshake
+			// And following a successful handshake, we may load the state machine.
+			//
+			// e.g. This also happens on restart of a node.
+			if consErr := reactor.PrepareConsensusInstanceWithReactor(ctx, chainID); consErr != nil {
+				*err = fmt.Errorf(
+					"error preparing consensus instance: %w", consErr)
+				return
+			}
 
-		logNodeStartupInfo(stateMachine.Copy(), privValPubKey, clogger)
+			// Inform about the state machine block height
+			clogger.Info(
+				"State machine loaded",
+				"chain_id", stateMachine.ChainID,
+				"height", stateMachine.LastBlockHeight,
+			)
 
-		// Start the actual consensus instance.
-		//
-		// Creates a mempool, evidence pool, block executor, blocksync
-		// and finally a consensus reactor.
-		if err := reactor.CreateConsensusInstanceReactors(ctx, chainID, blockSync, waitSyncd); err != nil {
-			return nil, nil, fmt.Errorf(
-				"error starting consensus reactors: %w", err)
-		}
+			// Determine whether we should do block sync. This must happen after
+			// the handshake, since the app may modify the validator set,
+			// e.g. specifying ourself as the only validator.
+			blockSync := !onlyValidatorIsUs(stateMachine.Copy(), privValPubKey)
+			waitSyncd := blockSync
 
-		// Inform about the consensus readiness
-		clogger.Info("Network is consensus ready", "chain_id", chainID)
+			logNodeStartupInfo(stateMachine.Copy(), privValPubKey, clogger)
+
+			// Start the actual consensus instance.
+			//
+			// Creates a mempool, evidence pool, block executor, blocksync
+			// and finally a consensus reactor.
+			if startErr := reactor.CreateConsensusInstanceReactors(ctx, chainID, blockSync, waitSyncd); startErr != nil {
+				*err = fmt.Errorf(
+					"error starting consensus reactors: %w", startErr)
+				return
+			}
+
+			// Inform about the consensus readiness
+			clogger.Info("Network is consensus ready", "chain_id", chainID)
+		}(cid, cch, &nodesWg, &nodeErr)
 	}
 	// End of for loop, code following this is run *globally*
 	// Note that reaching this section means that *all replicated chains* are
 	// effectively *consensus-ready* and ready to produce blocks (validators).
+
+	// Waits for all required networks to be ready.
+	// Blocks the main thread intentionally to wait for node services.
+	nodesWg.Wait()
+
+	if nodeErr != nil {
+		return nil, nil, nodeErr
+	}
 
 	// Inform about all replicated chains being consensus ready
 	logger.Info("All known networks are consensus ready", "nodeId", string(nodeKey.ID()))

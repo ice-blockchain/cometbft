@@ -155,11 +155,14 @@ type Reactor struct {
 	multiplexRegistry NamedMultiplexMap[any]
 	multiplexMetrics  NamedMultiplexMap[any]
 
-	// chainReadyCh is written on when node instances have started, inside
-	// the [OnStart] method. This channel is consumed by [WaitForNetworks],
-	// and by [NewNodesMultiplex].
+	// chainReadyChs contains channels that are opened when node instance
+	// is being started by ChainID. These channels are written on when node
+	// instances have started, inside the [OnStart] method.
+	// Channels are consumed by [WaitForNetworks], by [InjectNewRuntime]
+	// or by [NewNodesMultiplex].
 	// This channel is closed by the [OnStop] method.
-	chainReadyCh chan string
+	chainReadyMtx sync.RWMutex
+	chainReadyChs map[string]chan bool
 
 	// ackReplResCh is written on when we intercept a [ChainReplicationResponse]
 	// message on the [server.ReplicationChannel].
@@ -241,7 +244,7 @@ func NewReactor(
 		configsPaths:      MultiplexFS{},
 
 		// Internal channels
-		chainReadyCh:   make(chan string),
+		chainReadyChs:  make(map[string]chan bool),
 		ackReplResCh:   make(chan *mxp2p.ChainReplicationResponse),
 		ackAcceptTxChs: make(map[string]chan *mxp2p.AckTransactionBroadcast),
 
@@ -1167,6 +1170,10 @@ func (reactor *Reactor) OnStart() error {
 		reactor.RegisterInstance(InstanceKeyConfig, chainID, configOverwrite)
 		reactor.RegisterInstance(InstanceKeyStorage, chainID, multiplexFS[chainID])
 
+		reactor.chainReadyMtx.Lock()
+		reactor.chainReadyChs[chainID] = make(chan bool, 1)
+		reactor.chainReadyMtx.Unlock()
+
 		// Non-blocking execution using different goroutine
 		// i.e. one goroutine spawned per each replicated chain
 		go func(network string) {
@@ -1181,8 +1188,12 @@ func (reactor *Reactor) OnStart() error {
 				panic(err)
 			}
 
+			reactor.chainReadyMtx.RLock()
+			chainReadyCh := reactor.chainReadyChs[chainID]
+			reactor.chainReadyMtx.RUnlock()
+
 			// Done starting node listeners
-			reactor.chainReadyCh <- network
+			chainReadyCh <- true
 		}(chainID)
 	}
 
@@ -1287,8 +1298,12 @@ func (reactor *Reactor) OnStop() {
 	}
 
 	// and close internal channels
-	if reactor.chainReadyCh != nil {
-		close(reactor.chainReadyCh)
+	reactor.chainReadyMtx.RLock()
+	restChainReadyChs := reactor.chainReadyChs
+	reactor.chainReadyMtx.RUnlock()
+
+	for _, chainReadyCh := range restChainReadyChs {
+		close(chainReadyCh)
 	}
 
 	if reactor.ackReplResCh != nil {
@@ -1296,10 +1311,10 @@ func (reactor *Reactor) OnStop() {
 	}
 
 	reactor.ackAcceptTxMtx.RLock()
-	remainingChannels := reactor.ackAcceptTxChs
+	restAckAcceptTxChs := reactor.ackAcceptTxChs
 	reactor.ackAcceptTxMtx.RUnlock()
 
-	for txHash, _ := range remainingChannels {
+	for txHash, _ := range restAckAcceptTxChs {
 		reactor.CloseAckTransactionChannel(txHash)
 	}
 }
@@ -1316,18 +1331,25 @@ func (reactor *Reactor) OnReset() error {
 //
 // TODO(midas): add timeout functionality in case some networks are stuck?
 func (reactor *Reactor) WaitForNetworks() error {
+	reactor.chainReadyMtx.RLock()
+	chainReadyChs := reactor.chainReadyChs
+	reactor.chainReadyMtx.RUnlock()
+
 	var wg sync.WaitGroup
-	knownNetworks := reactor.GetNetworks()
-	wg.Add(len(knownNetworks))
+	wg.Add(len(chainReadyChs))
 
 	// Waits for all nodes to be configured
-	for i := 0; i < len(knownNetworks); i++ {
-		// The multiplex reactor communicates the ChainID on a channel
-		// to tell about the readiness of an individual network config
-		<-reactor.chainReadyCh
-		wg.Done() // one network is configured
+	for _, chainReadyCh := range chainReadyChs {
+		go func(ch chan bool) {
+			// The multiplex reactor communicates the ChainID on a channel
+			// to tell about the readiness of an individual network config
+			<-ch
+			wg.Done() // one network is configured
+		}(chainReadyCh)
 	}
 
+	// Waits for all networks to be ready (order doesn't matter).
+	wg.Wait()
 	return nil
 }
 
