@@ -78,6 +78,7 @@ type MultiplexBackend struct {
 	eventSwitch  *p2p.Switch
 	rpcListeners []net.Listener
 	httpServers  []*http.Server
+	httpClients  []*http.Client
 
 	multiNodeInfo   *MultiNetworkNodeInfo
 	broadcastAddr   *p2p.NetAddress // P2P Discovery (:dp)
@@ -170,6 +171,7 @@ func NewServer(
 		acceptor:     impl,
 		rpcListeners: []net.Listener{},
 		httpServers:  []*http.Server{},
+		httpClients:  []*http.Client{},
 
 		logger:   nodeLogger,
 		errorsCh: make(chan error),
@@ -584,6 +586,10 @@ func (b *MultiplexBackend) Close() error {
 		rpcListener.Close()
 	}
 
+	for _, httpClient := range b.httpClients {
+		httpClient.CloseIdleConnections()
+	}
+
 	// Stop any custom HTTP servers (e.g. prometheus)
 	for _, httpServer := range b.httpServers {
 		httpServer.Close()
@@ -840,6 +846,10 @@ func (b *MultiplexBackend) GetRemoteRelayInfo(
 		return nil, connectErr
 	}
 
+	b.relayMtx.Lock()
+	b.httpClients = append(b.httpClients, c.GetHTTPClient())
+	b.relayMtx.Unlock()
+
 	// TODO(midas): timeoutDuration to be added to method args.
 	ctx, _ := context.WithTimeout(context.Background(), 700*time.Millisecond)
 
@@ -1023,8 +1033,7 @@ func (b *MultiplexBackend) ApplyFilterAckTransactionRelayIds(
 		}
 	}
 
-	slices.Compact(relevantRelays)
-	return relevantRelays
+	return removeDuplicates(relevantRelays)
 }
 
 // ApplyFilterReplRequestRelays filters relays and returns a map of relays

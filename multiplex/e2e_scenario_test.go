@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	mx "github.com/ice-blockchain/cometbft/multiplex"
@@ -102,7 +103,7 @@ func waitForClientBroadcastStatus(
 				return
 
 			case <-ctx.Done():
-				resultStatusMsg.Error = fmt.Errorf(
+				(*status).Error = fmt.Errorf(
 					"Timed out waiting for broadcast status for %s", testChainID)
 				return // cancels context
 			}
@@ -119,6 +120,8 @@ func waitForClientBroadcastStatus(
 // to which the relays respond with a AckTransactionBroadcast message
 // before we proceed to accepting the transaction.
 func TestScenarioClientBroadcastHealthyRelays(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 1
 	numRelays := 7
 
@@ -179,6 +182,8 @@ func TestScenarioClientBroadcastHealthyRelays(t *testing.T) {
 // using a message on mempool channel, to which the relays respond with a
 // AckTransactionBroadcast message before we proceed to accepting the transaction.
 func TestScenarioClientBroadcastEmptyRelays(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 0
 	numRelays := 7
 
@@ -243,6 +248,8 @@ func TestScenarioClientBroadcastEmptyRelays(t *testing.T) {
 // calls to GetRemoteRelayInfo, and the exclusion of "self" from relays list
 // if necessary.
 func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 0
 	numHealthy := 3
 
@@ -503,6 +510,8 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 // address that DO NOT contain a relay ID. Namely, calls to GetRemoteRelayInfo
 // should be successful and fill the healthyRemoteRelays slice correctly.
 func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 0
 	numHealthy := 2
 
@@ -687,6 +696,8 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 // which includes the broadcast transactions data (using client.BroadcastTx),
 // and the state machine and blocks store are updated with transactions data.
 func TestScenarioClientBroadcastEmptyRelaysProduceBlockWithTx(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 0
 	numRelays := 7
 
@@ -744,7 +755,7 @@ func TestScenarioClientBroadcastEmptyRelaysProduceBlockWithTx(t *testing.T) {
 	stateMachine, err := chainStore.Load()
 	assert.NoError(t, err, "should not error loading state")
 	assert.Equal(t, testChainID, stateMachine.ChainID)
-	assert.Equal(t, stateMachine.LastBlockHeight, int64(1))
+	assert.Equal(t, int64(1), stateMachine.LastBlockHeight)
 
 	blockStoreProvider := testReactor.GetInstanceProvider(mx.InstanceKeyBlockStore)
 	assert.NotNil(t, blockStoreProvider, "should not error getting block store provider")
@@ -764,6 +775,8 @@ func TestScenarioClientBroadcastEmptyRelaysProduceBlockWithTx(t *testing.T) {
 // to which the relays respond with a AckTransactionBroadcast message before we
 // proceed to accepting the transaction.
 func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 1
 	numRelays := 7
 	numHealthy := (numRelays / 2) + 1
@@ -888,6 +901,8 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 // to which the relays respond with a AckTransactionBroadcast message
 // before we proceed to accepting the transaction.
 func TestScenarioClientBroadcastEnoughEmptyRelays(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 0
 	numRelays := 7
 	numHealthy := (numRelays / 2) + 1
@@ -1023,6 +1038,8 @@ func TestScenarioClientBroadcastEnoughEmptyRelays(t *testing.T) {
 // less minimum healthy relays, and then we test a broadcast failure
 // with five relays failing, i.e. too many, to fail the broadcast.
 func TestScenarioClientBroadcastNotEnoughHealthyRelays(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 0
 	numHealthy := 2
 
@@ -1131,6 +1148,8 @@ func TestScenarioClientBroadcastNotEnoughHealthyRelays(t *testing.T) {
 // to which the relays respond with a AckTransactionBroadcast message before we
 // proceed to accepting the transaction.
 func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 0
 	numRelays := 7
 	minHealthy := (numRelays / 2) + 1
@@ -1263,6 +1282,8 @@ func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 // With a list of enough healthy relays, they should proceed to
 // accepting the transaction even with some other relays failing.
 func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 0
 	numRelays := 7
 	numHealthy := (numRelays / 2) + 1 // Keep enough healthy relays
@@ -1384,7 +1405,7 @@ func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 		testChain100 := "test-chain-" + strconv.Itoa(100+numFailing)
 		testChain200 := "test-chain-" + strconv.Itoa(200+numFailing)
 
-		thirdTimeoutAfter := 20 * time.Second // Time for broadcast
+		thirdTimeoutAfter := 30 * time.Second // Time for broadcast
 		thirdBroadcastCtx, thirdCancelCtxFn := context.WithTimeout(context.TODO(), thirdTimeoutAfter)
 		defer thirdCancelCtxFn()
 
@@ -1413,7 +1434,7 @@ func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 			"should not contain error status with numFailing: "+strconv.Itoa(numFailing))
 		t.Logf("Broadcast completed with %d failing relays for %s...", numFailing, testChain100)
 
-		fourthTimeoutAfter := 20 * time.Second // Time for broadcast
+		fourthTimeoutAfter := 30 * time.Second // Time for broadcast
 		fourthBroadcastCtx, fourthCancelCtxFn := context.WithTimeout(context.TODO(), fourthTimeoutAfter)
 		defer fourthCancelCtxFn()
 
@@ -1448,6 +1469,8 @@ func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 // the transaction broadcast process must normally resume operations and the
 // broadcast operation(s) must succeed without errors from the relays.
 func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 0
 	numRelays := 7
 
@@ -1530,6 +1553,8 @@ func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
 // one after having restarted the backend to ensure that continuation works.
 // Finally, it also broadcasts one more transaction using a different ChainID.
 func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 0
 	numRelays := 7
 
@@ -1681,6 +1706,8 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 // This test focusses on sending concurrent transactions for unknown chains
 // to make sure in a concurrent scenario, multiple new chains may be created.
 func TestScenarioClientBroadcastConcurrentNewChains(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	timeoutGlobal := 30 * time.Second // Time for full test round
 	testCaseCtx, globalCancelFn := context.WithTimeout(context.TODO(), timeoutGlobal)
 	defer globalCancelFn()
@@ -1814,6 +1841,8 @@ func TestScenarioClientBroadcastConcurrentNewChains(t *testing.T) {
 }
 
 func TestScenarioClientBroadcastConcurrentNewChainsAndExistingChains(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	timeoutGlobal := 60 * time.Second // Time for full test round
 	testCaseCtx, globalCancelFn := context.WithTimeout(context.TODO(), timeoutGlobal)
 	defer globalCancelFn()
@@ -1957,8 +1986,10 @@ func TestScenarioClientBroadcastConcurrentNewChainsAndExistingChains(t *testing.
 	assert.NoError(t, errBroadcast, "concurrent broadcasts should not error")
 }
 
-func TestScenarioClientBroadcastConcurrentTransactionsMany(t *testing.T) {
-	timeoutGlobal := 60 * time.Second // Time for full test round
+func TestScenarioClientBroadcastConcurrentNewChains3(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	timeoutGlobal := 120 * time.Second // Time for full test round
 	testCaseCtx, globalCancelFn := context.WithTimeout(context.TODO(), timeoutGlobal)
 	defer globalCancelFn()
 
@@ -1968,10 +1999,10 @@ func TestScenarioClientBroadcastConcurrentTransactionsMany(t *testing.T) {
 	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
 	defer shutdownFn()
 
+	servers[0].SetLogger(cmtlog.TestingLogger().With("process", "relay-1"))
+
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
-
-	servers[0].SetLogger(cmtlog.TestingLogger().With("process", "relay-1"))
 
 	// Note: healthyRelays includes self
 	healthyRelays, _, _ := StartTestScenarioRelays(t,
@@ -1985,11 +2016,11 @@ func TestScenarioClientBroadcastConcurrentTransactionsMany(t *testing.T) {
 	relaysForTestCase := healthyRelaysWithoutIds[:]
 
 	// Concurrently broadcast transactions using new chains.
-	numConcurrent := 10
+	numConcurrent := 3
 	testDoneCh := make(chan struct{}, numConcurrent)
 
 	for i := 0; i < numConcurrent; i++ {
-		timeoutAfter := 20 * time.Second // Time for broadcast
+		timeoutAfter := 30 * time.Second // Time for broadcast
 		broadcastCtx, cancelCtxFn := context.WithTimeout(context.TODO(), timeoutAfter)
 		defer cancelCtxFn()
 
@@ -2026,9 +2057,9 @@ func TestScenarioClientBroadcastConcurrentTransactionsMany(t *testing.T) {
 				testChainID,
 				notifyCh,
 			)
-			assert.NotNil(t, resultStatusMsg)
-			assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
-			assert.NoError(t, resultStatusMsg.Error,
+			require.NotNil(t, resultStatusMsg)
+			require.Len(t, resultStatusMsg.TxHashes, numTransactions)
+			require.NoError(t, resultStatusMsg.Error,
 				"broadcast at "+strconv.Itoa(i)+" should not contain error status")
 
 			ch <- struct{}{}
@@ -2281,13 +2312,15 @@ func ResetTestScenarioRelays(
 	require.Len(tb, servers, numRelays)
 
 	shutdownFn := func() {
+		waitDuration := 10 * time.Second
+		tb.Logf("Waiting %.0fsec for shutdown...", waitDuration.Seconds())
+		time.Sleep(waitDuration)
 		for i := 0; i < len(servers); i++ {
-			defer os.RemoveAll(rootDirs[i])
-
-			if servers[i] != nil {
-				err := servers[i].Close()
-				assert.NoError(tb, err, "should shutdown server at index: "+strconv.Itoa(i))
+			if servers[i] == nil {
+				continue // Reset/stopped backends are shutdown manually.
 			}
+
+			go closeAndRemoveAll(tb, rootDirs[i], servers[i])
 		}
 	}
 

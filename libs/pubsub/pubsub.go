@@ -323,24 +323,38 @@ func (*Server) OnReset() error {
 }
 
 func (s *Server) loop(state state) {
-loop:
-	for cmd := range s.cmds {
-		switch cmd.op {
-		case unsub:
-			if cmd.query != nil {
-				state.remove(cmd.clientID, cmd.query.String(), ErrUnsubscribed)
-			} else {
-				state.removeClient(cmd.clientID, ErrUnsubscribed)
+	for {
+		// NOTE(midas): non-blocking select on shutdown channel makes
+		// sure every time before handling a command, we know to shutdown.
+		select {
+		case <-s.Quit():
+			return
+		default: // Proceed to handle command
+		}
+
+		// NOTE(midas): non-blocking select channel to permit interruptions
+		// more frequently and generally permit faster shutdown routine.
+		select {
+		case cmd := <-s.cmds:
+			switch cmd.op {
+			case shutdown:
+				state.removeAll(nil)
+				return
+			case unsub:
+				if cmd.query != nil {
+					state.remove(cmd.clientID, cmd.query.String(), ErrUnsubscribed)
+				} else {
+					state.removeClient(cmd.clientID, ErrUnsubscribed)
+				}
+			case sub:
+				state.add(cmd.clientID, cmd.query, cmd.subscription)
+			case pub:
+				if err := state.send(cmd.msg, cmd.events); err != nil {
+					s.Logger.Error("Error querying for events", "err", err)
+				}
 			}
-		case shutdown:
-			state.removeAll(nil)
-			break loop
-		case sub:
-			state.add(cmd.clientID, cmd.query, cmd.subscription)
-		case pub:
-			if err := state.send(cmd.msg, cmd.events); err != nil {
-				s.Logger.Error("Error querying for events", "err", err)
-			}
+		default:
+			// not waiting for command, come back later instead.
 		}
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/ice-blockchain/cometbft/libs/protoio"
 	mx "github.com/ice-blockchain/cometbft/multiplex"
 	"github.com/ice-blockchain/cometbft/p2p"
+	"go.uber.org/goleak"
 )
 
 const (
@@ -19,6 +20,8 @@ const (
 )
 
 func TestMultiplexTransportHandshake(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	ln, err := net.Listen("tcp", "127.0.0.1:0") // with 0, OS picks free port
 	if err != nil {
 		t.Fatal(err)

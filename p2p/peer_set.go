@@ -167,6 +167,9 @@ func (ps *PeerSet) Remove(peer Peer) bool {
 
 func (ps *PeerSet) RemoveByAddr(addr net.Addr) error {
 	p := ps.GetByAddr(addr)
+	if p == nil {
+		return nil // Nothing to do
+	}
 	removed := ps.remove(p.ID(), p.IsOutbound())
 	extraPeer := ps.Get(p.ID())
 	if extraPeer != nil {

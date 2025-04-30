@@ -448,7 +448,14 @@ func (cs *State) OnStop() {
 // NOTE: be sure to Stop() the event switch and drain
 // any event channels or this may deadlock.
 func (cs *State) Wait() {
-	<-cs.done
+	// NOTE(midas): added selecting from shutdown channel to permit
+	// faster shutdowns and generally stop waiting during shutdowns.
+	select {
+	case <-cs.done:
+		return
+	case <-cs.Quit():
+		return
+	}
 }
 
 // OpenWAL opens a file to log all consensus messages and timeouts for

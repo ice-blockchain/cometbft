@@ -748,6 +748,13 @@ func (n *Node) OnStop() {
 		n.isListening = false
 	}
 
+	// stop the client gracefully
+	if n.proxyApp != nil && n.proxyApp.IsRunning() {
+		if err := n.proxyApp.Stop(); err != nil {
+			n.Logger.Error("Error stopping the ABCI client", "err", err)
+		}
+	}
+
 	// finally stop the listeners / external services
 	for _, l := range n.rpcListeners {
 		n.Logger.Info("Closing rpc listener", "listener", l)

@@ -8,7 +8,6 @@ package flowrate
 
 import (
 	"math"
-	"runtime"
 	"sync/atomic"
 	"time"
 
@@ -69,9 +68,6 @@ func New(sampleRate, windowSize time.Duration) *Monitor {
 		sRate:   sampleRate,
 		tLast:   now,
 	}
-	runtime.SetFinalizer(m, func(m *Monitor) {
-		m.Stop()
-	})
 	return m
 }
 
@@ -177,7 +173,6 @@ func (m *Monitor) Status() Status {
 func (m *Monitor) Stop() {
 	if atomic.AddInt64(&instances, -1) <= 0 {
 		if st := stopped.CompareAndSwap(false, true); st {
-			//shutdown <- struct{}{}
 			close(shutdown)
 		}
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 
 	"github.com/ice-blockchain/cometbft/config"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
@@ -55,10 +56,16 @@ func mockNodeInfoWithNetworks(
 	}
 }
 
-func TestMultiplexReactorCreateTransportSwitchesWithReactors(t *testing.T) {
+func TestMultiplexReactorP2PCreateTransportSwitchesWithReactors(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 5
 	rootDir, globalCfg, reactor := ResetTestMultiplexP2P(t, numChains)
-	defer os.RemoveAll(rootDir)
+	defer func() {
+		defer os.RemoveAll(rootDir)
+		err := reactor.Stop()
+		require.NoError(t, err)
+	}()
 
 	testChainIds := reactor.GetNetworks()
 
@@ -74,12 +81,6 @@ func TestMultiplexReactorCreateTransportSwitchesWithReactors(t *testing.T) {
 	err := reactor.CreateTransportSwitchesWithReactors(context.TODO(), testChainIds)
 	assert.NoError(t, err, "should not error creating transports and switches")
 
-	// transportsProvider := reactor.GetInstanceProvider(mx.InstanceKeyP2PTransport)
-	// assert.NotNil(t, transportsProvider, "transport provider must not be nil")
-
-	// switchesProvider := reactor.GetInstanceProvider(mx.InstanceKeyP2PSwitch)
-	// assert.NotNil(t, switchesProvider, "event switch provider must not be nil")
-
 	assert.NotNil(t, reactor.GetEventSwitchForCometBFT())
 	assert.NotNil(t, reactor.GetTransportForCometBFT())
 
@@ -88,11 +89,6 @@ func TestMultiplexReactorCreateTransportSwitchesWithReactors(t *testing.T) {
 	assert.NotNil(t, testTransport.NetAddress())
 
 	for _, chainID := range testChainIds {
-		// testTransport := transportsProvider(chainID).(*p2p.MultiplexTransport)
-		// assert.NotNil(t, testTransport)
-
-		// testSwitch := switchesProvider(chainID).(*p2p.Switch)
-
 		testReactors := testSwitch.Reactors(chainID)
 		assert.Len(t, testReactors, 4) // mempool, blocksync, consensus, evidence
 		assert.Contains(t, testReactors, "MEMPOOL")
@@ -107,10 +103,16 @@ func TestMultiplexReactorCreateTransportSwitchesWithReactors(t *testing.T) {
 	}
 }
 
-func TestMultiplexReactorCreateAddressBooks(t *testing.T) {
+func TestMultiplexReactorP2PCreateAddressBooks(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 5
 	rootDir, globalCfg, reactor := ResetTestMultiplexP2P(t, numChains)
-	defer os.RemoveAll(rootDir)
+	defer func() {
+		defer os.RemoveAll(rootDir)
+		err := reactor.Stop()
+		require.NoError(t, err)
+	}()
 
 	testChainIds := reactor.GetNetworks()
 

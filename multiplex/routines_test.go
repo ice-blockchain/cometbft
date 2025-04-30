@@ -2,12 +2,13 @@ package multiplex_test
 
 import (
 	"context"
-	"os"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
@@ -15,6 +16,8 @@ import (
 )
 
 func TestMultiplexRoutinesNodeReplRequest(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 3
 	numRelays := 3
 
@@ -38,13 +41,9 @@ func TestMultiplexRoutinesNodeReplRequest(t *testing.T) {
 	require.Len(t, servers, numRelays)
 
 	defer func() {
+		time.Sleep(10 * time.Second)
 		for i := 0; i < len(servers); i++ {
-			defer os.RemoveAll(rootDirs[i])
-
-			if servers[i] != nil {
-				err := servers[i].Close()
-				assert.NoError(t, err, "should shutdown server at index: "+strconv.Itoa(i))
-			}
+			go closeAndRemoveAll(t, rootDirs[i], servers[i])
 		}
 	}()
 

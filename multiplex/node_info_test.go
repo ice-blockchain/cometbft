@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	cmtnet "github.com/ice-blockchain/cometbft/internal/net"
@@ -94,6 +95,8 @@ func TestMultiplexMultiNetworkNodeInfoValidate(t *testing.T) {
 }
 
 func TestMultiplexMultiNetworkNodeInfoCompatible(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	nodeKey1 := p2p.NodeKey{PrivKey: ed25519.GenPrivKey()}
 	nodeKey2 := p2p.NodeKey{PrivKey: ed25519.GenPrivKey()}
 	name := "testing"

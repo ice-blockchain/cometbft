@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
@@ -14,6 +15,8 @@ import (
 
 // Full transactions broadcast with runtime chain and 10 second wait time before pre-shutdown.
 func TestScenarioFullLogsClientBroadcastEmptyRelaysWithWait(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 0
 	numRelays := 7
 
@@ -85,6 +88,8 @@ func TestScenarioFullLogsClientBroadcastEmptyRelaysWithWait(t *testing.T) {
 
 // Full transactions broadcast with 2 runtime chains and 10 second wait time before pre-shutdown.
 func TestScenarioFullLogsClientBroadcastEmptyRelaysWithSecondBroadcastAndWait(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 0
 	numRelays := 7
 

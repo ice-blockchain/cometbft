@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	mx "github.com/ice-blockchain/cometbft/multiplex"
@@ -13,6 +14,8 @@ import (
 )
 
 func TestMultiplexClientNewClient(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	// Uses config.TestConfig() and random MultiplexConfig
 	// For debug, change the logger to cmtlog.TestingLogger()
 	rootDir,

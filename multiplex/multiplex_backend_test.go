@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	mx "github.com/ice-blockchain/cometbft/multiplex"
@@ -16,12 +17,22 @@ import (
 	sm "github.com/ice-blockchain/cometbft/state"
 )
 
+func closeAndRemoveAll(tb testing.TB, rootDir string, server *mx.MultiplexBackend) {
+	tb.Helper()
+
+	defer os.RemoveAll(rootDir)
+
+	err := server.Close()
+	require.NoError(tb, err, "should shutdown server gracefully")
+}
+
 func TestMultiplexBackendNewServer(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	// Uses config.TestConfig() and random MultiplexConfig
 	rootDir,
 		globalCfg := ResetTestMultiplexNode(t, 5) // 5 distinct networks
 	require.NotNil(t, globalCfg)
-	defer os.RemoveAll(rootDir)
 
 	// Act
 	backend, err := mx.NewServer(
@@ -33,28 +44,19 @@ func TestMultiplexBackendNewServer(t *testing.T) {
 	assert.NotNil(t, backend)
 	assert.NotNil(t, backend.GetAcceptor())
 
-	defer func() {
-		if backend != nil {
-			err := backend.Close()
-			assert.NoError(t, err, "should shutdown gracefully")
-		}
-	}()
+	defer closeAndRemoveAll(t, rootDir, backend)
 }
 
 func TestMultiplexBackendMustStart(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	// Uses config.TestConfig() and random MultiplexConfig
 	// For debug, change the logger to cmtlog.TestingLogger()
 	rootDir,
 		backend := ResetTestMultiplexBackend(t, 2, cmtlog.NewNopLogger()) // 2 distinct networks
 	require.NotNil(t, backend)
 
-	defer func() {
-		defer os.RemoveAll(rootDir)
-		if backend != nil {
-			err := backend.Close()
-			assert.NoError(t, err, "should shutdown gracefully")
-		}
-	}()
+	defer closeAndRemoveAll(t, rootDir, backend)
 
 	// Act
 	backend.MustStart()
@@ -72,19 +74,15 @@ func TestMultiplexBackendMustStart(t *testing.T) {
 }
 
 func TestMultiplexBackendGetLocalNetworkHeights(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	// Uses config.TestConfig() and random MultiplexConfig
 	// For debug, change the logger to cmtlog.TestingLogger()
 	rootDir,
 		backend := ResetTestMultiplexBackend(t, 1, cmtlog.NewNopLogger())
 	require.NotNil(t, backend)
 
-	defer func() {
-		defer os.RemoveAll(rootDir)
-		if backend != nil {
-			err := backend.Close()
-			assert.NoError(t, err, "should shutdown gracefully")
-		}
-	}()
+	defer closeAndRemoveAll(t, rootDir, backend)
 
 	// Start the node backend
 	backend.MustStart()
@@ -168,19 +166,15 @@ func TestMultiplexBackendGetLocalNetworkHeights(t *testing.T) {
 }
 
 func TestMultiplexBackendCheckDialCompatibleRelayWithOnlySelfRelay(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	// Uses config.TestConfig() and random MultiplexConfig
 	// For debug, change the logger to cmtlog.TestingLogger()
 	rootDir,
 		backend := ResetTestMultiplexBackend(t, 0, cmtlog.NewNopLogger())
 	require.NotNil(t, backend)
 
-	defer func() {
-		defer os.RemoveAll(rootDir)
-		if backend != nil {
-			err := backend.Close()
-			assert.NoError(t, err, "should shutdown gracefully")
-		}
-	}()
+	defer closeAndRemoveAll(t, rootDir, backend)
 
 	// Start the node backend
 	backend.MustStart()
@@ -201,6 +195,8 @@ func TestMultiplexBackendCheckDialCompatibleRelayWithOnlySelfRelay(t *testing.T)
 }
 
 func TestMultiplexBackendCheckDialCompatibleRelayWithTwoRelays(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	// For debug, change the loggers to cmtlog.TestingLogger()
 	loggerRelay1 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
 	loggerRelay2 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-2")
@@ -217,19 +213,12 @@ func TestMultiplexBackendCheckDialCompatibleRelayWithTwoRelays(t *testing.T) {
 	require.Len(t, rootDirs, 2)
 	require.Len(t, servers, 2)
 
+	require.NotNil(t, servers[0])
+	require.NotNil(t, servers[1])
+
 	defer func() {
-		defer os.RemoveAll(rootDirs[0])
-		defer os.RemoveAll(rootDirs[1])
-
-		if servers[0] != nil {
-			err := servers[0].Close()
-			assert.NoError(t, err, "should shutdown first server gracefully")
-		}
-
-		if servers[1] != nil {
-			err := servers[1].Close()
-			assert.NoError(t, err, "should shutdown second server gracefully")
-		}
+		go closeAndRemoveAll(t, rootDirs[0], servers[0])
+		go closeAndRemoveAll(t, rootDirs[1], servers[1])
 	}()
 
 	// Start the node backend
@@ -237,14 +226,8 @@ func TestMultiplexBackendCheckDialCompatibleRelayWithTwoRelays(t *testing.T) {
 	servers[1].MustStart()
 
 	// server 0 talks to server 1
-	sourceSwitch := servers[0].CreateOrLoadDiscoveryEventSwitch()
-	sourceReactor := servers[0].GetReactor()
-	recipientSwitch := servers[1].CreateOrLoadDiscoveryEventSwitch()
 	recipientReactor := servers[1].GetReactor()
 	recipientNodeID := string(recipientReactor.GetNodeKey().ID())
-
-	sourceSwitch.AddUnconditionalPeerIDs([]string{string(recipientReactor.GetNodeKey().ID())})
-	recipientSwitch.AddUnconditionalPeerIDs([]string{string(sourceReactor.GetNodeKey().ID())})
 
 	// Act - Relay 1 communicates with Relay 2
 	testRelayAddr, err := server.NewRelayAddress(
@@ -260,6 +243,8 @@ func TestMultiplexBackendCheckDialCompatibleRelayWithTwoRelays(t *testing.T) {
 }
 
 func TestMultiplexBackendCheckDialCompatibleRelaySevenCompatibleRelays(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 3
 	numRelays := 7
 
@@ -291,13 +276,9 @@ func TestMultiplexBackendCheckDialCompatibleRelaySevenCompatibleRelays(t *testin
 	require.Len(t, servers, numRelays)
 
 	defer func() {
+		time.Sleep(5 * time.Second)
 		for i := 0; i < len(servers); i++ {
-			defer os.RemoveAll(rootDirs[i])
-
-			if servers[i] != nil {
-				err := servers[i].Close()
-				assert.NoError(t, err, "should shutdown server at index: "+strconv.Itoa(i))
-			}
+			go closeAndRemoveAll(t, rootDirs[i], servers[i])
 		}
 	}()
 
@@ -334,6 +315,8 @@ func TestMultiplexBackendCheckDialCompatibleRelaySevenCompatibleRelays(t *testin
 }
 
 func TestMultiplexBackendGetRemoteRelayInfo(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 3
 	numRelays := 2
 
@@ -355,13 +338,9 @@ func TestMultiplexBackendGetRemoteRelayInfo(t *testing.T) {
 	require.Len(t, servers, numRelays)
 
 	defer func() {
+		time.Sleep(10 * time.Second)
 		for i := 0; i < len(servers); i++ {
-			defer os.RemoveAll(rootDirs[i])
-
-			if servers[i] != nil {
-				err := servers[i].Close()
-				assert.NoError(t, err, "should shutdown server at index: "+strconv.Itoa(i))
-			}
+			go closeAndRemoveAll(t, rootDirs[i], servers[i])
 		}
 	}()
 
@@ -383,6 +362,8 @@ func TestMultiplexBackendGetRemoteRelayInfo(t *testing.T) {
 }
 
 func TestMultiplexBackendGetRemoteRelayInfoWithFourRelays(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 3
 	numRelays := 4
 
@@ -408,13 +389,9 @@ func TestMultiplexBackendGetRemoteRelayInfoWithFourRelays(t *testing.T) {
 	require.Len(t, servers, numRelays)
 
 	defer func() {
+		time.Sleep(10 * time.Second)
 		for i := 0; i < len(servers); i++ {
-			defer os.RemoveAll(rootDirs[i])
-
-			if servers[i] != nil {
-				err := servers[i].Close()
-				assert.NoError(t, err, "should shutdown server at index: "+strconv.Itoa(i))
-			}
+			go closeAndRemoveAll(t, rootDirs[i], servers[i])
 		}
 	}()
 
@@ -438,6 +415,8 @@ func TestMultiplexBackendGetRemoteRelayInfoWithFourRelays(t *testing.T) {
 }
 
 func TestMultiplexBackendGetRelaysByNetwork(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 3
 	numRelays := 2
 
@@ -459,13 +438,9 @@ func TestMultiplexBackendGetRelaysByNetwork(t *testing.T) {
 	require.Len(t, servers, numRelays)
 
 	defer func() {
+		time.Sleep(10 * time.Second)
 		for i := 0; i < len(servers); i++ {
-			defer os.RemoveAll(rootDirs[i])
-
-			if servers[i] != nil {
-				err := servers[i].Close()
-				assert.NoError(t, err, "should shutdown server at index: "+strconv.Itoa(i))
-			}
+			go closeAndRemoveAll(t, rootDirs[i], servers[i])
 		}
 	}()
 
@@ -503,19 +478,15 @@ func TestMultiplexBackendGetRelaysByNetwork(t *testing.T) {
 }
 
 func TestMultiplexBackendAddTransactions(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	// Uses config.TestConfig() and random MultiplexConfig
 	// For debug, change the logger to cmtlog.TestingLogger()
 	rootDir,
 		server := ResetTestMultiplexBackend(t, 1, cmtlog.NewNopLogger()) // 1 network
 	require.NotNil(t, server)
 
-	defer func() {
-		defer os.RemoveAll(rootDir)
-		if server != nil {
-			err := server.Close()
-			assert.NoError(t, err, "should shutdown gracefully")
-		}
-	}()
+	defer closeAndRemoveAll(t, rootDir, server)
 
 	// Start the node backend
 	server.MustStart()
@@ -534,22 +505,19 @@ func TestMultiplexBackendAddTransactions(t *testing.T) {
 		},
 	)
 	assert.NoError(t, actualErr, "should add transaction to mempool")
+	time.Sleep(5 * time.Second)
 }
 
 func TestMultiplexBackendRemoveTransactions(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	// Uses config.TestConfig() and random MultiplexConfig
 	// For debug, change the logger to cmtlog.TestingLogger()
 	rootDir,
 		server := ResetTestMultiplexBackend(t, 1, cmtlog.NewNopLogger()) // 1 network
 	require.NotNil(t, server)
 
-	defer func() {
-		defer os.RemoveAll(rootDir)
-		if server != nil {
-			err := server.Close()
-			assert.NoError(t, err, "should shutdown gracefully")
-		}
-	}()
+	defer closeAndRemoveAll(t, rootDir, server)
 
 	// Start the node backend
 	server.MustStart()
@@ -577,6 +545,7 @@ func TestMultiplexBackendRemoveTransactions(t *testing.T) {
 		},
 	)
 	assert.NoError(t, actualErr, "should remove transaction from mempool")
+	time.Sleep(5 * time.Second)
 }
 
 // TODO(midas): add test for 0-network compatible relays

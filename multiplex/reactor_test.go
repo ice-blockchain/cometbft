@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 
 	dbm "github.com/cometbft/cometbft-db"
 	"github.com/ice-blockchain/cometbft/config"
@@ -44,6 +45,8 @@ func mockErrorGenesisDocSetProviderFunc() node.GenesisDocProvider {
 }
 
 func TestMultiplexReactorNewReactor(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	rootDir, err := os.MkdirTemp("", t.Name())
 	require.NoError(t, err)
 	defer os.RemoveAll(rootDir)
@@ -101,6 +104,8 @@ func TestMultiplexReactorNewReactor(t *testing.T) {
 }
 
 func TestMultiplexReactorRegisterService(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	rootDir, err := os.MkdirTemp("", t.Name())
 	require.NoError(t, err)
 	defer os.RemoveAll(rootDir)
@@ -169,6 +174,8 @@ func TestMultiplexReactorRegisterService(t *testing.T) {
 }
 
 func TestMultiplexReactorRegisterInstance(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	rootDir, err := os.MkdirTemp("", t.Name())
 	require.NoError(t, err)
 	defer os.RemoveAll(rootDir)
@@ -300,6 +307,8 @@ func TestMultiplexReactorRegisterInstance(t *testing.T) {
 }
 
 func TestMultiplexReactorRegisterNetwork(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numNetworks := 1
 
 	// Initialize and START the nodes multiplex

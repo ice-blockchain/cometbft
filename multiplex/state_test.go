@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 
 	dbm "github.com/cometbft/cometbft-db"
 	"github.com/ice-blockchain/cometbft/config"
@@ -49,6 +50,8 @@ func mockMultiplexGenesisDocProviderFunc(
 }
 
 func TestMultiplexReactorInitMultiplexStatesEmptyState(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 5
 	rootDir, _, reactor := ResetTestMultiplexState(t, numChains, mx.InstanceKeyDatabaseState) // Uses database/state
 	defer os.RemoveAll(rootDir)
@@ -113,6 +116,8 @@ func TestMultiplexReactorInitMultiplexStatesEmptyState(t *testing.T) {
 }
 
 func TestMultiplexReactorInitMultiplexStatesFilledState(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 5
 	rootDir, _, reactor := ResetTestMultiplexState(t, numChains, mx.InstanceKeyDatabaseState) // Uses database/state
 	defer os.RemoveAll(rootDir)
@@ -178,6 +183,8 @@ func TestMultiplexReactorInitMultiplexStatesFilledState(t *testing.T) {
 }
 
 func TestMultiplexReactorInitMultiplexBlockStores(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 5
 	rootDir, _, reactor := ResetTestMultiplexState(t, numChains, mx.InstanceKeyDatabaseBlock) // Uses database/blockStore
 	defer os.RemoveAll(rootDir)

@@ -827,9 +827,14 @@ OUTER_LOOP:
 			}
 		}
 
-		time.Sleep(conR.conS.config.PeerQueryMaj23SleepDuration)
-
-		continue OUTER_LOOP
+		// NOTE(midas): instead of time.Sleep, we select the interval to permit
+		// the shutdown routine to stop waiting here as well.
+		select {
+		case <-time.After(conR.conS.config.PeerQueryMaj23SleepDuration):
+			continue OUTER_LOOP
+		case <-conR.Quit():
+			return
+		}
 	}
 }
 

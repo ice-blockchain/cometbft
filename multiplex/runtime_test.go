@@ -9,6 +9,7 @@ import (
 	dbm "github.com/cometbft/cometbft-db"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
@@ -28,6 +29,8 @@ const (
 )
 
 func TestMultiplexRuntimeMakeNetworkFilesystem(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	rootDir, err := os.MkdirTemp("", t.Name())
 	require.NoError(t, err)
 	defer os.RemoveAll(rootDir)
@@ -60,6 +63,8 @@ func TestMultiplexRuntimeMakeNetworkFilesystem(t *testing.T) {
 }
 
 func TestMultiplexRuntimeMakeNetworkDatabases(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	rootDir,
 		_,
 		testReactor := ResetTestMultiplexRuntime(t, 3)
@@ -94,6 +99,8 @@ func TestMultiplexRuntimeMakeNetworkDatabases(t *testing.T) {
 }
 
 func TestMultiplexRuntimeMakeNetworkValidator(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	rootDir,
 		_,
 		testReactor := ResetTestMultiplexRuntime(t, 5)
@@ -132,6 +139,8 @@ func TestMultiplexRuntimeMakeNetworkValidator(t *testing.T) {
 }
 
 func TestMultiplexRuntimeMakeNetworkGenesis(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	rootDir,
 		_,
 		testReactor := ResetTestMultiplexRuntime(t, 3)
@@ -183,6 +192,8 @@ func TestMultiplexRuntimeMakeNetworkGenesis(t *testing.T) {
 }
 
 func TestMultiplexRuntimeMakeNetworkStateMachine(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	rootDir,
 		testConfig,
 		testReactor,
@@ -226,6 +237,8 @@ func TestMultiplexRuntimeMakeNetworkStateMachine(t *testing.T) {
 }
 
 func TestMultiplexRuntimeMakeNetworkConfigOverwrite(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 3
 	rootDir,
 		testConfig,
@@ -251,6 +264,8 @@ func TestMultiplexRuntimeMakeNetworkConfigOverwrite(t *testing.T) {
 }
 
 func TestMultiplexRuntimeAllocateNetwork(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 5
 	rootDir,
 		testConfig,
@@ -296,6 +311,8 @@ func TestMultiplexRuntimeAllocateNetwork(t *testing.T) {
 }
 
 func TestMultiplexRuntimeInjectGenesisDoc(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 4
 	rootDir,
 		testConfig,
@@ -346,6 +363,8 @@ func TestMultiplexRuntimeInjectGenesisDoc(t *testing.T) {
 }
 
 func TestMultiplexRuntimeInjectStateMachine(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 4
 	rootDir,
 		testConfig,
@@ -378,6 +397,8 @@ func TestMultiplexRuntimeInjectStateMachine(t *testing.T) {
 
 // CAUTION: This tests the injection with a running reactor instance.
 func TestMultiplexRuntimeInjectNewNetwork(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 1
 
 	// Initialize and START the nodes multiplex
@@ -412,6 +433,8 @@ func TestMultiplexRuntimeInjectNewNetwork(t *testing.T) {
 }
 
 func TestMultiplexRuntimeInjectNewNetworkCallsAllocateNetwork(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 1
 
 	// Initialize and START the nodes multiplex
@@ -476,6 +499,8 @@ func TestMultiplexRuntimeInjectNewNetworkCallsAllocateNetwork(t *testing.T) {
 }
 
 func TestMultiplexRuntimeInjectNewNetworkCallsInjectStateMachine(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 1
 
 	// Initialize and START the nodes multiplex
@@ -521,6 +546,8 @@ func TestMultiplexRuntimeInjectNewNetworkCallsInjectStateMachine(t *testing.T) {
 }
 
 func TestMultiplexRuntimeInjectNewNetworkCallsRegisterNetwork(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 1
 
 	// Initialize and START the nodes multiplex
@@ -554,6 +581,8 @@ func TestMultiplexRuntimeInjectNewNetworkCallsRegisterNetwork(t *testing.T) {
 }
 
 func TestMultiplexRuntimeInjectNewRuntime(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 0
 
 	// Initialize and START the nodes multiplex
@@ -581,6 +610,8 @@ func TestMultiplexRuntimeInjectNewRuntime(t *testing.T) {
 }
 
 func TestMultiplexRuntimeInjectNewRuntimeWithOthers(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 1
 
 	// Initialize and START the nodes multiplex

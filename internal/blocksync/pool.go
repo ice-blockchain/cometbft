@@ -113,6 +113,18 @@ func (pool *BlockPool) OnStart() error {
 	return nil
 }
 
+func (pool *BlockPool) OnStop() {
+	pool.mtx.Lock()
+	defer pool.mtx.Unlock()
+
+	for _, peer := range pool.peers {
+		peer.recvMonitor.Stop()
+		if peer.timeout != nil {
+			peer.timeout.Stop()
+		}
+	}
+}
+
 func (pool *BlockPool) makeRequestersRoutine() {
 	for {
 		if !pool.IsRunning() {
@@ -124,7 +136,17 @@ func (pool *BlockPool) makeRequestersRoutine() {
 		if time.Since(pool.startTime) < peerConnWait {
 			// Calculate the duration to sleep until peerConnWait seconds have passed since pool.startTime
 			sleepDuration := peerConnWait - time.Since(pool.startTime)
-			time.Sleep(sleepDuration)
+			if ok := pool.WaitForInterval(sleepDuration); !ok {
+				return
+			}
+		}
+
+		// NOTE(midas): non-blocking select on shutdown channel makes
+		// sure every time before handling a requester, we know to shutdown.
+		select {
+		case <-pool.Quit():
+			return
+		default: // Proceed to handle requesters
 		}
 
 		pool.mtx.Lock()
@@ -138,14 +160,36 @@ func (pool *BlockPool) makeRequestersRoutine() {
 
 		switch {
 		case maxRequestersCreated: // If we have enough requesters, wait for them to finish.
-			time.Sleep(requestInterval)
+			if ok := pool.WaitForInterval(requestInterval); !ok {
+				return
+			}
 			pool.removeTimedoutPeers()
 		case maxPeerHeightReached: // If we're caught up, wait for a bit so reactor could finish or a higher height is reported.
-			time.Sleep(requestInterval)
+			if ok := pool.WaitForInterval(requestInterval); !ok {
+				return
+			}
 		default:
 			pool.makeNextRequester(nextHeight)
 			// Sleep for a bit to make the requests more ordered.
-			time.Sleep(requestInterval)
+			if ok := pool.WaitForInterval(requestInterval); !ok {
+				return
+			}
+		}
+	}
+}
+
+// WaitForInterval blocks the thread until duration is reached or until a
+// shutdown process kills the BlockPool instance.
+// This method returns false if a shutdown process is ongoing.
+func (pool *BlockPool) WaitForInterval(duration time.Duration) bool {
+	for {
+		// NOTE(midas): instead of time.Sleep, we select the interval to permit
+		// the shutdown routine to stop waiting here as well.
+		select {
+		case <-time.After(duration):
+			return true
+		case <-pool.Quit():
+			return false
 		}
 	}
 }

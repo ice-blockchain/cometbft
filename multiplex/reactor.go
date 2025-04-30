@@ -1211,16 +1211,6 @@ func (reactor *Reactor) OnStart() error {
 // no specific order is used to close the database connection because every
 // database connection is independent of other database connections.
 func (reactor *Reactor) OnStop() {
-	// Shutdown the ABCI client if running
-	reactor.envMutex.Lock()
-	if reactor.abciClient != nil && reactor.abciClient.IsRunning() {
-		if err := reactor.abciClient.Stop(); err != nil {
-			reactor.logger.Error(
-				"Error stopping the ABCI client", "err", err)
-		}
-	}
-	reactor.envMutex.Unlock()
-
 	// Shutdown all network resources atomically
 	reactor.networkMutex.Lock()
 
@@ -1253,7 +1243,7 @@ func (reactor *Reactor) OnStop() {
 	reactor.servicesMutex.RLock()
 
 	// Uses LIFO strategy to shutdown registered services
-	servicesLIFO := reactor.servicesSequence
+	servicesLIFO := reactor.servicesSequence[:]
 	sort.Sort(sort.Reverse(sort.StringSlice(
 		servicesLIFO,
 	)))
@@ -1271,6 +1261,17 @@ func (reactor *Reactor) OnStop() {
 		}
 	}
 	reactor.servicesMutex.RUnlock()
+
+	// Now nothing may perturb shutting down ABCI anymore.
+	// Shutdown the ABCI client if running
+	reactor.envMutex.Lock()
+	if reactor.abciClient != nil && reactor.abciClient.IsRunning() {
+		if err := reactor.abciClient.Stop(); err != nil {
+			reactor.logger.Error(
+				"Error stopping the ABCI client", "err", err)
+		}
+	}
+	reactor.envMutex.Unlock()
 
 	// Each database multiplex opens x dbs, no ordering or reversing is
 	// applied here as it doesn't matter which database is closed first.

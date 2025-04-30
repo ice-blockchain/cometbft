@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/crypto"
@@ -35,6 +36,8 @@ import (
 // CAUTION: do not remove this test because it makes sure that that multiplex
 // implementation *does not interfere* with the legacy node implementation.
 func TestMultiplexNodeLegacyNodeImplementation(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	testChainID := "test-legacy-chain-id"
 	rootDir, err := os.MkdirTemp("", t.Name())
 	require.NoError(t, err)
@@ -89,6 +92,8 @@ func TestMultiplexNodeLegacyNodeImplementation(t *testing.T) {
 }
 
 func TestMultiplexNodeNewLegacyNodeMultiplex(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	testChainID := "test-legacy-chain-id"
 	rootDir, err := os.MkdirTemp("", t.Name())
 	require.NoError(t, err)
@@ -143,6 +148,8 @@ func TestMultiplexNodeNewLegacyNodeMultiplex(t *testing.T) {
 }
 
 func TestMultiplexNodeNewNodesMultiplexFallback(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	// We define the necessary infrastructure for a legacy node
 	testChainID := "test-legacy-chain-id"
 	rootDir, err := os.MkdirTemp("", t.Name())
@@ -202,6 +209,8 @@ func TestMultiplexNodeNewNodesMultiplexFallback(t *testing.T) {
 }
 
 func TestMultiplexNodeNewNodesMultiplex(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 5
 	rootDir, globalCfg := ResetTestMultiplexNode(t, numChains)
 	defer os.RemoveAll(rootDir)
@@ -304,6 +313,8 @@ func TestMultiplexNodeNewNodesMultiplex(t *testing.T) {
 }
 
 func TestMultiplexNodeNewNodesMultiplexSingleNetworkProduceBlocks(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numNetworks := 1
 
 	// Initialize and START the nodes multiplex
@@ -371,6 +382,8 @@ func TestMultiplexNodeNewNodesMultiplexSingleNetworkProduceBlocks(t *testing.T) 
 }
 
 func TestMultiplexNodeNewNodesMultiplexProduceBlocks(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numNetworks := 5
 
 	// Initialize and START the nodes multiplex

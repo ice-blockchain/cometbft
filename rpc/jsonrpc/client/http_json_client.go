@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	cmtsync "github.com/ice-blockchain/cometbft/libs/sync"
 	"github.com/ice-blockchain/cometbft/rpc/jsonrpc/types"
@@ -194,6 +195,11 @@ func NewWithHTTPClient(remote string, client *http.Client) (*Client, error) {
 	}
 
 	return rpcClient, nil
+}
+
+// GetHTTPClient returns the internal [http.Client] instance.
+func (c *Client) GetHTTPClient() *http.Client {
+	return c.client
 }
 
 // Call issues a POST HTTP request. Requests are JSON encoded. Content-Type:
@@ -408,7 +414,8 @@ func MakeHTTPDialer(remoteAddr string) (func(string, string) (net.Conn, error), 
 	}
 
 	dialFn := func(_, _ string) (net.Conn, error) {
-		return net.Dial(protocol, u.GetDialAddress())
+		dialer := net.Dialer{Timeout: 3 * time.Second}
+		return dialer.Dial(protocol, u.GetDialAddress())
 	}
 
 	return dialFn, nil

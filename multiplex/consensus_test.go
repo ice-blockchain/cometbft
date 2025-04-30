@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/internal/blocksync"
@@ -19,6 +20,8 @@ import (
 )
 
 func TestMultiplexReactorPrepareConsensusInstanceWithReactor(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 5
 
 	rootDir, globalCfg, reactor := ResetTestMultiplexConsensus(t,
@@ -59,6 +62,8 @@ func TestMultiplexReactorPrepareConsensusInstanceWithReactor(t *testing.T) {
 }
 
 func TestMultiplexReactorCreateConsensusInstanceReactors(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
 	numChains := 5
 
 	rootDir, globalCfg, reactor := ResetTestMultiplexConsensus(t,

@@ -63,6 +63,14 @@ func (is *IndexerService) OnStart() error {
 
 	go func() {
 		for {
+			// NOTE(midas): non-blocking select on shutdown channel makes
+			// sure every time before handling a block, we know to shutdown.
+			select {
+			case <-is.Quit():
+				return
+			default: // Proceed to handle block event
+			}
+
 			select {
 			case <-blockSub.Canceled():
 				return
@@ -117,6 +125,8 @@ func (is *IndexerService) OnStart() error {
 				} else {
 					is.Logger.Debug("indexed transactions", "height", height, "num_txs", numTxs)
 				}
+			default:
+				// not waiting for blocks, come back later instead.
 			}
 		}
 	}()

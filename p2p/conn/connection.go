@@ -359,6 +359,8 @@ func (c *MConnection) OnStop() {
 	}
 
 	c.conn.Close()
+	c.recvMonitor.Stop()
+	c.sendMonitor.Stop()
 
 	// We can't close pong safely here because
 	// recvRoutine may write to it after we've stopped.
@@ -818,15 +820,15 @@ func (c *MConnection) Status() ConnectionStatus {
 	status.Duration = time.Since(c.created)
 	status.SendMonitor = c.sendMonitor.Status()
 	status.RecvMonitor = c.recvMonitor.Status()
-	status.Channels = make([]ChannelStatus, len(c.channels))
-	for i, channel := range c.channels {
-		status.Channels[i] = ChannelStatus{
+	status.Channels = []ChannelStatus{}
+	for _, channel := range c.channels {
+		status.Channels = append(status.Channels, ChannelStatus{
 			ID:                channel.desc.ID,
 			SendQueueCapacity: cap(channel.sendQueue),
 			SendQueueSize:     int(atomic.LoadInt32(&channel.sendQueueSize)),
 			Priority:          channel.desc.Priority,
 			RecentlySent:      atomic.LoadInt64(&channel.recentlySent),
-		}
+		})
 	}
 	return status
 }

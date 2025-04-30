@@ -39,3 +39,17 @@ func splitAndTrimEmpty(s, sep, cutset string) []string {
 	}
 	return nonEmptyStrings
 }
+
+// removeDuplicates filters out duplicate strings in a string slice.
+func removeDuplicates(input []string) (output []string) {
+	dedupl := map[string]bool{}
+	for _, v := range input {
+		dedupl[v] = true
+	}
+
+	output = make([]string, 0, len(dedupl))
+	for v := range dedupl {
+		output = append(output, v)
+	}
+	return
+}

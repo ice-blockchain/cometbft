@@ -323,7 +323,15 @@ func (p *Pruner) pruneABCIResponses() {
 				})
 			}
 			lastRetainHeight = newRetainHeight
-			time.Sleep(p.interval)
+		}
+
+		// NOTE(midas): instead of time.Sleep, we select the interval to permit
+		// the shutdown routine to stop waiting here as well.
+		select {
+		case <-time.After(p.interval):
+			continue
+		case <-p.Quit():
+			return
 		}
 	}
 }
@@ -344,7 +352,15 @@ func (p *Pruner) pruneBlocks() {
 				})
 			}
 			lastRetainHeight = newRetainHeight
-			time.Sleep(p.interval)
+		}
+
+		// NOTE(midas): instead of time.Sleep, we select the interval to permit
+		// the shutdown routine to stop waiting here as well.
+		select {
+		case <-time.After(p.interval):
+			continue
+		case <-p.Quit():
+			return
 		}
 	}
 }
@@ -360,8 +376,15 @@ func (p *Pruner) pruneIndexesRoutine() {
 		default:
 			lastTxIndexerRetainHeight = p.pruneTxIndexerToRetainHeight(lastTxIndexerRetainHeight)
 			lastBlockIndexerRetainHeight = p.pruneBlockIndexerToRetainHeight(lastBlockIndexerRetainHeight)
-			// TODO call observer
-			time.Sleep(p.interval)
+		}
+
+		// NOTE(midas): instead of time.Sleep, we select the interval to permit
+		// the shutdown routine to stop waiting here as well.
+		select {
+		case <-time.After(p.interval):
+			continue
+		case <-p.Quit():
+			return
 		}
 	}
 }
