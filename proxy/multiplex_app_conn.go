@@ -143,34 +143,27 @@ func (conn *multiplexAppConn) Snapshot(chainID string) AppConnSnapshot {
 //
 // ToAppConns implements [ChainConns].
 func (conn *multiplexAppConn) ToAppConns(chainID string) AppConns {
-	conn.proxyMutex.RLock()
-	appConns := conn.proxyAppConns
-	conn.proxyMutex.RUnlock()
+	conn.proxyMutex.Lock()
+	defer conn.proxyMutex.Unlock()
 
-	if appConns == nil {
-		// Note: this instance uses the legacy AppConns implementation
-		// Mutex connsMutex is locked for read through method calls.
-		appConns = &multiAppConn{
-			metrics:       conn.metrics,
-			consensusConn: conn.Consensus(chainID),
-			mempoolConn:   conn.Mempool(chainID),
-			queryConn:     conn.Query(chainID),
-			snapshotConn:  conn.Snapshot(chainID),
+	// Note: this instance uses the legacy AppConns implementation
+	// Mutex connsMutex is locked for read through method calls.
+	conn.proxyAppConns = &multiAppConn{
+		metrics:       conn.metrics,
+		consensusConn: conn.Consensus(chainID),
+		mempoolConn:   conn.Mempool(chainID),
+		queryConn:     conn.Query(chainID),
+		snapshotConn:  conn.Snapshot(chainID),
 
-			consensusConnClient: conn.sharedClients.consensus,
-			mempoolConnClient:   conn.sharedClients.mempool,
-			queryConnClient:     conn.sharedClients.query,
-			snapshotConnClient:  conn.sharedClients.snapshot,
+		consensusConnClient: conn.sharedClients.consensus,
+		mempoolConnClient:   conn.sharedClients.mempool,
+		queryConnClient:     conn.sharedClients.query,
+		snapshotConnClient:  conn.sharedClients.snapshot,
 
-			clientCreator: conn.clientCreator,
-		}
-
-		conn.proxyMutex.Lock()
-		conn.proxyAppConns = appConns
-		conn.proxyMutex.Unlock()
+		clientCreator: conn.clientCreator,
 	}
 
-	return appConns
+	return conn.proxyAppConns
 }
 
 // OnStart implements [service.Service].
