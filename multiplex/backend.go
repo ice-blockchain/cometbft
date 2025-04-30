@@ -680,6 +680,9 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 
 	// Each relevant (healthy) relay should acknowledge each transaction once.
 	numExpected = len(relevantRelays) * len(transactions)
+	if numExpected == 0 {
+		return
+	}
 
 	// Written on at the end of this method, when results are returned.
 	// Consumed and closed in deferral process of this method.
@@ -752,6 +755,39 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 		)
 	}
 
+	// Gracefully shutdown any living goroutines for a particular
+	// transaction hash txHash. This method is called in deferral
+	// process, once per *accepted* transaction.
+	shutdownFn := func(
+		txHash string,
+		shutdownChs map[string]chan struct{},
+		remoteTxChs map[string]chan string,
+	) {
+		if _, ok := shutdownChs[txHash]; ok {
+			shutdownChs[txHash] <- struct{}{}
+			close(shutdownChs[txHash])
+		}
+
+		b.reactor.CloseAckTransactionChannel(txHash)
+
+		if _, ok := remoteTxChs[txHash]; ok {
+			close(remoteTxChs[txHash])
+		}
+	}
+
+	// Cancels any remaining goroutine in case of error, we must iterate
+	// through transactions to make sure we shutdown all remaining goroutines.
+	shutdownForError := func(
+		transactions []client.Transaction,
+		shutdownChs map[string]chan struct{},
+		remoteTxChs map[string]chan string,
+	) {
+		for _, tx := range transactions {
+			txHash := fmt.Sprintf("%X", tx.Hash())
+			shutdownFn(txHash, shutdownChs, remoteTxChs)
+		}
+	}
+
 	// Waits until we have all required results (or errors).
 	for i := 0; i < len(transactions); i++ {
 		// Wait for one result (it doesn't matter which)
@@ -759,6 +795,7 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 		if txResult.Error != nil {
 			// We stop waiting at first error that occurs.
 			err = txResult.Error
+			shutdownForError(transactions, shutdownWaitChs, remoteRelayTxChs)
 			return
 		}
 
@@ -767,14 +804,7 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 		numReceived += len(txResult.Relays)
 
 		// Shutdown any living goroutine for this txHash
-		defer func(txHash string) {
-			shutdownWaitChs[txHash] <- struct{}{}
-			b.reactor.CloseAckTransactionChannel(txHash)
-
-			close(remoteRelayTxChs[txHash])
-			close(shutdownWaitChs[txHash])
-
-		}(txResult.TxHash)
+		defer shutdownFn(txResult.TxHash, shutdownWaitChs, remoteRelayTxChs)
 	}
 
 	return

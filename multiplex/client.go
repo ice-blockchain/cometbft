@@ -500,6 +500,14 @@ func (c MultiplexClient) BroadcastTx(
 			"tx_hashes", transactionHashes)
 	}
 
+	// In single-node network we don't expect acks from remotes, meaning the
+	// transactions should get accepted when this condition matches.
+	if numExpectedAcks == 0 {
+		for _, tx := range transactions {
+			acceptedTxHashes = append(acceptedTxHashes, tx.Hash())
+		}
+	}
+
 	for txHash, ackedRelays := range ackedRelaysPerTx {
 		// Filters relay IDs such that relays that are still replicating are
 		// not expected to respond with a transaction ack, because their mempool
