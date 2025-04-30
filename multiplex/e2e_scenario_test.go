@@ -763,9 +763,9 @@ func TestScenarioClientBroadcastEmptyRelaysProduceBlockWithTx(t *testing.T) {
 	assert.NotNil(t, blockStore, "block store per chain must not be nil")
 
 	actualBlock, actualMeta := blockStore.LoadBlock(stateMachine.LastBlockHeight)
-	assert.NotNil(t, actualBlock, "should return correct block")
-	assert.NotNil(t, actualMeta, "should return correct block meta")
-	assert.NotEmpty(t, actualBlock.Data, "should return non-empty block data")
+	require.NotNil(t, actualBlock, "should return correct block")
+	require.NotNil(t, actualMeta, "should return correct block meta")
+	require.NotEmpty(t, actualBlock.Data, "should return non-empty block data")
 	assert.NotEmpty(t, actualBlock.Data.Txs, "should return non-empty block transactions")
 	assert.Len(t, actualBlock.Data.Txs, numTransactions)
 }

@@ -18,7 +18,6 @@ var (
 // should not be accepted, or if the batch must not be broadcast.
 func (DefaultAcceptor) AcceptBroadcastTx(
 	_ context.Context,
-	_ string,
 	_ ...Transaction,
 ) error {
 	return nil
@@ -28,7 +27,6 @@ func (DefaultAcceptor) AcceptBroadcastTx(
 // should not be accepted, or if the batch must not be broadcast.
 func (DefaultAcceptor) AcceptBroadcastTxRemoval(
 	_ context.Context,
-	_ string,
 	_ ...Transaction,
 ) error {
 	return nil
@@ -38,7 +36,6 @@ func (DefaultAcceptor) AcceptBroadcastTxRemoval(
 // previously committed for a transaction batch that is being rollbacked.
 func (DefaultAcceptor) RollbackTx(
 	_ context.Context,
-	_ string,
 	_ ...Transaction,
 ) error {
 	return nil
@@ -48,7 +45,6 @@ func (DefaultAcceptor) RollbackTx(
 // data previously committed for a removal operation that is rollbacked.
 func (DefaultAcceptor) RollbackTxRemoval(
 	_ context.Context,
-	_ string,
 	_ ...Transaction,
 ) error {
 	return nil
@@ -95,131 +91,49 @@ func (DefaultServer) MustStart() {}
 // Mocks
 
 type MockAcceptorImpl struct {
-	TxAcceptCallsByAddress map[string]int
-	TxAcceptBytesByAddress map[string][][]byte
-
-	TxRemoveCallsByAddress map[string]int
-	TxRemoveBytesByAddress map[string][][]byte
-
-	RbAcceptCallsByAddress map[string]int
-	RbAcceptBytesByAddress map[string][][]byte
-
-	RbRemoveCallsByAddress map[string]int
-	RbRemoveBytesByAddress map[string][][]byte
+	TxAcceptCalls int
+	TxRemoveCalls int
+	RbAcceptCalls int
+	RbRemoveCalls int
 }
 
 func NewMockAcceptorImpl() *MockAcceptorImpl {
 	return &MockAcceptorImpl{
-		TxAcceptCallsByAddress: map[string]int{},
-		TxAcceptBytesByAddress: map[string][][]byte{},
-
-		TxRemoveCallsByAddress: map[string]int{},
-		TxRemoveBytesByAddress: map[string][][]byte{},
-
-		RbAcceptCallsByAddress: map[string]int{},
-		RbAcceptBytesByAddress: map[string][][]byte{},
-
-		RbRemoveCallsByAddress: map[string]int{},
-		RbRemoveBytesByAddress: map[string][][]byte{},
+		TxAcceptCalls: 0,
+		TxRemoveCalls: 0,
+		RbAcceptCalls: 0,
+		RbRemoveCalls: 0,
 	}
 }
 
 func (acceptor *MockAcceptorImpl) AcceptBroadcastTx(
 	_ context.Context,
-	userAddress string,
 	transactions ...Transaction,
 ) error {
-	acceptor.TxAcceptCallsByAddress = acceptor.addCall(
-		acceptor.TxAcceptCallsByAddress,
-		userAddress,
-	)
-	acceptor.TxAcceptBytesByAddress = acceptor.addBytes(
-		acceptor.TxAcceptBytesByAddress,
-		userAddress,
-		transactions...,
-	)
+	acceptor.TxAcceptCalls++
 	return nil
 }
 
 func (acceptor *MockAcceptorImpl) AcceptBroadcastTxRemoval(
 	_ context.Context,
-	userAddress string,
 	transactions ...Transaction,
 ) error {
-	acceptor.TxRemoveCallsByAddress = acceptor.addCall(
-		acceptor.TxRemoveCallsByAddress,
-		userAddress,
-	)
-	acceptor.TxRemoveBytesByAddress = acceptor.addBytes(
-		acceptor.TxRemoveBytesByAddress,
-		userAddress,
-		transactions...,
-	)
+	acceptor.TxRemoveCalls++
 	return nil
 }
 
 func (acceptor *MockAcceptorImpl) RollbackTx(
 	_ context.Context,
-	userAddress string,
 	transactions ...Transaction,
 ) error {
-	acceptor.RbAcceptCallsByAddress = acceptor.addCall(
-		acceptor.RbAcceptCallsByAddress,
-		userAddress,
-	)
-	acceptor.RbAcceptBytesByAddress = acceptor.addBytes(
-		acceptor.RbAcceptBytesByAddress,
-		userAddress,
-		transactions...,
-	)
+	acceptor.RbAcceptCalls++
 	return nil
 }
 
 func (acceptor *MockAcceptorImpl) RollbackTxRemoval(
 	_ context.Context,
-	userAddress string,
 	transactions ...Transaction,
 ) error {
-	acceptor.RbRemoveCallsByAddress = acceptor.addCall(
-		acceptor.RbRemoveCallsByAddress,
-		userAddress,
-	)
-	acceptor.RbRemoveBytesByAddress = acceptor.addBytes(
-		acceptor.RbRemoveBytesByAddress,
-		userAddress,
-		transactions...,
-	)
+	acceptor.RbRemoveCalls++
 	return nil
-}
-
-func (acceptor *MockAcceptorImpl) addCall(
-	target map[string]int,
-	userAddress string,
-) map[string]int {
-	if _, ok := target[userAddress]; !ok {
-		target[userAddress] = 0
-	}
-
-	target[userAddress]++
-	return target
-}
-
-func (acceptor *MockAcceptorImpl) addBytes(
-	target map[string][][]byte,
-	userAddress string,
-	transactions ...Transaction,
-) map[string][][]byte {
-	if _, ok := target[userAddress]; !ok {
-		target[userAddress] = [][]byte{}
-	}
-
-	for _, tx := range transactions {
-		rawTx := TransactionToRawTx(tx)
-		target[userAddress] = append(
-			target[userAddress],
-			rawTx.Hash(),
-		)
-	}
-
-	return target
 }

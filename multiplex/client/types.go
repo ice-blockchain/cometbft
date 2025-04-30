@@ -74,7 +74,6 @@ type Acceptor interface {
 	// should not be accepted, or if the batch must not be broadcast.
 	AcceptBroadcastTx(
 		ctx context.Context,
-		userAddress string,
 		transactions ...Transaction,
 	) error
 
@@ -82,7 +81,6 @@ type Acceptor interface {
 	// should not be accepted, or if the batch must not be broadcast.
 	AcceptBroadcastTxRemoval(
 		ctx context.Context,
-		userAddress string,
 		transactions ...Transaction,
 	) error
 
@@ -90,7 +88,6 @@ type Acceptor interface {
 	// previously committed for a transaction batch that is being rollbacked.
 	RollbackTx(
 		ctx context.Context,
-		userAddress string,
 		transactions ...Transaction,
 	) error
 
@@ -98,7 +95,6 @@ type Acceptor interface {
 	// data previously committed for a removal operation that is rollbacked.
 	RollbackTxRemoval(
 		ctx context.Context,
-		userAddress string,
 		transactions ...Transaction,
 	) error
 }

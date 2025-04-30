@@ -223,7 +223,6 @@ func (app *SnapsApp) FinalizeBlock(
 ) (*abcitypes.FinalizeBlockResponse, error) {
 	// Retrieve ChainID from context
 	chainID := ctx.Value(client.KeyChainID).(string)
-	userAddress := client.GetUserAddress(chainID)
 
 	resp := &abcitypes.FinalizeBlockResponse{TxResults: []*abcitypes.ExecTxResult{}}
 
@@ -267,7 +266,6 @@ func (app *SnapsApp) FinalizeBlock(
 
 		if err := app.txAcceptor.AcceptBroadcastTx(
 			ctx,
-			userAddress,
 			batch...,
 		); err != nil {
 			return nil, fmt.Errorf(

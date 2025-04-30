@@ -223,7 +223,6 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 		// Forward the transaction rollbacks to an Acceptor.
 		err := memR.txAcceptor.RollbackTx(
 			context.TODO(),
-			memR.userAddress,
 			batch...,
 		)
 		if err != nil {
@@ -273,7 +272,6 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 
 			err := memR.txAcceptor.AcceptBroadcastTx(
 				context.TODO(),
-				memR.userAddress,
 				batch...,
 			)
 			if err != nil {

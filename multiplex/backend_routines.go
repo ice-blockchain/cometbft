@@ -425,7 +425,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 				go routineCancelBroadcast(ctx, userAddress, transactions)
 
 				// Also call RollbackTx extension locally and remove from mempool.
-				if err := b.acceptor.RollbackTx(ctx, userAddress, transactions...); err == nil {
+				if err := b.acceptor.RollbackTx(ctx, transactions...); err == nil {
 					// Remove the transactions from local mempool.
 					b.RemoveTransactions(userAddress, transactions...)
 				}
