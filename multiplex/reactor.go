@@ -1367,12 +1367,10 @@ func (reactor *Reactor) initMultiplexProviders(
 ) {
 	// Use the initial GenesisDocSet to load individual genesis docs
 	reactor.genesisDocProvider = func(chainId string) (*types.GenesisDoc, error) {
-		reactor.genesisDocsMutex.RLock()
-		defer reactor.genesisDocsMutex.RUnlock()
-
-		genDoc, err := reactor.initialGenesisDocs.GenesisDocByChainID(chainId)
+		icsGenesisDocSet := reactor.GetChecksummedGenesisDocSet()
+		genDoc, err := icsGenesisDocSet.GenesisDocByChainID(chainId)
 		if err != nil {
-			return nil, fmt.Errorf("could not load genesis doc for ChainID %s", chainId)
+			return nil, fmt.Errorf("could not load genesis doc for ChainID %s: %w", chainId, err)
 		}
 
 		return genDoc, nil

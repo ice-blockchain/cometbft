@@ -632,7 +632,9 @@ OUTER_LOOP:
 		if conR.conS.config.PeerGossipIntraloopSleepDuration > 0 {
 			// the config sets an upper bound for how long we sleep.
 			randDuration := rng.Int63n(int64(conR.conS.config.PeerGossipIntraloopSleepDuration))
-			time.Sleep(time.Duration(randDuration))
+			if ok := conR.sleepOrQuit(time.Duration(randDuration)); !ok {
+				return
+			}
 		}
 
 		rs := conR.getRoundState()
@@ -669,7 +671,9 @@ OUTER_LOOP:
 		}
 
 		// Nothing to do. Sleep.
-		time.Sleep(conR.conS.config.PeerGossipSleepDuration)
+		if ok := conR.sleepOrQuit(conR.conS.config.PeerGossipSleepDuration); !ok {
+			return
+		}
 	}
 }
 
@@ -692,7 +696,9 @@ OUTER_LOOP:
 		if conR.conS.config.PeerGossipIntraloopSleepDuration > 0 {
 			// the config sets an upper bound for how long we sleep.
 			randDuration := rng.Int63n(int64(conR.conS.config.PeerGossipIntraloopSleepDuration))
-			time.Sleep(time.Duration(randDuration))
+			if ok := conR.sleepOrQuit(time.Duration(randDuration)); !ok {
+				return
+			}
 		}
 
 		rs := conR.getRoundState()
@@ -730,7 +736,9 @@ OUTER_LOOP:
 			sleeping = 1
 		}
 
-		time.Sleep(conR.conS.config.PeerGossipSleepDuration)
+		if ok := conR.sleepOrQuit(conR.conS.config.PeerGossipSleepDuration); !ok {
+			return
+		}
 	}
 }
 
@@ -759,7 +767,9 @@ OUTER_LOOP:
 							BlockID: maj23.ToProto(),
 						},
 					})
-					time.Sleep(conR.conS.config.PeerQueryMaj23SleepDuration)
+					if ok := conR.sleepOrQuit(conR.conS.config.PeerQueryMaj23SleepDuration); !ok {
+						return
+					}
 				}
 			}
 		}
@@ -779,7 +789,9 @@ OUTER_LOOP:
 							BlockID: maj23.ToProto(),
 						},
 					})
-					time.Sleep(conR.conS.config.PeerQueryMaj23SleepDuration)
+					if ok := conR.sleepOrQuit(conR.conS.config.PeerQueryMaj23SleepDuration); !ok {
+						return
+					}
 				}
 			}
 		}
@@ -799,7 +811,9 @@ OUTER_LOOP:
 							BlockID: maj23.ToProto(),
 						},
 					})
-					time.Sleep(conR.conS.config.PeerQueryMaj23SleepDuration)
+					if ok := conR.sleepOrQuit(conR.conS.config.PeerQueryMaj23SleepDuration); !ok {
+						return
+					}
 				}
 			}
 		}
@@ -822,19 +836,29 @@ OUTER_LOOP:
 							BlockID: commit.BlockID.ToProto(),
 						},
 					})
-					time.Sleep(conR.conS.config.PeerQueryMaj23SleepDuration)
+					if ok := conR.sleepOrQuit(conR.conS.config.PeerQueryMaj23SleepDuration); !ok {
+						return
+					}
 				}
 			}
 		}
 
 		// NOTE(midas): instead of time.Sleep, we select the interval to permit
 		// the shutdown routine to stop waiting here as well.
-		select {
-		case <-time.After(conR.conS.config.PeerQueryMaj23SleepDuration):
-			continue OUTER_LOOP
-		case <-conR.Quit():
+		if ok := conR.sleepOrQuit(conR.conS.config.PeerQueryMaj23SleepDuration); !ok {
 			return
 		}
+
+		continue OUTER_LOOP
+	}
+}
+
+func (conR *Reactor) sleepOrQuit(duration time.Duration) bool {
+	select {
+	case <-time.After(duration):
+		return true
+	case <-conR.Quit():
+		return false
 	}
 }
 

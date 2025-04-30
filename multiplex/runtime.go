@@ -213,15 +213,15 @@ func (reactor *Reactor) InjectNewNetwork(
 	reactor.envMutex.RUnlock()
 
 	// Create the [types.GenesisDoc] instance for this network.
-	icsGenesisDocSet, err := reactor.MakeNetworkGenesis(
+	if _, err := reactor.MakeNetworkGenesis(
 		extChainID,
 		newConfFolder,
 		privValidator,
-	)
-	if err != nil {
+	); err != nil {
 		return fmt.Errorf(
 			"could not create genesis doc for ChainID %s: %w", chainID, err)
 	}
+	icsGenesisDocSet := reactor.GetChecksummedGenesisDocSet()
 
 	// Interpret the GenesisDocSet to initialize a state machine for chainID
 	if err := reactor.InjectStateMachine(chainID, icsGenesisDocSet); err != nil {

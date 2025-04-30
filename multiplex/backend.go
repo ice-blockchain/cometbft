@@ -679,7 +679,7 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 	)
 
 	// Each relevant (healthy) relay should acknowledge each transaction once.
-	totalAcksExpected := len(relevantRelays) * len(transactions)
+	numExpected = len(relevantRelays) * len(transactions)
 
 	// Written on at the end of this method, when results are returned.
 	// Consumed and closed in deferral process of this method.
@@ -711,7 +711,7 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 		b.logger.Debug("Waiting only for relevant relays to respond",
 			"num_relays", len(relevantRelays),
 			"relay_ids", relevantRelays,
-			"total_ack", totalAcksExpected,
+			"total_ack", numExpected,
 			"tx_hash", txHash,
 		)
 
