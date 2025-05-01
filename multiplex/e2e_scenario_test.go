@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 
+	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	mx "github.com/ice-blockchain/cometbft/multiplex"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
@@ -42,20 +43,12 @@ func useRelaysWithoutIds(tb testing.TB, relays []string) []string {
 	return relaysWithoutIds
 }
 
-// Uses MultiplexClient to broadcast transactions.
-func clientBroadcastTx(
+func makeClientTransactions(
 	tb testing.TB,
-	ctx context.Context,
-	server *mx.MultiplexBackend,
-	relays []string,
-	testChainID string,
+	chainInfo mx.ExtendedChainID,
 	numTransactions int,
-	notifyCh chan client.BroadcastStatus,
-) {
+) []client.Transaction {
 	tb.Helper()
-
-	chainInfo, err := mx.NewExtendedChainIDFromLegacy(testChainID)
-	require.NoError(tb, err, "should create correctly formatted ChainID")
 
 	randomizer := rand.New(rand.NewSource(time.Now().Unix()))
 	testTransactions := []client.Transaction{}
@@ -67,8 +60,109 @@ func clientBroadcastTx(
 		})
 	}
 
+	return testTransactions
+}
+
+// Note that in this mock implementation, a relay is considered healthy iff
+// the relay address contains an ID.
+func clientAckTransaction(
+	tb testing.TB,
+	ctx context.Context,
+	relay *mx.MultiplexBackend,
+	chainRelays map[string][]*server.RelayAddress,
+	catchupRelays map[string][]*server.RelayAddress,
+	chainID string,
+	numTransactions int,
+) (relaysPerTx map[string][]string, numExpected int, numReceived int, err error) {
+	tb.Helper()
+
+	chainInfo, err := mx.NewExtendedChainIDFromLegacy(chainID)
+	require.NoError(tb, err, "should create correctly formatted ChainID")
+
+	// Random transactions data
+	testTransactions := makeClientTransactions(tb, chainInfo, numTransactions)
 	multiplexClient := mx.NewClient(
-		mx.WithBackend(server),
+		mx.WithBackend(relay),
+	)
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+
+	// THREAD 1: Waiting for AckTransaction messages.
+	go func() {
+		defer wg.Done()
+
+		relaysPerTx,
+			numExpected,
+			numReceived,
+			err = multiplexClient.GetBackend().WaitForRelaysAckTransactionBatch(ctx,
+			chainRelays,
+			catchupRelays,
+			testTransactions,
+		)
+	}()
+
+	// THREAD 2: Sending mock AckTransactionBroadcast messages.
+	go func() {
+		for chainID, relaysForChain := range chainRelays {
+			for _, relayAddr := range relaysForChain {
+				for _, testTx := range testTransactions {
+					// Mocks relayAddr ack for transaction
+					txHashes := [][]byte{}
+					txHashes = append(txHashes, testTx.Hash())
+
+					mockAckTxBroadcast := mockAckTransactionBroadcast(tb, relayAddr, testTx, chainID)
+
+					testTxHash := fmt.Sprintf("%X", mockAckTxBroadcast.TxHashes[0])
+					acceptChForTxHash := relay.GetReactor().ChannelForAckTransaction(testTxHash)
+
+					acceptChForTxHash <- mockAckTxBroadcast
+				}
+			}
+		}
+	}()
+
+	// Coupled to finishing the execution of THREAD 1
+	wg.Wait()
+
+	return
+}
+
+func mockAckTransactionBroadcast(
+	tb testing.TB,
+	relayAddr *server.RelayAddress,
+	transaction client.Transaction,
+	chainID string,
+) *mxp2p.AckTransactionBroadcast {
+	// Mocks relayAddr ack for transaction
+	txHashes := [][]byte{}
+	txHashes = append(txHashes, transaction.Hash())
+
+	return &mxp2p.AckTransactionBroadcast{
+		TxHashes: txHashes,
+		NodeId:   string(relayAddr.ID()),
+		ChainID:  chainID,
+	}
+}
+
+// Uses MultiplexClient to broadcast transactions.
+func clientBroadcastTx(
+	tb testing.TB,
+	ctx context.Context,
+	relay *mx.MultiplexBackend,
+	relays []string,
+	testChainID string,
+	numTransactions int,
+	notifyCh chan client.BroadcastStatus,
+) {
+	tb.Helper()
+
+	chainInfo, err := mx.NewExtendedChainIDFromLegacy(testChainID)
+	require.NoError(tb, err, "should create correctly formatted ChainID")
+
+	testTransactions := makeClientTransactions(tb, chainInfo, numTransactions)
+	multiplexClient := mx.NewClient(
+		mx.WithBackend(relay),
 	)
 
 	multiplexClient.BroadcastTx(ctx,
@@ -113,6 +207,157 @@ func waitForClientBroadcastStatus(
 	// Waits for a status update or timeout
 	wg.Wait()
 	return resultStatusMsg
+}
+
+func TestScenarioClientBroadcastErrors(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	numChains := 0
+	numRelays := 2
+
+	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
+	defer shutdownFn()
+
+	require.NotEmpty(t, servers)
+	require.Len(t, servers, numRelays)
+
+	// Note: relays includes self
+	healthyRelays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
+		servers,
+		2*time.Second,  // Time for backend
+		20*time.Second, // Time for broadcast
+	)
+
+	defer cancelCtxFn()
+
+	require.NotEmpty(t, healthyRelays)
+	require.NotNil(t, broadcastCtx)
+
+	// NOTE: this removes the Relay ID from relays addresses.
+	healthyRelaysWithoutIds := useRelaysWithoutIds(t, healthyRelays)
+
+	// TEST 1 - Errors
+	//
+	// Add 5 unavailable relays to the list and make sure errors match.
+	// numRelays=7;numHealthy=2;numErrors=5;withSelf=true
+
+	relaysForErrCase := healthyRelaysWithoutIds[:]
+	numHealthy := len(relaysForErrCase)
+	numRelaysForErrCase := 7
+	for i := numHealthy; i < numRelaysForErrCase; i++ {
+		relaysForErrCase = append(relaysForErrCase, "1.2.3.4:"+strconv.Itoa(1000+i))
+	}
+
+	numTransactions := 1
+	testChainID := makeChainID("test-chain-1")
+	notifyCh := make(chan client.BroadcastStatus)
+	defer close(notifyCh)
+
+	// Separate goroutine for client broadcast process
+	go clientBroadcastTx(t,
+		broadcastCtx,
+		servers[0],
+		relaysForErrCase,
+		testChainID,
+		numTransactions,
+		notifyCh,
+	)
+
+	// Blocks the main thread until we consume from notifyCh.
+	resultStatusMsg := waitForClientBroadcastStatus(t,
+		broadcastCtx,
+		testChainID,
+		notifyCh,
+	)
+	assert.NotNil(t, resultStatusMsg)
+	assert.NotNil(t, resultStatusMsg.Error)
+	assert.Error(t, resultStatusMsg.Error)
+	assert.Contains(t, resultStatusMsg.Error.Error(), "not enough healthy relays")
+
+	numExpected := (numRelaysForErrCase / 2) + 1
+	expectedMessage := fmt.Sprintf("expected %d, got %d", numExpected, numHealthy)
+	assert.Contains(t, resultStatusMsg.Error.Error(), expectedMessage)
+
+	// TODO(midas): add other error cases as forwarded with Client.BroadcastTx.
+}
+
+func TestScenarioClientBroadcastWaitForAckTransactions(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	numChains := 0
+	numRelays := 7
+
+	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
+	defer shutdownFn()
+
+	require.NotEmpty(t, servers)
+	require.Len(t, servers, numRelays)
+
+	// Note: relays includes self
+	healthyRelays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
+		servers,
+		2*time.Second,  // Time for backend
+		20*time.Second, // Time for broadcast
+	)
+
+	defer cancelCtxFn()
+
+	require.NotEmpty(t, healthyRelays)
+	require.NotNil(t, broadcastCtx)
+
+	// TEST 1 - Success
+	//
+	// Use the 7 healthy relays including self and make sure we intercepted
+	// AckTransactionBroadcast messages (mocked in clientAckTransaction).
+	// numRelays=7;numHealthy=7;numErrors=0;withSelf=true
+
+	relaysForTestCase := healthyRelays[:] // with IDs!
+	numHealthy := len(relaysForTestCase)
+	testChainID := makeChainID("test-chain-1")
+	testRelay := servers[0]
+
+	// Fill chainRelays such that all HEALTHY relays are expected to respond.
+	testChainRelays := make(map[string][]*server.RelayAddress, 1)
+	testCatchupRelays := map[string][]*server.RelayAddress{}
+	for _, relayAddrStr := range relaysForTestCase {
+		ra, err := server.NewRelayAddress(relayAddrStr)
+		require.NoError(t, err, "expected valid relay address, got: "+relayAddrStr)
+
+		// Do not include SELF in AckTransaction process, nor unhealthy relays
+		if len(string(ra.ID())) == 0 || string(ra.ID()) == string(testRelay.GetRelayID()) {
+			continue
+		}
+
+		if _, ok := testChainRelays[testChainID]; !ok {
+			testChainRelays[testChainID] = make([]*server.RelayAddress, 0, len(relaysForTestCase))
+		}
+
+		testChainRelays[testChainID] = append(testChainRelays[testChainID], ra)
+	}
+
+	// Block main thread to test AckTransaction process
+	numTransactions := 1
+	actualRelaysPerTx,
+		actualExpectedAcks,
+		actualNumReceived,
+		actualAcceptErr := clientAckTransaction(t,
+		broadcastCtx,
+		servers[0],
+		testChainRelays,
+		testCatchupRelays,
+		testChainID,
+		numTransactions,
+	)
+
+	expectedNumAwaitedAcks := (numHealthy - 1) * numTransactions // -self
+	expectedNumReceived := numHealthy - 1                        // -self
+
+	assert.Equal(t, expectedNumAwaitedAcks, actualExpectedAcks)
+	assert.Equal(t, expectedNumReceived, actualNumReceived)
+	assert.NoError(t, actualAcceptErr, "should complete AckTransaction process")
+	assert.NotEmpty(t, actualRelaysPerTx)
+
+	// TODO(midas): add error cases for AckTransaction process.
 }
 
 // With a list of healthy relays, the transactions will be added locally

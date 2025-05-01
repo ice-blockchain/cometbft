@@ -82,6 +82,15 @@ func (is *IndexerService) OnStart() error {
 				batch := NewBatch(numTxs)
 
 				for i := int64(0); i < numTxs; i++ {
+					// NOTE(midas): non-blocking select on shutdown channel makes
+					// sure every time before processing, we know to shutdown.
+					// This is necessary to stop processing blocks during shutdown.
+					select {
+					case <-is.Quit():
+						return
+					default: // Proceed to wait for Transaction
+					}
+
 					msg2 := <-txsSub.Out()
 					txResult := msg2.Data().(types.EventDataTx).TxResult
 

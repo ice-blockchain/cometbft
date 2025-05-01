@@ -763,15 +763,15 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 		shutdownChs map[string]chan struct{},
 		remoteTxChs map[string]chan string,
 	) {
-		if _, ok := shutdownChs[txHash]; ok {
-			shutdownChs[txHash] <- struct{}{}
-			close(shutdownChs[txHash])
+		if ch, ok := shutdownChs[txHash]; ok && ch != nil {
+			ch <- struct{}{}
+			close(ch)
 		}
 
 		b.reactor.CloseAckTransactionChannel(txHash)
 
-		if _, ok := remoteTxChs[txHash]; ok {
-			close(remoteTxChs[txHash])
+		if ch, ok := remoteTxChs[txHash]; ok && ch != nil {
+			close(ch)
 		}
 	}
 
@@ -1037,7 +1037,7 @@ func (b *MultiplexBackend) ApplyFilterAckTransactionRelayIds(
 			return relayIds
 		}()
 		relevantRelays = slices.DeleteFunc(healthyRelayIds, func(relayId string) bool {
-			return relayId == string(b.GetRelayID())
+			return len(relayId) == 0 || relayId == string(b.GetRelayID())
 		})
 	}
 
