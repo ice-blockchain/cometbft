@@ -3,11 +3,12 @@ package p2p
 import (
 	"errors"
 	"fmt"
-	"github.com/ice-blockchain/cometbft/libs/log"
 	"math"
 	"net"
 	"slices"
 	"time"
+
+	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 
 	"github.com/cosmos/gogoproto/proto"
 
@@ -166,7 +167,7 @@ func NewSwitch(
 	return sw
 }
 
-func (sw *Switch) SetLogger(l log.Logger) {
+func (sw *Switch) SetLogger(l cmtlog.Logger) {
 	sw.Logger = l.With("typ", sw.Typ)
 	sw.Transport().SetLogger(sw.Logger)
 }
@@ -587,6 +588,9 @@ func (sw *Switch) removePeer(peer Peer, reason any) error {
 						"error on peer removal for ID %s", string(peer.ID()),
 					)
 				}
+			}
+			if peerSet.Has(peer.ID()) {
+				peerSet.Remove(peer)
 			}
 		}
 	}

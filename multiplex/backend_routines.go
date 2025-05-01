@@ -278,6 +278,19 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 					if b.reactor.IsDialError(err) {
 						client.Error(notifyCh, fmt.Errorf(
 							"could not dial relay %s: %w", relayAddr.AddressForCometBFT(), err))
+					} else {
+						// Not an error: peer already exists / duplicate.
+						// Manually add peers when the switch was already running.
+						dialedPeer := cometbftSwitch.UniquePeers().Get(peerAddr.ID)
+						if !dialedPeer.IsRunning() {
+							cometbftSwitch.StopPeerGracefully(dialedPeer)
+							if err = cometbftSwitch.DialPeerWithAddressAndChainID(peerAddr, chainID); err != nil {
+								if b.reactor.IsDialError(err) {
+									client.Error(notifyCh, fmt.Errorf(
+										"could not dial relay %s: %w", relayAddr.AddressForCometBFT(), err))
+								}
+							}
+						}
 					}
 				}
 			}

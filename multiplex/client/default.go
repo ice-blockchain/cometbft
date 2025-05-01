@@ -23,6 +23,15 @@ func (DefaultAcceptor) AcceptBroadcastTx(
 	return nil
 }
 
+// CommitBroadcastTx returns an error if any of the transactions
+// should not be committed.
+func (DefaultAcceptor) CommitBroadcastTx(
+	_ context.Context,
+	_ ...Transaction,
+) error {
+	return nil
+}
+
 // AcceptBroadcastTxRemoval returns an error if any of the transactions
 // should not be accepted, or if the batch must not be broadcast.
 func (DefaultAcceptor) AcceptBroadcastTxRemoval(
@@ -92,6 +101,7 @@ func (DefaultServer) MustStart() {}
 
 type MockAcceptorImpl struct {
 	TxAcceptCalls int
+	TxCommitCalls int
 	TxRemoveCalls int
 	RbAcceptCalls int
 	RbRemoveCalls int
@@ -100,6 +110,7 @@ type MockAcceptorImpl struct {
 func NewMockAcceptorImpl() *MockAcceptorImpl {
 	return &MockAcceptorImpl{
 		TxAcceptCalls: 0,
+		TxCommitCalls: 0,
 		TxRemoveCalls: 0,
 		RbAcceptCalls: 0,
 		RbRemoveCalls: 0,
@@ -108,15 +119,25 @@ func NewMockAcceptorImpl() *MockAcceptorImpl {
 
 func (acceptor *MockAcceptorImpl) AcceptBroadcastTx(
 	_ context.Context,
-	transactions ...Transaction,
+	_ ...Transaction,
 ) error {
 	acceptor.TxAcceptCalls++
 	return nil
 }
 
+// CommitBroadcastTx returns an error if any of the transactions
+// should not be committed.
+func (acceptor *MockAcceptorImpl) CommitBroadcastTx(
+	_ context.Context,
+	_ ...Transaction,
+) error {
+	acceptor.TxCommitCalls++
+	return nil
+}
+
 func (acceptor *MockAcceptorImpl) AcceptBroadcastTxRemoval(
 	_ context.Context,
-	transactions ...Transaction,
+	_ ...Transaction,
 ) error {
 	acceptor.TxRemoveCalls++
 	return nil
@@ -124,7 +145,7 @@ func (acceptor *MockAcceptorImpl) AcceptBroadcastTxRemoval(
 
 func (acceptor *MockAcceptorImpl) RollbackTx(
 	_ context.Context,
-	transactions ...Transaction,
+	_ ...Transaction,
 ) error {
 	acceptor.RbAcceptCalls++
 	return nil
@@ -132,7 +153,7 @@ func (acceptor *MockAcceptorImpl) RollbackTx(
 
 func (acceptor *MockAcceptorImpl) RollbackTxRemoval(
 	_ context.Context,
-	transactions ...Transaction,
+	_ ...Transaction,
 ) error {
 	acceptor.RbRemoveCalls++
 	return nil

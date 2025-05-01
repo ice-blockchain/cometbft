@@ -77,6 +77,13 @@ type Acceptor interface {
 		transactions ...Transaction,
 	) error
 
+	// CommitBroadcastTx returns an error if any of the transactions
+	// should not be committed.
+	CommitBroadcastTx(
+		ctx context.Context,
+		transactions ...Transaction,
+	) error
+
 	// AcceptBroadcastTxRemoval returns an error if any of the transactions
 	// should not be accepted, or if the batch must not be broadcast.
 	AcceptBroadcastTxRemoval(

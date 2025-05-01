@@ -264,7 +264,7 @@ func (app *SnapsApp) FinalizeBlock(
 			batch = append(batch, client.RawTxToTransaction(rawTx))
 		}
 
-		if err := app.txAcceptor.AcceptBroadcastTx(
+		if err := app.txAcceptor.CommitBroadcastTx(
 			ctx,
 			batch...,
 		); err != nil {

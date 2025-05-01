@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -41,6 +42,11 @@ type Reactor struct {
 	txAcceptor  client.Acceptor
 	userAddress string
 	ChainID     string // Exported.
+
+	// Stores messages received during WaitSync() which are processed
+	// in [EnableInOutTxs] and then deleted.
+	pendingMsgsMtx *sync.RWMutex
+	pendingMsgs    map[string]p2p.Envelope
 }
 
 // NewReactor returns a new Reactor with the given config and mempool.
@@ -51,14 +57,22 @@ func NewReactor(
 	options ...func(*Reactor),
 ) *Reactor {
 	memR := &Reactor{
-		config:   config,
-		mempool:  mempool,
-		waitSync: atomic.Bool{},
+		config:         config,
+		mempool:        mempool,
+		waitSync:       atomic.Bool{},
+		pendingMsgsMtx: new(sync.RWMutex),
+		pendingMsgs:    make(map[string]p2p.Envelope),
 	}
 
 	// Enable overwrite of some optional properties.
 	for _, option := range options {
 		option(memR)
+	}
+
+	// TODO(midas): refactor to WithOnUpdate() option helper.
+	mempool.OnUpdate = func(txes []types.Tx) error {
+		err := memR.clientAcceptTx(txes)
+		return err
 	}
 
 	memR.BaseReactor = *p2p.NewBaseReactor("Mempool", memR)
@@ -251,61 +265,16 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 		if memR.WaitSync() {
 			memR.Logger.Debug("Ignored message received while syncing", "msg", msg)
 
-			// Uses the multiplex server.AckBroadcastChannel to send a receipt.
-			// Note that in this case, we don't check the transaction ourselves.
-			// Unblocks the broadcast on relays that are handling a ReplRequest.
-			if err := memR.sendAckTransactionBroadcast(e.Src, protoTxs); err != nil {
-				memR.Logger.Error("Error with AckTransactionBroadcast", "err", err)
-				return
-			}
+			// TODO(midas): fix bottleneck here, should not use only first tx,
+			// but instead it should use a hash of the envelope or batch.
+			memR.pendingMsgsMtx.Lock()
+			memR.pendingMsgs[string(types.Tx(protoTxs[0]).Hash())] = e
+			memR.pendingMsgsMtx.Unlock()
 
 			return
 		}
 
-		// Forward the transaction to an Acceptor if any is available. This
-		// will delegate transaction verification locally to an acceptor.
-		if memR.txAcceptor != nil {
-			batch := []client.Transaction{}
-			for _, rawTx := range protoTxs {
-				batch = append(batch, client.RawTxToTransaction(rawTx))
-			}
-
-			err := memR.txAcceptor.AcceptBroadcastTx(
-				context.TODO(),
-				batch...,
-			)
-			if err != nil {
-				memR.Logger.Debug("Acceptor rejected batch broadcast",
-					"address", memR.userAddress,
-					"err", err,
-				)
-				return // do not accept transaction
-			}
-		}
-
-		for _, txBytes := range protoTxs {
-			tx := types.Tx(txBytes)
-			if _, err := memR.mempool.CheckTx(tx, e.Src.ID()); err != nil {
-				switch {
-				case errors.Is(err, ErrTxInCache):
-					memR.Logger.Debug("Tx already exists in cache", "tx", tx.Hash())
-				case errors.As(err, &ErrMempoolIsFull{}):
-					// using debug level to avoid flooding when traffic is high
-					memR.Logger.Debug(err.Error())
-				default:
-					memR.Logger.Info("Could not check tx", "tx", tx.Hash(), "err", err)
-				}
-			}
-		}
-
-		// Uses the multiplex server.AckBroadcastChannel to send an acknowledgment
-		// message, or receipt, to describe that the transaction has been checked.
-		if err := memR.sendAckTransactionBroadcast(e.Src, protoTxs); err != nil {
-			memR.Logger.Debug("Error with AckTransactionBroadcast",
-				"err", err,
-			)
-			return
-		}
+		memR.processTxs(e.Src, protoTxs)
 
 	default:
 		memR.Logger.Error("Unknown message type", "src", e.Src, "chId", e.ChannelID, "msg", e.Message)
@@ -314,6 +283,68 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 	}
 
 	// broadcasting happens from go routines per peer
+}
+
+// processTxs forwards transaction to the internal Acceptor to verify their
+// acceptance, then calls [CheckTx] to validate the inclusion and finally
+// it will send a [AckTransactionBroadcast] message.
+func (memR *Reactor) processTxs(peer p2p.Peer, protoTxs [][]byte) {
+	rawTx := []types.Tx{}
+	for _, txBytes := range protoTxs {
+		tx := types.Tx(txBytes)
+		rawTx = append(rawTx, tx)
+	}
+	if aErr := memR.clientAcceptTx(rawTx); aErr != nil {
+		return
+	}
+	for _, tx := range rawTx {
+		if _, err := memR.mempool.CheckTx(tx, peer.ID()); err != nil {
+			switch {
+			case errors.Is(err, ErrTxInCache):
+				memR.Logger.Debug("Tx already exists in cache", "tx", tx.Hash())
+			case errors.As(err, &ErrMempoolIsFull{}):
+				// using debug level to avoid flooding when traffic is high
+				memR.Logger.Debug(err.Error())
+			default:
+				memR.Logger.Info("Could not check tx", "tx", tx.Hash(), "err", err)
+			}
+		}
+	}
+
+	// Uses the multiplex server.AckBroadcastChannel to send an acknowledgment
+	// message, or receipt, to describe that the transaction has been checked.
+	if err := memR.sendAckTransactionBroadcast(peer, protoTxs); err != nil {
+		memR.Logger.Debug("Error with AckTransactionBroadcast",
+			"err", err,
+		)
+		return
+	}
+}
+
+// clientAcceptTx delegates the verification of transactions to an Acceptor
+// if any is available. It returns an error if the Acceptor rejects the batch.
+func (memR *Reactor) clientAcceptTx(protoTxs []types.Tx) error {
+	if memR.txAcceptor == nil || len(protoTxs) == 0 {
+		return nil // Nothing to do
+	}
+
+	batch := []client.Transaction{}
+	for _, rawTx := range protoTxs {
+		batch = append(batch, client.RawTxToTransaction(rawTx))
+	}
+
+	if err := memR.txAcceptor.AcceptBroadcastTx(
+		context.TODO(),
+		batch...,
+	); err != nil {
+		memR.Logger.Debug("Acceptor rejected batch broadcast",
+			"address", memR.userAddress,
+			"err", err,
+		)
+		return err // do not accept transactions
+	}
+
+	return nil
 }
 
 func (memR *Reactor) EnableInOutTxs() {
@@ -326,6 +357,14 @@ func (memR *Reactor) EnableInOutTxs() {
 	if memR.config.Broadcast {
 		close(memR.waitSyncCh)
 	}
+
+	// Delayed processing of transactions that we received during WaitSync.
+	memR.pendingMsgsMtx.Lock()
+	for k, e := range memR.pendingMsgs {
+		memR.processTxs(e.Src, e.Message.(*protomem.Txs).GetTxs())
+		delete(memR.pendingMsgs, k)
+	}
+	memR.pendingMsgsMtx.Unlock()
 }
 
 func (memR *Reactor) WaitSync() bool {

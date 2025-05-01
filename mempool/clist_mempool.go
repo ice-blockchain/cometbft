@@ -56,8 +56,9 @@ type CListMempool struct {
 	// This reduces the pressure on the proxyApp.
 	cache TxCache
 
-	logger  log.Logger
-	metrics *Metrics
+	logger   log.Logger
+	metrics  *Metrics
+	OnUpdate func([]types.Tx) error
 }
 
 var _ Mempool = &CListMempool{}
@@ -629,6 +630,7 @@ func (mem *CListMempool) Update(
 	mem.metrics.Size.Set(float64(mem.Size()))
 	mem.metrics.SizeBytes.Set(float64(mem.SizeBytes()))
 
+	mem.OnUpdate(txs)
 	return nil
 }
 
