@@ -84,6 +84,13 @@ type Acceptor interface {
 		transactions ...Transaction,
 	) error
 
+	// ReplayBroadcastTxBatch returns an error if any of the transactions
+	// could not be added to a replay batch or if the replay fails.
+	ReplayBroadcastTxBatch(
+		ctx context.Context,
+		transactions ...Transaction,
+	) error
+
 	// AcceptBroadcastTxRemoval returns an error if any of the transactions
 	// should not be accepted, or if the batch must not be broadcast.
 	AcceptBroadcastTxRemoval(

@@ -32,6 +32,15 @@ func (DefaultAcceptor) CommitBroadcastTx(
 	return nil
 }
 
+// ReplayBroadcastTxBatch returns an error if any of the transactions
+// could not be added to a replay batch or if the replay fails.
+func (DefaultAcceptor) ReplayBroadcastTxBatch(
+	ctx context.Context,
+	transactions ...Transaction,
+) error {
+	return nil
+}
+
 // AcceptBroadcastTxRemoval returns an error if any of the transactions
 // should not be accepted, or if the batch must not be broadcast.
 func (DefaultAcceptor) AcceptBroadcastTxRemoval(
@@ -102,6 +111,7 @@ func (DefaultServer) MustStart() {}
 type MockAcceptorImpl struct {
 	TxAcceptCalls int
 	TxCommitCalls int
+	TxReplayCalls int
 	TxRemoveCalls int
 	RbAcceptCalls int
 	RbRemoveCalls int
@@ -111,6 +121,7 @@ func NewMockAcceptorImpl() *MockAcceptorImpl {
 	return &MockAcceptorImpl{
 		TxAcceptCalls: 0,
 		TxCommitCalls: 0,
+		TxReplayCalls: 0,
 		TxRemoveCalls: 0,
 		RbAcceptCalls: 0,
 		RbRemoveCalls: 0,
@@ -132,6 +143,16 @@ func (acceptor *MockAcceptorImpl) CommitBroadcastTx(
 	_ ...Transaction,
 ) error {
 	acceptor.TxCommitCalls++
+	return nil
+}
+
+// ReplayBroadcastTxBatch returns an error if any of the transactions
+// could not be added to a replay batch or if the replay fails.
+func (acceptor *MockAcceptorImpl) ReplayBroadcastTxBatch(
+	_ context.Context,
+	_ ...Transaction,
+) error {
+	acceptor.TxReplayCalls++
 	return nil
 }
 
