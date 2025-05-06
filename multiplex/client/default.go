@@ -1,6 +1,9 @@
 package client
 
-import "context"
+import (
+	"context"
+	"sync/atomic"
+)
 
 type (
 	DefaultAcceptor struct{}
@@ -109,30 +112,23 @@ func (DefaultServer) MustStart() {}
 // Mocks
 
 type MockAcceptorImpl struct {
-	TxAcceptCalls int
-	TxCommitCalls int
-	TxReplayCalls int
-	TxRemoveCalls int
-	RbAcceptCalls int
-	RbRemoveCalls int
+	TxAcceptCalls atomic.Uint64
+	TxCommitCalls atomic.Uint64
+	TxReplayCalls atomic.Uint64
+	TxRemoveCalls atomic.Uint64
+	RbAcceptCalls atomic.Uint64
+	RbRemoveCalls atomic.Uint64
 }
 
 func NewMockAcceptorImpl() *MockAcceptorImpl {
-	return &MockAcceptorImpl{
-		TxAcceptCalls: 0,
-		TxCommitCalls: 0,
-		TxReplayCalls: 0,
-		TxRemoveCalls: 0,
-		RbAcceptCalls: 0,
-		RbRemoveCalls: 0,
-	}
+	return &MockAcceptorImpl{}
 }
 
 func (acceptor *MockAcceptorImpl) AcceptBroadcastTx(
 	_ context.Context,
 	_ ...Transaction,
 ) error {
-	acceptor.TxAcceptCalls++
+	acceptor.TxAcceptCalls.Add(1)
 	return nil
 }
 
@@ -142,7 +138,7 @@ func (acceptor *MockAcceptorImpl) CommitBroadcastTx(
 	_ context.Context,
 	_ ...Transaction,
 ) error {
-	acceptor.TxCommitCalls++
+	acceptor.TxCommitCalls.Add(1)
 	return nil
 }
 
@@ -152,7 +148,7 @@ func (acceptor *MockAcceptorImpl) ReplayBroadcastTxBatch(
 	_ context.Context,
 	_ ...Transaction,
 ) error {
-	acceptor.TxReplayCalls++
+	acceptor.TxReplayCalls.Add(1)
 	return nil
 }
 
@@ -160,7 +156,7 @@ func (acceptor *MockAcceptorImpl) AcceptBroadcastTxRemoval(
 	_ context.Context,
 	_ ...Transaction,
 ) error {
-	acceptor.TxRemoveCalls++
+	acceptor.TxRemoveCalls.Add(1)
 	return nil
 }
 
@@ -168,7 +164,7 @@ func (acceptor *MockAcceptorImpl) RollbackTx(
 	_ context.Context,
 	_ ...Transaction,
 ) error {
-	acceptor.RbAcceptCalls++
+	acceptor.RbAcceptCalls.Add(1)
 	return nil
 }
 
@@ -176,6 +172,6 @@ func (acceptor *MockAcceptorImpl) RollbackTxRemoval(
 	_ context.Context,
 	_ ...Transaction,
 ) error {
-	acceptor.RbRemoveCalls++
+	acceptor.RbRemoveCalls.Add(1)
 	return nil
 }

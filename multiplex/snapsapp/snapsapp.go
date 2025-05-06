@@ -41,13 +41,17 @@ type SnapsApp struct {
 	// Inject custom transaction verification with an acceptor implementation.
 	txAcceptor client.Acceptor
 
-	// The current heights being worked on for replicated chains.
-	chMutex        *sync.RWMutex
-	currentHeights map[string]int64
-
 	// The initial heights as used for state-sync of replicated chains.
 	ihMutex        *sync.RWMutex
 	initialHeights map[string]int64
+
+	// The last block height by ChainID.
+	lbMutex          *sync.RWMutex
+	lastBlockHeights map[string]int64
+
+	// The current heights being worked on by ChainID.
+	whMutex        *sync.RWMutex
+	workingHeights map[string]int64
 
 	// The finalized block heights consist of working block heights.
 	fbMutex              *sync.RWMutex
@@ -66,7 +70,8 @@ func NewSnapsApplication(
 	app := &SnapsApp{
 		reactor: reactor,
 		logger:  logger,
-		chMutex: new(sync.RWMutex),
+		lbMutex: new(sync.RWMutex),
+		whMutex: new(sync.RWMutex),
 		ihMutex: new(sync.RWMutex),
 		fbMutex: new(sync.RWMutex),
 	}
@@ -84,10 +89,15 @@ func NewSnapsApplication(
 	app.initialHeights = make(map[string]int64, len(replicatedChains))
 	app.ihMutex.Unlock()
 
+	// last block heights are thread-safe
+	app.lbMutex.Lock()
+	app.lastBlockHeights = make(map[string]int64, len(replicatedChains))
+	app.lbMutex.Unlock()
+
 	// working heights are thread-safe
-	app.chMutex.Lock()
-	app.currentHeights = make(map[string]int64, len(replicatedChains))
-	app.chMutex.Unlock()
+	app.whMutex.Lock()
+	app.workingHeights = make(map[string]int64, len(replicatedChains))
+	app.whMutex.Unlock()
 
 	// finalizeBlock heights must be thread-safe
 	app.fbMutex.Lock()
@@ -122,10 +132,10 @@ func (app *SnapsApp) InitialHeight(chainID string) int64 {
 
 // LastBlockHeight returns the last block height processed for a chainID.
 func (app *SnapsApp) LastBlockHeight(chainID string) int64 {
-	app.chMutex.RLock()
-	defer app.chMutex.RUnlock()
+	app.lbMutex.RLock()
+	defer app.lbMutex.RUnlock()
 
-	return app.currentHeights[chainID]
+	return app.lastBlockHeights[chainID]
 }
 
 // FinalizeBlockHeight returns the latest finalizeBlock height.

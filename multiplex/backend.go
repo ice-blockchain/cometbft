@@ -1051,7 +1051,7 @@ func (b *MultiplexBackend) ApplyFilterAckTransactionRelayIds(
 			}
 			return relayIds
 		}()
-		if len(chainRelays) > 0 {
+		if len(relevantRelays) > 0 {
 			// Some have chain, some don't. The ones that are missing it
 			// will replicate, but we shouldn't be waiting for them.
 			relevantRelays = slices.DeleteFunc(relevantRelays, func(relayId string) bool {

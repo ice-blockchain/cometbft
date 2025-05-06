@@ -48,13 +48,13 @@ func (app *SnapsApp) InitChain(
 	}
 
 	// if req.InitialHeight is > 1, then we set the initial version on the app
-	app.chMutex.Lock()
+	app.lbMutex.Lock()
 	if req.InitialHeight > 1 {
-		app.currentHeights[chainID] = req.InitialHeight
+		app.lastBlockHeights[chainID] = req.InitialHeight
 	} else {
-		app.currentHeights[chainID] = 0
+		app.lastBlockHeights[chainID] = 0
 	}
-	app.chMutex.Unlock()
+	app.lbMutex.Unlock()
 	app.logger.Info("InitChain", "initialHeight", req.InitialHeight, "chainID", req.ChainId)
 
 	// Get the state machine instance to retrieve current AppHash
@@ -196,9 +196,14 @@ func (app *SnapsApp) ProcessProposal(
 	}
 
 	// Update the current working block height
-	app.chMutex.Lock()
-	app.currentHeights[chainID] = req.Height
-	app.chMutex.Unlock()
+	app.whMutex.Lock()
+	app.workingHeights[chainID] = req.Height
+	app.whMutex.Unlock()
+
+	// Update the last block height for this ChainID
+	app.lbMutex.Lock()
+	app.lastBlockHeights[chainID] = req.Height
+	app.lbMutex.Unlock()
 
 	return &abcitypes.ProcessProposalResponse{Status: abcitypes.PROCESS_PROPOSAL_STATUS_ACCEPT}, nil
 }
@@ -254,17 +259,30 @@ func (app *SnapsApp) FinalizeBlock(
 		}}
 	}
 
-	// Forward the transaction batch to an Acceptor if any is available. This
-	// is required when blocks are *replayed*, e.g. through blocksync.
+	app.whMutex.RLock()
+	isReplayMode := false
+	if workingHeight, ok := app.workingHeights[chainID]; ok {
+		isReplayMode = workingHeight != req.Height
+	}
+	app.whMutex.RUnlock()
+
+	// Forward the transaction batch to an Acceptor if any is available.
 	if app.txAcceptor != nil {
-		// Note that the transaction batch won't always match the batch that
-		// is being broadcast because more than one may be included in a block.
 		batch := []client.Transaction{}
 		for _, rawTx := range processedTxs {
 			batch = append(batch, client.RawTxToTransaction(rawTx))
 		}
 
-		if err := app.txAcceptor.CommitBroadcastTx(
+		// In replay-mode, we must make sure the ReplayBroadcastTxBatch
+		// callback will succeed. The replay pool calls it continuously
+		// until it succeeds (no-error).
+		if isReplayMode {
+			// Add the transactions to a transaction replay bucket by ChainID.
+			if err := app.addToReplayPool(chainID, batch...); err != nil {
+				return nil, fmt.Errorf(
+					"error adding to replay pool for %s: %w", chainID, err)
+			}
+		} else if err := app.txAcceptor.CommitBroadcastTx(
 			ctx,
 			batch...,
 		); err != nil {
@@ -282,6 +300,19 @@ func (app *SnapsApp) FinalizeBlock(
 	return &abcitypes.FinalizeBlockResponse{
 		TxResults: txResults,
 	}, nil
+}
+
+func (app *SnapsApp) addToReplayPool(
+	chainID string,
+	transactions ...client.Transaction,
+) error {
+	userAddress := client.GetUserAddress(chainID)
+
+	// Register this batch in the reactor's replay pool.
+	// Transactions will be added to a transaction bucket by user address.
+	replayPool := app.reactor.GetReplayPool()
+	replayPool.Add(userAddress, transactions...)
+	return nil
 }
 
 // CheckTx allows the application to validate transactions and/or discard them.

@@ -150,6 +150,15 @@ func NewNodesMultiplex(
 			"could not start the multiplex reactor: %w", err)
 	}
 
+	// Start the replay pool which processes transaction batches
+	// that this relay may have missed during downtime, or must
+	// replay during blocksync and/or consensus processes.
+	replayPool := reactor.GetReplayPool()
+	if err := replayPool.Start(); err != nil {
+		return nil, nil, fmt.Errorf(
+			"could not start the replay pool: %w", err)
+	}
+
 	// Create the local ABCI client for the SnapsApp application.
 	//
 	// This application is forcefully enabled using the multiplex package,

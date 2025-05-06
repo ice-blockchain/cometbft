@@ -113,29 +113,65 @@ func (conn *multiplexAppConn) AddNetwork(chainID string) {
 // Mempool implements [ChainConns].
 func (conn *multiplexAppConn) Mempool(chainID string) AppConnMempool {
 	conn.connsMutex.RLock()
-	defer conn.connsMutex.RUnlock()
-	return conn.mempoolConns[chainID]
+	mconn, hasMempoolConn := conn.mempoolConns[chainID]
+	conn.connsMutex.RUnlock()
+
+	if !hasMempoolConn {
+		mconn = NewChainConnMempool(chainID, conn.sharedClients.mempool, conn.metrics)
+		conn.connsMutex.Lock()
+		conn.mempoolConns[chainID] = mconn
+		conn.connsMutex.Unlock()
+	}
+
+	return mconn
 }
 
 // Consensus implements [ChainConns].
 func (conn *multiplexAppConn) Consensus(chainID string) AppConnConsensus {
 	conn.connsMutex.RLock()
-	defer conn.connsMutex.RUnlock()
-	return conn.consensusConns[chainID]
+	cconn, hasConsensusConn := conn.consensusConns[chainID]
+	conn.connsMutex.RUnlock()
+
+	if !hasConsensusConn {
+		cconn = NewChainConnConsensus(chainID, conn.sharedClients.consensus, conn.metrics)
+		conn.connsMutex.Lock()
+		conn.consensusConns[chainID] = cconn
+		conn.connsMutex.Unlock()
+	}
+
+	return cconn
 }
 
 // Query implements [ChainConns].
 func (conn *multiplexAppConn) Query(chainID string) AppConnQuery {
 	conn.connsMutex.RLock()
-	defer conn.connsMutex.RUnlock()
-	return conn.queryConns[chainID]
+	qconn, hasQueryConn := conn.queryConns[chainID]
+	conn.connsMutex.RUnlock()
+
+	if !hasQueryConn {
+		qconn = NewChainConnQuery(chainID, conn.sharedClients.query, conn.metrics)
+		conn.connsMutex.Lock()
+		conn.queryConns[chainID] = qconn
+		conn.connsMutex.Unlock()
+	}
+
+	return qconn
 }
 
 // Snapshot implements [ChainConns].
 func (conn *multiplexAppConn) Snapshot(chainID string) AppConnSnapshot {
 	conn.connsMutex.RLock()
-	defer conn.connsMutex.RUnlock()
-	return conn.snapshotConns[chainID]
+	sconn, hasSnapshotConn := conn.snapshotConns[chainID]
+	conn.connsMutex.RUnlock()
+
+	if !hasSnapshotConn {
+		sconn = NewChainConnSnapshot(chainID, conn.sharedClients.snapshot, conn.metrics)
+		conn.connsMutex.Lock()
+		conn.snapshotConns[chainID] = sconn
+		conn.connsMutex.Unlock()
+	}
+
+	return sconn
 }
 
 // ToAppConns converts the instance to be AppConns compatible
@@ -143,9 +179,6 @@ func (conn *multiplexAppConn) Snapshot(chainID string) AppConnSnapshot {
 //
 // ToAppConns implements [ChainConns].
 func (conn *multiplexAppConn) ToAppConns(chainID string) AppConns {
-	conn.proxyMutex.Lock()
-	defer conn.proxyMutex.Unlock()
-
 	// Note: this instance uses the legacy AppConns implementation
 	// Mutex connsMutex is locked for read through method calls.
 	conn.proxyAppConns = &multiAppConn{

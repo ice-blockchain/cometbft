@@ -316,10 +316,8 @@ func TestABCI_FinalizeBlock_WithAcceptor(t *testing.T) {
 	assert.NotNil(t, actualAcceptor)
 	testAcceptor := actualAcceptor.(*client.MockAcceptorImpl)
 
-	assert.NotEmpty(t, testAcceptor.TxAcceptCalls)
-
-	expectedNumCalls := 1
-	assert.Equal(t, expectedNumCalls, testAcceptor.TxAcceptCalls)
+	expectedNumCalls := uint64(1)
+	assert.Equal(t, expectedNumCalls, testAcceptor.TxAcceptCalls.Load())
 }
 
 func TestABCI_Proposal_HappyPath(t *testing.T) {

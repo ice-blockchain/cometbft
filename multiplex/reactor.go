@@ -180,6 +180,11 @@ type Reactor struct {
 	ackAcceptTxMtx sync.RWMutex
 	ackAcceptTxChs map[string]chan *mxp2p.AckTransactionBroadcast
 
+	// ReplayPool defines a pool for concurrent processing of transaction buckets,
+	// which consist of one or many batches of transactions by user address.
+	replayPoolMtx sync.RWMutex
+	replayPool    *server.ReplayPool
+
 	// Internal
 	logger cmtlog.Logger
 }
@@ -272,6 +277,15 @@ func NewReactor(
 
 	// Initializes instance providers (services, multiplex)
 	reactor.initMultiplexProviders(icsGenesisDocSet)
+
+	// TODO(midas): Write some more tests to determine correct threshold.
+	reactor.replayPoolMtx.Lock()
+	reactor.replayPool = server.NewReplayPool(
+		reactor.logger.With("module", "replay"),
+		server.ReplayPoolThreshold(10),
+		server.ReplayPoolAcceptor(reactor.acceptorImpl),
+	)
+	reactor.replayPoolMtx.Unlock()
 
 	return reactor
 }
@@ -797,6 +811,18 @@ func (reactor *Reactor) GetStateStore(chainID string) sm.Store {
 	return stateStoreProvider(chainID).(sm.Store)
 }
 
+// GetReplayPool returns a [server.ReplayPool] which contains transactions
+// batches to be replayed. These batches may contain one or many txes
+// that will be forwarded to [Acceptor#ReplayBroadcastTxBatch].
+//
+// GetReplayPool implements [snapsapp.Reactor].
+func (reactor *Reactor) GetReplayPool() *server.ReplayPool {
+	reactor.replayPoolMtx.RLock()
+	defer reactor.replayPoolMtx.RUnlock()
+
+	return reactor.replayPool
+}
+
 // ----------------------------------------------------------------------------
 // Reactor implements p2p.Reactor
 
@@ -1272,6 +1298,16 @@ func (reactor *Reactor) OnStop() {
 		}
 	}
 	reactor.envMutex.Unlock()
+
+	// ABCI is shutdown, we can safely close the replay pool.
+	reactor.replayPoolMtx.Lock()
+	if reactor.replayPool != nil && reactor.replayPool.IsRunning() {
+		if err := reactor.replayPool.Stop(); err != nil {
+			reactor.logger.Error(
+				"Error stopping the replay pool", "err", err)
+		}
+	}
+	reactor.replayPoolMtx.Unlock()
 
 	// Each database multiplex opens x dbs, no ordering or reversing is
 	// applied here as it doesn't matter which database is closed first.
