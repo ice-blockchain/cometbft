@@ -1,6 +1,7 @@
 package multiplex_test
 
 import (
+	"context"
 	"os"
 	"strconv"
 	"testing"
@@ -188,6 +189,7 @@ func TestMultiplexBackendCheckDialCompatibleRelayWithOnlySelfRelay(t *testing.T)
 	require.NoError(t, err)
 
 	discoverErr := backend.CheckDialCompatibleRelay(
+		context.TODO(),
 		testRelayAddr,
 	)
 
@@ -236,6 +238,7 @@ func TestMultiplexBackendCheckDialCompatibleRelayWithTwoRelays(t *testing.T) {
 	require.NoError(t, err)
 
 	discoverErr := servers[0].CheckDialCompatibleRelay(
+		context.TODO(),
 		testRelayAddr,
 	)
 
@@ -307,6 +310,7 @@ func TestMultiplexBackendCheckDialCompatibleRelaySevenCompatibleRelays(t *testin
 		require.NoError(t, err)
 
 		discoverErr := servers[0].CheckDialCompatibleRelay(
+			context.TODO(),
 			testRelayAddr,
 		)
 
@@ -355,7 +359,7 @@ func TestMultiplexBackendGetRemoteRelayInfo(t *testing.T) {
 	require.NoError(t, err)
 
 	actualRelayID,
-		actualError := servers[0].GetRemoteRelayInfo(testRelayAddr)
+		actualError := servers[0].GetRemoteRelayInfo(context.TODO(), testRelayAddr)
 
 	require.NoError(t, actualError)
 	assert.Equal(t, servers[1].GetRelayID(), actualRelayID.DefaultNodeID)
@@ -407,7 +411,7 @@ func TestMultiplexBackendGetRemoteRelayInfoWithFourRelays(t *testing.T) {
 		require.NoError(t, err)
 
 		actualRelayID,
-			actualError := servers[0].GetRemoteRelayInfo(testRelayAddr)
+			actualError := servers[0].GetRemoteRelayInfo(context.TODO(), testRelayAddr)
 
 		require.NoError(t, actualError)
 		assert.Equal(t, servers[i].GetRelayID(), actualRelayID.DefaultNodeID)
@@ -464,7 +468,7 @@ func TestMultiplexBackendGetRelaysByNetwork(t *testing.T) {
 	testRelayAddr, err := server.NewRelayAddress(recipientNodeID + "@127.0.0.1:" + testBroadcastPort)
 	require.NoError(t, err)
 
-	chainRelays, errorRelays := servers[0].GetRelaysByNetwork([]*server.RelayAddress{
+	chainRelays, errorRelays := servers[0].GetRelaysByNetwork(context.TODO(), []*server.RelayAddress{
 		testRelayAddr,
 	})
 

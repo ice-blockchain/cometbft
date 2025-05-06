@@ -165,7 +165,7 @@ func (c MultiplexClient) BroadcastTx(
 	// Determine relay IDs (CometBFT Node ID) and supported networks of each
 	// of the relays and identify potential unhealthy relays.
 	startRelaysByNetwork := time.Now()
-	chainRelays, errorRelays := c.GetBackend().GetRelaysByNetwork(relayAddresses)
+	chainRelays, errorRelays := c.GetBackend().GetRelaysByNetwork(ctx, relayAddresses)
 	durationRelaysByNetwork := time.Since(startRelaysByNetwork).Milliseconds()
 
 	// Now we know how many (remote) relays are actually healthy.
@@ -239,7 +239,7 @@ func (c MultiplexClient) BroadcastTx(
 	// before counting the number of failing relays.
 	for _, relayAddr := range healthyRemoteRelays {
 		// Uses the local P2P switch to dial a remote peer.
-		if err := c.GetBackend().CheckDialCompatibleRelay(relayAddr); err != nil {
+		if err := c.GetBackend().CheckDialCompatibleRelay(ctx, relayAddr); err != nil {
 			errorRelays = append(errorRelays, relayAddr.String())
 		}
 	}

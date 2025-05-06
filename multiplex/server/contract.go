@@ -107,6 +107,7 @@ type Backend interface {
 	// GetRemoteRelayInfo should request a relay information object which contains
 	// a CometBFT Node ID, the supported networks and the node's listen address.
 	GetRemoteRelayInfo(
+		ctx context.Context,
 		relayAddress *RelayAddress,
 	) (*RPCResultRelayInfo, error)
 
@@ -114,12 +115,16 @@ type Backend interface {
 	// to a slice of relay addresses, and it also returns a slice of relays
 	// that produced errors, e.g. network error.
 	GetRelaysByNetwork(
+		ctx context.Context,
 		relays []*RelayAddress,
 	) (map[string][]*RelayAddress, []string)
 
 	// CheckDialCompatibleRelay should dial a relay, executing a P2P handshake
 	// and thereby defining whether a relay is compatible for dialing.
-	CheckDialCompatibleRelay(relayAddress *RelayAddress) error
+	CheckDialCompatibleRelay(
+		ctx context.Context,
+		relayAddress *RelayAddress,
+	) error
 
 	// ApplyFilterReplRequestRelays should filter relays and return a map of
 	// relays by ChainID with only relays that need to catchup, i.e. it should

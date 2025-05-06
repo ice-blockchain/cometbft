@@ -3,13 +3,11 @@ package server
 import (
 	"context"
 	"errors"
-	"math/rand"
 	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	cmtrand "github.com/ice-blockchain/cometbft/internal/rand"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/libs/service"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
@@ -26,7 +24,11 @@ const (
 
 	// DefaultReplayPauseInterval contains a period of time used for reducing
 	// stress in processing routines after completion.
-	DefaultReplayPauseInterval = 50 * time.Millisecond
+	DefaultReplayPauseInterval = 200 * time.Millisecond
+
+	// DefaultReplayRetryInterval contains a period of time used for reducing
+	// stress on the client implementation when acceptor calls are failing.
+	DefaultReplayRetryInterval = 500 * time.Millisecond
 
 	// DefaultReplayMaxConcurrent contains the default maximum number of
 	// concurrent threads that may run to process buckets replay.
@@ -41,15 +43,14 @@ var ErrBucketNotFound = errors.New("transaction bucket not found in replay pool"
 // when a threshold is reached or after flushInterval. This structure allows
 // for batching requests to [Acceptor#ReplayBroadcastTxBatch].
 //
-// Internally, we map transaction batches to user addresses to form buckets,
+// Internally, we map transaction batches by user addresses to fill buckets,
 // i.e. processing for one user address happens atomically for all batches.
 //
 // TODO(midas): TBI on testing post-shutdown replay of transactions, due to using
 // this replay pool from inside FinalizeBlock(), we use cometbft restore strategy.
 type ReplayPool struct {
 	service.BaseService
-	mtx  *sync.Mutex
-	rand *cmtrand.Rand
+	mtx *sync.Mutex
 
 	// The maximum number of concurrent processing threads for buckets.
 	maxc uint64 // atomic
@@ -68,15 +69,22 @@ type ReplayPool struct {
 	threshold     int
 	flushInterval time.Duration
 	pauseInterval time.Duration
+	retryInterval time.Duration
 	txAcceptor    client.Acceptor
 	logger        cmtlog.Logger
 
-	// Contain one buffered channel per transaction bucket (user address).
+	// Contains one buffered channel per transaction bucket (user address).
 	processingCh map[string]chan bool
+
+	// Contains one unbuffered channel per transaction bucket,
+	// i.e. must be consumed, see [WaitForBroadcastLoop].
 	didProcessCh map[string]chan bool
 
-	// Buffered channel written on when goroutines are done processing.
+	// Unbuffered channel written on when goroutines are done processing.
 	mayProcessCh chan bool
+
+	// Unbuffered channel that may be written on to shutdown processing,
+	// this channel is consumed alongside the [Quit] channel.
 	goShutdownCh chan bool
 }
 
@@ -85,16 +93,20 @@ type ReplayOption func(*ReplayPool)
 // NewReplayPool creates an empty [ReplayPool].
 func NewReplayPool(logger cmtlog.Logger, options ...ReplayOption) *ReplayPool {
 	pool := &ReplayPool{
-		mtx:  new(sync.Mutex),
-		rand: cmtrand.NewRand(),
+		mtx: new(sync.Mutex),
 
+		// Options
 		threshold:     DefaultReplayPoolThreshold,
 		flushInterval: DefaultReplayFlushInterval,
 		pauseInterval: DefaultReplayPauseInterval,
+		retryInterval: DefaultReplayRetryInterval,
 		logger:        logger,
 
-		Buckets:      []string{},
-		UserTxs:      map[string][]client.Transaction{},
+		// Storage
+		Buckets: []string{},
+		UserTxs: map[string][]client.Transaction{},
+
+		// Channels
 		didProcessCh: map[string]chan bool{},
 		processingCh: map[string]chan bool{},
 		mayProcessCh: make(chan bool), // unbuffered
@@ -106,9 +118,8 @@ func NewReplayPool(logger cmtlog.Logger, options ...ReplayOption) *ReplayPool {
 	atomic.StoreUint64(&pool.numw, uint64(0))
 	atomic.StoreUint64(&pool.size, uint64(0))
 
-	for _, option := range options {
-		option(pool)
-	}
+	// Use option helpers
+	pool.SetOptions(options...)
 
 	pool.BaseService = *service.NewBaseService(nil, "ReplayPool", pool)
 
@@ -122,10 +133,27 @@ func ReplayPoolThreshold(t int) ReplayOption {
 	}
 }
 
-// ReplayPoolFlushInterval sets a custom flush interval.
+// ReplayPoolFlushInterval sets a custom flush interval. This interval is used
+// to configure the timer-processing goroutine.
 func ReplayPoolFlushInterval(fi time.Duration) ReplayOption {
 	return func(p *ReplayPool) {
 		p.flushInterval = fi
+	}
+}
+
+// ReplayPoolPauseInterval sets a custom pause interval. This interval is used
+// to introduce some waiting time after processing.
+func ReplayPoolPauseInterval(pi time.Duration) ReplayOption {
+	return func(p *ReplayPool) {
+		p.pauseInterval = pi
+	}
+}
+
+// ReplayPoolRetryInterval sets a custom retry interval. This interval is used
+// wait before re-trying calls to the client [Acceptor#ReplayBroadcastTxBatch].
+func ReplayPoolRetryInterval(ri time.Duration) ReplayOption {
+	return func(p *ReplayPool) {
+		p.pauseInterval = ri
 	}
 }
 
@@ -143,6 +171,13 @@ func ReplayPoolMaxConcurrent(m uint64) ReplayOption {
 	}
 }
 
+// ReplayPoolLogger injects a custom logger instance.
+func ReplayPoolLogger(logger cmtlog.Logger) ReplayOption {
+	return func(p *ReplayPool) {
+		p.logger = logger
+	}
+}
+
 // ----------------------------------------------------------------------------
 // ReplayPool implements [service.Service]
 
@@ -155,17 +190,26 @@ func (pool *ReplayPool) OnStart() error {
 		return nil
 	}
 
+	pool.logger.Debug("Starting replay pool routines",
+		"size", pool.Size(),
+		"maxc", pool.MaxConcurrent(),
+		"threshold", pool.Threshold(),
+		"timer", pool.FlushInterval(),
+	)
+
 	if pool.Threshold() >= 0 {
 		// Starts the buckets processing routine (by threshold)
-		go pool.processBucketsRoutine()
+		go pool.thresholdProcessorRoutine()
 	}
 
 	// Starts a flushInterval processing routine
-	go pool.flushBucketsRoutine()
+	go pool.timerProcessorRoutine()
 
 	return nil
 }
 
+// OnStop implements [service.Service] by closing all open channels and
+// freeing memory resources allocated per transaction bucket.
 func (pool *ReplayPool) OnStop() {
 	pool.mtx.Lock()
 	defer pool.mtx.Unlock()
@@ -184,6 +228,49 @@ func (pool *ReplayPool) OnStop() {
 	for userAddress, _ := range pool.didProcessCh {
 		close(pool.didProcessCh[userAddress])
 		delete(pool.didProcessCh, userAddress)
+	}
+}
+
+// StopAfterProcessing stops the service when the pool's size reaches 0.
+//
+// TODO(midas): Rather than waiting for an interval, we should be waiting
+// for updates on processingCh/mayProcessCh and/or introduce a channel
+// for messages around flushing the pool or capacity updates.
+func (pool *ReplayPool) StopAfterProcessing() error {
+	// Loops until the pool has processed all buckets.
+	for {
+		// NOTE(midas): non-blocking select on shutdown channel makes
+		// sure every time before verifying size, we know to shutdown.
+		select {
+		case <-pool.Quit():
+		case <-pool.goShutdownCh:
+			return nil
+		default: // Proceed to size check
+		}
+
+		var (
+			currentSize = atomic.LoadUint64(&pool.size)
+		)
+
+		switch {
+		case currentSize == 0:
+			return pool.BaseService.Stop()
+		default:
+		}
+
+		// Give the pool some time for/after processing, or shutdown.
+		if ok := pool.waitForInterval(100 * time.Millisecond); !ok {
+			return nil
+		}
+	}
+}
+
+// ----------------------------------------------------------------------------
+
+// SetOptions uses custom option helpers to configure a ReplayPool instance.
+func (pool *ReplayPool) SetOptions(options ...ReplayOption) {
+	for _, option := range options {
+		option(pool)
 	}
 }
 
@@ -253,6 +340,8 @@ func (pool *ReplayPool) GetTransactions() map[string][]client.Transaction {
 	return pool.UserTxs
 }
 
+// ----------------------------------------------------------------------------
+
 // Add adds a transaction batch to the replay pool. Transaction batches are
 // mapped to a user address to fill a transaction bucket.
 func (pool *ReplayPool) Add(userAddress string, batch ...client.Transaction) error {
@@ -280,6 +369,12 @@ func (pool *ReplayPool) Add(userAddress string, batch ...client.Transaction) err
 		pool.didProcessCh[userAddress] = make(chan bool) // unbuffered
 	}
 
+	pool.logger.Debug("Added transaction batch to bucket",
+		"bucket", userAddress,
+		"txes", len(batch),
+		"size", atomic.LoadUint64(&pool.size),
+	)
+
 	return nil
 }
 
@@ -302,6 +397,7 @@ func (pool *ReplayPool) Flush(userAddress string) error {
 	pool.mtx.Lock()
 	defer pool.mtx.Unlock()
 
+	numTransactions := len(pool.UserTxs[userAddress])
 	if err := pool.removeBucket(userAddress); err != nil {
 		pool.logger.Error(
 			"Error removing transaction bucket",
@@ -310,6 +406,12 @@ func (pool *ReplayPool) Flush(userAddress string) error {
 		)
 		return err
 	}
+
+	pool.logger.Debug("Removed bucket from replay pool",
+		"bucket", userAddress,
+		"txes", numTransactions,
+		"size", atomic.LoadUint64(&pool.size),
+	)
 
 	return nil
 }
@@ -326,15 +428,6 @@ func (pool *ReplayPool) Flush(userAddress string) error {
 func (pool *ReplayPool) ReplayBucket(userAddress string) (waiting bool) {
 	maxConcurrent := atomic.LoadUint64(&pool.maxc)
 	numConcurrent := atomic.LoadUint64(&pool.numc)
-	numWaiting := atomic.LoadUint64(&pool.numw)
-
-	// TODO(midas): remove debug logs
-	pool.logger.Debug("Evaluating concurrent pool access",
-		"maxc", maxConcurrent,
-		"numc", numConcurrent,
-		"numw", numWaiting,
-		"bucket", userAddress,
-	)
 
 	// If we have enough capacity for creating a new goroutine, we issue
 	// the ReplayBroadcastLoop call as soon as possible and flush the bucket
@@ -360,9 +453,12 @@ func (pool *ReplayPool) ReplayBucket(userAddress string) (waiting bool) {
 }
 
 // ReplayBroadcastLoop calls [Acceptor#ReplayBroadcastTxBatch] until it succeeds.
-// The processingCh channel for userAddress is written on when processing begins.
-// The mayProcessCh and didProcessCh for userAddress channels are written on
-// when processing has ended successfully (completed).
+// The processingCh channel is written on when processing begins. The mayProcessCh
+// and didProcessCh channels are written on when processing has ended successfully
+// (completed).
+//
+// When the callback produces an error, we shall retry executing the callback
+// until it finally succeeds. See also: [RetryInterval].
 func (pool *ReplayPool) ReplayBroadcastLoop(userAddress string) {
 	pool.mtx.Lock()
 	didProcessCh := pool.didProcessCh[userAddress]
@@ -370,11 +466,6 @@ func (pool *ReplayPool) ReplayBroadcastLoop(userAddress string) {
 
 	bucket := pool.Get(userAddress)
 	if len(bucket) == 0 {
-		// TODO(midas): remove debug logs
-		pool.logger.Debug("Skipping empty transactions bucket",
-			"bucket", userAddress,
-		)
-
 		didProcessCh <- true
 		return
 	}
@@ -397,9 +488,9 @@ func (pool *ReplayPool) ReplayBroadcastLoop(userAddress string) {
 		}
 	}()
 
-	// TODO(midas): remove debug logs
-	pool.logger.Debug("Starting to process bucket",
+	pool.logger.Debug("Starting replay broadcast loop",
 		"bucket", userAddress,
+		"txes", len(bucket),
 		"numc", pool.NumConcurrent(),
 	)
 
@@ -411,32 +502,34 @@ func (pool *ReplayPool) ReplayBroadcastLoop(userAddress string) {
 		case <-pool.goShutdownCh:
 			// TODO(midas): Add tests to make sure that buckets which have not
 			// been completely replayed yet, are *always* restarted after a shutdown.
-			// TODO(midas): remove debug logs
-			pool.logger.Debug("Shutting down ReplayBroadcastLoop goroutine",
-				"bucket", userAddress,
-			)
-
 			return
 		default:
 		}
 
-		// TODO(midas): remove debug logs
-		pool.logger.Debug("Sending bucket to replay callback",
-			"bucket", userAddress,
-			"num_txes", len(bucket),
-		)
-
 		// Try the callback, and terminate on success.
-		if err := pool.txAcceptor.ReplayBroadcastTxBatch(
+		var err error
+		if err = pool.txAcceptor.ReplayBroadcastTxBatch(
 			context.Background(),
 			bucket..., // one or many transaction batches
 		); err == nil {
+			pool.logger.Debug("Successfully processed bucket replay",
+				"bucket", userAddress,
+				"txes", len(bucket),
+			)
 			didProcessCh <- true
 			return // Done processing bucket
 		}
 
-		// TODO(midas): use pauseInterval here as well, or introduce clientInterval
-		// to reduce stress on the client acceptor implementation in case of errors.
+		pool.logger.Error("Error with replay callback",
+			"bucket", userAddress,
+			"retry", pool.retryInterval,
+			"err", err,
+		)
+
+		// Give the client implementation some time before re-trying.
+		if ok := pool.waitForInterval(pool.retryInterval); !ok {
+			return
+		}
 	}
 }
 
@@ -451,14 +544,9 @@ func (pool *ReplayPool) WaitForBroadcastLoop(userAddress string) {
 	for {
 		select {
 		case <-didProcessCh: // block until done
-			// TODO(midas): remove debug logs
-			pool.logger.Debug("Done processing bucket, proceed to flush",
-				"bucket", userAddress,
-			)
-
+			// Removes the transaction bucket and closes channels.
 			if err := pool.Flush(userAddress); err != nil {
-				pool.logger.Error(
-					"Error flushing transaction bucket",
+				pool.logger.Error("Error flushing transaction bucket",
 					"bucket", userAddress,
 					"err", err.Error(),
 				)
@@ -467,11 +555,6 @@ func (pool *ReplayPool) WaitForBroadcastLoop(userAddress string) {
 
 		case <-pool.Quit():
 		case <-pool.goShutdownCh:
-			// TODO(midas): remove debug logs
-			pool.logger.Debug("Shutting down WaitForBroadcastLoop goroutine",
-				"bucket", userAddress,
-			)
-
 			// Flush could not execute gracefully, not an error.
 			return
 		}
@@ -483,10 +566,11 @@ func (pool *ReplayPool) WaitForBroadcastLoop(userAddress string) {
 // mayProcessCh to indicate that some capacity is becoming available.
 // This method re-dispatches a [ReplayBucket] call for userAddress.
 func (pool *ReplayPool) ThrottleBroadcastLoop(userAddress string) {
-	// TODO(midas): remove debug logs
-	pool.logger.Debug("Waiting for capacity before processing",
-		"numw", pool.NumWaiting(),
+	pool.logger.Debug("Waiting for capacity to process bucket",
 		"bucket", userAddress,
+		"maxc", pool.MaxConcurrent(),
+		"numc", pool.NumConcurrent(),
+		"numw", pool.NumWaiting(),
 	)
 
 	pool.mtx.Lock()
@@ -499,17 +583,13 @@ func (pool *ReplayPool) ThrottleBroadcastLoop(userAddress string) {
 			// This process is not waiting anymore.
 			atomic.AddUint64(&pool.numw, ^uint64(0)) // -1
 
-			// TODO(midas): remove debug logs
-			pool.logger.Debug("Processing capacity is now available",
-				"bucket", userAddress,
-				"numw", pool.NumWaiting(),
-			)
-
 			// Start replaying this bucket now that capacity is available.
 			if waiting := pool.ReplayBucket(userAddress); waiting {
-				// TODO(midas): remove debug logs
-				pool.logger.Debug("Not enough capacity, waiting to process bucket (again)",
+				pool.logger.Debug("Bucket replay is waiting for capacity (again)",
 					"bucket", userAddress,
+					"maxc", pool.MaxConcurrent(),
+					"numc", pool.NumConcurrent(),
+					"numw", pool.NumWaiting(),
 				)
 			}
 			return
@@ -518,10 +598,6 @@ func (pool *ReplayPool) ThrottleBroadcastLoop(userAddress string) {
 		case <-pool.goShutdownCh:
 			// TODO(midas): Add tests to make sure that buckets in waiting state
 			// are *always* restarted after a shutdown.
-			// TODO(midas): remove debug logs
-			pool.logger.Debug("Shutting down ThrottleBroadcastLoop goroutine",
-				"bucket", userAddress,
-			)
 
 			return
 		}
@@ -536,11 +612,6 @@ func (pool *ReplayPool) removeBucket(userAddress string) error {
 	if _, bucketExists := pool.UserTxs[userAddress]; !bucketExists {
 		return ErrBucketNotFound
 	}
-
-	// TODO(midas): remove debug logs
-	pool.logger.Debug("Removing transaction bucket",
-		"bucket", userAddress,
-	)
 
 	// Remove from atomic.Uint64 and from map
 	atomic.AddUint64(&pool.size, ^uint64(0)*uint64(len(pool.UserTxs[userAddress])))
@@ -571,46 +642,17 @@ func (pool *ReplayPool) removeBucket(userAddress string) error {
 		delete(pool.didProcessCh, userAddress)
 	}
 
-	// TODO(midas): remove debug logs
-	pool.logger.Debug("Done removing transaction bucket",
-		"bucket", userAddress,
-	)
-
 	return nil
 }
 
 // ----------------------------------------------------------------------------
 // Routines
 
-func (pool *ReplayPool) StopAfterProcessing() error {
-	// TODO(midas): remove debug logs
-	pool.logger.Debug("Waiting for all buckets to be processed")
-
-	for {
-		var (
-			currentSize = atomic.LoadUint64(&pool.size)
-		)
-
-		switch {
-		case currentSize == 0:
-			return pool.BaseService.Stop()
-		default:
-		}
-
-		// Give the pool some time for/after processing, or shutdown.
-		if ok := pool.waitForInterval(100 * time.Millisecond); !ok {
-			return nil
-		}
-	}
-}
-
-// processBucketsRoutine verifies the threshold and when it is reached,
-// it will execute the replay loop for a random transactions bucket,
-// i.e. it processes transactions buckets as soon as it should.
-func (pool *ReplayPool) processBucketsRoutine() {
-	// TODO(midas): remove debug logs
-	pool.logger.Debug("Starting threshold processing routine")
-
+// thresholdProcessorRoutine verifies the threshold and when it is reached,
+// it will execute the replay loop using the maximum number of items it may
+// process concurrently, i.e. it processes some buckets as soon as it should.
+func (pool *ReplayPool) thresholdProcessorRoutine() {
+	// Loops undefinitely and processes replays when threshold is reached.
 	for {
 		if !pool.IsRunning() {
 			return
@@ -621,8 +663,6 @@ func (pool *ReplayPool) processBucketsRoutine() {
 		select {
 		case <-pool.Quit():
 		case <-pool.goShutdownCh:
-			// TODO(midas): remove debug logs
-			pool.logger.Debug("Shutting down processBucketsRoutine")
 			return
 		default: // Proceed to wait or handle
 		}
@@ -633,24 +673,38 @@ func (pool *ReplayPool) processBucketsRoutine() {
 			bucketsAvailable = pool.GetBuckets()
 		)
 
-		// TODO(midas): remove debug logs
-		pool.logger.Debug("Evaluating pool threshold",
-			"threshold", pool.Threshold(),
-			"size", currentSize,
-		)
-
 		switch {
-		case thresholdReached: // If we have enough transactions, process a random bucket.
-			randBucketsIndex := rand.Intn(len(bucketsAvailable))
-			bucketAddress := bucketsAvailable[randBucketsIndex]
+		case thresholdReached: // If we have enough transactions, process some buckets.
+			// We extract a max of items to process as many buckets as possible.
+			numBuckets := min(
+				pool.MaxConcurrent()-pool.NumConcurrent(), // capacity
+				uint64(len(bucketsAvailable)),
+			)
+			bucketsToProcess := bucketsAvailable[:numBuckets]
 
-			// Start replaying this bucket if/when capacity is available.
-			if waiting := pool.ReplayBucket(bucketAddress); waiting {
-				// TODO(midas): remove debug logs
-				pool.logger.Debug("Not enough capacity, waiting to process bucket",
-					"bucket", bucketAddress,
-				)
+			pool.logger.Debug("Pool threshold reached, now replaying buckets",
+				"size", currentSize,
+				"threshold", pool.Threshold(),
+				"num_buckets", numBuckets,
+			)
+
+			for _, bucketAddress := range bucketsToProcess {
+				// Start replaying this bucket if/when capacity is available.
+				if waiting := pool.ReplayBucket(bucketAddress); waiting {
+					pool.logger.Debug("Bucket replay is waiting for capacity",
+						"bucket", bucketAddress,
+						"maxc", pool.MaxConcurrent(),
+						"numc", pool.NumConcurrent(),
+						"numw", pool.NumWaiting(),
+					)
+				}
+
+				// Give the pool some time for/after processing, or shutdown.
+				if ok := pool.waitForInterval(pool.pauseInterval); !ok {
+					return
+				}
 			}
+
 		default:
 		}
 
@@ -661,21 +715,15 @@ func (pool *ReplayPool) processBucketsRoutine() {
 	}
 }
 
-// flushBucketsRoutine waits for flushInterval, then executes the replay loop.
-func (pool *ReplayPool) flushBucketsRoutine() {
-	// TODO(midas): remove debug logs
-	pool.logger.Debug("Starting interval processing routine")
-
+// timerProcessorRoutine waits for flushInterval, then executes the replay loop
+// using the maximum number of items it may process concurrently.
+func (pool *ReplayPool) timerProcessorRoutine() {
+	// Loops undefinitely and processes replays when timer ticks.
 	for {
 		flushInterval := pool.FlushInterval()
 
-		// TODO(midas): remove debug logs
-		pool.logger.Debug("Waiting for flush interval",
-			"interval", flushInterval,
-		)
-
 		select {
-		case <-time.After(flushInterval): // Every flushInterval, we process the buckets.
+		case <-time.After(flushInterval): // Every flushInterval, we process some buckets.
 			bucketsAvailable := pool.GetBuckets()
 
 			// We extract a max of items to process as many buckets as possible.
@@ -685,17 +733,14 @@ func (pool *ReplayPool) flushBucketsRoutine() {
 			)
 			bucketsToProcess := bucketsAvailable[:numBuckets]
 
-			// TODO(midas): remove debug logs
-			pool.logger.Debug("Picked as many buckets as possible",
-				"num_buckets", numBuckets,
-			)
-
 			for _, bucketAddress := range bucketsToProcess {
 				// Start replaying this bucket if/when capacity is available.
 				if waiting := pool.ReplayBucket(bucketAddress); waiting {
-					// TODO(midas): remove debug logs
-					pool.logger.Debug("Not enough capacity, waiting to process bucket",
+					pool.logger.Debug("Bucket replay is waiting for capacity",
 						"bucket", bucketAddress,
+						"maxc", pool.MaxConcurrent(),
+						"numc", pool.NumConcurrent(),
+						"numw", pool.NumWaiting(),
 					)
 				}
 
@@ -707,8 +752,6 @@ func (pool *ReplayPool) flushBucketsRoutine() {
 
 		case <-pool.Quit():
 		case <-pool.goShutdownCh:
-			// TODO(midas): remove debug logs
-			pool.logger.Debug("Shutting down flushBucketsRoutine")
 			return
 		}
 
@@ -721,17 +764,12 @@ func (pool *ReplayPool) flushBucketsRoutine() {
 
 // waitForInterval waits for i using time.After, or shutdown channels.
 func (pool *ReplayPool) waitForInterval(i time.Duration) (waited bool) {
-	// TODO(midas): remove debug logs
-	pool.logger.Debug("Waiting for interval", "interval", i)
-
 	for {
 		select {
 		case <-time.After(i):
 			return true
 		case <-pool.Quit():
 		case <-pool.goShutdownCh:
-			// TODO(midas): remove debug logs
-			pool.logger.Debug("Shutting down waitForInterval")
 			return false
 		}
 	}

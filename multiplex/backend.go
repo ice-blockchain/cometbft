@@ -41,6 +41,9 @@ const (
 
 	// Prometheus timeout configuration
 	readHeaderTimeout = 10 * time.Second
+
+	// Network requests timeout configuration, e.g. [GetRemoteRelayInfo].
+	DefaultRequestTimeout = 2 * time.Second
 )
 
 // Assert that our implementation satisfies the [server.Backend] interface.
@@ -87,6 +90,9 @@ type MultiplexBackend struct {
 	cometbftRPCAddr *p2p.NetAddress // CometBFT RPC  (:dp+2)
 	prometheusAddr  *p2p.NetAddress // Prometheus (:dp+3)
 
+	// Defines the duration for network requests to timeout
+	requestTimeout time.Duration
+
 	// An acceptor implementation to which transactions will be forwarded.
 	acceptor client.Acceptor
 
@@ -130,6 +136,13 @@ func WithLogger(
 ) func(*MultiplexBackend) {
 	return func(b *MultiplexBackend) {
 		b.logger = logger
+	}
+}
+
+// WithRequestTimeout is an option helper to inject a custom timeout duration.
+func WithRequestTimeout(t time.Duration) func(*MultiplexBackend) {
+	return func(b *MultiplexBackend) {
+		b.requestTimeout = t
 	}
 }
 
@@ -180,6 +193,10 @@ func NewServer(
 	// Enable overwrite of optional properties
 	for _, option := range options {
 		option(server)
+	}
+
+	if server.requestTimeout == 0 {
+		server.requestTimeout = DefaultRequestTimeout
 	}
 
 	if server.metrics != nil {
@@ -867,8 +884,12 @@ func (b *MultiplexBackend) GetLocalNetworkHeights(
 // and calls the GetRelayInfo remote procedure to retrieve the Relay ID,
 // the supported networks and the listen address for the remote relay.
 //
+// The relayAddress parameter should use `DiscoveryPort` as this method
+// will map it to its corresponding RelayInfo port (`DiscoveryPort - 1`).
+//
 // GetRemoteRelayInfo implements [server.Backend].
 func (b *MultiplexBackend) GetRemoteRelayInfo(
+	clientCtx context.Context,
 	relayAddress *server.RelayAddress,
 ) (*server.RPCResultRelayInfo, error) {
 	c, connectErr := rpcclient.New(relayAddress.AddressForRelayInfo())
@@ -880,18 +901,25 @@ func (b *MultiplexBackend) GetRemoteRelayInfo(
 	b.httpClients = append(b.httpClients, c.GetHTTPClient())
 	b.relayMtx.Unlock()
 
-	// TODO(midas): timeoutDuration to be added to method args.
-	ctx, _ := context.WithTimeout(context.Background(), 700*time.Millisecond)
+	// Each call should timeout after max requestTimeout.
+	timeoutCtx, cancelFn := context.WithTimeout(context.Background(), b.requestTimeout)
+	defer cancelFn()
 
 	result := &server.RPCResultRelayInfo{}
 	params := map[string]any{}
-	_, callErr := c.Call(ctx, "info", params, result)
+	_, callErr := c.Call(timeoutCtx, "info", params, result)
 
 	select {
-	// context timeout
-	case <-ctx.Done():
+	// cancelled by caller
+	case <-clientCtx.Done():
+		cancelledErr := fmt.Errorf(
+			"RelayInfo cancelled with %s", relayAddress.AddressForRelayInfo())
+		b.logger.Error(cancelledErr.Error())
+		return nil, cancelledErr
+	// context timeout (request took too long)
+	case <-timeoutCtx.Done():
 		timeoutErr := fmt.Errorf(
-			"RelayInfo timed out with %s", relayAddress.String())
+			"RelayInfo timed out with %s", relayAddress.AddressForRelayInfo())
 		b.logger.Error(timeoutErr.Error())
 		return nil, timeoutErr
 	default:
@@ -911,6 +939,7 @@ func (b *MultiplexBackend) GetRemoteRelayInfo(
 // This method uses [GetRemoteRelayInfo] to find the relay's ID.
 // GetRelaysByNetwork implements [server.Backend].
 func (b *MultiplexBackend) GetRelaysByNetwork(
+	clientCtx context.Context,
 	relayAddresses []*server.RelayAddress,
 ) (
 	chainRelays map[string][]*server.RelayAddress,
@@ -924,13 +953,14 @@ func (b *MultiplexBackend) GetRelaysByNetwork(
 	errorRelays = []string{}
 	for _, relayAddr := range relayAddresses {
 		startTz := time.Now()
+		addrRPC := relayAddr.AddressForRelayInfo()
 
 		// Discover this relay's ID (CometBFT Node ID).
 		// This executes a RPC request for RelayInfo.
-		result, err := b.GetRemoteRelayInfo(relayAddr)
+		result, err := b.GetRemoteRelayInfo(clientCtx, relayAddr) // expects DiscoveryPort
 		if err != nil {
 			b.logger.Error("Error discovering relay information",
-				"relay", relayAddr,
+				"relay", addrRPC,
 				"err", err,
 			)
 			relaysWithFailure[relayAddr.String()] = true
@@ -941,7 +971,7 @@ func (b *MultiplexBackend) GetRelaysByNetwork(
 
 		// TODO(midas): remove debug logs
 		b.logger.Debug("Retrieved networks information from relay",
-			"relay", relayAddr.String(),
+			"relay", addrRPC,
 			"networks", result.Networks,
 			"time", strconv.Itoa(int(durationMs))+"ms",
 		)
@@ -976,6 +1006,7 @@ func (b *MultiplexBackend) GetRelaysByNetwork(
 //
 // CheckDialCompatibleRelay implements [server.Backend].
 func (b *MultiplexBackend) CheckDialCompatibleRelay(
+	_ context.Context,
 	relayAddr *server.RelayAddress,
 ) error {
 	// If this is us, nothing to do.
