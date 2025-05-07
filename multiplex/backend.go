@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -421,6 +422,17 @@ func (b *MultiplexBackend) UpdateAvailableNetworks(networks []string) []string {
 	return availableNetworks
 }
 
+// recoverFromPanics tries to close the backend after a panic.
+func (b *MultiplexBackend) recoverFromPanics() {
+	if r := recover(); r != nil {
+		b.logger.Error("Multiplex panicked", "err", r, "stack", string(debug.Stack()))
+
+		if err := b.Close(); err != nil {
+			b.logger.Error("Graceful shutdown failed", "err", err, "stack", string(debug.Stack()))
+		}
+	}
+}
+
 // MustStart starts a replication backend basically selecting void
 // and running forever.
 //
@@ -471,6 +483,8 @@ func (b *MultiplexBackend) MustStart() {
 	// Here we should wait forever, until the internal Reactor instance
 	// is told to replicate a new chain using the server.ReplicationChannel.
 	go func() {
+		defer b.recoverFromPanics()
+
 		// CAUTION:
 		// We open a discovery port which is required such that the relay may
 		// be communicated to, even without hosting any replicated chain.
