@@ -547,7 +547,7 @@ func (sw *Switch) StopPeerGracefully(peer Peer) {
 func (sw *Switch) stopPeer(peer Peer, reason any) error {
 	if err := peer.Stop(); err != nil {
 		return fmt.Errorf(
-			"error stopping peer for ID %s", string(peer.ID()),
+			"error stopping peer for ID %s: %w", string(peer.ID()), err,
 		)
 	}
 
@@ -569,10 +569,13 @@ func (sw *Switch) removePeer(peer Peer, reason any) error {
 	if err := sw.uniquePeers.RemoveByAddr(peer.RemoteAddr()); err != nil {
 		if extra, ok := err.(ErrHasExtraPeer); ok {
 			err = sw.stopPeer(extra.Peer, reason)
+			if errors.Is(err, service.ErrAlreadyStopped) {
+				err = nil
+			}
 		}
 		if err != nil {
 			return fmt.Errorf(
-				"error on unique peer removal for ID %s", string(peer.ID()),
+				"error on unique peer removal for ID %s: %w", string(peer.ID()), err,
 			)
 		}
 	}
@@ -582,10 +585,13 @@ func (sw *Switch) removePeer(peer Peer, reason any) error {
 			if err := peerSet.RemoveByAddr(peer.RemoteAddr()); err != nil {
 				if extra, ok := err.(ErrHasExtraPeer); ok {
 					err = sw.stopPeer(extra.Peer, reason)
+					if errors.Is(err, service.ErrAlreadyStopped) {
+						err = nil
+					}
 				}
 				if err != nil {
 					return fmt.Errorf(
-						"error on peer removal for ID %s", string(peer.ID()),
+						"error on peer removal for ID %s: %w", string(peer.ID()), err,
 					)
 				}
 			}
@@ -605,6 +611,13 @@ func (sw *Switch) stopAndRemovePeer(peer Peer, reason any) {
 	// this function may be called from multiple places at once.
 	if err := sw.stopPeer(peer, reason); err != nil {
 		sw.Logger.Error("error stopping peer", "peer", peer.ID(), "err", err)
+		if errors.Is(err, service.ErrAlreadyStopped) {
+			// Make sure.
+			if err := sw.removePeer(peer, reason); err != nil {
+				sw.Logger.Debug("error on peer removal", "peer", peer.ID(), "err", err)
+				return
+			}
+		}
 		return
 	}
 
@@ -615,7 +628,7 @@ func (sw *Switch) stopAndRemovePeer(peer Peer, reason any) {
 	if err := sw.removePeer(peer, reason); err != nil {
 		// Removal of the peer has failed. The function above sets a flag within the peer to mark this.
 		// We keep this message here as information to the developer.
-		sw.Logger.Debug("error on peer removal", "peer", peer.ID())
+		sw.Logger.Debug("error on peer removal", "peer", peer.ID(), "err", err)
 		return
 	}
 

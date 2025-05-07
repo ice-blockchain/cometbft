@@ -377,6 +377,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 						"chain_id", chainID,
 						"tx_hash", txHash,
 						"peer", peerID,
+						"peerRunning", peer.IsRunning(),
 					)
 
 					// Send transaction to relay mempool, after checks the mempool
