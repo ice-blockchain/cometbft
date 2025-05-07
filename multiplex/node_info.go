@@ -276,17 +276,12 @@ func (info *MultiNetworkNodeInfo) GetNodeInfo(chainID string) (p2p.DefaultNodeIn
 		return v.ChainID == chainID
 	})
 
-	networkPos := slices.IndexFunc(info.Networks, func(n string) bool {
-		return n == chainID
-	})
-
-	// Not finding a protocol version, network or listen address should never happen
-	if versionPos < 0 || networkPos < 0 {
-		return p2p.DefaultNodeInfo{}, fmt.Errorf(
-			"could not determine version for ChainID %s", chainID)
+	var protocolVersion ChainProtocolVersion
+	if versionPos < 0 {
+		protocolVersion = ChainProtocolVersion{ChainID: chainID, P2P: DefaultProtocolVersion.P2P, Block: DefaultProtocolVersion.Block, App: DefaultProtocolVersion.App}
+	} else {
+		protocolVersion = info.ProtocolVersions[versionPos]
 	}
-
-	protocolVersion := info.ProtocolVersions[versionPos]
 
 	nodeInfo := p2p.DefaultNodeInfo{
 		ProtocolVersion: p2p.NewProtocolVersion(
@@ -407,11 +402,12 @@ func (info *MultiNetworkNodeInfo) CompatibleWith(otherInfo p2p.NodeInfo) error {
 		})
 
 		// Not having the same replicated chains is allowed
+		var localProtocolVersion ChainProtocolVersion
 		if versionPos < 0 {
-			continue
+			localProtocolVersion = ChainProtocolVersion{ChainID: otherChainID, App: DefaultProtocolVersion.App, Block: DefaultProtocolVersion.Block, P2P: DefaultProtocolVersion.P2P}
+		} else {
+			localProtocolVersion = info.ProtocolVersions[versionPos]
 		}
-
-		localProtocolVersion := info.ProtocolVersions[versionPos]
 
 		// Block versions for one ChainID must be the same on both nodes
 		if localProtocolVersion.Block != otherProtocolVersion.Block {
@@ -501,17 +497,13 @@ func (info *MultiNetworkNodeInfo) ToProto() (*mxp2p.MultiNetworkNodeInfo, error)
 			return v.ChainID == userChainID
 		})
 
-		networkPos := slices.IndexFunc(info.Networks, func(n string) bool {
-			return n == userChainID
-		})
-
 		// Not being able to find a protocol version or network should never happen
-		if versionPos < 0 || networkPos < 0 {
-			return nil, fmt.Errorf(
-				"could not determine version for ChainID %s", userChainID)
+		var protocolVersion ChainProtocolVersion
+		if versionPos < 0 {
+			protocolVersion = ChainProtocolVersion{ChainID: userChainID, P2P: DefaultProtocolVersion.P2P, Block: DefaultProtocolVersion.Block, App: DefaultProtocolVersion.App}
+		} else {
+			protocolVersion = info.ProtocolVersions[versionPos]
 		}
-
-		protocolVersion := info.ProtocolVersions[versionPos]
 
 		dni.Networks[i] = userChainID
 
