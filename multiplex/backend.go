@@ -1258,8 +1258,12 @@ func (b *MultiplexBackend) StartP2PServerDiscovery(
 	*p2p.NetAddress, // P2P
 	error,
 ) {
+	promoteAddr := nodeCfg.P2P.ExternalAddress
+	if promoteAddr == "" {
+		promoteAddr = nodeCfg.P2P.ListenAddress
+	}
 	p2pListenAddr := overwriteListenPort(
-		nodeCfg.P2P.ListenAddress,
+		promoteAddr,
 		int(nodeCfg.DiscoveryPort),
 	)
 
@@ -1292,15 +1296,30 @@ func (b *MultiplexBackend) StartP2PServerDiscovery(
 
 	// Open the broadcast port for listening continuously
 	if listenTransport := eventSwitch.Transport(); listenTransport != nil {
-		netAddress := b.broadcastAddr
-		if err := listenTransport.Listen(*netAddress); err != nil {
+		listenAddr := overwriteListenPort(
+			nodeCfg.P2P.ListenAddress,
+			int(nodeCfg.DiscoveryPort),
+		)
+
+		relayListenAddr, err := server.NewRelayAddress(listenAddr)
+		if err != nil {
 			return nil, fmt.Errorf(
-				"could not start listening on %s: %w", netAddress.DialString(), err)
+				"could not create relay address for P2P: %w", err)
+		}
+		relayListenAddr.SetID(nodeKey.ID())
+		netListenAddr, err := relayListenAddr.NetAddress()
+		if err != nil {
+			return nil, fmt.Errorf(
+				"could not create p2p listen address: %w", err)
+		}
+		if err := listenTransport.Listen(*netListenAddr); err != nil {
+			return nil, fmt.Errorf(
+				"could not start listening on %s: %w", netListenAddr.DialString(), err)
 		}
 
 		// TODO(midas): remove debug logs
 		b.logger.Debug("Process is now listening on broadcast port",
-			"addr", netAddress.DialString(),
+			"addr", netListenAddr.DialString(),
 		)
 	}
 

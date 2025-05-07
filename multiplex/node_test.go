@@ -474,6 +474,9 @@ func ResetTestMultiplexNodeWithConfigAndPorts(
 	nodeCfg.SetRoot(rootDir)
 	nodeCfg.MultiplexConfig = mxConfig
 	nodeCfg.DiscoveryPort = discoveryPort
+	nodeCfg.P2P.ListenAddress = fmt.Sprintf("tcp://0.0.0.0:%v", discoveryPort+1)
+	nodeCfg.P2P.ExternalAddress = fmt.Sprintf("tcp://127.0.0.1:%v", discoveryPort+1)
+	nodeCfg.RPC.ListenAddress = fmt.Sprintf("tcp://127.0.0.1:%v", discoveryPort-1)
 	nodeCfg.Instrumentation.Namespace += metricsSuffix
 	nodeCfg.Consensus.CreateEmptyBlocks = true // when using *Node
 

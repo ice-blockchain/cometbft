@@ -486,7 +486,7 @@ func makeNodeInfo(
 	nodeConfig := reactor.GetNodeConfig()
 
 	p2pListenAddr := overwriteListenPort(
-		nodeConfig.P2P.ListenAddress,
+		nodeConfig.P2P.ExternalAddress,
 		int(nodeConfig.DiscoveryPort)+1, // defaults to 30002
 	)
 
