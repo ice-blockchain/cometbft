@@ -1187,11 +1187,14 @@ func (reactor *Reactor) OnStart() error {
 	// For each ChainID, we run a node with a distinct listen address
 	chainIds := reactor.GetNetworks()
 	for _, chainID := range chainIds {
-		configOverwrite := NewConfigOverwrite(
+		configOverwrite, err := NewConfigOverwrite(
 			nodeConfig,
 			chainRegistry,
 			chainID,
 		)
+		if err != nil {
+			return err
+		}
 
 		reactor.RegisterInstance(InstanceKeyConfig, chainID, configOverwrite)
 		reactor.RegisterInstance(InstanceKeyStorage, chainID, multiplexFS[chainID])

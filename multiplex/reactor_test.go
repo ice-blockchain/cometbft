@@ -195,11 +195,12 @@ func TestMultiplexReactorRegisterInstance(t *testing.T) {
 	testChainIds := reactor.GetNetworks()
 	for index, chainID := range testChainIds {
 		// 1. We create a mutated config per chain
-		perChainCfg := mx.NewConfigOverwrite(
+		perChainCfg, err := mx.NewConfigOverwrite(
 			nodeCfg,
 			reactor.GetChainRegistry(),
 			chainID,
 		)
+		require.NoError(t, err)
 
 		// 2. We create a database instance per chain
 		dbName := "chaindb-" + strconv.Itoa(index)
@@ -255,11 +256,12 @@ func TestMultiplexReactorRegisterInstance(t *testing.T) {
 		wg.Add(1)
 		go func(idx int, concurrentChainID string) {
 			// 1. We create a mutated config per chain
-			perChainCfg := mx.NewConfigOverwrite(
+			perChainCfg, err := mx.NewConfigOverwrite(
 				nodeCfg,
 				otherReactor.GetChainRegistry(),
 				concurrentChainID,
 			)
+			require.NoError(t, err)
 
 			// 2. We create a database instance per chain
 			dbName := "chaindb-" + strconv.Itoa(idx)

@@ -71,7 +71,8 @@ func TestMultiplexConfigNewConfigOverwrite(t *testing.T) {
 	address1, err := chainRegistry.GetAddress(chainID1)
 	expectWal1 := makeWalPath(rootDir, address1, chainID1)
 	require.NoError(t, err)
-	cfgOverwrite1 := mx.NewConfigOverwrite(conf, chainRegistry, chainID1)
+	cfgOverwrite1, err := mx.NewConfigOverwrite(conf, chainRegistry, chainID1)
+	assert.NoError(t, err)
 	assert.NotEqual(t, conf.P2P.ListenAddress, cfgOverwrite1.P2P.ListenAddress)
 	assert.Contains(t, cfgOverwrite1.P2P.ListenAddress, strconv.Itoa(int(conf.DiscoveryPort)+1)) // :30002
 	assert.Contains(t, cfgOverwrite1.RPC.ListenAddress, strconv.Itoa(int(conf.DiscoveryPort)+2)) // :30003
@@ -83,7 +84,8 @@ func TestMultiplexConfigNewConfigOverwrite(t *testing.T) {
 	assert.NoError(t, err)
 
 	expectWal2 := makeWalPath(rootDir, address2, chainID2)
-	cfgOverwrite2 := mx.NewConfigOverwrite(conf, chainRegistry, chainID2)
+	cfgOverwrite2, err := mx.NewConfigOverwrite(conf, chainRegistry, chainID2)
+	assert.NoError(t, err)
 	assert.NotEqual(t, conf.P2P.ListenAddress, cfgOverwrite2.P2P.ListenAddress)
 	assert.Equal(t, cfgOverwrite1.P2P.ListenAddress, cfgOverwrite2.P2P.ListenAddress)
 	assert.Equal(t, cfgOverwrite1.RPC.ListenAddress, cfgOverwrite2.RPC.ListenAddress)
@@ -97,7 +99,8 @@ func TestMultiplexConfigNewConfigOverwrite(t *testing.T) {
 	assert.NoError(t, err)
 
 	expectWal3 := makeWalPath(rootDir, address3, chainID3)
-	cfgOverwrite3 := mx.NewConfigOverwrite(conf, chainRegistry, chainID3)
+	cfgOverwrite3, err := mx.NewConfigOverwrite(conf, chainRegistry, chainID3)
+	assert.NoError(t, err)
 	assert.NotEqual(t, conf.P2P.ListenAddress, cfgOverwrite3.P2P.ListenAddress)
 	assert.Equal(t, cfgOverwrite2.P2P.ListenAddress, cfgOverwrite3.P2P.ListenAddress)
 	assert.Equal(t, cfgOverwrite2.RPC.ListenAddress, cfgOverwrite3.RPC.ListenAddress)

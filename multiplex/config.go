@@ -86,16 +86,9 @@ func NewConfigOverwrite(
 	baseConfig *config.Config,
 	chainRegistry ChainRegistry,
 	withChainID string,
-) *config.Config {
+) (*config.Config, error) {
 	// Multiplex can be configured to start at different port
 	discoveryPort := int(baseConfig.DiscoveryPort) // defaults to 30001
-
-	// Find index of ChainID (deterministic due to sorting)
-	// nodeIdx, err := chainRegistry.FindChain(withChainID)
-	// if err != nil {
-	// 	panic(fmt.Errorf(
-	// 		"could not find ChainID %s: %w", withChainID, err))
-	// }
 
 	// Seed nodes *may* be empty, error ignored here.
 	seedNodes, _ := chainRegistry.GetSeeds(withChainID)
@@ -113,11 +106,11 @@ func NewConfigOverwrite(
 		discoveryPort,
 	)
 	if err != nil {
-		panic(fmt.Errorf(
-			"could create a config overwrite for ChainID %s: %w", withChainID, err))
+		return nil, fmt.Errorf(
+			"could not create a config overwrite for ChainID %s: %w", withChainID, err)
 	}
 
-	return mxConfig
+	return mxConfig, nil
 }
 
 // NewConfigOverwriteWithParameters updates a node configuration in-place to
