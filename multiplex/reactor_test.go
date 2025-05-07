@@ -92,7 +92,8 @@ func TestMultiplexReactorNewReactor(t *testing.T) {
 	// Networks must be ordered
 	// ChainRegistry.GetChains() is tested to produce an ordered slice.
 	assert.NotEmpty(t, testChainIds)
-	for i, testChainID := range chainRegistry.GetChains() {
+	regChainIds := chainRegistry.GetChains()
+	for i, testChainID := range regChainIds {
 		actualChainID := testChainIds[i]
 		assert.Equal(t, testChainID, actualChainID)
 	}

@@ -53,6 +53,8 @@ type ChainRegistry interface {
 var _ ChainRegistry = (*singletonChainRegistry)(nil)
 
 type singletonChainRegistry struct {
+	mtx *sync.Mutex
+
 	// SyncConfig maps a ChainID to trust options for the state-sync service.
 	SyncConfig map[string]*config.StateSyncConfig
 
@@ -87,6 +89,9 @@ func (r *singletonChainRegistry) AddChain(
 		return r
 	}
 
+	r.mtx.Lock()
+	defer r.mtx.Unlock()
+
 	// Append to list of available ChainID
 	r.ReplicatedChains = append(r.ReplicatedChains, chainID)
 	r.ChainSeeds[chainID] = ""
@@ -107,6 +112,9 @@ func (r *singletonChainRegistry) AddChain(
 // HasChain returns true if the ChainID can be found
 // HasChain implements ChainRegistry.
 func (r *singletonChainRegistry) HasChain(chainID string) bool {
+	r.mtx.Lock()
+	defer r.mtx.Unlock()
+
 	return slices.Contains(r.ReplicatedChains, chainID)
 }
 
@@ -114,6 +122,9 @@ func (r *singletonChainRegistry) HasChain(chainID string) bool {
 // Note that the ChainID slice is ordered in ascending alphabetical order.
 // GetChains implements ChainRegistry.
 func (r *singletonChainRegistry) GetChains() []string {
+	r.mtx.Lock()
+	defer r.mtx.Unlock()
+
 	return r.ReplicatedChains
 }
 
@@ -140,6 +151,9 @@ func (r *singletonChainRegistry) GetStateSyncConfig(
 func (r *singletonChainRegistry) GetSeeds(
 	chainID string,
 ) (string, error) {
+	r.mtx.Lock()
+	defer r.mtx.Unlock()
+
 	if _, ok := r.ChainSeeds[chainID]; ok {
 		return r.ChainSeeds[chainID], nil
 	}
@@ -153,6 +167,9 @@ func (r *singletonChainRegistry) GetSeeds(
 func (r *singletonChainRegistry) GetAddress(
 	chainID string,
 ) (string, error) {
+	r.mtx.Lock()
+	defer r.mtx.Unlock()
+
 	if !slices.Contains(r.ReplicatedChains, chainID) {
 		return "", fmt.Errorf("could not find a user address for ChainID %s", chainID)
 	}
@@ -175,7 +192,8 @@ func (r *singletonChainRegistry) GetAddress(
 // Note that the ChainID slice is ordered in ascending alphabetical order.
 // FindChain implements ChainRegistry.
 func (r *singletonChainRegistry) FindChain(chainID string) (int, error) {
-	for i, cid := range r.GetChains() {
+	chainIds := r.GetChains()
+	for i, cid := range chainIds {
 		if cid == chainID {
 			return i, nil
 		}
@@ -210,7 +228,7 @@ func NewChainRegistry(
 	genesisDocSetFile string,
 ) (ChainRegistry, error) {
 	if conf.Strategy == DisableReplicationStrategy() {
-		return &singletonChainRegistry{}, nil
+		return &singletonChainRegistry{mtx: new(sync.Mutex)}, nil
 	}
 
 	// This type is used to return an error alongside the ChainRegistry if
@@ -224,10 +242,14 @@ func NewChainRegistry(
 	// to be done only once. The returned ChainRegistry instance is the result
 	// of parsing the [config.MultiplexConfig] configuration object.
 	cacheableChainRegistry := sync.OnceValue(func() returnInstanceWithError {
-		registry := &singletonChainRegistry{}
-		registry.ChainSeeds = map[string]string{}
-		registry.userChains = map[string][]string{}
-		registry.ReplicatedChains = []string{}
+		registry := &singletonChainRegistry{
+			mtx: new(sync.Mutex),
+
+			ChainSeeds:       map[string]string{},
+			ReplicatedChains: []string{},
+
+			userChains: map[string][]string{},
+		}
 
 		// Copy seed nodes and map to ChainID
 		for chainID, seedNodes := range conf.ChainSeeds {
@@ -275,7 +297,7 @@ func NewChainRegistry(
 	regWithErr := cacheableChainRegistry()
 	cRegistry := regWithErr.instance
 	if regWithErr.err != nil {
-		return &singletonChainRegistry{}, regWithErr.err
+		return &singletonChainRegistry{mtx: new(sync.Mutex)}, regWithErr.err
 	}
 
 	return cRegistry, nil

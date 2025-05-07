@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"sync"
 
 	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
 	tmp2p "github.com/ice-blockchain/cometbft/api/cometbft/p2p/v1"
@@ -67,6 +68,8 @@ func NewChainListenAddr(chainID string, laddr string) ChainListenAddr {
 // MultiNetworkNodeInfo is a multiplex node information exchanged
 // between two peers during the CometBFT P2P handshake.
 type MultiNetworkNodeInfo struct {
+	mtx sync.Mutex
+
 	// Replication configuration
 	Networks         []string               `json:"networks"` // contains ChainIDs
 	ProtocolVersions []ChainProtocolVersion `json:"protocol_versions"`
@@ -87,12 +90,12 @@ type MultiNetworkNodeInfo struct {
 }
 
 // Assert MultiNetworkNodeInfo satisfies NodeInfo.
-var _ p2p.NodeInfo = MultiNetworkNodeInfo{}
+var _ p2p.NodeInfo = (*MultiNetworkNodeInfo)(nil)
 
-// NewMultiNetworkNodeInfo creates a new instance around a nodeCfg, a nodeKey
+// NewMultiNetworkNodeInfoWithConfig creates a new instance around a nodeCfg, a nodeKey
 // and a listenAddr.
 // Note that the liveness of listenAddr is not validated here.
-func NewMultiNetworkNodeInfo(
+func NewMultiNetworkNodeInfoWithConfig(
 	nodeCfg *config.Config,
 	nodeKey *p2p.NodeKey,
 	listenAddr *p2p.NetAddress,
@@ -126,18 +129,149 @@ func NewMultiNetworkNodeInfo(
 	}
 }
 
+func NewMultiNetworkNodeInfo() *MultiNetworkNodeInfo {
+	return &MultiNetworkNodeInfo{
+		Networks:         []string{},
+		ProtocolVersions: []ChainProtocolVersion{},
+	}
+}
+
 // ID returns the node's peer ID.
-func (info MultiNetworkNodeInfo) ID() p2p.ID {
+func (info *MultiNetworkNodeInfo) ID() p2p.ID {
+	info.mtx.Lock()
+	defer info.mtx.Unlock()
+
 	return info.DefaultNodeID
 }
 
+// SetID sets the node's peer ID.
+func (info *MultiNetworkNodeInfo) SetID(id p2p.ID) {
+	info.mtx.Lock()
+	defer info.mtx.Unlock()
+
+	info.DefaultNodeID = id
+}
+
 // GetChannels returns the node's channels.
-func (info MultiNetworkNodeInfo) GetChannels() cmtbytes.HexBytes {
+func (info *MultiNetworkNodeInfo) GetChannels() cmtbytes.HexBytes {
+	info.mtx.Lock()
+	defer info.mtx.Unlock()
+
 	return info.Channels
 }
 
+// SetChannels sets the node's channels.
+func (info *MultiNetworkNodeInfo) SetChannels(channels cmtbytes.HexBytes) {
+	info.mtx.Lock()
+	defer info.mtx.Unlock()
+
+	info.Channels = make([]byte, len(channels))
+	copy(info.Channels, channels)
+}
+
+// GetNetworks returns the node's channels.
+func (info *MultiNetworkNodeInfo) GetNetworks() []string {
+	info.mtx.Lock()
+	defer info.mtx.Unlock()
+
+	return info.Networks
+}
+
+// SetNetworks sets the node's channels.
+func (info *MultiNetworkNodeInfo) SetNetworks(networks []string) {
+	info.mtx.Lock()
+	defer info.mtx.Unlock()
+
+	info.Networks = make([]string, len(networks))
+	copy(info.Networks, networks)
+}
+
+// GetProtocolVersions returns the node's channels.
+func (info *MultiNetworkNodeInfo) GetProtocolVersions() []ChainProtocolVersion {
+	info.mtx.Lock()
+	defer info.mtx.Unlock()
+
+	return info.ProtocolVersions
+}
+
+// SetProtocolVersions sets the node's channels.
+func (info *MultiNetworkNodeInfo) SetProtocolVersions(versions []ChainProtocolVersion) {
+	info.mtx.Lock()
+	defer info.mtx.Unlock()
+
+	info.ProtocolVersions = make([]ChainProtocolVersion, len(versions))
+	copy(info.ProtocolVersions, versions)
+}
+
+// GetVersion returns the node's channels.
+func (info *MultiNetworkNodeInfo) GetVersion() string {
+	info.mtx.Lock()
+	defer info.mtx.Unlock()
+
+	return info.Version
+}
+
+// SetVersion sets the node's channels.
+func (info *MultiNetworkNodeInfo) SetVersion(version string) {
+	info.mtx.Lock()
+	defer info.mtx.Unlock()
+
+	info.Version = version
+}
+
+// GetMoniker returns the node's channels.
+func (info *MultiNetworkNodeInfo) GetMoniker() string {
+	info.mtx.Lock()
+	defer info.mtx.Unlock()
+
+	return info.Moniker
+}
+
+// SetMoniker sets the node's channels.
+func (info *MultiNetworkNodeInfo) SetMoniker(moniker string) {
+	info.mtx.Lock()
+	defer info.mtx.Unlock()
+
+	info.Moniker = moniker
+}
+
+// GetListenAddr returns the node's channels.
+func (info *MultiNetworkNodeInfo) GetListenAddr() string {
+	info.mtx.Lock()
+	defer info.mtx.Unlock()
+
+	return info.ListenAddr
+}
+
+// SetListenAddr sets the node's channels.
+func (info *MultiNetworkNodeInfo) SetListenAddr(laddr string) {
+	info.mtx.Lock()
+	defer info.mtx.Unlock()
+
+	info.ListenAddr = laddr
+}
+
+// GetOther returns the node's channels.
+func (info *MultiNetworkNodeInfo) GetOther() p2p.DefaultNodeInfoOther {
+	info.mtx.Lock()
+	defer info.mtx.Unlock()
+
+	return info.Other
+}
+
+// SetOther sets the node's channels.
+func (info *MultiNetworkNodeInfo) SetOther(other p2p.DefaultNodeInfoOther) {
+	info.mtx.Lock()
+	defer info.mtx.Unlock()
+
+	info.Other = other
+}
+
 // GetNodeInfo returns a [p2p.NodeInfo] instance by chain ID.
-func (info MultiNetworkNodeInfo) GetNodeInfo(chainID string) p2p.DefaultNodeInfo {
+func (info *MultiNetworkNodeInfo) GetNodeInfo(chainID string) p2p.DefaultNodeInfo {
+	info.mtx.Lock()
+	defer info.mtx.Unlock()
+
 	versionPos := slices.IndexFunc(info.ProtocolVersions, func(v ChainProtocolVersion) bool {
 		return v.ChainID == chainID
 	})
@@ -188,12 +322,15 @@ func (info MultiNetworkNodeInfo) GetNodeInfo(chainID string) p2p.DefaultNodeInfo
 // It returns an error if there are too many Channels, if there are
 // any duplicate Channels, if the ListenAddr is malformed, or if the
 // ListenAddr is a host name that can not be resolved to some IP.
-func (info MultiNetworkNodeInfo) Validate() error {
+func (info *MultiNetworkNodeInfo) Validate() error {
 	// ID is already validated.
+
+	info.mtx.Lock()
+	defer info.mtx.Unlock()
 
 	// Validate P2P listen address
 	if len(info.ListenAddr) > 0 && info.ListenAddr != p2p.EmptyNetAddress {
-		if _, err := p2p.NewNetAddressString(p2p.IDAddressString(info.ID(), info.ListenAddr)); err != nil {
+		if _, err := p2p.NewNetAddressString(p2p.IDAddressString(info.DefaultNodeID, info.ListenAddr)); err != nil {
 			return err
 		}
 	}
@@ -249,12 +386,15 @@ func (info MultiNetworkNodeInfo) Validate() error {
 //
 // CONTRACT: two nodes are compatible if the Block version and network match
 // and they have at least one channel in common.
-func (info MultiNetworkNodeInfo) CompatibleWith(otherInfo p2p.NodeInfo) error {
-	other, ok := otherInfo.(MultiNetworkNodeInfo)
+func (info *MultiNetworkNodeInfo) CompatibleWith(otherInfo p2p.NodeInfo) error {
+	other, ok := otherInfo.(*MultiNetworkNodeInfo)
 	if !ok {
 		return fmt.Errorf(
 			"wrong NodeInfo type. Expected MultiNetworkNodeInfo, got %v", reflect.TypeOf(otherInfo))
 	}
+
+	info.mtx.Lock()
+	defer info.mtx.Unlock()
 
 	// Validate per-network protocol versions here because differing versions
 	// indicate a breaking network upgrade.
@@ -302,12 +442,15 @@ OUTER_LOOP:
 }
 
 // GetCommonChains returns the ChainIDs that we have in common with otherInfo.
-func (info MultiNetworkNodeInfo) GetCommonChains(otherInfo p2p.NodeInfo) ([]string, error) {
-	other, ok := otherInfo.(MultiNetworkNodeInfo)
+func (info *MultiNetworkNodeInfo) GetCommonChains(otherInfo p2p.NodeInfo) ([]string, error) {
+	other, ok := otherInfo.(*MultiNetworkNodeInfo)
 	if !ok {
 		return nil, fmt.Errorf(
 			"wrong NodeInfo type. Expected MultiNetworkNodeInfo, got %v", reflect.TypeOf(otherInfo))
 	}
+
+	info.mtx.Lock()
+	defer info.mtx.Unlock()
 
 	commonChains := make([]string, 0, len(info.Networks))
 	commonChains = append(commonChains, info.Networks...)
@@ -321,16 +464,22 @@ func (info MultiNetworkNodeInfo) GetCommonChains(otherInfo p2p.NodeInfo) ([]stri
 // it includes the authenticated peer ID and the self-reported
 // ListenAddr. Note that the ListenAddr is not authenticated and
 // may not match that address actually dialed if its an outbound peer.
-func (info MultiNetworkNodeInfo) NetAddress() (*p2p.NetAddress, error) {
+func (info *MultiNetworkNodeInfo) NetAddress() (*p2p.NetAddress, error) {
 	idAddr := p2p.IDAddressString(info.ID(), info.ListenAddr)
 	return p2p.NewNetAddressString(idAddr)
 }
 
-func (info MultiNetworkNodeInfo) HasChannel(chID byte) bool {
+func (info *MultiNetworkNodeInfo) HasChannel(chID byte) bool {
+	info.mtx.Lock()
+	defer info.mtx.Unlock()
+
 	return bytes.Contains(info.Channels, []byte{chID})
 }
 
-func (info MultiNetworkNodeInfo) ToProto() *mxp2p.MultiNetworkNodeInfo {
+func (info *MultiNetworkNodeInfo) ToProto() *mxp2p.MultiNetworkNodeInfo {
+	info.mtx.Lock()
+	defer info.mtx.Unlock()
+
 	numReplicatedChains := len(info.Networks)
 	numVersions := len(info.ProtocolVersions)
 
@@ -385,9 +534,9 @@ func (info MultiNetworkNodeInfo) ToProto() *mxp2p.MultiNetworkNodeInfo {
 	return dni
 }
 
-func MultiNetworkNodeInfoFromProto(pb *mxp2p.MultiNetworkNodeInfo) (MultiNetworkNodeInfo, error) {
+func MultiNetworkNodeInfoFromProto(pb *mxp2p.MultiNetworkNodeInfo) (*MultiNetworkNodeInfo, error) {
 	if pb == nil {
-		return MultiNetworkNodeInfo{}, errors.New("nil node info")
+		return nil, errors.New("nil node info")
 	}
 
 	networks := make([]string, len(pb.Networks))
@@ -404,7 +553,7 @@ func MultiNetworkNodeInfoFromProto(pb *mxp2p.MultiNetworkNodeInfo) (MultiNetwork
 		}
 	}
 
-	dni := MultiNetworkNodeInfo{
+	dni := &MultiNetworkNodeInfo{
 		Networks:         networks,
 		ProtocolVersions: protocolVersions,
 		DefaultNodeID:    p2p.ID(pb.DefaultNodeID),

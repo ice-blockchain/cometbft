@@ -14,9 +14,21 @@ import (
 	"github.com/ice-blockchain/cometbft/p2p"
 )
 
+func malleateTxIndex(ni *mx.MultiNetworkNodeInfo, v string) {
+	o := ni.GetOther()
+	o.TxIndex = v
+	ni.SetOther(o)
+}
+
+func malleateRPCAddress(ni *mx.MultiNetworkNodeInfo, v string) {
+	o := ni.GetOther()
+	o.RPCAddress = v
+	ni.SetOther(o)
+}
+
 func TestMultiplexMultiNetworkNodeInfoValidate(t *testing.T) {
 	// empty fails
-	ni := mx.MultiNetworkNodeInfo{}
+	ni := &mx.MultiNetworkNodeInfo{}
 	require.Error(t, ni.Validate())
 
 	maxNumChannels := p2p.MaxNumChannels()
@@ -40,51 +52,51 @@ func TestMultiplexMultiNetworkNodeInfoValidate(t *testing.T) {
 	}{
 		{
 			"Too Many Channels",
-			func(ni *mx.MultiNetworkNodeInfo) { ni.Channels = append(channels, byte(maxNumChannels)) }, //nolint: makezero
+			func(ni *mx.MultiNetworkNodeInfo) { ni.SetChannels(append(channels, byte(maxNumChannels))) }, //nolint: makezero
 			true,
 		},
-		{"Duplicate Channel", func(ni *mx.MultiNetworkNodeInfo) { ni.Channels = dupChannels }, true},
-		{"Good Channels", func(ni *mx.MultiNetworkNodeInfo) { ni.Channels = ni.Channels[:5] }, false},
+		{"Duplicate Channel", func(ni *mx.MultiNetworkNodeInfo) { ni.SetChannels(dupChannels) }, true},
+		{"Good Channels", func(ni *mx.MultiNetworkNodeInfo) { ni.SetChannels(ni.Channels[:5]) }, false},
 
-		{"Invalid NetAddress", func(ni *mx.MultiNetworkNodeInfo) { ni.ListenAddr = "not-an-address" }, true},
-		{"Good NetAddress", func(ni *mx.MultiNetworkNodeInfo) { ni.ListenAddr = "0.0.0.0:26656" }, false},
+		{"Invalid NetAddress", func(ni *mx.MultiNetworkNodeInfo) { ni.SetListenAddr("not-an-address") }, true},
+		{"Good NetAddress", func(ni *mx.MultiNetworkNodeInfo) { ni.SetListenAddr("0.0.0.0:26656") }, false},
 
-		{"Non-ASCII Version", func(ni *mx.MultiNetworkNodeInfo) { ni.Version = nonASCII }, true},
-		{"Empty tab Version", func(ni *mx.MultiNetworkNodeInfo) { ni.Version = emptyTab }, true},
-		{"Empty space Version", func(ni *mx.MultiNetworkNodeInfo) { ni.Version = emptySpace }, true},
-		{"Empty Version", func(ni *mx.MultiNetworkNodeInfo) { ni.Version = "" }, false},
+		{"Non-ASCII Version", func(ni *mx.MultiNetworkNodeInfo) { ni.SetVersion(nonASCII) }, true},
+		{"Empty tab Version", func(ni *mx.MultiNetworkNodeInfo) { ni.SetVersion(emptyTab) }, true},
+		{"Empty space Version", func(ni *mx.MultiNetworkNodeInfo) { ni.SetVersion(emptySpace) }, true},
+		{"Empty Version", func(ni *mx.MultiNetworkNodeInfo) { ni.SetVersion("") }, false},
 
-		{"Non-ASCII Moniker", func(ni *mx.MultiNetworkNodeInfo) { ni.Moniker = nonASCII }, true},
-		{"Empty tab Moniker", func(ni *mx.MultiNetworkNodeInfo) { ni.Moniker = emptyTab }, true},
-		{"Empty space Moniker", func(ni *mx.MultiNetworkNodeInfo) { ni.Moniker = emptySpace }, true},
-		{"Empty Moniker", func(ni *mx.MultiNetworkNodeInfo) { ni.Moniker = "" }, true},
-		{"Good Moniker", func(ni *mx.MultiNetworkNodeInfo) { ni.Moniker = "hey its me" }, false},
+		{"Non-ASCII Moniker", func(ni *mx.MultiNetworkNodeInfo) { ni.SetMoniker(nonASCII) }, true},
+		{"Empty tab Moniker", func(ni *mx.MultiNetworkNodeInfo) { ni.SetMoniker(emptyTab) }, true},
+		{"Empty space Moniker", func(ni *mx.MultiNetworkNodeInfo) { ni.SetMoniker(emptySpace) }, true},
+		{"Empty Moniker", func(ni *mx.MultiNetworkNodeInfo) { ni.SetMoniker("") }, true},
+		{"Good Moniker", func(ni *mx.MultiNetworkNodeInfo) { ni.SetMoniker("hey its me") }, false},
 
-		{"Non-ASCII TxIndex", func(ni *mx.MultiNetworkNodeInfo) { ni.Other.TxIndex = nonASCII }, true},
-		{"Empty tab TxIndex", func(ni *mx.MultiNetworkNodeInfo) { ni.Other.TxIndex = emptyTab }, true},
-		{"Empty space TxIndex", func(ni *mx.MultiNetworkNodeInfo) { ni.Other.TxIndex = emptySpace }, true},
-		{"Empty TxIndex", func(ni *mx.MultiNetworkNodeInfo) { ni.Other.TxIndex = "" }, false},
-		{"Off TxIndex", func(ni *mx.MultiNetworkNodeInfo) { ni.Other.TxIndex = "off" }, false},
+		{"Non-ASCII TxIndex", func(ni *mx.MultiNetworkNodeInfo) { malleateTxIndex(ni, nonASCII) }, true},
+		{"Empty tab TxIndex", func(ni *mx.MultiNetworkNodeInfo) { malleateTxIndex(ni, emptyTab) }, true},
+		{"Empty space TxIndex", func(ni *mx.MultiNetworkNodeInfo) { malleateTxIndex(ni, emptySpace) }, true},
+		{"Empty TxIndex", func(ni *mx.MultiNetworkNodeInfo) { malleateTxIndex(ni, "") }, false},
+		{"Off TxIndex", func(ni *mx.MultiNetworkNodeInfo) { malleateTxIndex(ni, "off") }, false},
 
-		{"Non-ASCII RPCAddress", func(ni *mx.MultiNetworkNodeInfo) { ni.Other.RPCAddress = nonASCII }, true},
-		{"Empty tab RPCAddress", func(ni *mx.MultiNetworkNodeInfo) { ni.Other.RPCAddress = emptyTab }, true},
-		{"Empty space RPCAddress", func(ni *mx.MultiNetworkNodeInfo) { ni.Other.RPCAddress = emptySpace }, true},
-		{"Empty RPCAddress", func(ni *mx.MultiNetworkNodeInfo) { ni.Other.RPCAddress = "" }, false},
-		{"Good RPCAddress", func(ni *mx.MultiNetworkNodeInfo) { ni.Other.RPCAddress = "0.0.0.0:26657" }, false},
+		{"Non-ASCII RPCAddress", func(ni *mx.MultiNetworkNodeInfo) { malleateRPCAddress(ni, nonASCII) }, true},
+		{"Empty tab RPCAddress", func(ni *mx.MultiNetworkNodeInfo) { malleateRPCAddress(ni, emptyTab) }, true},
+		{"Empty space RPCAddress", func(ni *mx.MultiNetworkNodeInfo) { malleateRPCAddress(ni, emptySpace) }, true},
+		{"Empty RPCAddress", func(ni *mx.MultiNetworkNodeInfo) { malleateRPCAddress(ni, "") }, false},
+		{"Good RPCAddress", func(ni *mx.MultiNetworkNodeInfo) { malleateRPCAddress(ni, "0.0.0.0:26657") }, false},
 	}
 
 	nodeKey := p2p.NodeKey{PrivKey: ed25519.GenPrivKey()}
 	name := "testing"
 
 	// test case passes
-	ni = testNodeInfo(nodeKey.ID(), name).(mx.MultiNetworkNodeInfo)
-	ni.Channels = channels
+	ni = testNodeInfo(nodeKey.ID(), name).(*mx.MultiNetworkNodeInfo)
+	ni.SetChannels(channels)
 	require.NoError(t, ni.Validate())
 
 	for i, tc := range testCases {
-		ni := testNodeInfo(nodeKey.ID(), name).(mx.MultiNetworkNodeInfo)
-		ni.Channels = channels
-		tc.malleateNodeInfo(&ni)
+		ni := testNodeInfo(nodeKey.ID(), name).(*mx.MultiNetworkNodeInfo)
+		ni.SetChannels(channels)
+		tc.malleateNodeInfo(ni)
 		err := ni.Validate()
 		if tc.expectErr {
 			require.Error(t, err, fmt.Sprintf(tc.testName+" should error at %d", i))
@@ -104,8 +116,8 @@ func TestMultiplexMultiNetworkNodeInfoCompatible(t *testing.T) {
 	var newTestChannel byte = 0x2
 
 	// test NodeInfo is compatible
-	ni1 := testNodeInfo(nodeKey1.ID(), name).(mx.MultiNetworkNodeInfo)
-	ni2 := testNodeInfo(nodeKey2.ID(), name).(mx.MultiNetworkNodeInfo)
+	ni1 := testNodeInfo(nodeKey1.ID(), name).(*mx.MultiNetworkNodeInfo)
+	ni2 := testNodeInfo(nodeKey2.ID(), name).(*mx.MultiNetworkNodeInfo)
 	require.NoError(t, ni1.CompatibleWith(ni2))
 
 	// add another channel; still compatible
@@ -127,14 +139,14 @@ func TestMultiplexMultiNetworkNodeInfoCompatible(t *testing.T) {
 	}
 
 	for i, tc := range testCases {
-		ni := testNodeInfo(nodeKey2.ID(), name).(mx.MultiNetworkNodeInfo)
-		tc.malleateNodeInfo(&ni)
+		ni := testNodeInfo(nodeKey2.ID(), name).(*mx.MultiNetworkNodeInfo)
+		tc.malleateNodeInfo(ni)
 		require.Error(t, ni1.CompatibleWith(ni), fmt.Sprintf("should error at %d", i))
 	}
 }
 
 func emptyNodeInfo() p2p.NodeInfo {
-	return mx.MultiNetworkNodeInfo{}
+	return mx.NewMultiNetworkNodeInfo()
 }
 
 func testNodeInfo(id p2p.ID, name string) p2p.NodeInfo {
@@ -145,21 +157,22 @@ func testNodeInfoWithNetwork(id p2p.ID, name, network string) p2p.NodeInfo {
 	p2pListenAddr := fmt.Sprintf("127.0.0.1:%d", getFreePort())
 	rpcListenAddr := fmt.Sprintf("127.0.0.1:%d", getFreePort())
 
-	return mx.MultiNetworkNodeInfo{
-		Networks: []string{network},
-		ProtocolVersions: []mx.ChainProtocolVersion{
-			mx.NewChainProtocolVersion(network, mx.DefaultProtocolVersion),
-		},
-		DefaultNodeID: id,
-		ListenAddr:    p2pListenAddr,
-		Version:       "1.2.3-rc0-deadbeef",
-		Channels:      []byte{testCh},
-		Moniker:       name,
-		Other: p2p.DefaultNodeInfoOther{
-			TxIndex:    "on",
-			RPCAddress: rpcListenAddr,
-		},
-	}
+	mnni := &mx.MultiNetworkNodeInfo{}
+	mnni.SetNetworks([]string{network})
+	mnni.SetProtocolVersions([]mx.ChainProtocolVersion{
+		mx.NewChainProtocolVersion(network, mx.DefaultProtocolVersion),
+	})
+	mnni.SetID(id)
+	mnni.SetListenAddr(p2pListenAddr)
+	mnni.SetChannels([]byte{testCh})
+	mnni.SetVersion("1.2.3-rc0-deadbeef")
+	mnni.SetMoniker(name)
+	mnni.SetOther(p2p.DefaultNodeInfoOther{
+		TxIndex:    "on",
+		RPCAddress: rpcListenAddr,
+	})
+
+	return mnni
 }
 
 func getFreePort() int {

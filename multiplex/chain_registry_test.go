@@ -189,7 +189,8 @@ func TestMultiplexChainRegistryGetStateSyncConfig(t *testing.T) {
 
 	// We can safely iterate the networks list from registry
 	// because state-sync config is not ordered specifically
-	for _, chainID := range testChainRegistry.GetChains() {
+	chainIds := testChainRegistry.GetChains()
+	for _, chainID := range chainIds {
 		actualStateSyncConf, err := testChainRegistry.GetStateSyncConfig(chainID)
 		assert.NoError(t, err, "should not error given existing ChainID")
 		assert.NotNil(t, actualStateSyncConf)
@@ -222,7 +223,8 @@ func TestMultiplexChainRegistryGetSeeds(t *testing.T) {
 
 	// We can safely iterate the networks list from registry
 	// because seed nodes config is not ordered specifically
-	for _, chainID := range testChainRegistry.GetChains() {
+	chainIds := testChainRegistry.GetChains()
+	for _, chainID := range chainIds {
 		actualSeeds, err := testChainRegistry.GetSeeds(chainID)
 		assert.NoError(t, err, "should not error given existing ChainID")
 		assert.NotNil(t, actualSeeds)
@@ -287,7 +289,8 @@ func TestMultiplexChainRegistryFindChain(t *testing.T) {
 	require.NoError(t, err, "should create chain registry from random multiplex config")
 
 	// GetChains is tested to return an alphabetically ordered slice of ChainID
-	for index, chainID := range testChainRegistry.GetChains() {
+	chainIds := testChainRegistry.GetChains()
+	for index, chainID := range chainIds {
 		// Should return the correct index in ordered slice
 		actualIndex, err := testChainRegistry.FindChain(chainID)
 		assert.NoError(t, err)

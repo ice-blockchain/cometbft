@@ -29,7 +29,7 @@ func TestMultiplexTransportHandshake(t *testing.T) {
 
 	var (
 		peerPV       = ed25519.GenPrivKey()
-		peerNodeInfo = testNodeInfo(p2p.PubKeyToID(peerPV.PubKey()), defaultNodeName)
+		peerNodeInfo = testNodeInfo(p2p.PubKeyToID(peerPV.PubKey()), defaultNodeName).(*mx.MultiNetworkNodeInfo)
 	)
 
 	go func() {
@@ -40,7 +40,7 @@ func TestMultiplexTransportHandshake(t *testing.T) {
 		}
 
 		go func(c net.Conn) {
-			_, err := protoio.NewDelimitedWriter(c).WriteMsg(peerNodeInfo.(mx.MultiNetworkNodeInfo).ToProto())
+			_, err := protoio.NewDelimitedWriter(c).WriteMsg(peerNodeInfo.ToProto())
 			if err != nil {
 				t.Error(err)
 			}

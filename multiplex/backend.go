@@ -319,7 +319,7 @@ func (b *MultiplexBackend) CreateOrLoadDiscoveryEventSwitch() *p2p.Switch {
 
 	// In-place mutation of the listen address so that it always uses
 	// the configured broadcast address.
-	multiNodeInfo := NewMultiNetworkNodeInfo(
+	multiNodeInfo := NewMultiNetworkNodeInfoWithConfig(
 		nodeConfig,
 		b.reactor.GetNodeKey(),
 		b.broadcastAddr,
@@ -370,20 +370,21 @@ func (b *MultiplexBackend) UpdateAvailableNetworks(networks []string) []string {
 	}
 
 	b.relayMtx.Lock()
-	multiNodeInfo := b.multiNodeInfo
-	availableNetworks := multiNodeInfo.Networks
+	availableNetworks := b.multiNodeInfo.Networks
+	availableVersions := b.multiNodeInfo.ProtocolVersions
 	b.relayMtx.Unlock()
 
 	// TODO(midas): remove debug logs
 	b.logger.Debug("Updating available networks",
-		"num_before", len(multiNodeInfo.Networks),
+		"num_versions", len(availableVersions),
+		"num_before", len(availableNetworks),
 		"num_adding", len(networks),
 	)
 
 	for _, chainID := range networks {
 		if !slices.Contains(availableNetworks, chainID) {
-			multiNodeInfo.Networks = append(multiNodeInfo.Networks, chainID)
-			multiNodeInfo.ProtocolVersions = append(multiNodeInfo.ProtocolVersions,
+			availableNetworks = append(availableNetworks, chainID)
+			availableVersions = append(availableVersions,
 				NewChainProtocolVersion(
 					chainID,
 					DefaultProtocolVersion,
@@ -394,15 +395,16 @@ func (b *MultiplexBackend) UpdateAvailableNetworks(networks []string) []string {
 
 	// Updates the MultiNetworkNodeInfo instance
 	b.relayMtx.Lock()
-	b.multiNodeInfo = multiNodeInfo
-	discoverySwitch.SetNodeInfo(multiNodeInfo)
+	b.multiNodeInfo.SetNetworks(availableNetworks)
+	b.multiNodeInfo.SetProtocolVersions(availableVersions)
+	discoverySwitch.SetNodeInfo(b.multiNodeInfo)
 	b.relayMtx.Unlock()
 
 	// We must upgrade the mconn channels for P2P discovery peers
 	// for injected networks that were not present at time of creation.
 	b.reactor.AddConnectionChannels(
 		discoverySwitch,
-		multiNodeInfo.Networks,
+		availableNetworks,
 		[]byte{server.ReplicationChannel},
 		false,
 	)
@@ -411,12 +413,12 @@ func (b *MultiplexBackend) UpdateAvailableNetworks(networks []string) []string {
 	// for injected networks that were not present at time of creation.
 	b.reactor.AddConnectionChannels(
 		cometbftSwitch,
-		multiNodeInfo.Networks,
+		availableNetworks,
 		[]byte{}, // all channels
 		true,
 	)
 
-	return multiNodeInfo.Networks
+	return availableNetworks
 }
 
 // MustStart starts a replication backend basically selecting void

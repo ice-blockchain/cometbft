@@ -27,7 +27,7 @@ func MultiplexTransportHandshake(
 		errc = make(chan error, 2)
 
 		pbpeerNodeInfo mxp2p.MultiNetworkNodeInfo
-		peerNodeInfo   MultiNetworkNodeInfo
+		peerNodeInfo   *MultiNetworkNodeInfo
 		ourNodeInfo    = nodeInfo.(*MultiNetworkNodeInfo)
 	)
 
