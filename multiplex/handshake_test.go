@@ -40,7 +40,12 @@ func TestMultiplexTransportHandshake(t *testing.T) {
 		}
 
 		go func(c net.Conn) {
-			_, err := protoio.NewDelimitedWriter(c).WriteMsg(peerNodeInfo.ToProto())
+			niProto, err := peerNodeInfo.ToProto()
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			_, err = protoio.NewDelimitedWriter(c).WriteMsg(niProto)
 			if err != nil {
 				t.Error(err)
 			}

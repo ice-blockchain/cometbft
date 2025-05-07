@@ -32,7 +32,12 @@ func MultiplexTransportHandshake(
 	)
 
 	go func(errc chan<- error, c net.Conn) {
-		_, err := protoio.NewDelimitedWriter(c).WriteMsg(ourNodeInfo.ToProto())
+		niProto, err := ourNodeInfo.ToProto()
+		if err != nil {
+			errc <- err
+			return
+		}
+		_, err = protoio.NewDelimitedWriter(c).WriteMsg(niProto)
 		errc <- err
 	}(errc, c)
 	go func(errc chan<- error, c net.Conn) {

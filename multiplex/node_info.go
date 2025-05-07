@@ -268,7 +268,7 @@ func (info *MultiNetworkNodeInfo) SetOther(other p2p.DefaultNodeInfoOther) {
 }
 
 // GetNodeInfo returns a [p2p.NodeInfo] instance by chain ID.
-func (info *MultiNetworkNodeInfo) GetNodeInfo(chainID string) p2p.DefaultNodeInfo {
+func (info *MultiNetworkNodeInfo) GetNodeInfo(chainID string) (p2p.DefaultNodeInfo, error) {
 	info.mtx.Lock()
 	defer info.mtx.Unlock()
 
@@ -282,7 +282,8 @@ func (info *MultiNetworkNodeInfo) GetNodeInfo(chainID string) p2p.DefaultNodeInf
 
 	// Not finding a protocol version, network or listen address should never happen
 	if versionPos < 0 || networkPos < 0 {
-		panic(fmt.Sprintf("could not determine version for ChainID %s", chainID)) //nolint:perfsprint
+		return p2p.DefaultNodeInfo{}, fmt.Errorf(
+			"could not determine version for ChainID %s", chainID)
 	}
 
 	protocolVersion := info.ProtocolVersions[versionPos]
@@ -312,10 +313,11 @@ func (info *MultiNetworkNodeInfo) GetNodeInfo(chainID string) p2p.DefaultNodeInf
 	nodeInfo.ListenAddr = info.ListenAddr
 	err := nodeInfo.Validate()
 	if err != nil {
-		panic(fmt.Errorf("could not validate p2p node info: %w", err))
+		return p2p.DefaultNodeInfo{}, fmt.Errorf(
+			"could not validate p2p node info: %w", err)
 	}
 
-	return nodeInfo
+	return nodeInfo, nil
 }
 
 // Validate checks the self-reported MultiNetworkNodeInfo is safe.
@@ -476,7 +478,7 @@ func (info *MultiNetworkNodeInfo) HasChannel(chID byte) bool {
 	return bytes.Contains(info.Channels, []byte{chID})
 }
 
-func (info *MultiNetworkNodeInfo) ToProto() *mxp2p.MultiNetworkNodeInfo {
+func (info *MultiNetworkNodeInfo) ToProto() (*mxp2p.MultiNetworkNodeInfo, error) {
 	info.mtx.Lock()
 	defer info.mtx.Unlock()
 
@@ -485,8 +487,9 @@ func (info *MultiNetworkNodeInfo) ToProto() *mxp2p.MultiNetworkNodeInfo {
 
 	// Mismatch in sizes should never happen here
 	if numReplicatedChains != numVersions {
-		panic(fmt.Sprintf("found inconsistent number of replicated chains, got %d networks and %d versions",
-			numReplicatedChains, numVersions))
+		return nil, fmt.Errorf(
+			"found inconsistent number of ChainID, got %d networks and %d versions: %v",
+			numReplicatedChains, numVersions, info)
 	}
 
 	dni := new(mxp2p.MultiNetworkNodeInfo)
@@ -504,7 +507,8 @@ func (info *MultiNetworkNodeInfo) ToProto() *mxp2p.MultiNetworkNodeInfo {
 
 		// Not being able to find a protocol version or network should never happen
 		if versionPos < 0 || networkPos < 0 {
-			panic(fmt.Sprintf("could not determine version for ChainID %s", userChainID)) //nolint:perfsprint
+			return nil, fmt.Errorf(
+				"could not determine version for ChainID %s", userChainID)
 		}
 
 		protocolVersion := info.ProtocolVersions[versionPos]
@@ -531,7 +535,7 @@ func (info *MultiNetworkNodeInfo) ToProto() *mxp2p.MultiNetworkNodeInfo {
 		RPCAddress: info.Other.RPCAddress,
 	}
 
-	return dni
+	return dni, nil
 }
 
 func MultiNetworkNodeInfoFromProto(pb *mxp2p.MultiNetworkNodeInfo) (*MultiNetworkNodeInfo, error) {

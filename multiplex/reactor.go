@@ -1211,10 +1211,12 @@ func (reactor *Reactor) OnStart() error {
 			defer reactor.runtimesMutex.Unlock()
 
 			// Start node listeners
-			//
-			// TODO(midas): Caller should recover from panic.,
 			if err := reactor.startNodeListeners(network); err != nil {
-				panic(err)
+				reactor.logger.Error(
+					"error starting node runtime",
+					"chain_id", network,
+					"err", err,
+				)
 			}
 
 			reactor.chainReadyMtx.RLock()

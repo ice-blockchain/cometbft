@@ -339,7 +339,8 @@ func TestMultiplexReactorRegisterNetwork(t *testing.T) {
 	testMultiNetNodeInfo := testReactor.GetMultiNetworkNodeInfo()
 	assert.NotNil(t, testMultiNetNodeInfo)
 
-	actualChainNodeInfo := testMultiNetNodeInfo.GetNodeInfo(testChainID)
+	actualChainNodeInfo, err := testMultiNetNodeInfo.GetNodeInfo(testChainID)
+	assert.NoError(t, err)
 	assert.NotNil(t, actualChainNodeInfo)
 	assert.Equal(t, testChainID, actualChainNodeInfo.Network)
 }

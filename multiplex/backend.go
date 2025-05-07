@@ -1712,7 +1712,10 @@ func (b *MultiplexBackend) StartNodeInstances() error {
 			)
 
 			if err := n.Start(); err != nil {
-				panic(fmt.Errorf("failed to start node: %w", err))
+				b.logger.Error("failed to stop node",
+					"chain_id", network,
+					"err", err,
+				)
 			}
 
 			b.logger.Info("Started node",
@@ -1754,7 +1757,10 @@ func (b *MultiplexBackend) StopNodeInstances() error {
 			if n.IsRunning() {
 				if err := n.Stop(); err != nil {
 					if err != service.ErrAlreadyStopped {
-						panic(fmt.Errorf("failed to stop node: %w", err))
+						b.logger.Error("failed to stop node",
+							"chain_id", network,
+							"err", err,
+						)
 					}
 				}
 			}

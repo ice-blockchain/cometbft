@@ -262,15 +262,14 @@ func (reactor *Reactor) InjectNewNetwork(
 // is created and started in a parallel goroutine. Given a nil return value
 // means that the node instance is running and that `Stop()` may be called.
 //
-// This method executes parallel goroutines which may produce panics. It is
-// recommended to recover from panics in the caller thread.
-//
 // Caution: The method [InjectNewNetwork] must be called before.
 func (reactor *Reactor) InjectNewRuntime(
 	ctx context.Context,
 	chainID string,
 	options ...node.Option,
 ) error {
+	clogger := reactor.logger.With("chain_id", chainID)
+
 	// ------------------------------------------------------------------------
 	// Step 1: Create runtime environment
 
@@ -279,7 +278,6 @@ func (reactor *Reactor) InjectNewRuntime(
 	reactor.chainReadyMtx.Unlock()
 
 	// Creates an event bus and loads the priv validator service.
-	// This goroutine produces a panic in case of errors.
 	go func(network string) {
 		// Lock the filesystem mutex while loading priv val (fs)
 		reactor.runtimesMutex.Lock()
@@ -287,7 +285,9 @@ func (reactor *Reactor) InjectNewRuntime(
 
 		// Start node listeners
 		if err := reactor.startNodeListeners(network); err != nil {
-			panic(err)
+			clogger.Error("failed to start node for new runtime",
+				"err", err,
+			)
 		}
 
 		reactor.chainReadyMtx.RLock()
@@ -305,8 +305,6 @@ func (reactor *Reactor) InjectNewRuntime(
 	// Waits until the reactor started the required node listeners
 	// Blocks the main thread intentionally to wait for node services.
 	<-chainReadyCh
-
-	clogger := reactor.logger.With("chain_id", chainID)
 
 	// ------------------------------------------------------------------------
 	// Step 2: Execute consensus handshake
@@ -416,13 +414,10 @@ func (reactor *Reactor) StartNode(ctx context.Context, chainID string) error {
 	// Note that consensus reactors are not started here to prevent race
 	// conditions between the replication routine and cometbft services.
 
-	// TODO(midas): recover from panics happening in start coroutine.
-
 	// Type-assertion makes sure we have a [*node.Node]
 	runNode := updatedMx[chainID].GetInstance().(*node.Node)
 
 	// Calls the Start method on the node.Node instance.
-	// This goroutine produces a panic in case of errors.
 	go func(network string, n *node.Node) {
 		clogger.Info("Starting new node", "chain_id", network)
 		clogger.Info("Using custom listen addresses",
@@ -431,11 +426,12 @@ func (reactor *Reactor) StartNode(ctx context.Context, chainID string) error {
 		)
 
 		if err := n.Start(); err != nil {
-			panic(fmt.Errorf("failed to start node: %w", err))
+			clogger.Error("failed to start node",
+				"err", err,
+			)
 		}
 
 		clogger.Info("Started node",
-			"chain_id", network,
 			"nodeInfo", n.Switch().NodeInfo(),
 		)
 	}(chainID, runNode)

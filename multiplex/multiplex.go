@@ -82,11 +82,15 @@ func (reactor *Reactor) createMultiplexNodesWithServices(
 
 		multiNodeInfo := reactor.GetMultiNetworkNodeInfo()
 		withNodeKey := reactor.GetNodeKey()
+		withNodeInfo, infoErr := multiNodeInfo.GetNodeInfo(chainID)
+		if infoErr != nil {
+			return nodesMultiplex, infoErr
+		}
 
 		nodeInstance := node.NewNodeWithServices(
 			cfgOverwrite,
 			genesisDoc,
-			multiNodeInfo.GetNodeInfo(chainID),
+			withNodeInfo,
 			withNodeKey,
 			privValidator,
 			pexAddrBook,
