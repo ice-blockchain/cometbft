@@ -2033,6 +2033,246 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
 }
 
+func TestScenarioClientBroadcastSingleRelayContinuousBlocks(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	numChains := 0
+	numRelays := 1
+
+	servers, shutdownFn := ResetTestScenarioRelaysWithLogs(t, numChains, numRelays)
+	defer shutdownFn()
+
+	require.NotEmpty(t, servers)
+	require.Len(t, servers, numRelays)
+
+	// Note: relays includes self
+	// Using 2 seconds waitDuration because we shall broadcast BEFORE shutdown.
+	relays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
+		servers,
+		2*time.Second,  // Time for backend
+		20*time.Second, // Time for broadcast
+	)
+	defer cancelCtxFn()
+
+	require.NotEmpty(t, relays)
+	require.NotNil(t, broadcastCtx)
+	require.Len(t, relays, numRelays)
+
+	testChainID1 := makeChainID("test-chain-1")
+	testChainID2 := makeChainID("test-chain-2")
+
+	// STEP 1:
+	// We execute a complete broadcast process (Height=1).
+
+	func() {
+		// Separate goroutine for client broadcast process
+		numTransactions := 1
+		notifyCh := make(chan client.BroadcastStatus)
+		defer close(notifyCh)
+
+		go clientBroadcastTx(t,
+			broadcastCtx,
+			servers[0],
+			relays,
+			testChainID1,
+			numTransactions,
+			notifyCh,
+		)
+
+		// Blocks the main thread until we consume from notifyCh.
+		resultStatusMsg := waitForClientBroadcastStatus(t,
+			broadcastCtx,
+			testChainID1,
+			notifyCh,
+		)
+		require.NotNil(t, resultStatusMsg)
+		require.NoError(t, resultStatusMsg.Error,
+			"should not error with first broadcast and "+testChainID1)
+		require.Len(t, resultStatusMsg.TxHashes, numTransactions)
+
+		t.Logf("Broadcast #1 completed with ChainID: %s", testChainID1)
+
+		waitDuration := 10 * time.Second
+		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
+		time.Sleep(waitDuration)
+
+		blockHeight := int64(1)
+		assertNetworkProducedBlockWithTxes(t, servers[0], testChainID1, blockHeight, numTransactions)
+	}()
+
+	// STEP 2:
+	// We execute another complete broadcast process (Height=2).
+
+	func() {
+		secondTimeoutAfter := 20 * time.Second // Time for broadcast
+		secondBroadcastCtx, secondCancelCtxFn := context.WithTimeout(context.TODO(), secondTimeoutAfter)
+		defer secondCancelCtxFn()
+
+		// Separate goroutine for client broadcast process
+		numTransactions := 1
+		notifyCh := make(chan client.BroadcastStatus)
+		defer close(notifyCh)
+
+		go clientBroadcastTx(t,
+			secondBroadcastCtx,
+			servers[0],
+			relays,
+			testChainID1,
+			numTransactions,
+			notifyCh,
+		)
+
+		// Blocks the main thread until we consume from notifyCh.
+		resultStatusMsg := waitForClientBroadcastStatus(t,
+			secondBroadcastCtx,
+			testChainID1,
+			notifyCh,
+		)
+		require.NotNil(t, resultStatusMsg)
+		require.NoError(t, resultStatusMsg.Error,
+			"should not error with second broadcast and "+testChainID1)
+		require.Len(t, resultStatusMsg.TxHashes, numTransactions)
+
+		t.Logf("Broadcast #2 completed with ChainID: %s", testChainID1)
+
+		waitDuration := 10 * time.Second
+		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
+		time.Sleep(waitDuration)
+
+		blockHeight := int64(2)
+		assertNetworkProducedBlockWithTxes(t, servers[0], testChainID1, blockHeight, numTransactions)
+	}()
+
+	// STEP 3:
+	// We execute another complete broadcast process (Height=3).
+
+	func() {
+		thirdTimeoutAfter := 20 * time.Second // Time for broadcast
+		thirdBroadcastCtx, thirdCancelCtxFn := context.WithTimeout(context.TODO(), thirdTimeoutAfter)
+		defer thirdCancelCtxFn()
+
+		// Separate goroutine for client broadcast process
+		numTransactions := 1
+		notifyCh := make(chan client.BroadcastStatus)
+		defer close(notifyCh)
+
+		go clientBroadcastTx(t,
+			thirdBroadcastCtx,
+			servers[0],
+			relays,
+			testChainID1,
+			numTransactions,
+			notifyCh,
+		)
+
+		// Blocks the main thread until we consume from notifyCh.
+		resultStatusMsg := waitForClientBroadcastStatus(t,
+			thirdBroadcastCtx,
+			testChainID1,
+			notifyCh,
+		)
+		require.NotNil(t, resultStatusMsg)
+		require.NoError(t, resultStatusMsg.Error,
+			"should not error with third broadcast and "+testChainID1)
+		require.Len(t, resultStatusMsg.TxHashes, numTransactions)
+
+		t.Logf("Broadcast #3 completed with ChainID: %s", testChainID1)
+
+		waitDuration := 10 * time.Second
+		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
+		time.Sleep(waitDuration)
+
+		blockHeight := int64(3)
+		assertNetworkProducedBlockWithTxes(t, servers[0], testChainID1, blockHeight, numTransactions)
+	}()
+
+	// STEP 4:
+	// We execute a complete broadcast process on different ChainID (Height=1).
+
+	func() {
+		fourthTimeoutAfter := 20 * time.Second // Time for broadcast
+		fourthBroadcastCtx, fourthCancelCtxFn := context.WithTimeout(context.TODO(), fourthTimeoutAfter)
+		defer fourthCancelCtxFn()
+
+		// Separate goroutine for client broadcast process
+		numTransactions := 1
+		notifyCh := make(chan client.BroadcastStatus)
+		defer close(notifyCh)
+
+		go clientBroadcastTx(t,
+			fourthBroadcastCtx,
+			servers[0],
+			relays,
+			testChainID2,
+			numTransactions,
+			notifyCh,
+		)
+
+		// Blocks the main thread until we consume from notifyCh.
+		resultStatusMsg := waitForClientBroadcastStatus(t,
+			fourthBroadcastCtx,
+			testChainID2,
+			notifyCh,
+		)
+		require.NotNil(t, resultStatusMsg)
+		require.NoError(t, resultStatusMsg.Error,
+			"should not error with fourth broadcast and "+testChainID2)
+		require.Len(t, resultStatusMsg.TxHashes, numTransactions)
+
+		t.Logf("Broadcast #4 completed with ChainID: %s", testChainID2)
+
+		waitDuration := 10 * time.Second
+		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
+		time.Sleep(waitDuration)
+
+		blockHeight := int64(1)
+		assertNetworkProducedBlockWithTxes(t, servers[0], testChainID2, blockHeight, numTransactions)
+	}()
+
+	// STEP 5:
+	// We execute a complete broadcast process on different ChainID (Height=2).
+
+	func() {
+		fifthTimeoutAfter := 20 * time.Second // Time for broadcast
+		fifthBroadcastCtx, fifthCancelCtxFn := context.WithTimeout(context.TODO(), fifthTimeoutAfter)
+		defer fifthCancelCtxFn()
+
+		// Separate goroutine for client broadcast process
+		numTransactions := 1
+		notifyCh := make(chan client.BroadcastStatus)
+		defer close(notifyCh)
+
+		go clientBroadcastTx(t,
+			fifthBroadcastCtx,
+			servers[0],
+			relays,
+			testChainID2,
+			numTransactions,
+			notifyCh,
+		)
+
+		// Blocks the main thread until we consume from notifyCh.
+		resultStatusMsg := waitForClientBroadcastStatus(t,
+			fifthBroadcastCtx,
+			testChainID2,
+			notifyCh,
+		)
+		require.NotNil(t, resultStatusMsg)
+		require.NoError(t, resultStatusMsg.Error,
+			"should not error with fifth broadcast and "+testChainID2)
+		require.Len(t, resultStatusMsg.TxHashes, numTransactions)
+
+		t.Logf("Broadcast #5 completed with ChainID: %s", testChainID2)
+
+		waitDuration := 10 * time.Second
+		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
+		time.Sleep(waitDuration)
+
+		blockHeight := int64(2)
+		assertNetworkProducedBlockWithTxes(t, servers[0], testChainID2, blockHeight, numTransactions)
+	}()
+}
+
 // After a complete backend restart (remote), due to a process failure or corruption,
 // the transaction broadcast process must normally resume operations and the
 // broadcast operation(s) must succeed without errors from the relays.
@@ -2048,9 +2288,8 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
 
-	servers[0].SetLogger(cmtlog.TestingLogger().With("process", "relay-1"))
-	servers[0].GetReactor().SetLogger(cmtlog.TestingLogger().With("process", "relay-1"))
-	//servers[1].SetLogger(cmtlog.TestingLogger().With("process", "relay-2-before"))
+	// Sets different name to process for more clarity
+	servers[1].SetLogger(cmtlog.TestingLogger().With("process", "relay-2-before"))
 
 	// Note: relays includes self
 	// Using 2 seconds waitDuration because we shall broadcast BEFORE shutdown.
@@ -2067,13 +2306,15 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 
 	reuseRootDir := servers[1].GetReactor().GetNodeConfig().RootDir
 
+	testChainID1 := makeChainID("test-chain-1")
+	testChainID2 := makeChainID("test-chain-2")
+
 	// STEP 1:
 	// We execute a complete broadcast process.
 
 	func() {
 		// Separate goroutine for client broadcast process
 		numTransactions := 1
-		testChainID1 := makeChainID("test-chain-1")
 		notifyCh := make(chan client.BroadcastStatus)
 		defer close(notifyCh)
 
@@ -2126,7 +2367,6 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 	func() {
 		// Separate goroutine for client broadcast process
 		numTransactions := 1
-		testChainID1 := makeChainID("test-chain-1")
 		notifyCh := make(chan client.BroadcastStatus)
 		defer close(notifyCh)
 
@@ -2187,7 +2427,6 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 
 		// Separate goroutine for client broadcast process
 		numTransactions := 2
-		testChainID1 := makeChainID("test-chain-1")
 		notifyCh := make(chan client.BroadcastStatus)
 		defer close(notifyCh)
 
@@ -2233,7 +2472,6 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 
 		// Separate goroutine for client broadcast process
 		numTransactions := 2
-		testChainID2 := makeChainID("test-chain-2")
 		notifyCh := make(chan client.BroadcastStatus)
 		defer close(notifyCh)
 
