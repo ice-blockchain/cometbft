@@ -2033,6 +2033,244 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
 }
 
+// After a complete backend restart (remote), due to a process failure or corruption,
+// the transaction broadcast process must normally resume operations and the
+// broadcast operation(s) must succeed without errors from the relays.
+func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	numChains := 0
+	numRelays := 7
+
+	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
+	defer shutdownFn()
+
+	require.NotEmpty(t, servers)
+	require.Len(t, servers, numRelays)
+
+	servers[0].SetLogger(cmtlog.TestingLogger().With("process", "relay-1"))
+	servers[0].GetReactor().SetLogger(cmtlog.TestingLogger().With("process", "relay-1"))
+	//servers[1].SetLogger(cmtlog.TestingLogger().With("process", "relay-2-before"))
+
+	// Note: relays includes self
+	// Using 2 seconds waitDuration because we shall broadcast BEFORE shutdown.
+	relays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
+		servers,
+		2*time.Second,  // Time for backend
+		20*time.Second, // Time for broadcast
+	)
+	defer cancelCtxFn()
+
+	require.NotEmpty(t, relays)
+	require.NotNil(t, broadcastCtx)
+	require.Len(t, relays, numRelays)
+
+	reuseRootDir := servers[1].GetReactor().GetNodeConfig().RootDir
+
+	// STEP 1:
+	// We execute a complete broadcast process.
+
+	func() {
+		// Separate goroutine for client broadcast process
+		numTransactions := 1
+		testChainID1 := makeChainID("test-chain-1")
+		notifyCh := make(chan client.BroadcastStatus)
+		defer close(notifyCh)
+
+		go clientBroadcastTx(t,
+			broadcastCtx,
+			servers[0],
+			relays,
+			testChainID1,
+			numTransactions,
+			notifyCh,
+		)
+
+		// Blocks the main thread until we consume from notifyCh.
+		resultStatusMsg := waitForClientBroadcastStatus(t,
+			broadcastCtx,
+			testChainID1,
+			notifyCh,
+		)
+		require.NotNil(t, resultStatusMsg)
+		require.NoError(t, resultStatusMsg.Error,
+			"should not error with broadcast before relay-2 downtime")
+		require.Len(t, resultStatusMsg.TxHashes, numTransactions)
+
+		t.Logf("Broadcast #1 completed with ChainID: %s", testChainID1)
+
+		waitDuration := 10 * time.Second
+		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
+		time.Sleep(waitDuration)
+
+		blockHeight := int64(1)
+		assertNetworkProducedBlockWithTxes(t, servers[0], testChainID1, blockHeight, numTransactions)
+		assertNetworkProducedBlockWithTxes(t, servers[1], testChainID1, blockHeight, numTransactions)
+	}()
+
+	// STEP 2:
+	//
+	// CAUTION:
+	// We mimic one of the relay shutting down completely, i.e. its process
+	// is not managed, corrupted or stopped. Setting nil on the "old" instance
+	// is only necessary during shutdown tests.
+
+	// Stop the receiving backend, then start it again.
+	err := servers[1].Close()
+	require.NoError(t, err, "should shutdown server")
+	servers[1] = nil // Only for test
+
+	// STEP 3:
+	// We execute a complete broadcast process while relay-2 is down.
+
+	func() {
+		// Separate goroutine for client broadcast process
+		numTransactions := 1
+		testChainID1 := makeChainID("test-chain-1")
+		notifyCh := make(chan client.BroadcastStatus)
+		defer close(notifyCh)
+
+		go clientBroadcastTx(t,
+			broadcastCtx,
+			servers[0],
+			relays,
+			testChainID1,
+			numTransactions,
+			notifyCh,
+		)
+
+		// Blocks the main thread until we consume from notifyCh.
+		resultStatusMsg := waitForClientBroadcastStatus(t,
+			broadcastCtx,
+			testChainID1,
+			notifyCh,
+		)
+		require.NotNil(t, resultStatusMsg)
+		require.NoError(t, resultStatusMsg.Error,
+			"should not error with broadcast during relay-2 downtime")
+		require.Len(t, resultStatusMsg.TxHashes, numTransactions)
+
+		t.Logf("Broadcast #2 completed with ChainID: %s", testChainID1)
+
+		waitDuration := 10 * time.Second
+		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
+		time.Sleep(waitDuration)
+
+		blockHeight := int64(2)
+		assertNetworkProducedBlockWithTxes(t, servers[0], testChainID1, blockHeight, numTransactions)
+		// servers[1] is down during this test!
+		assertNetworkProducedBlockWithTxes(t, servers[2], testChainID1, blockHeight, numTransactions)
+	}()
+
+	// STEP 3:
+	// We restart relay-2 and complete a broadcast process, relay-2 should be
+	// behind on blocks for testChainID1 since it missed the broadcast of Step 3.
+
+	resetRelay, newShutdownFn := ResetTestSingleCompatibleRelay(t,
+		reuseRootDir,
+		servers[0], // CompatibleWith
+		1,          // indexRelay (resetting relay-2)
+		cmtlog.TestingLogger().With("process", "relay-2-after"),
+	)
+	defer newShutdownFn() // resetRelay.Close()
+
+	resetRelay.MustStart()
+
+	waitDuration := 2 * time.Second
+	t.Logf("Waiting %.0fsec to use restarted node services...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
+
+	func() {
+		secondTimeoutAfter := 20 * time.Second // Time for broadcast
+		secondBroadcastCtx, secondCancelCtxFn := context.WithTimeout(context.TODO(), secondTimeoutAfter)
+		defer secondCancelCtxFn()
+
+		// Separate goroutine for client broadcast process
+		numTransactions := 2
+		testChainID1 := makeChainID("test-chain-1")
+		notifyCh := make(chan client.BroadcastStatus)
+		defer close(notifyCh)
+
+		go clientBroadcastTx(t,
+			secondBroadcastCtx,
+			servers[0],
+			relays,
+			testChainID1,
+			numTransactions,
+			notifyCh,
+		)
+
+		// Blocks the main thread until we consume from notifyCh.
+		resultStatusMsg := waitForClientBroadcastStatus(t,
+			secondBroadcastCtx,
+			testChainID1,
+			notifyCh,
+		)
+		require.NotNil(t, resultStatusMsg)
+		require.NoError(t, resultStatusMsg.Error,
+			"should not error with broadcast after relay-2 restart")
+		require.Len(t, resultStatusMsg.TxHashes, numTransactions)
+
+		t.Logf("Broadcast #3 completed with ChainID: %s", testChainID1)
+
+		waitDuration := 10 * time.Second
+		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
+		time.Sleep(waitDuration)
+
+		blockHeight := int64(3)
+		assertNetworkProducedBlockWithTxes(t, servers[0], testChainID1, blockHeight, numTransactions)
+		assertNetworkProducedBlockWithTxes(t, servers[1], testChainID1, blockHeight, numTransactions)
+	}()
+
+	// STEP 4:
+	//
+	// Also try to broadcast using a different ChainID.
+
+	func() {
+		thirdTimeoutAfter := 20 * time.Second // Time for broadcast
+		thirdBroadcastCtx, thirdCancelCtxFn := context.WithTimeout(context.TODO(), thirdTimeoutAfter)
+		defer thirdCancelCtxFn()
+
+		// Separate goroutine for client broadcast process
+		numTransactions := 2
+		testChainID2 := makeChainID("test-chain-2")
+		notifyCh := make(chan client.BroadcastStatus)
+		defer close(notifyCh)
+
+		go clientBroadcastTx(t,
+			thirdBroadcastCtx,
+			servers[0],
+			relays,
+			testChainID2,
+			numTransactions,
+			notifyCh,
+		)
+
+		// Blocks the main thread until we consume from notifyCh.
+		resultStatusMsg := waitForClientBroadcastStatus(t,
+			thirdBroadcastCtx,
+			testChainID2,
+			notifyCh,
+		)
+		require.NotNil(t, resultStatusMsg)
+		require.NoError(t, resultStatusMsg.Error,
+			"should not error with broadcast after relay-2 restart and diff ChainID")
+		require.Len(t, resultStatusMsg.TxHashes, numTransactions)
+
+		t.Logf("Broadcast #4 completed with ChainID: %s", testChainID2)
+
+		waitDuration := 10 * time.Second
+		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
+		time.Sleep(waitDuration)
+
+		blockHeight := int64(1)
+		assertNetworkProducedBlockWithTxes(t, servers[0], testChainID2, blockHeight, numTransactions)
+		assertNetworkProducedBlockWithTxes(t, servers[1], testChainID2, blockHeight, numTransactions)
+	}()
+
+	t.Log("Test case done running, evaluating results...")
+}
+
 // With a list of empty relays, a ChainReplicationRequest must be sent,
 // and a response is expected before sharing transactions using a message
 // on mempool channel, to which the relays respond with a Ack message
@@ -2108,7 +2346,6 @@ func TestScenarioClientBroadcastConcurrentNewChains(t *testing.T) {
 	t.Logf("Broadcast goroutine started with %d relays and test-chain-2: %s...", len(relaysForTestCase), testChainID2)
 
 	go func(ch chan struct{}) {
-		defer close(notifyCh1)
 		t.Logf("Waiting for broadcast status on test-chain-1: %s...", testChainID1)
 
 		// Blocks this thread until we consume from notifyCh1.
@@ -2125,7 +2362,6 @@ func TestScenarioClientBroadcastConcurrentNewChains(t *testing.T) {
 	}(testDoneCh)
 
 	go func(ch chan struct{}) {
-		defer close(notifyCh2)
 		t.Logf("Waiting for broadcast status on test-chain-2: %s...", testChainID2)
 
 		// Blocks this thread until we consume from notifyCh2.
@@ -2167,6 +2403,9 @@ func TestScenarioClientBroadcastConcurrentNewChains(t *testing.T) {
 		}
 	}(testDoneCh)
 	wg.Wait()
+
+	close(notifyCh1)
+	close(notifyCh2)
 
 	t.Log("Test case done running, evaluating results...")
 
@@ -2243,6 +2482,7 @@ func TestScenarioClientBroadcastConcurrentNewChainsAndExistingChains(t *testing.
 
 	numConcurrent := 5
 	testDoneCh := make(chan struct{}, numConcurrent)
+	notifyChs := make(map[string]chan client.BroadcastStatus, numConcurrent)
 
 	for i := 0; i < numConcurrent; i++ {
 		timeoutAfter := 20 * time.Second // Time for broadcast
@@ -2252,7 +2492,7 @@ func TestScenarioClientBroadcastConcurrentNewChainsAndExistingChains(t *testing.
 		numTransactions := 1
 		testChainName := "test-chain-" + strconv.Itoa(i)
 		testChainID := makeChainID(testChainName)
-		notifyCh := make(chan client.BroadcastStatus)
+		notifyChs[testChainID] = make(chan client.BroadcastStatus)
 
 		go clientBroadcastTx(t,
 			broadcastCtx,
@@ -2260,7 +2500,7 @@ func TestScenarioClientBroadcastConcurrentNewChainsAndExistingChains(t *testing.
 			relaysForTestCase,
 			testChainID,
 			numTransactions,
-			notifyCh,
+			notifyChs[testChainID],
 		)
 
 		t.Logf("Broadcast goroutine started with %d relays and %s: %s...",
@@ -2268,7 +2508,6 @@ func TestScenarioClientBroadcastConcurrentNewChainsAndExistingChains(t *testing.
 
 		// Wait in a separate goroutine as we want to test thread-safety.
 		go func(ch chan struct{}) {
-			defer close(notifyCh)
 			// t.Logf("Waiting for broadcast status on %s: %s...",
 			// 	testChainName, testChainID)
 
@@ -2276,7 +2515,7 @@ func TestScenarioClientBroadcastConcurrentNewChainsAndExistingChains(t *testing.
 			resultStatusMsg := waitForClientBroadcastStatus(t,
 				broadcastCtx,
 				testChainID,
-				notifyCh,
+				notifyChs[testChainID],
 			)
 			assert.NotNil(t, resultStatusMsg)
 			assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
@@ -2313,6 +2552,10 @@ func TestScenarioClientBroadcastConcurrentNewChainsAndExistingChains(t *testing.
 		}
 	}(testDoneCh)
 	wg.Wait()
+
+	for _, notifyCh := range notifyChs {
+		close(notifyCh)
+	}
 
 	t.Log("Test case done running, evaluating results...")
 
@@ -2352,6 +2595,7 @@ func TestScenarioClientBroadcastConcurrentNewChains3(t *testing.T) {
 	// Concurrently broadcast transactions using new chains.
 	numConcurrent := 3
 	testDoneCh := make(chan struct{}, numConcurrent)
+	notifyChs := make(map[string]chan client.BroadcastStatus, numConcurrent)
 
 	for i := 0; i < numConcurrent; i++ {
 		timeoutAfter := 30 * time.Second // Time for broadcast
@@ -2361,7 +2605,7 @@ func TestScenarioClientBroadcastConcurrentNewChains3(t *testing.T) {
 		numTransactions := 1
 		testChainName := "test-chain-" + strconv.Itoa(i)
 		testChainID := makeChainID(testChainName)
-		notifyCh := make(chan client.BroadcastStatus)
+		notifyChs[testChainID] = make(chan client.BroadcastStatus)
 
 		// Note we broadcast using the main thread to make sure broadcasting
 		// happens before waiting for an update on notifyCh, as it is not
@@ -2372,7 +2616,7 @@ func TestScenarioClientBroadcastConcurrentNewChains3(t *testing.T) {
 			relaysForTestCase,
 			testChainID,
 			numTransactions,
-			notifyCh,
+			notifyChs[testChainID],
 		)
 
 		t.Logf("Broadcast started with %d relays and %s: %s...",
@@ -2380,8 +2624,6 @@ func TestScenarioClientBroadcastConcurrentNewChains3(t *testing.T) {
 
 		// Wait in a separate goroutine.
 		go func(ch chan struct{}) {
-			defer close(notifyCh)
-
 			t.Logf("Waiting for broadcast status on %s: %s...",
 				testChainName, testChainID)
 
@@ -2389,7 +2631,7 @@ func TestScenarioClientBroadcastConcurrentNewChains3(t *testing.T) {
 			resultStatusMsg := waitForClientBroadcastStatus(t,
 				broadcastCtx,
 				testChainID,
-				notifyCh,
+				notifyChs[testChainID],
 			)
 			require.NotNil(t, resultStatusMsg)
 			require.Len(t, resultStatusMsg.TxHashes, numTransactions)
@@ -2426,6 +2668,10 @@ func TestScenarioClientBroadcastConcurrentNewChains3(t *testing.T) {
 		}
 	}(testDoneCh)
 	wg.Wait()
+
+	for _, notifyCh := range notifyChs {
+		close(notifyCh)
+	}
 
 	t.Log("Test case done running, evaluating results...")
 
@@ -2714,7 +2960,7 @@ func ResetTestSingleCompatibleRelay(
 		globalCfgRelayX := ResetTestMultiplexNodeWithConfigAndPorts(
 		tb,
 		rootDir,
-		"_"+strconv.Itoa(indexRelay+1), // metricsSuffix
+		"_"+strconv.Itoa(indexRelay+1)+"_after_reset", // metricsSuffix
 		baseCfg.MultiplexConfig,
 		uint16(50001+(indexRelay*100)), // 50001, 50101, 50201, 50301, 50401
 		false,                          // don't create new root dir
@@ -2742,4 +2988,38 @@ func ResetTestSingleCompatibleRelay(
 	}
 
 	return serverRelayX, shutdownFn
+}
+
+func assertNetworkProducedBlockWithTxes(
+	tb testing.TB,
+	relay *mx.MultiplexBackend,
+	useChainID string,
+	blockHeight int64,
+	numTransactions int,
+) {
+	tb.Helper()
+
+	testReactor := relay.GetReactor()
+
+	stateStoreProvider := testReactor.GetInstanceProvider(mx.InstanceKeyStateStore)
+	require.NotNil(tb, stateStoreProvider, "should not error getting state store provider")
+	chainStore := stateStoreProvider(useChainID).(sm.Store)
+	require.NotNil(tb, chainStore, "state store per chain must not be nil")
+
+	stateMachine, err := chainStore.Load()
+	require.NoError(tb, err, "should not error loading state")
+	require.Equal(tb, useChainID, stateMachine.ChainID)
+	require.Equal(tb, blockHeight, stateMachine.LastBlockHeight)
+
+	blockStoreProvider := testReactor.GetInstanceProvider(mx.InstanceKeyBlockStore)
+	require.NotNil(tb, blockStoreProvider, "should not error getting block store provider")
+	blockStore := blockStoreProvider(useChainID).(*store.BlockStore)
+	require.NotNil(tb, blockStore, "block store per chain must not be nil")
+
+	actualBlock, actualMeta := blockStore.LoadBlock(stateMachine.LastBlockHeight)
+	require.NotNil(tb, actualBlock, "should return correct block")
+	require.NotNil(tb, actualMeta, "should return correct block meta")
+	require.NotEmpty(tb, actualBlock.Data, "should return non-empty block data")
+	require.NotEmpty(tb, actualBlock.Data.Txs, "should return non-empty block transactions")
+	require.Len(tb, actualBlock.Data.Txs, numTransactions)
 }
