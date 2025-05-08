@@ -2365,13 +2365,17 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 	// We execute a complete broadcast process while relay-2 is down.
 
 	func() {
+		secondTimeoutAfter := 20 * time.Second // Time for broadcast
+		secondBroadcastCtx, secondCancelCtxFn := context.WithTimeout(context.TODO(), secondTimeoutAfter)
+		defer secondCancelCtxFn()
+
 		// Separate goroutine for client broadcast process
 		numTransactions := 1
 		notifyCh := make(chan client.BroadcastStatus)
 		defer close(notifyCh)
 
 		go clientBroadcastTx(t,
-			broadcastCtx,
+			secondBroadcastCtx,
 			servers[0],
 			relays,
 			testChainID1,
@@ -2381,7 +2385,7 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 
 		// Blocks the main thread until we consume from notifyCh.
 		resultStatusMsg := waitForClientBroadcastStatus(t,
-			broadcastCtx,
+			secondBroadcastCtx,
 			testChainID1,
 			notifyCh,
 		)
