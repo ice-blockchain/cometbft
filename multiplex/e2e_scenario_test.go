@@ -2462,7 +2462,7 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 
 		blockHeight := int64(3)
 		assertNetworkProducedBlockWithTxes(t, servers[0], testChainID1, blockHeight, numTransactions)
-		assertNetworkProducedBlockWithTxes(t, servers[1], testChainID1, blockHeight, numTransactions)
+		assertNetworkProducedBlockWithTxes(t, resetRelay, testChainID1, blockHeight, numTransactions)
 	}()
 
 	// STEP 4:
@@ -2507,7 +2507,7 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 
 		blockHeight := int64(1)
 		assertNetworkProducedBlockWithTxes(t, servers[0], testChainID2, blockHeight, numTransactions)
-		assertNetworkProducedBlockWithTxes(t, servers[1], testChainID2, blockHeight, numTransactions)
+		assertNetworkProducedBlockWithTxes(t, resetRelay, testChainID2, blockHeight, numTransactions)
 	}()
 
 	t.Log("Test case done running, evaluating results...")
