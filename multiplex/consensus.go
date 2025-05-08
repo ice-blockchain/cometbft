@@ -205,7 +205,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 		mempool.EnableTxsAvailable()
 	}
 	mempoolReactor.SetLogger(memplLogger)
-
+	mempoolReactor.SetSwitch(reactor.cometbftSwitch)
 	// 2) Create the evidence pool / evidence reactor
 	evidenceDB := evidenceDBProvider(chainID).(dbm.DB)
 	stateStore := stateStoreProvider(chainID).(sm.Store)

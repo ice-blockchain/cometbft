@@ -1000,6 +1000,20 @@ func (sw *Switch) acceptRoutine() {
 	}
 }
 
+// IsDialError returns true given a non-acceptable dial error. Acceptable
+// dial errors include "currently-dialing", "existing-address" and
+// errors marked as duplicates.
+func IsDialError(err error) bool {
+	switch err.(type) {
+	case ErrCurrentlyDialingOrExistingAddress:
+		return false
+	case ErrRejected:
+		return !err.(ErrRejected).IsDuplicate()
+	}
+
+	return true
+}
+
 // dial the peer; make secret connection; authenticate against the dialed ID;
 // add the peer.
 // if dialing fails, start the reconnect loop. If handshake fails, it's over.

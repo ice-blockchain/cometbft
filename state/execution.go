@@ -304,7 +304,7 @@ func (blockExec *BlockExecutor) applyBlock(state State, blockID types.BlockID, b
 	if err != nil {
 		return state, fmt.Errorf("commit failed for application: %w", err)
 	}
-
+	blockExec.logger.Debug("state.LastResultsHash updated in updateState", "newVal", state.LastBlockHeight, "chain", block.ChainID)
 	// Lock mempool, commit app state, update mempoool.
 	retainHeight, err := blockExec.Commit(state, block, abciResponse)
 	if err != nil {

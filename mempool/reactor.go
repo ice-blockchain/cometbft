@@ -316,7 +316,58 @@ func (memR *Reactor) processTxs(peer p2p.Peer, protoTxs [][]byte) {
 	if err := memR.sendAckTransactionBroadcast(peer, protoTxs); err != nil {
 		memR.Logger.Debug("Error with AckTransactionBroadcast",
 			"err", err,
+			"chain", memR.ChainID,
+			"toPeer", peer,
+			"peerRunning", peer.IsRunning(),
 		)
+		peerById := memR.Switch.Peers(memR.ChainID).Get(peer.ID())
+		if peerById != nil {
+			if err = memR.sendAckTransactionBroadcast(peerById, protoTxs); err != nil {
+				memR.Logger.Debug("Error with AckTransactionBroadcast",
+					"err", err,
+					"chain", memR.ChainID,
+					"toPeer", peerById,
+					"peerRunning", peerById.IsRunning(),
+				)
+				peerById = nil
+			}
+		}
+		if peerById == nil || !peerById.IsRunning() {
+			if !peerById.IsRunning() {
+				memR.Switch.StopPeerGracefully(peerById)
+			}
+			peerAddr, err := peer.NodeInfo().NetAddress()
+			if err != nil {
+				memR.Logger.Debug("Error with AckTransactionBroadcast",
+					"err", err,
+					"chain", memR.ChainID,
+					"toPeer", peer,
+					"peerRunning", peer.IsRunning(),
+				)
+				return
+			}
+			if err = memR.Switch.DialPeerWithAddressAndChainID(peerAddr, memR.ChainID); err != nil {
+				if !p2p.IsDialError(err) {
+					err = nil
+				}
+			}
+			if err != nil {
+				memR.Logger.Debug("Error with AckTransactionBroadcast",
+					"err", err,
+					"chain", memR.ChainID,
+					"toAddr", peerAddr,
+				)
+			}
+			peerById = memR.Switch.Peers(memR.ChainID).Get(peer.ID())
+			if err = memR.sendAckTransactionBroadcast(peerById, protoTxs); err != nil {
+				memR.Logger.Debug("Error with AckTransactionBroadcast",
+					"err", err,
+					"chain", memR.ChainID,
+					"toPeer", peerById,
+					"peerRunning", peerById.IsRunning(),
+				)
+			}
+		}
 		return
 	}
 }
@@ -497,7 +548,7 @@ func (memR *Reactor) sendAckTransactionBroadcast(
 		myPeerID = string(memR.nodeKey.ID())
 	}
 
-	peer.Send(memR.ChainID, p2p.Envelope{
+	if success := peer.Send(memR.ChainID, p2p.Envelope{
 		ChannelID: server.AckBroadcastChannel,
 		Message: &mxp2p.Receipt{
 			Sum: &mxp2p.Receipt_AckTransactionBroadcast{
@@ -508,7 +559,9 @@ func (memR *Reactor) sendAckTransactionBroadcast(
 				},
 			},
 		},
-	})
+	}); !success {
+		return errors.New("sending was unsuccess")
+	}
 
 	return nil
 }

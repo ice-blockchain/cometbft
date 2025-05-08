@@ -1123,18 +1123,8 @@ func (r *Reactor) DialBackReplicationPartner(
 	return nil
 }
 
-// IsDialError returns true given a non-acceptable dial error. Acceptable
-// dial errors include "currently-dialing", "existing-address" and
-// errors marked as duplicates.
 func (r *Reactor) IsDialError(err error) bool {
-	switch err.(type) {
-	case p2p.ErrCurrentlyDialingOrExistingAddress:
-		return false
-	case p2p.ErrRejected:
-		return !err.(p2p.ErrRejected).IsDuplicate()
-	}
-
-	return true
+	return p2p.IsDialError(err)
 }
 
 // ----------------------------------------------------------------------------
