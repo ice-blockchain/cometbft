@@ -400,24 +400,6 @@ func (c MultiplexClient) BroadcastTx(
 		}
 	}
 
-	// ------------------------------------------------------------------------
-	// Step 5: Add transactions to mempool, trigger broadcast to relays
-
-	// Move status update to next step (step=5)
-	currentBroadcastStep++
-
-	// TODO(midas): remove debug logs
-	c.backend.GetLogger().Debug("Adding transaction batch to local mempool",
-		"num_txes", len(transactions),
-		"tx_hashes", transactionHashes)
-
-	// Add each transaction to the local mempool, an error stops the process.
-	if err := c.GetBackend().AddTransactions(userAddress, transactions...); err != nil {
-		client.Error(notifyCh, fmt.Errorf(
-			"error adding txes to mempool: %w", err))
-		return // STOP here
-	}
-
 	// IMPORTANT:
 	// The transactions have been accepted locally, we may broadcast now.
 	//
@@ -551,6 +533,24 @@ func (c MultiplexClient) BroadcastTx(
 		client.Error(notifyCh, fmt.Errorf(
 			"missing accepted transaction hashes, expected %d, got %d",
 			len(transactions), len(acceptedTxHashes)))
+		return // STOP here
+	}
+	// TODO: move upper before broadcast to remote as we fix validators
+	// ------------------------------------------------------------------------
+	// Step 5: Add transactions to mempool, trigger broadcast to relays
+
+	// Move status update to next step (step=5)
+	currentBroadcastStep++
+
+	// TODO(midas): remove debug logs
+	c.backend.GetLogger().Debug("Adding transaction batch to local mempool",
+		"num_txes", len(transactions),
+		"tx_hashes", transactionHashes)
+
+	// Add each transaction to the local mempool, an error stops the process.
+	if err := c.GetBackend().AddTransactions(userAddress, transactions...); err != nil {
+		client.Error(notifyCh, fmt.Errorf(
+			"error adding txes to mempool: %w", err))
 		return // STOP here
 	}
 

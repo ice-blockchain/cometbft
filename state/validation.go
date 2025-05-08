@@ -66,9 +66,12 @@ func validateBlock(state State, block *types.Block) error {
 		)
 	}
 	if !bytes.Equal(block.LastResultsHash, state.LastResultsHash) {
-		return fmt.Errorf("wrong Block.Header.LastResultsHash.  Expected %X, got %v",
+		return fmt.Errorf("wrong Block.Header.LastResultsHash.  Expected %X, got %v on chain %v and state, block height (%v, %v)",
 			state.LastResultsHash,
 			block.LastResultsHash,
+			block.ChainID,
+			state.LastBlockHeight,
+			block.Height,
 		)
 	}
 	if !bytes.Equal(block.ValidatorsHash, state.Validators.Hash()) {

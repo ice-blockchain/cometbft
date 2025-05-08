@@ -318,8 +318,8 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 				b.reactor.poolRequestsMtx.Lock()
 				b.reactor.poolRequestsSent[txHash] = peers
 				b.reactor.poolRequestsMtx.Unlock()
-
-				continue // Do not broadcast to relays
+				// TODO: we need to broadcast until we fix validators
+				//continue // Do not broadcast to relays
 			}
 
 			// Force the execution of mempool broadcast to *all* healthy relays.
@@ -329,6 +329,9 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 				if relayAddr.ID() != b.GetRelayID() {
 					chainHealthyPeers = append(chainHealthyPeers, string(relayAddr.ID()))
 				}
+			}
+			for _, relayAddr := range replReqRelays[chainID] {
+				chainHealthyPeers = append(chainHealthyPeers, string(relayAddr.ID()))
 			}
 
 			chainPeerSet := cometbftSwitch.Peers(chainID)
