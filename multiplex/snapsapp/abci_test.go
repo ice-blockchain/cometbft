@@ -199,8 +199,10 @@ func TestABCI_ProcessProposal(t *testing.T) {
 	}
 
 	resProcessProposal, err := suite.snapsApp.ProcessProposal(ctx, &reqProcessProposal)
+	workingHeight := suite.snapsApp.WorkingHeight(testChainID)
 	assert.NoError(t, err, "should not error given proposal request (ProcessProposal)")
 	assert.Equal(t, abci.PROCESS_PROPOSAL_STATUS_ACCEPT, resProcessProposal.Status)
+	assert.Equal(t, reqProcessProposal.Height, workingHeight)
 }
 
 func TestABCI_FinalizeBlock(t *testing.T) {
@@ -317,7 +319,7 @@ func TestABCI_FinalizeBlock_WithAcceptor(t *testing.T) {
 	testAcceptor := actualAcceptor.(*client.MockAcceptorImpl)
 
 	expectedNumCalls := uint64(1)
-	assert.Equal(t, expectedNumCalls, testAcceptor.TxAcceptCalls.Load())
+	assert.Equal(t, expectedNumCalls, testAcceptor.TxCommitCalls.Load())
 }
 
 func TestABCI_Proposal_HappyPath(t *testing.T) {
@@ -365,8 +367,10 @@ func TestABCI_Proposal_HappyPath(t *testing.T) {
 	}
 
 	resProcessProposal, err := suite.snapsApp.ProcessProposal(ctx, &reqProcessProposal)
+	workingHeight := suite.snapsApp.WorkingHeight(testChainID)
 	assert.NoError(t, err, "should not error given proposal request (ProcessProposal)")
 	assert.Equal(t, abci.PROCESS_PROPOSAL_STATUS_ACCEPT, resProcessProposal.Status)
+	assert.Equal(t, reqPrepareProposal.Height, workingHeight)
 
 	// (4). FinalizeBlock
 	lastBlockHeight := suite.snapsApp.LastBlockHeight(testChainID)

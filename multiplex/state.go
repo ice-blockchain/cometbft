@@ -62,7 +62,8 @@ func (reactor *Reactor) InitMultiplexStates() error {
 		// Initialize a replicable sm.Store
 		dbKeyLayoutVersion := globalConfig.Storage.ExperimentalKeyLayout
 		stateStore := sm.NewStore(stateDB, sm.StoreOptions{
-			DBKeyLayout: dbKeyLayoutVersion,
+			DiscardABCIResponses: false,
+			DBKeyLayout:          dbKeyLayoutVersion,
 		})
 
 		// .. and load the state machine

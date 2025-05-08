@@ -138,6 +138,15 @@ func (app *SnapsApp) LastBlockHeight(chainID string) int64 {
 	return app.lastBlockHeights[chainID]
 }
 
+// WorkingHeights returns the latest block height processed in ProcessProposal
+// for a chainID.
+func (app *SnapsApp) WorkingHeight(chainID string) int64 {
+	app.whMutex.RLock()
+	defer app.whMutex.RUnlock()
+
+	return app.workingHeights[chainID]
+}
+
 // FinalizeBlockHeight returns the latest finalizeBlock height.
 func (app *SnapsApp) FinalizeBlockHeight(chainID string) int64 {
 	app.fbMutex.RLock()

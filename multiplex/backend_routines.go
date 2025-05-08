@@ -322,7 +322,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 				//continue // Do not broadcast to relays
 			}
 
-			// Force the execution of mempool broadcast to *all* healthy relays.
+			// Force the execution of mempool broadcast to remaining healthy relays.
 			minHealthyRelays := numRemotesByChain[chainID]
 			chainHealthyPeers := []string{}
 			for _, relayAddr := range relaysByChain[chainID] {
