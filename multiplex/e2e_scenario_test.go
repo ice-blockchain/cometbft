@@ -2279,6 +2279,10 @@ func TestScenarioClientBroadcastSingleRelayContinuousBlocks(t *testing.T) {
 func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
+	timeoutGlobal := 120 * time.Second // Time for full test round
+	testCaseCtx, globalCancelFn := context.WithTimeout(context.TODO(), timeoutGlobal)
+	defer globalCancelFn()
+
 	numChains := 0
 	numRelays := 7
 
@@ -2308,6 +2312,12 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 
 	testChainID1 := makeChainID("test-chain-1")
 	testChainID2 := makeChainID("test-chain-2")
+
+	expectedEndHeightChainID1 := int64(3)
+	expectedEndHeightChainID2 := int64(2)
+
+	numStepsTested := 5
+	testDoneCh := make(chan struct{}, numStepsTested)
 
 	// STEP 1:
 	// We execute a complete broadcast process.
@@ -2340,13 +2350,15 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 
 		t.Logf("Broadcast #1 completed with ChainID: %s", testChainID1)
 
-		waitDuration := 10 * time.Second
+		waitDuration := 20 * time.Second
 		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
 		time.Sleep(waitDuration)
 
 		blockHeight := int64(1)
 		assertNetworkProducedBlockWithTxes(t, servers[0], testChainID1, blockHeight, numTransactions)
 		assertNetworkProducedBlockWithTxes(t, servers[1], testChainID1, blockHeight, numTransactions)
+
+		testDoneCh <- struct{}{}
 	}()
 
 	// STEP 2:
@@ -2396,7 +2408,7 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 
 		t.Logf("Broadcast #2 completed with ChainID: %s", testChainID1)
 
-		waitDuration := 10 * time.Second
+		waitDuration := 20 * time.Second
 		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
 		time.Sleep(waitDuration)
 
@@ -2404,9 +2416,11 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 		assertNetworkProducedBlockWithTxes(t, servers[0], testChainID1, blockHeight, numTransactions)
 		// servers[1] is down during this test!
 		assertNetworkProducedBlockWithTxes(t, servers[2], testChainID1, blockHeight, numTransactions)
+
+		testDoneCh <- struct{}{}
 	}()
 
-	// STEP 3:
+	// STEP 4:
 	// We restart relay-2 and complete a broadcast process, relay-2 should be
 	// behind on blocks for testChainID1 since it missed the broadcast of Step 3.
 
@@ -2425,51 +2439,6 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 	time.Sleep(waitDuration)
 
 	func() {
-		secondTimeoutAfter := 20 * time.Second // Time for broadcast
-		secondBroadcastCtx, secondCancelCtxFn := context.WithTimeout(context.TODO(), secondTimeoutAfter)
-		defer secondCancelCtxFn()
-
-		// Separate goroutine for client broadcast process
-		numTransactions := 2
-		notifyCh := make(chan client.BroadcastStatus)
-		defer close(notifyCh)
-
-		go clientBroadcastTx(t,
-			secondBroadcastCtx,
-			servers[0],
-			relays,
-			testChainID1,
-			numTransactions,
-			notifyCh,
-		)
-
-		// Blocks the main thread until we consume from notifyCh.
-		resultStatusMsg := waitForClientBroadcastStatus(t,
-			secondBroadcastCtx,
-			testChainID1,
-			notifyCh,
-		)
-		require.NotNil(t, resultStatusMsg)
-		require.NoError(t, resultStatusMsg.Error,
-			"should not error with broadcast after relay-2 restart")
-		require.Len(t, resultStatusMsg.TxHashes, numTransactions)
-
-		t.Logf("Broadcast #3 completed with ChainID: %s", testChainID1)
-
-		waitDuration := 10 * time.Second
-		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
-		time.Sleep(waitDuration)
-
-		blockHeight := int64(3)
-		assertNetworkProducedBlockWithTxes(t, servers[0], testChainID1, blockHeight, numTransactions)
-		assertNetworkProducedBlockWithTxes(t, resetRelay, testChainID1, blockHeight, numTransactions)
-	}()
-
-	// STEP 4:
-	//
-	// Also try to broadcast using a different ChainID.
-
-	func() {
 		thirdTimeoutAfter := 20 * time.Second // Time for broadcast
 		thirdBroadcastCtx, thirdCancelCtxFn := context.WithTimeout(context.TODO(), thirdTimeoutAfter)
 		defer thirdCancelCtxFn()
@@ -2483,7 +2452,7 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 			thirdBroadcastCtx,
 			servers[0],
 			relays,
-			testChainID2,
+			testChainID1,
 			numTransactions,
 			notifyCh,
 		)
@@ -2491,6 +2460,53 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 		// Blocks the main thread until we consume from notifyCh.
 		resultStatusMsg := waitForClientBroadcastStatus(t,
 			thirdBroadcastCtx,
+			testChainID1,
+			notifyCh,
+		)
+		require.NotNil(t, resultStatusMsg)
+		require.NoError(t, resultStatusMsg.Error,
+			"should not error with broadcast after relay-2 restart")
+		require.Len(t, resultStatusMsg.TxHashes, numTransactions)
+
+		t.Logf("Broadcast #3 completed with ChainID: %s", testChainID1)
+
+		waitDuration := 20 * time.Second
+		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
+		time.Sleep(waitDuration)
+
+		blockHeight := int64(3)
+		assertNetworkProducedBlockWithTxes(t, servers[0], testChainID1, blockHeight, numTransactions)
+		assertNetworkProducedBlockWithTxes(t, resetRelay, testChainID1, blockHeight, numTransactions)
+
+		testDoneCh <- struct{}{}
+	}()
+
+	// STEP 4:
+	//
+	// Also try to broadcast using a different ChainID.
+
+	func() {
+		fourthTimeoutAfter := 20 * time.Second // Time for broadcast
+		fourthBroadcastCtx, fourthCancelCtxFn := context.WithTimeout(context.TODO(), fourthTimeoutAfter)
+		defer fourthCancelCtxFn()
+
+		// Separate goroutine for client broadcast process
+		numTransactions := 2
+		notifyCh := make(chan client.BroadcastStatus)
+		defer close(notifyCh)
+
+		go clientBroadcastTx(t,
+			fourthBroadcastCtx,
+			servers[0],
+			relays,
+			testChainID2,
+			numTransactions,
+			notifyCh,
+		)
+
+		// Blocks the main thread until we consume from notifyCh.
+		resultStatusMsg := waitForClientBroadcastStatus(t,
+			fourthBroadcastCtx,
 			testChainID2,
 			notifyCh,
 		)
@@ -2501,16 +2517,144 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 
 		t.Logf("Broadcast #4 completed with ChainID: %s", testChainID2)
 
-		waitDuration := 10 * time.Second
+		waitDuration := 20 * time.Second
 		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
 		time.Sleep(waitDuration)
 
 		blockHeight := int64(1)
 		assertNetworkProducedBlockWithTxes(t, servers[0], testChainID2, blockHeight, numTransactions)
 		assertNetworkProducedBlockWithTxes(t, resetRelay, testChainID2, blockHeight, numTransactions)
+
+		testDoneCh <- struct{}{}
 	}()
 
+	// STEP 5:
+	// We execute a second broadcast on different ChainID (Height=2).
+
+	func() {
+		fifthTimeoutAfter := 20 * time.Second // Time for broadcast
+		fifthBroadcastCtx, fifthCancelCtxFn := context.WithTimeout(context.TODO(), fifthTimeoutAfter)
+		defer fifthCancelCtxFn()
+
+		// Separate goroutine for client broadcast process
+		numTransactions := 2
+		notifyCh := make(chan client.BroadcastStatus)
+		defer close(notifyCh)
+
+		go clientBroadcastTx(t,
+			fifthBroadcastCtx,
+			servers[0],
+			relays,
+			testChainID2,
+			numTransactions,
+			notifyCh,
+		)
+
+		// Blocks the main thread until we consume from notifyCh.
+		resultStatusMsg := waitForClientBroadcastStatus(t,
+			fifthBroadcastCtx,
+			testChainID2,
+			notifyCh,
+		)
+		require.NotNil(t, resultStatusMsg)
+		require.NoError(t, resultStatusMsg.Error,
+			"should not error with fifth broadcast and "+testChainID2)
+		require.Len(t, resultStatusMsg.TxHashes, numTransactions)
+
+		t.Logf("Broadcast #5 completed with ChainID: %s", testChainID2)
+
+		waitDuration := 20 * time.Second
+		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
+		time.Sleep(waitDuration)
+
+		blockHeight := int64(2)
+		assertNetworkProducedBlockWithTxes(t, servers[0], testChainID2, blockHeight, numTransactions)
+
+		testDoneCh <- struct{}{}
+	}()
+
+	// Waits to consume from testDoneCh or timeout after 30 seconds
+	var (
+		wg           sync.WaitGroup
+		cntDone      int
+		errBroadcast error
+	)
+	wg.Add(1)
+	go func(ch chan struct{}) {
+		defer wg.Done()
+		for {
+			select {
+			case <-ch:
+				cntDone++
+				if cntDone == numStepsTested {
+					return
+				}
+
+			case <-testCaseCtx.Done():
+				errBroadcast = errors.New("Timed out waiting for concurrent broadcasts to end")
+				return
+			}
+		}
+	}(testDoneCh)
+	wg.Wait()
+
+	waitDuration = 20 * time.Second
+	t.Logf("Waiting %.0fsec to evaluate state machines...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
+
 	t.Log("Test case done running, evaluating results...")
+	assert.Equal(t, numStepsTested, cntDone)
+	assert.NoError(t, errBroadcast, "consecutive broadcasts should not error")
+
+	numTxesInLastBlock := 2
+
+	// relay-1 chain-1
+	assertNetworkProducedBlockWithTxes(t,
+		servers[0],
+		testChainID1,
+		expectedEndHeightChainID1,
+		numTxesInLastBlock,
+	)
+
+	// relay-2 chain-1
+	assertNetworkProducedBlockWithTxes(t,
+		resetRelay,
+		testChainID1,
+		expectedEndHeightChainID1,
+		numTxesInLastBlock,
+	)
+
+	// relay-3 chain-1
+	assertNetworkProducedBlockWithTxes(t,
+		servers[2],
+		testChainID1,
+		expectedEndHeightChainID1,
+		numTxesInLastBlock,
+	)
+
+	// relay-1 chain-2
+	assertNetworkProducedBlockWithTxes(t,
+		servers[0],
+		testChainID2,
+		expectedEndHeightChainID2,
+		numTxesInLastBlock,
+	)
+
+	// relay-2 chain-2
+	assertNetworkProducedBlockWithTxes(t,
+		resetRelay,
+		testChainID2,
+		expectedEndHeightChainID2,
+		numTxesInLastBlock,
+	)
+
+	// relay-3 chain-2
+	assertNetworkProducedBlockWithTxes(t,
+		servers[2],
+		testChainID2,
+		expectedEndHeightChainID2,
+		numTxesInLastBlock,
+	)
 }
 
 // With a list of empty relays, a ChainReplicationRequest must be sent,
