@@ -2282,7 +2282,7 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 	numChains := 0
 	numRelays := 7
 
-	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
+	servers, shutdownFn := ResetTestScenarioRelaysWithLogs(t, numChains, numRelays)
 	defer shutdownFn()
 
 	require.NotEmpty(t, servers)
