@@ -930,13 +930,63 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 
 			// Now respond with a [ChainReplicationResponse].
 			// This serves as a receipt for a chain replication request.
-			if err := r.sendChainReplicationResponse(sourcePeer, replRequest.ChainID); err != nil {
+			if err = r.sendChainReplicationResponse(sourcePeer, replRequest.ChainID); err != nil {
 				r.logger.Error(
 					"ChainReplicationRequest: Error sending ChainReplicationResponse",
 					"chain_id", replRequest.ChainID,
+					"peer.isRunning", sourcePeer.IsRunning(),
+					"peer", sourcePeer,
 					"err", err,
 				)
-				return
+				peerById := r.cometbftSwitch.Peers(replRequest.ChainID).Get(sourcePeer.ID())
+				if peerById != nil {
+					if err = r.sendChainReplicationResponse(peerById, replRequest.ChainID); err != nil {
+						r.Logger.Debug("Error with ChainReplicationResponse",
+							"err", err,
+							"chain", replRequest.ChainID,
+							"toPeer", peerById,
+							"peerRunning", peerById.IsRunning(),
+						)
+						peerById = nil
+					}
+				}
+				if peerById == nil || !peerById.IsRunning() {
+					if !peerById.IsRunning() {
+						r.cometbftSwitch.StopPeerGracefully(peerById)
+					}
+					peerAddr, err := sourcePeer.NodeInfo().NetAddress()
+					if err != nil {
+						r.Logger.Debug("Error with ChainReplicationResponse - getting addr",
+							"err", err,
+							"chain", replRequest.ChainID,
+							"toPeer", sourcePeer,
+							"peerRunning", sourcePeer.IsRunning(),
+						)
+						return
+					}
+					if err = r.cometbftSwitch.DialPeerWithAddressAndChainID(peerAddr, replRequest.ChainID); err != nil {
+						if !p2p.IsDialError(err) {
+							err = nil
+						}
+					}
+					if err != nil {
+						r.Logger.Debug("Error with ChainReplicationResponse",
+							"err", err,
+							"chain", replRequest,
+							"toAddr", peerAddr,
+						)
+					}
+					peerById = r.cometbftSwitch.Peers(replRequest.ChainID).Get(sourcePeer.ID())
+					if err = r.sendChainReplicationResponse(peerById, replRequest.ChainID); err != nil {
+						r.Logger.Debug("Error with ChainReplicationResponse",
+							"err", err,
+							"chain", replRequest.ChainID,
+							"toPeer", peerById,
+							"peerRunning", peerById.IsRunning(),
+						)
+					}
+				}
+
 			}
 
 			// Done.
@@ -1676,7 +1726,7 @@ func (reactor *Reactor) sendChainReplicationResponse(
 	chainID string,
 ) error {
 	myPeerID := reactor.GetNodeKey().ID()
-	peer.Send(chainID, p2p.Envelope{
+	if success := peer.Send(chainID, p2p.Envelope{
 		ChannelID: server.ReplicationChannel,
 		Message: &mxp2p.Message{
 			Sum: &mxp2p.Message_ChainReplicationResponse{
@@ -1686,7 +1736,9 @@ func (reactor *Reactor) sendChainReplicationResponse(
 				},
 			},
 		},
-	})
+	}); !success {
+		return errors.New("sending was unsuccess")
+	}
 
 	return nil
 }
