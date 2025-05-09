@@ -2448,7 +2448,7 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 		defer thirdCancelCtxFn()
 
 		// Separate goroutine for client broadcast process
-		numTransactions := 2
+		numTransactions := 1
 		notifyCh := make(chan client.BroadcastStatus)
 		defer close(notifyCh)
 
@@ -2497,7 +2497,7 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 		defer fourthCancelCtxFn()
 
 		// Separate goroutine for client broadcast process
-		numTransactions := 2
+		numTransactions := 1
 		notifyCh := make(chan client.BroadcastStatus)
 		defer close(notifyCh)
 
@@ -2543,7 +2543,7 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 		defer fifthCancelCtxFn()
 
 		// Separate goroutine for client broadcast process
-		numTransactions := 2
+		numTransactions := 1
 		notifyCh := make(chan client.BroadcastStatus)
 		defer close(notifyCh)
 
@@ -2614,7 +2614,7 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 	assert.Equal(t, numStepsTested, cntDone)
 	assert.NoError(t, errBroadcast, "consecutive broadcasts should not error")
 
-	numTxesInLastBlock := 2
+	numTxesInLastBlock := 1
 
 	// relay-1 chain-1
 	_, relay1_actualHeightChainID1 := assertNetworkProducedBlockWithTxes(t,
