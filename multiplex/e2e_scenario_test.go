@@ -2460,6 +2460,10 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 		testDoneCh <- struct{}{}
 	}()
 
+	waitDuration := 3 * time.Second
+	t.Logf("Waiting %.0fsec before next broadcast...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
+
 	// STEP 2:
 	//
 	// CAUTION:
@@ -2517,6 +2521,10 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 		testDoneCh <- struct{}{}
 	}()
 
+	waitDuration = 3 * time.Second
+	t.Logf("Waiting %.0fsec before next broadcast...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
+
 	// STEP 4:
 	// We restart relay-2 and complete a broadcast process, relay-2 should be
 	// behind on blocks for testChainID1 since it missed the broadcast of Step 3.
@@ -2531,7 +2539,7 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 
 	resetRelay.MustStart()
 
-	waitDuration := 2 * time.Second
+	waitDuration = 2 * time.Second
 	t.Logf("Waiting %.0fsec to use restarted node services...", waitDuration.Seconds())
 	time.Sleep(waitDuration)
 
@@ -2576,6 +2584,10 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 
 		testDoneCh <- struct{}{}
 	}()
+
+	waitDuration = 3 * time.Second
+	t.Logf("Waiting %.0fsec before next broadcast...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
 
 	// STEP 4:
 	//
@@ -2622,6 +2634,10 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 
 		testDoneCh <- struct{}{}
 	}()
+
+	waitDuration = 3 * time.Second
+	t.Logf("Waiting %.0fsec before next broadcast...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
 
 	// STEP 5:
 	// We execute a second broadcast on different ChainID (Height=2).
