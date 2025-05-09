@@ -1014,6 +1014,7 @@ func (b *MultiplexBackend) GetRelaysByNetwork(
 		relayAddr := result.addr
 		if result.result == nil {
 			relaysWithFailure[relayAddr.String()] = true
+			enhancedAddresses = append(enhancedAddresses, relayAddr)
 			continue
 		}
 		durationMs := time.Since(result.start).Milliseconds()
