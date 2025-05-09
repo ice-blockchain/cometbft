@@ -3439,7 +3439,7 @@ func assertNetworkProducedBlockWithTxes(
 	blockStore := blockStoreProvider(useChainID).(*store.BlockStore)
 	assert.NotNil(tb, blockStore, "block store per chain must not be nil")
 
-	actualBlock, actualMeta := blockStore.LoadBlock(stateMachine.LastBlockHeight)
+	actualBlock, actualMeta := blockStore.LoadBlock(blockHeight)
 	assert.NotNil(tb, actualBlock, "should return correct block")
 	assert.NotNil(tb, actualMeta, "should return correct block meta")
 	assert.NotEmpty(tb, actualBlock.Data, "should return non-empty block data")
