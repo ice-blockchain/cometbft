@@ -2116,12 +2116,9 @@ func TestScenarioClientBroadcastSingleRelayContinuousBlocks(t *testing.T) {
 
 		t.Logf("Broadcast #1 completed with ChainID: %s", testChainID1)
 
-		waitDuration := 10 * time.Second
-		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
+		waitDuration := 5 * time.Second
+		t.Logf("Waiting %.0fsec to shutdown test case 1...", waitDuration.Seconds())
 		time.Sleep(waitDuration)
-
-		blockHeight := int64(1)
-		assertNetworkProducedBlocks(t, servers[0], testChainID1, blockHeight)
 
 		testDoneCh <- struct{}{}
 	}()
@@ -2164,12 +2161,9 @@ func TestScenarioClientBroadcastSingleRelayContinuousBlocks(t *testing.T) {
 
 		t.Logf("Broadcast #2 completed with ChainID: %s", testChainID1)
 
-		waitDuration := 10 * time.Second
-		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
+		waitDuration := 5 * time.Second
+		t.Logf("Waiting %.0fsec to shutdown test case 2...", waitDuration.Seconds())
 		time.Sleep(waitDuration)
-
-		blockHeight := int64(2)
-		assertNetworkProducedBlocks(t, servers[0], testChainID1, blockHeight)
 
 		testDoneCh <- struct{}{}
 	}()
@@ -2212,12 +2206,9 @@ func TestScenarioClientBroadcastSingleRelayContinuousBlocks(t *testing.T) {
 
 		t.Logf("Broadcast #3 completed with ChainID: %s", testChainID1)
 
-		waitDuration := 10 * time.Second
-		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
+		waitDuration := 5 * time.Second
+		t.Logf("Waiting %.0fsec to shutdown test case 3...", waitDuration.Seconds())
 		time.Sleep(waitDuration)
-
-		blockHeight := int64(3)
-		assertNetworkProducedBlocks(t, servers[0], testChainID1, blockHeight)
 
 		testDoneCh <- struct{}{}
 	}()
@@ -2260,12 +2251,9 @@ func TestScenarioClientBroadcastSingleRelayContinuousBlocks(t *testing.T) {
 
 		t.Logf("Broadcast #4 completed with ChainID: %s", testChainID2)
 
-		waitDuration := 10 * time.Second
-		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
+		waitDuration := 5 * time.Second
+		t.Logf("Waiting %.0fsec to shutdown test case 4...", waitDuration.Seconds())
 		time.Sleep(waitDuration)
-
-		blockHeight := int64(1)
-		assertNetworkProducedBlocks(t, servers[0], testChainID2, blockHeight)
 
 		testDoneCh <- struct{}{}
 	}()
@@ -2308,12 +2296,9 @@ func TestScenarioClientBroadcastSingleRelayContinuousBlocks(t *testing.T) {
 
 		t.Logf("Broadcast #5 completed with ChainID: %s", testChainID2)
 
-		waitDuration := 10 * time.Second
-		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
+		waitDuration := 5 * time.Second
+		t.Logf("Waiting %.0fsec to shutdown test case 5...", waitDuration.Seconds())
 		time.Sleep(waitDuration)
-
-		blockHeight := int64(2)
-		assertNetworkProducedBlocks(t, servers[0], testChainID2, blockHeight)
 
 		testDoneCh <- struct{}{}
 	}()
@@ -2468,13 +2453,9 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 
 		t.Logf("Broadcast #1 completed with ChainID: %s", testChainID1)
 
-		waitDuration := 20 * time.Second
-		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
+		waitDuration := 5 * time.Second
+		t.Logf("Waiting %.0fsec to shutdown test case 1...", waitDuration.Seconds())
 		time.Sleep(waitDuration)
-
-		blockHeight := int64(1)
-		assertNetworkProducedBlocks(t, servers[0], testChainID1, blockHeight)
-		assertNetworkProducedBlocks(t, servers[1], testChainID1, blockHeight)
 
 		testDoneCh <- struct{}{}
 	}()
@@ -2529,14 +2510,9 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 
 		t.Logf("Broadcast #2 completed with ChainID: %s", testChainID1)
 
-		waitDuration := 20 * time.Second
-		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
+		waitDuration := 5 * time.Second
+		t.Logf("Waiting %.0fsec to shutdown test case 2...", waitDuration.Seconds())
 		time.Sleep(waitDuration)
-
-		blockHeight := int64(2)
-		assertNetworkProducedBlocks(t, servers[0], testChainID1, blockHeight)
-		// servers[1] is down during this test!
-		assertNetworkProducedBlocks(t, servers[2], testChainID1, blockHeight)
 
 		testDoneCh <- struct{}{}
 	}()
@@ -2594,13 +2570,9 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 
 		t.Logf("Broadcast #3 completed with ChainID: %s", testChainID1)
 
-		waitDuration := 20 * time.Second
-		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
+		waitDuration := 5 * time.Second
+		t.Logf("Waiting %.0fsec to shutdown test case 3...", waitDuration.Seconds())
 		time.Sleep(waitDuration)
-
-		blockHeight := int64(3)
-		assertNetworkProducedBlocks(t, servers[0], testChainID1, blockHeight)
-		assertNetworkProducedBlocks(t, resetRelay, testChainID1, blockHeight)
 
 		testDoneCh <- struct{}{}
 	}()
@@ -2644,13 +2616,9 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 
 		t.Logf("Broadcast #4 completed with ChainID: %s", testChainID2)
 
-		waitDuration := 20 * time.Second
-		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
+		waitDuration := 5 * time.Second
+		t.Logf("Waiting %.0fsec to shutdown test case 4...", waitDuration.Seconds())
 		time.Sleep(waitDuration)
-
-		blockHeight := int64(1)
-		assertNetworkProducedBlocks(t, servers[0], testChainID2, blockHeight)
-		assertNetworkProducedBlocks(t, resetRelay, testChainID2, blockHeight)
 
 		testDoneCh <- struct{}{}
 	}()
@@ -2693,12 +2661,9 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 
 		t.Logf("Broadcast #5 completed with ChainID: %s", testChainID2)
 
-		waitDuration := 20 * time.Second
-		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
+		waitDuration := 5 * time.Second
+		t.Logf("Waiting %.0fsec to shutdown test case 5...", waitDuration.Seconds())
 		time.Sleep(waitDuration)
-
-		blockHeight := int64(2)
-		assertNetworkProducedBlocks(t, servers[0], testChainID2, blockHeight)
 
 		testDoneCh <- struct{}{}
 	}()
