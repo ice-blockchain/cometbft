@@ -445,7 +445,7 @@ func (c MultiplexClient) BroadcastTx(
 	// The RelaysBroadcast routine communicates the tx hash on a
 	// channel to tell this broadcaster about the acceptance of the
 	// transaction by our own mempool.
-	ackedRelaysPerTx,
+	expectedRelaysPerTx, ackedRelaysPerTx,
 		numExpectedAcks,
 		totalAckReceived,
 		acceptErr := c.GetBackend().WaitForRelaysAckTransactionBatch(ctx,
@@ -491,16 +491,8 @@ func (c MultiplexClient) BroadcastTx(
 	}
 
 	for txHash, ackedRelays := range ackedRelaysPerTx {
-		// Filters relay IDs such that relays that are still replicating are
-		// not expected to respond with a transaction ack, because their mempool
-		// is not ready to include a transaction - these relays will get the
-		// transaction by blocksync instead.
-		txExpectedAckRelays := c.GetBackend().ApplyFilterAckTransactionRelayIds(
-			chainRelays,
-			catchupRelays,
-		)
 
-		if len(ackedRelays) < len(txExpectedAckRelays) {
+		if len(ackedRelays) < len(expectedRelaysPerTx[txHash]) {
 			// Not all healthy relays acked this transaction.
 			// Broadcast a rollback operation because some of the healthy relays
 			// may have included (some) transactions in their mempool already.
@@ -511,7 +503,7 @@ func (c MultiplexClient) BroadcastTx(
 
 			client.Error(notifyCh, fmt.Errorf(
 				"missing relays acceptance for %s, expected %d, got %d",
-				txHash, len(txExpectedAckRelays), len(ackedRelays)))
+				txHash, len(expectedRelaysPerTx[txHash]), len(ackedRelays)))
 			return // STOP here
 		}
 

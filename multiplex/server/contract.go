@@ -86,7 +86,7 @@ type Backend interface {
 		chainRelays map[string][]*RelayAddress,
 		catchupRelays map[string][]*RelayAddress,
 		transactions []client.Transaction,
-	) (relaysPerTx map[string][]string, numExpected int, numReceived int, err error)
+	) (expectedRelaysPerTx, relaysPerTx map[string][]string, numExpected int, numReceived int, err error)
 
 	// CancelBroadcastOperation should execute the CancelBroadcast routine
 	// and it should remove transactions from the local mempool.

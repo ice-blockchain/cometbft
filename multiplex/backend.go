@@ -701,8 +701,9 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 	chainRelays map[string][]*server.RelayAddress,
 	catchupRelays map[string][]*server.RelayAddress,
 	transactions []client.Transaction,
-) (relaysPerTx map[string][]string, numExpected int, numReceived int, err error) {
+) (expectedRelaysPerTx map[string][]string, relaysPerTx map[string][]string, numExpected int, numReceived int, err error) {
 	relaysPerTx = map[string][]string{}
+	expectedRelaysPerTx = map[string][]string{}
 	numReceived = 0
 
 	// Contains only relay IDs for which we must wait
@@ -742,11 +743,20 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 	// a [AckTransactionBroadcast] message on the [server.AckBroadcastChannel].
 	for _, transaction := range transactions {
 		txHash := fmt.Sprintf("%X", transaction.Hash())
-
+		relevantRelaysForTx := relevantRelays
+		b.reactor.poolRequestsMtx.Lock()
+		txSentToPeers := b.reactor.poolRequestsSent[txHash]
+		b.reactor.poolRequestsMtx.Unlock()
+		if len(txSentToPeers) != len(relevantRelays) && len(txSentToPeers) > 0 {
+			numExpected -= len(relevantRelays)
+			numExpected += len(txSentToPeers)
+			relevantRelaysForTx = txSentToPeers
+		}
+		expectedRelaysPerTx[txHash] = relevantRelaysForTx
 		// TODO(midas): remove debug logs
 		b.logger.Debug("Waiting only for relevant relays to respond",
 			"num_relays", len(relevantRelays),
-			"relay_ids", relevantRelays,
+			"relay_ids", relevantRelaysForTx,
 			"total_ack", numExpected,
 			"tx_hash", txHash,
 		)
@@ -769,7 +779,7 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 		// Collects AckTransactionBroadcast messages and proxy to remoteRelayTxCh.
 		// Stopped on shutdownWaitCh.
 		go b.remoteAckTransactionConsumer(ctx,
-			relevantRelays,           // Accept ACK only from these relays
+			relevantRelaysForTx,      // Accept ACK only from these relays
 			transaction,              // ... and for this transaction
 			ackAcceptTxChs[txHash],   // Consuming this channel
 			remoteRelayTxChs[txHash], // Forwarding to local consumer
@@ -780,7 +790,7 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 		// Collects remoteRelayTxCh messages and create result object.
 		// Stopped on shutdownWaitCh.
 		go b.localAckTransactionConsumer(ctx,
-			relevantRelays,           // Wait for ACK only for these relays
+			relevantRelaysForTx,      // Wait for ACK only for these relays
 			transaction,              // ... and for these transactions
 			remoteRelayTxChs[txHash], // Consuming this channel
 			asyncResultsCh,
@@ -1106,7 +1116,6 @@ func (b *MultiplexBackend) ApplyFilterAckTransactionRelayIds(
 	catchupRelays map[string][]*server.RelayAddress,
 ) []string {
 	relevantRelays := []string{}
-
 	// Any healthy relay should be waited for initially.
 	for _, relaysForChain := range chainRelays {
 		healthyRelayIds := func() (relayIds []string) {

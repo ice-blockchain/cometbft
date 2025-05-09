@@ -106,7 +106,7 @@ func clientAckTransaction(
 	catchupRelays map[string][]*server.RelayAddress,
 	mustAckRelays map[string][]*server.RelayAddress,
 	testTransactions []client.Transaction,
-) (relaysPerTx map[string][]string, numExpected int, numReceived int, err error) {
+) (expectedRelaysPerTx, relaysPerTx map[string][]string, numExpected int, numReceived int, err error) {
 	tb.Helper()
 
 	multiplexClient := mx.NewClient(
@@ -120,7 +120,7 @@ func clientAckTransaction(
 	go func() {
 		defer wg.Done()
 
-		relaysPerTx,
+		expectedRelaysPerTx, relaysPerTx,
 			numExpected,
 			numReceived,
 			err = multiplexClient.GetBackend().WaitForRelaysAckTransactionBatch(ctx,
@@ -361,7 +361,7 @@ func TestScenarioClientBroadcastWaitForAckTransactions(t *testing.T) {
 	testTransactions1 := makeClientTransactions(t, testChainInfo1, 1)
 
 	// Block main thread to test AckTransaction process
-	actualRelaysPerTx,
+	_, actualRelaysPerTx,
 		actualExpectedAcks,
 		actualNumReceived,
 		actualAcceptErr := clientAckTransaction(t,
@@ -426,7 +426,7 @@ func TestScenarioClientBroadcastWaitForAckTransactions(t *testing.T) {
 	testTransactions2 := makeClientTransactions(t, testChainInfo2, 1)
 
 	// Block main thread to test AckTransaction process
-	_, actualExpectedAcks, _, actualAcceptErr = clientAckTransaction(t,
+	_, _, actualExpectedAcks, _, actualAcceptErr = clientAckTransaction(t,
 		secondBroadcastCtx,
 		testRelayOne,
 		testAckingRelays, // unhealthy removed
