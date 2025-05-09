@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"sync"
 	"testing"
@@ -43,6 +44,14 @@ func useRelaysWithoutIds(tb testing.TB, relays []string) []string {
 		relaysWithoutIds = append(relaysWithoutIds, ra.StringWithoutId())
 	}
 	return relaysWithoutIds
+}
+
+func txResultsHash(rawHashes [][]byte) []string {
+	txHashes := []string{}
+	for _, bzHash := range rawHashes {
+		txHashes = append(txHashes, fmt.Sprintf("%X", bzHash))
+	}
+	return txHashes
 }
 
 func makeClientTransactions(
@@ -2036,6 +2045,10 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 func TestScenarioClientBroadcastSingleRelayContinuousBlocks(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
+	timeoutGlobal := 120 * time.Second // Time for full test round
+	testCaseCtx, globalCancelFn := context.WithTimeout(context.TODO(), timeoutGlobal)
+	defer globalCancelFn()
+
 	numChains := 0
 	numRelays := 1
 
@@ -2060,6 +2073,14 @@ func TestScenarioClientBroadcastSingleRelayContinuousBlocks(t *testing.T) {
 
 	testChainID1 := makeChainID("test-chain-1")
 	testChainID2 := makeChainID("test-chain-2")
+
+	expectedMinEndHeightChainID1 := int64(3)
+	expectedMinEndHeightChainID2 := int64(2)
+	expectedTxHashesChainID1 := []string{}
+	expectedTxHashesChainID2 := []string{}
+
+	numStepsTested := 5
+	testDoneCh := make(chan struct{}, numStepsTested)
 
 	// STEP 1:
 	// We execute a complete broadcast process (Height=1).
@@ -2090,6 +2111,9 @@ func TestScenarioClientBroadcastSingleRelayContinuousBlocks(t *testing.T) {
 			"should not error with first broadcast and "+testChainID1)
 		require.Len(t, resultStatusMsg.TxHashes, numTransactions)
 
+		expectedTxHashes := txResultsHash(resultStatusMsg.TxHashes)
+		expectedTxHashesChainID1 = append(expectedTxHashesChainID1, expectedTxHashes...)
+
 		t.Logf("Broadcast #1 completed with ChainID: %s", testChainID1)
 
 		waitDuration := 10 * time.Second
@@ -2097,7 +2121,9 @@ func TestScenarioClientBroadcastSingleRelayContinuousBlocks(t *testing.T) {
 		time.Sleep(waitDuration)
 
 		blockHeight := int64(1)
-		assertNetworkProducedBlockWithTxes(t, servers[0], testChainID1, blockHeight, numTransactions, true) // true=allowGreater
+		assertNetworkProducedBlocks(t, servers[0], testChainID1, blockHeight)
+
+		testDoneCh <- struct{}{}
 	}()
 
 	// STEP 2:
@@ -2133,6 +2159,9 @@ func TestScenarioClientBroadcastSingleRelayContinuousBlocks(t *testing.T) {
 			"should not error with second broadcast and "+testChainID1)
 		require.Len(t, resultStatusMsg.TxHashes, numTransactions)
 
+		expectedTxHashes := txResultsHash(resultStatusMsg.TxHashes)
+		expectedTxHashesChainID1 = append(expectedTxHashesChainID1, expectedTxHashes...)
+
 		t.Logf("Broadcast #2 completed with ChainID: %s", testChainID1)
 
 		waitDuration := 10 * time.Second
@@ -2140,7 +2169,9 @@ func TestScenarioClientBroadcastSingleRelayContinuousBlocks(t *testing.T) {
 		time.Sleep(waitDuration)
 
 		blockHeight := int64(2)
-		assertNetworkProducedBlockWithTxes(t, servers[0], testChainID1, blockHeight, numTransactions, true) // true=allowGreater
+		assertNetworkProducedBlocks(t, servers[0], testChainID1, blockHeight)
+
+		testDoneCh <- struct{}{}
 	}()
 
 	// STEP 3:
@@ -2176,16 +2207,19 @@ func TestScenarioClientBroadcastSingleRelayContinuousBlocks(t *testing.T) {
 			"should not error with third broadcast and "+testChainID1)
 		require.Len(t, resultStatusMsg.TxHashes, numTransactions)
 
+		expectedTxHashes := txResultsHash(resultStatusMsg.TxHashes)
+		expectedTxHashesChainID1 = append(expectedTxHashesChainID1, expectedTxHashes...)
+
 		t.Logf("Broadcast #3 completed with ChainID: %s", testChainID1)
 
 		waitDuration := 10 * time.Second
 		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
 		time.Sleep(waitDuration)
 
-		// Here we do not allow a greater height because
-		// this is the last tx for this chain.
 		blockHeight := int64(3)
-		assertNetworkProducedBlockWithTxes(t, servers[0], testChainID1, blockHeight, numTransactions, false) // false=allowGreater
+		assertNetworkProducedBlocks(t, servers[0], testChainID1, blockHeight)
+
+		testDoneCh <- struct{}{}
 	}()
 
 	// STEP 4:
@@ -2221,6 +2255,9 @@ func TestScenarioClientBroadcastSingleRelayContinuousBlocks(t *testing.T) {
 			"should not error with fourth broadcast and "+testChainID2)
 		require.Len(t, resultStatusMsg.TxHashes, numTransactions)
 
+		expectedTxHashes := txResultsHash(resultStatusMsg.TxHashes)
+		expectedTxHashesChainID2 = append(expectedTxHashesChainID2, expectedTxHashes...)
+
 		t.Logf("Broadcast #4 completed with ChainID: %s", testChainID2)
 
 		waitDuration := 10 * time.Second
@@ -2228,7 +2265,9 @@ func TestScenarioClientBroadcastSingleRelayContinuousBlocks(t *testing.T) {
 		time.Sleep(waitDuration)
 
 		blockHeight := int64(1)
-		assertNetworkProducedBlockWithTxes(t, servers[0], testChainID2, blockHeight, numTransactions, true) // true=allowGreater
+		assertNetworkProducedBlocks(t, servers[0], testChainID2, blockHeight)
+
+		testDoneCh <- struct{}{}
 	}()
 
 	// STEP 5:
@@ -2264,17 +2303,87 @@ func TestScenarioClientBroadcastSingleRelayContinuousBlocks(t *testing.T) {
 			"should not error with fifth broadcast and "+testChainID2)
 		require.Len(t, resultStatusMsg.TxHashes, numTransactions)
 
+		expectedTxHashes := txResultsHash(resultStatusMsg.TxHashes)
+		expectedTxHashesChainID2 = append(expectedTxHashesChainID2, expectedTxHashes...)
+
 		t.Logf("Broadcast #5 completed with ChainID: %s", testChainID2)
 
 		waitDuration := 10 * time.Second
 		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
 		time.Sleep(waitDuration)
 
-		// Here we do not allow a greater height because
-		// this is the last tx for this chain.
 		blockHeight := int64(2)
-		assertNetworkProducedBlockWithTxes(t, servers[0], testChainID2, blockHeight, numTransactions, false) // false=allowGreater
+		assertNetworkProducedBlocks(t, servers[0], testChainID2, blockHeight)
+
+		testDoneCh <- struct{}{}
 	}()
+
+	// Waits to consume from testDoneCh or timeout after 30 seconds
+	var (
+		wg           sync.WaitGroup
+		cntDone      int
+		errBroadcast error
+	)
+	wg.Add(1)
+	go func(ch chan struct{}) {
+		defer wg.Done()
+		for {
+			select {
+			case <-ch:
+				cntDone++
+				if cntDone == numStepsTested {
+					return
+				}
+
+			case <-testCaseCtx.Done():
+				errBroadcast = errors.New("Timed out waiting for concurrent broadcasts to end")
+				return
+			}
+		}
+	}(testDoneCh)
+	wg.Wait()
+
+	waitDuration := 10 * time.Second
+	t.Logf("Waiting %.0fsec to evaluate state machines...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
+
+	t.Log("Test case done running, evaluating results...")
+	assert.Equal(t, numStepsTested, cntDone)
+	assert.NoError(t, errBroadcast, "consecutive broadcasts should not error")
+
+	// relay-1 chain-1
+	_, relay1_actualHeightChainID1 := assertNetworkProducedBlocks(t,
+		servers[0],
+		testChainID1,
+		expectedMinEndHeightChainID1,
+	)
+
+	// relay-1 chain-2
+	_, relay1_actualHeightChainID2 := assertNetworkProducedBlocks(t,
+		servers[0],
+		testChainID2,
+		expectedMinEndHeightChainID2,
+	)
+
+	// Testing ChainID min end heights
+	require.GreaterOrEqual(t, relay1_actualHeightChainID1, expectedMinEndHeightChainID1,
+		fmt.Sprintf("relay-1 should have correct end height, expected %d, got %d", expectedMinEndHeightChainID1, relay1_actualHeightChainID1))
+
+	require.GreaterOrEqual(t, relay1_actualHeightChainID2, expectedMinEndHeightChainID2,
+		fmt.Sprintf("relay-1 should have correct end height, expected %d, got %d", expectedMinEndHeightChainID2, relay1_actualHeightChainID2))
+
+	// Testing inclusion of all transactions
+	assertNetworkIncludedTransactions(t,
+		servers[0], // relay-1
+		testChainID1,
+		expectedTxHashesChainID1,
+	)
+
+	assertNetworkIncludedTransactions(t,
+		servers[0], // relay-1
+		testChainID2,
+		expectedTxHashesChainID2,
+	)
 }
 
 // After a complete backend restart (remote), due to a process failure or corruption,
@@ -2317,8 +2426,10 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 	testChainID1 := makeChainID("test-chain-1")
 	testChainID2 := makeChainID("test-chain-2")
 
-	expectedEndHeightChainID1 := int64(3)
-	expectedEndHeightChainID2 := int64(2)
+	expectedMinEndHeightChainID1 := int64(3)
+	expectedMinEndHeightChainID2 := int64(2)
+	expectedTxHashesChainID1 := []string{}
+	expectedTxHashesChainID2 := []string{}
 
 	numStepsTested := 5
 	testDoneCh := make(chan struct{}, numStepsTested)
@@ -2352,6 +2463,9 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 			"should not error with broadcast before relay-2 downtime")
 		require.Len(t, resultStatusMsg.TxHashes, numTransactions)
 
+		expectedTxHashes := txResultsHash(resultStatusMsg.TxHashes)
+		expectedTxHashesChainID1 = append(expectedTxHashesChainID1, expectedTxHashes...)
+
 		t.Logf("Broadcast #1 completed with ChainID: %s", testChainID1)
 
 		waitDuration := 20 * time.Second
@@ -2359,8 +2473,8 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 		time.Sleep(waitDuration)
 
 		blockHeight := int64(1)
-		assertNetworkProducedBlockWithTxes(t, servers[0], testChainID1, blockHeight, numTransactions, true) // true=allowGreater
-		assertNetworkProducedBlockWithTxes(t, servers[1], testChainID1, blockHeight, numTransactions, true) // true=allowGreater
+		assertNetworkProducedBlocks(t, servers[0], testChainID1, blockHeight)
+		assertNetworkProducedBlocks(t, servers[1], testChainID1, blockHeight)
 
 		testDoneCh <- struct{}{}
 	}()
@@ -2410,6 +2524,9 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 			"should not error with broadcast during relay-2 downtime")
 		require.Len(t, resultStatusMsg.TxHashes, numTransactions)
 
+		expectedTxHashes := txResultsHash(resultStatusMsg.TxHashes)
+		expectedTxHashesChainID1 = append(expectedTxHashesChainID1, expectedTxHashes...)
+
 		t.Logf("Broadcast #2 completed with ChainID: %s", testChainID1)
 
 		waitDuration := 20 * time.Second
@@ -2417,9 +2534,9 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 		time.Sleep(waitDuration)
 
 		blockHeight := int64(2)
-		assertNetworkProducedBlockWithTxes(t, servers[0], testChainID1, blockHeight, numTransactions, true) // true=allowGreater
+		assertNetworkProducedBlocks(t, servers[0], testChainID1, blockHeight)
 		// servers[1] is down during this test!
-		assertNetworkProducedBlockWithTxes(t, servers[2], testChainID1, blockHeight, numTransactions, true) // true=allowGreater
+		assertNetworkProducedBlocks(t, servers[2], testChainID1, blockHeight)
 
 		testDoneCh <- struct{}{}
 	}()
@@ -2472,17 +2589,18 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 			"should not error with broadcast after relay-2 restart")
 		require.Len(t, resultStatusMsg.TxHashes, numTransactions)
 
+		expectedTxHashes := txResultsHash(resultStatusMsg.TxHashes)
+		expectedTxHashesChainID1 = append(expectedTxHashesChainID1, expectedTxHashes...)
+
 		t.Logf("Broadcast #3 completed with ChainID: %s", testChainID1)
 
 		waitDuration := 20 * time.Second
 		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
 		time.Sleep(waitDuration)
 
-		// Here we do not allow a greater height because
-		// this is the last tx for this chain.
 		blockHeight := int64(3)
-		assertNetworkProducedBlockWithTxes(t, servers[0], testChainID1, blockHeight, numTransactions, false) // false=allowGreater
-		assertNetworkProducedBlockWithTxes(t, resetRelay, testChainID1, blockHeight, numTransactions, false) // false=allowGreater
+		assertNetworkProducedBlocks(t, servers[0], testChainID1, blockHeight)
+		assertNetworkProducedBlocks(t, resetRelay, testChainID1, blockHeight)
 
 		testDoneCh <- struct{}{}
 	}()
@@ -2521,6 +2639,9 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 			"should not error with broadcast after relay-2 restart and diff ChainID")
 		require.Len(t, resultStatusMsg.TxHashes, numTransactions)
 
+		expectedTxHashes := txResultsHash(resultStatusMsg.TxHashes)
+		expectedTxHashesChainID2 = append(expectedTxHashesChainID2, expectedTxHashes...)
+
 		t.Logf("Broadcast #4 completed with ChainID: %s", testChainID2)
 
 		waitDuration := 20 * time.Second
@@ -2528,8 +2649,8 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 		time.Sleep(waitDuration)
 
 		blockHeight := int64(1)
-		assertNetworkProducedBlockWithTxes(t, servers[0], testChainID2, blockHeight, numTransactions, true) // true=allowGreater
-		assertNetworkProducedBlockWithTxes(t, resetRelay, testChainID2, blockHeight, numTransactions, true) // true=allowGreater
+		assertNetworkProducedBlocks(t, servers[0], testChainID2, blockHeight)
+		assertNetworkProducedBlocks(t, resetRelay, testChainID2, blockHeight)
 
 		testDoneCh <- struct{}{}
 	}()
@@ -2567,16 +2688,17 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 			"should not error with fifth broadcast and "+testChainID2)
 		require.Len(t, resultStatusMsg.TxHashes, numTransactions)
 
+		expectedTxHashes := txResultsHash(resultStatusMsg.TxHashes)
+		expectedTxHashesChainID2 = append(expectedTxHashesChainID2, expectedTxHashes...)
+
 		t.Logf("Broadcast #5 completed with ChainID: %s", testChainID2)
 
 		waitDuration := 20 * time.Second
 		t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
 		time.Sleep(waitDuration)
 
-		// Here we do not allow a greater height because
-		// this is the last tx for this chain.
 		blockHeight := int64(2)
-		assertNetworkProducedBlockWithTxes(t, servers[0], testChainID2, blockHeight, numTransactions, false) // false=allowGreater
+		assertNetworkProducedBlocks(t, servers[0], testChainID2, blockHeight)
 
 		testDoneCh <- struct{}{}
 	}()
@@ -2614,76 +2736,95 @@ func TestScenarioClientBroadcastDuringAndAfterRemoteRestart(t *testing.T) {
 	assert.Equal(t, numStepsTested, cntDone)
 	assert.NoError(t, errBroadcast, "consecutive broadcasts should not error")
 
-	numTxesInLastBlock := 1
-
 	// relay-1 chain-1
-	_, relay1_actualHeightChainID1 := assertNetworkProducedBlockWithTxes(t,
+	_, relay1_actualHeightChainID1 := assertNetworkProducedBlocks(t,
 		servers[0],
 		testChainID1,
-		expectedEndHeightChainID1,
-		numTxesInLastBlock,
-		false, // testing "end height", i.e. do not allow greater
+		expectedMinEndHeightChainID1,
 	)
 
 	// relay-2 chain-1
-	_, relay2_actualHeightChainID1 := assertNetworkProducedBlockWithTxes(t,
+	_, relay2_actualHeightChainID1 := assertNetworkProducedBlocks(t,
 		resetRelay,
 		testChainID1,
-		expectedEndHeightChainID1,
-		numTxesInLastBlock,
-		false, // testing "end height", i.e. do not allow greater
+		expectedMinEndHeightChainID1,
 	)
 
 	// relay-3 chain-1
-	_, relay3_actualHeightChainID1 := assertNetworkProducedBlockWithTxes(t,
+	_, relay3_actualHeightChainID1 := assertNetworkProducedBlocks(t,
 		servers[2],
 		testChainID1,
-		expectedEndHeightChainID1,
-		numTxesInLastBlock,
-		false, // testing "end height", i.e. do not allow greater
+		expectedMinEndHeightChainID1,
 	)
 
 	// relay-1 chain-2
-	_, relay1_actualHeightChainID2 := assertNetworkProducedBlockWithTxes(t,
+	_, relay1_actualHeightChainID2 := assertNetworkProducedBlocks(t,
 		servers[0],
 		testChainID2,
-		expectedEndHeightChainID2,
-		numTxesInLastBlock,
-		false, // testing "end height", i.e. do not allow greater
+		expectedMinEndHeightChainID2,
 	)
 
 	// relay-2 chain-2
-	_, relay2_actualHeightChainID2 := assertNetworkProducedBlockWithTxes(t,
+	_, relay2_actualHeightChainID2 := assertNetworkProducedBlocks(t,
 		resetRelay,
 		testChainID2,
-		expectedEndHeightChainID2,
-		numTxesInLastBlock,
-		false, // testing "end height", i.e. do not allow greater
+		expectedMinEndHeightChainID2,
 	)
 
 	// relay-3 chain-2
-	_, relay3_actualHeightChainID2 := assertNetworkProducedBlockWithTxes(t,
+	_, relay3_actualHeightChainID2 := assertNetworkProducedBlocks(t,
 		servers[2],
 		testChainID2,
-		expectedEndHeightChainID2,
-		numTxesInLastBlock,
-		false, // testing "end height", i.e. do not allow greater
+		expectedMinEndHeightChainID2,
 	)
 
-	// Testing ChainID end heights
-	require.Equal(t, expectedEndHeightChainID1, relay1_actualHeightChainID1,
-		fmt.Sprintf("relay-1 should have correct end height, expected %d, got %d", expectedEndHeightChainID1, relay1_actualHeightChainID1))
-	require.Equal(t, expectedEndHeightChainID1, relay2_actualHeightChainID1,
-		fmt.Sprintf("relay-2 should have correct end height, expected %d, got %d", expectedEndHeightChainID1, relay1_actualHeightChainID1))
-	require.Equal(t, expectedEndHeightChainID1, relay3_actualHeightChainID1,
-		fmt.Sprintf("relay-3 should have correct end height, expected %d, got %d", expectedEndHeightChainID1, relay1_actualHeightChainID1))
+	// Testing ChainID min end heights
+	require.GreaterOrEqual(t, relay1_actualHeightChainID1, expectedMinEndHeightChainID1,
+		fmt.Sprintf("relay-1 should have correct end height, expected %d, got %d", expectedMinEndHeightChainID1, relay1_actualHeightChainID1))
+	require.GreaterOrEqual(t, relay2_actualHeightChainID1, expectedMinEndHeightChainID1,
+		fmt.Sprintf("relay-2 should have correct end height, expected %d, got %d", expectedMinEndHeightChainID1, relay1_actualHeightChainID1))
+	require.GreaterOrEqual(t, relay3_actualHeightChainID1, expectedMinEndHeightChainID1,
+		fmt.Sprintf("relay-3 should have correct end height, expected %d, got %d", expectedMinEndHeightChainID1, relay1_actualHeightChainID1))
 
-	require.Equal(t, expectedEndHeightChainID2, relay1_actualHeightChainID2,
-		fmt.Sprintf("relay-1 should have correct end height, expected %d, got %d", expectedEndHeightChainID2, relay1_actualHeightChainID2))
-	require.Equal(t, expectedEndHeightChainID2, relay2_actualHeightChainID2,
-		fmt.Sprintf("relay-2 should have correct end height, expected %d, got %d", expectedEndHeightChainID2, relay1_actualHeightChainID2))
-	require.Equal(t, expectedEndHeightChainID2, relay3_actualHeightChainID2,
-		fmt.Sprintf("relay-3 should have correct end height, expected %d, got %d", expectedEndHeightChainID2, relay1_actualHeightChainID2))
+	require.GreaterOrEqual(t, relay1_actualHeightChainID2, expectedMinEndHeightChainID2,
+		fmt.Sprintf("relay-1 should have correct end height, expected %d, got %d", expectedMinEndHeightChainID2, relay1_actualHeightChainID2))
+	require.GreaterOrEqual(t, relay2_actualHeightChainID2, expectedMinEndHeightChainID2,
+		fmt.Sprintf("relay-2 should have correct end height, expected %d, got %d", expectedMinEndHeightChainID2, relay1_actualHeightChainID2))
+	require.GreaterOrEqual(t, relay3_actualHeightChainID2, expectedMinEndHeightChainID2,
+		fmt.Sprintf("relay-3 should have correct end height, expected %d, got %d", expectedMinEndHeightChainID2, relay1_actualHeightChainID2))
+
+	// Testing inclusion of all transactions
+	assertNetworkIncludedTransactions(t,
+		servers[0], // relay-1
+		testChainID1,
+		expectedTxHashesChainID1,
+	)
+	assertNetworkIncludedTransactions(t,
+		resetRelay, // relay-2
+		testChainID1,
+		expectedTxHashesChainID1,
+	)
+	assertNetworkIncludedTransactions(t,
+		servers[2], // relay-3
+		testChainID1,
+		expectedTxHashesChainID1,
+	)
+
+	assertNetworkIncludedTransactions(t,
+		servers[0], // relay-1
+		testChainID2,
+		expectedTxHashesChainID2,
+	)
+	assertNetworkIncludedTransactions(t,
+		resetRelay, // relay-2
+		testChainID2,
+		expectedTxHashesChainID2,
+	)
+	assertNetworkIncludedTransactions(t,
+		servers[2], // relay-3
+		testChainID2,
+		expectedTxHashesChainID2,
+	)
 }
 
 // With a list of empty relays, a ChainReplicationRequest must be sent,
@@ -3405,13 +3546,11 @@ func ResetTestSingleCompatibleRelay(
 	return serverRelayX, shutdownFn
 }
 
-func assertNetworkProducedBlockWithTxes(
+func assertNetworkProducedBlocks(
 	tb testing.TB,
 	relay *mx.MultiplexBackend,
 	useChainID string,
-	blockHeight int64,
-	numTransactions int,
-	allowGreaterHeight bool,
+	minBlockHeight int64,
 ) (expected int64, actual int64) {
 	tb.Helper()
 
@@ -3422,31 +3561,73 @@ func assertNetworkProducedBlockWithTxes(
 	chainStore := stateStoreProvider(useChainID).(sm.Store)
 	assert.NotNil(tb, chainStore, "state store per chain must not be nil")
 
+	// Test that the state machine progressed at least up to minBlockHeight
 	stateMachine, err := chainStore.Load()
 	assert.NoError(tb, err, "should not error loading state")
 	assert.Equal(tb, useChainID, stateMachine.ChainID)
-
-	// When we are broadcasting txes concurrently, it happens that the next
-	// broadcast will have finished before we evaluate state machines.
-	if allowGreaterHeight {
-		assert.GreaterOrEqual(tb, stateMachine.LastBlockHeight, blockHeight)
-	} else {
-		assert.Equal(tb, blockHeight, stateMachine.LastBlockHeight)
-	}
+	assert.GreaterOrEqual(tb, stateMachine.LastBlockHeight, minBlockHeight)
 
 	blockStoreProvider := testReactor.GetInstanceProvider(mx.InstanceKeyBlockStore)
 	assert.NotNil(tb, blockStoreProvider, "should not error getting block store provider")
 	blockStore := blockStoreProvider(useChainID).(*store.BlockStore)
 	assert.NotNil(tb, blockStore, "block store per chain must not be nil")
 
-	actualBlock, actualMeta := blockStore.LoadBlock(blockHeight)
+	// Test that we are able to read the block with minBlockHeight
+	actualBlock, actualMeta := blockStore.LoadBlock(minBlockHeight)
 	assert.NotNil(tb, actualBlock, "should return correct block")
 	assert.NotNil(tb, actualMeta, "should return correct block meta")
-	assert.NotEmpty(tb, actualBlock.Data, "should return non-empty block data")
-	assert.NotEmpty(tb, actualBlock.Data.Txs, "should return non-empty block transactions")
-	assert.Len(tb, actualBlock.Data.Txs, numTransactions)
 
-	expected = blockHeight
+	expected = minBlockHeight
 	actual = stateMachine.LastBlockHeight
 	return
+}
+
+func assertNetworkIncludedTransactions(
+	tb testing.TB,
+	relay *mx.MultiplexBackend,
+	useChainID string,
+	expectedTxHashes []string,
+) {
+	tb.Helper()
+
+	testReactor := relay.GetReactor()
+
+	stateStoreProvider := testReactor.GetInstanceProvider(mx.InstanceKeyStateStore)
+	assert.NotNil(tb, stateStoreProvider, "should not error getting state store provider")
+	chainStore := stateStoreProvider(useChainID).(sm.Store)
+	assert.NotNil(tb, chainStore, "state store per chain must not be nil")
+
+	blockStoreProvider := testReactor.GetInstanceProvider(mx.InstanceKeyBlockStore)
+	assert.NotNil(tb, blockStoreProvider, "should not error getting block store provider")
+	blockStore := blockStoreProvider(useChainID).(*store.BlockStore)
+	assert.NotNil(tb, blockStore, "block store per chain must not be nil")
+
+	// Load latest state machine state
+	stateMachine, err := chainStore.Load()
+	assert.NoError(tb, err, "should not error loading state")
+	assert.Equal(tb, useChainID, stateMachine.ChainID)
+
+	actualTxHashes := []string{}
+	for h := int64(1); h <= stateMachine.LastBlockHeight; h++ {
+		actualBlock, actualMeta := blockStore.LoadBlock(h)
+		assert.NotNil(tb, actualBlock, "should return correct block at height "+strconv.Itoa(int(h)))
+		assert.NotNil(tb, actualMeta, "should return correct block meta at height "+strconv.Itoa(int(h)))
+
+		// If this block height included txes, check if we are interested in these.
+		if len(actualBlock.Txs) > 0 {
+			rawTxes := actualBlock.Data.Txs
+			for _, rawTx := range rawTxes {
+				actualTxHash := fmt.Sprintf("%X", client.RawTxToTransaction(rawTx).Hash())
+				if slices.Contains(expectedTxHashes, actualTxHash) {
+					actualTxHashes = append(actualTxHashes, actualTxHash)
+				}
+				// else not interested in this tx
+			}
+		}
+	}
+
+	// Now evaluate whether we included *all* transaction hashes.
+	assert.NotEmpty(tb, actualTxHashes)
+	assert.Len(tb, actualTxHashes, len(expectedTxHashes),
+		"should include all expected transactions in blocks")
 }
