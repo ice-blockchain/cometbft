@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/ice-blockchain/cometbft/crypto/merkle"
 	"os"
 	"time"
 
@@ -327,7 +328,7 @@ func MakeGenesisState(genDoc *types.GenesisDoc) (State, error) {
 
 		ConsensusParams:                  *genDoc.ConsensusParams,
 		LastHeightConsensusParamsChanged: genDoc.InitialHeight,
-
-		AppHash: genDoc.AppHash,
+		LastResultsHash:                  merkle.HashFromByteSlices(nil),
+		AppHash:                          genDoc.AppHash,
 	}, nil
 }
