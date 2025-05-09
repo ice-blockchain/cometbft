@@ -916,9 +916,12 @@ func (b *MultiplexBackend) GetRemoteRelayInfo(
 	b.relayMtx.Lock()
 	b.httpClients = append(b.httpClients, c.GetHTTPClient())
 	b.relayMtx.Unlock()
-
+	deadline := time.Now().Add(b.requestTimeout)
 	// Each call should timeout after max requestTimeout.
-	timeoutCtx, cancelFn := context.WithTimeout(context.Background(), b.requestTimeout)
+	if ctxDeadline, withDeadline := clientCtx.Deadline(); withDeadline {
+		deadline = ctxDeadline
+	}
+	timeoutCtx, cancelFn := context.WithDeadline(context.Background(), deadline)
 	defer cancelFn()
 
 	result := &server.RPCResultRelayInfo{}
@@ -958,6 +961,7 @@ func (b *MultiplexBackend) GetRelaysByNetwork(
 	clientCtx context.Context,
 	relayAddresses []*server.RelayAddress,
 ) (
+	enhancedAddresses []*server.RelayAddress,
 	chainRelays map[string][]*server.RelayAddress,
 	errorRelays []string,
 ) {
@@ -967,35 +971,63 @@ func (b *MultiplexBackend) GetRelaysByNetwork(
 	// out their relay ID (CometBFT Node ID) before we can connect with P2P.
 	chainRelays = map[string][]*server.RelayAddress{}
 	errorRelays = []string{}
-	for _, relayAddr := range relayAddresses {
-		startTz := time.Now()
-		addrRPC := relayAddr.AddressForRelayInfo()
+	var wg sync.WaitGroup
+	res := make(chan struct {
+		start  time.Time
+		result *server.RPCResultRelayInfo
+		addr   *server.RelayAddress
+	}, len(relayAddresses))
+	for _, relAddr := range relayAddresses {
+		wg.Add(1)
+		go func(relayAddr *server.RelayAddress) {
+			defer wg.Done()
+			startTz := time.Now()
+			addrRPC := relayAddr.AddressForRelayInfo()
 
-		// Discover this relay's ID (CometBFT Node ID).
-		// This executes a RPC request for RelayInfo.
-		result, err := b.GetRemoteRelayInfo(clientCtx, relayAddr) // expects DiscoveryPort
-		if err != nil {
-			b.logger.Error("Error discovering relay information",
-				"relay", addrRPC,
-				"err", err,
-			)
+			// Discover this relay's ID (CometBFT Node ID).
+			// This executes a RPC request for RelayInfo.
+			result, err := b.GetRemoteRelayInfo(clientCtx, relayAddr) // expects DiscoveryPort
+			if err != nil {
+				b.logger.Error("Error discovering relay information",
+					"relay", addrRPC,
+					"err", err,
+				)
+				res <- struct {
+					start  time.Time
+					result *server.RPCResultRelayInfo
+					addr   *server.RelayAddress
+				}{result: nil, addr: relayAddr, start: startTz}
+				return
+			}
+
+			res <- struct {
+				start  time.Time
+				result *server.RPCResultRelayInfo
+				addr   *server.RelayAddress
+			}{result: result, addr: relayAddr, start: startTz}
+		}(relAddr)
+	}
+	wg.Wait()
+	close(res)
+	enhancedAddresses = make([]*server.RelayAddress, 0, len(relayAddresses))
+	for result := range res {
+		relayAddr := result.addr
+		if result.result == nil {
 			relaysWithFailure[relayAddr.String()] = true
 			continue
 		}
-
-		durationMs := time.Since(startTz).Milliseconds()
+		durationMs := time.Since(result.start).Milliseconds()
 
 		// TODO(midas): remove debug logs
 		b.logger.Debug("Retrieved networks information from relay",
-			"relay", addrRPC,
-			"networks", result.Networks,
+			"relay", relayAddr,
+			"networks", result.result.Networks,
 			"time", strconv.Itoa(int(durationMs))+"ms",
 		)
-
-		relayAddr.SetID(result.DefaultNodeID)
-
+		relayAddr.SetID(result.result.DefaultNodeID)
+		enhancedAddresses = append(enhancedAddresses, relayAddr)
 		// Populate a map of relay addresses by ChainID.
-		for _, chainID := range result.Networks {
+		for _, chainID := range result.result.Networks {
 			if _, ok := chainRelays[chainID]; !ok {
 				chainRelays[chainID] = []*server.RelayAddress{}
 			}
@@ -1011,7 +1043,7 @@ func (b *MultiplexBackend) GetRelaysByNetwork(
 		}
 	}
 
-	return chainRelays, errorRelays
+	return enhancedAddresses, chainRelays, errorRelays
 }
 
 // CheckDialCompatibleRelay dials the relay using a local [p2p.Switch] instance

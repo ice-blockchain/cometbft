@@ -165,7 +165,7 @@ func (c MultiplexClient) BroadcastTx(
 	// Determine relay IDs (CometBFT Node ID) and supported networks of each
 	// of the relays and identify potential unhealthy relays.
 	startRelaysByNetwork := time.Now()
-	chainRelays, errorRelays := c.GetBackend().GetRelaysByNetwork(ctx, relayAddresses)
+	relayAddresses, chainRelays, errorRelays := c.GetBackend().GetRelaysByNetwork(ctx, relayAddresses)
 	durationRelaysByNetwork := time.Since(startRelaysByNetwork).Milliseconds()
 
 	// Now we know how many (remote) relays are actually healthy.

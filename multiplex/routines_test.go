@@ -69,7 +69,7 @@ func TestMultiplexRoutinesNodeReplRequest(t *testing.T) {
 	}
 
 	// ReplRequest preparations (must dial)
-	chainRelays,
+	testRelayAddrs, chainRelays,
 		errorRelays := servers[0].GetRelaysByNetwork(context.TODO(), testRelayAddrs)
 	require.Len(t, errorRelays, 0) // NO error!
 	require.Len(t, chainRelays, numChains)

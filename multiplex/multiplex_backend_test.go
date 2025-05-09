@@ -468,7 +468,7 @@ func TestMultiplexBackendGetRelaysByNetwork(t *testing.T) {
 	testRelayAddr, err := server.NewRelayAddress(recipientNodeID + "@127.0.0.1:" + testBroadcastPort)
 	require.NoError(t, err)
 
-	chainRelays, errorRelays := servers[0].GetRelaysByNetwork(context.TODO(), []*server.RelayAddress{
+	_, chainRelays, errorRelays := servers[0].GetRelaysByNetwork(context.TODO(), []*server.RelayAddress{
 		testRelayAddr,
 	})
 

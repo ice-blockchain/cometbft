@@ -117,7 +117,7 @@ type Backend interface {
 	GetRelaysByNetwork(
 		ctx context.Context,
 		relays []*RelayAddress,
-	) (map[string][]*RelayAddress, []string)
+	) ([]*RelayAddress, map[string][]*RelayAddress, []string)
 
 	// CheckDialCompatibleRelay should dial a relay, executing a P2P handshake
 	// and thereby defining whether a relay is compatible for dialing.
