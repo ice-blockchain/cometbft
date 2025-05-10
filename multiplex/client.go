@@ -240,7 +240,9 @@ func (c MultiplexClient) BroadcastTx(
 	for _, relayAddr := range healthyRemoteRelays {
 		// Uses the local P2P switch to dial a remote peer.
 		if err := c.GetBackend().CheckDialCompatibleRelay(ctx, relayAddr); err != nil {
-			errorRelays = append(errorRelays, relayAddr.String())
+			if !slices.Contains(errorRelays, relayAddr.String()) {
+				errorRelays = append(errorRelays, relayAddr.String())
+			}
 		}
 	}
 
@@ -258,6 +260,12 @@ func (c MultiplexClient) BroadcastTx(
 
 	// Make sure dialing did not error for too many of the healthy relays.
 	if len(errorRelays) > maxFailingRelays {
+		c.backend.GetLogger().Debug("got errors from too many relays; ",
+			"expected", maxFailingRelays,
+			"errorRelaysCount", len(errorRelays),
+			"errorRelays", errorRelays,
+		)
+
 		client.Error(notifyCh, fmt.Errorf(
 			"CONSENSUS FAILURE: got errors from too many relays; expected %d, got %d",
 			maxFailingRelays,
