@@ -324,17 +324,11 @@ func (*Server) OnReset() error {
 
 func (s *Server) loop(state state) {
 	for {
-		// NOTE(midas): non-blocking select on shutdown channel makes
-		// sure every time before handling a command, we know to shutdown.
-		select {
-		case <-s.Quit():
-			return
-		default: // Proceed to handle command
-		}
-
 		// NOTE(midas): non-blocking select channel to permit interruptions
 		// more frequently and generally permit faster shutdown routine.
 		select {
+		case <-s.Quit():
+			return
 		case cmd := <-s.cmds:
 			switch cmd.op {
 			case shutdown:
@@ -353,8 +347,6 @@ func (s *Server) loop(state state) {
 					s.Logger.Error("Error querying for events", "err", err)
 				}
 			}
-		default:
-			// not waiting for command, come back later instead.
 		}
 	}
 }

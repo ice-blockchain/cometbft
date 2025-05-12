@@ -372,28 +372,25 @@ func (conn *multiplexAppConn) killTMOnClientError() {
 		}
 	}
 
-	for {
-		select {
-		// NOTE(midas): stop selecting as we are handling a shutdown.
-		case <-conn.Quit():
-			return
-		case <-conn.sharedClients.consensus.Quit():
-			if err := conn.sharedClients.consensus.Error(); err != nil {
-				killFn(connConsensus, err, conn.Logger)
-			}
-		case <-conn.sharedClients.mempool.Quit():
-			if err := conn.sharedClients.mempool.Error(); err != nil {
-				killFn(connMempool, err, conn.Logger)
-			}
-		case <-conn.sharedClients.query.Quit():
-			if err := conn.sharedClients.query.Error(); err != nil {
-				killFn(connQuery, err, conn.Logger)
-			}
-		case <-conn.sharedClients.snapshot.Quit():
-			if err := conn.sharedClients.snapshot.Error(); err != nil {
-				killFn(connSnapshot, err, conn.Logger)
-			}
-		default: // come back later.
+	select {
+	// NOTE(midas): stop selecting as we are handling a shutdown.
+	case <-conn.Quit():
+		return
+	case <-conn.sharedClients.consensus.Quit():
+		if err := conn.sharedClients.consensus.Error(); err != nil {
+			killFn(connConsensus, err, conn.Logger)
+		}
+	case <-conn.sharedClients.mempool.Quit():
+		if err := conn.sharedClients.mempool.Error(); err != nil {
+			killFn(connMempool, err, conn.Logger)
+		}
+	case <-conn.sharedClients.query.Quit():
+		if err := conn.sharedClients.query.Error(); err != nil {
+			killFn(connQuery, err, conn.Logger)
+		}
+	case <-conn.sharedClients.snapshot.Quit():
+		if err := conn.sharedClients.snapshot.Error(); err != nil {
+			killFn(connSnapshot, err, conn.Logger)
 		}
 	}
 }

@@ -125,8 +125,6 @@ func (is *IndexerService) OnStart() error {
 				} else {
 					is.Logger.Debug("indexed transactions", "height", height, "num_txs", numTxs)
 				}
-			default:
-				// not waiting for blocks, come back later instead.
 			}
 		}
 	}()
