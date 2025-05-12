@@ -317,7 +317,7 @@ func TestABCI_FinalizeBlock_WithAcceptor(t *testing.T) {
 	testAcceptor := actualAcceptor.(*client.MockAcceptorImpl)
 
 	expectedNumCalls := uint64(1)
-	assert.Equal(t, expectedNumCalls, testAcceptor.TxAcceptCalls.Load())
+	assert.Equal(t, expectedNumCalls, testAcceptor.TxCommitCalls.Load())
 }
 
 func TestABCI_Proposal_HappyPath(t *testing.T) {

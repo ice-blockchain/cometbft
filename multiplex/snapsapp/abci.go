@@ -286,8 +286,8 @@ func (app *SnapsApp) FinalizeBlock(
 			ctx,
 			batch...,
 		); err != nil {
-			return nil, fmt.Errorf(
-				"acceptor rejected transaction batch for %s in FinalizeBlock: %w", chainID, err)
+			app.logger.Error(fmt.Errorf(
+				"acceptor rejected transaction batch for %s in FinalizeBlock: %w", chainID, err).Error())
 		}
 	}
 
