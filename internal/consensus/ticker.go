@@ -98,7 +98,6 @@ func (t *timeoutTicker) timeoutRoutine() {
 		// sure every time before scheduling a timeout, we know to shutdown.
 		select {
 		case <-t.Quit():
-			t.stopTimer()
 			return
 		default: // Proceed to timeout schedule
 		}
