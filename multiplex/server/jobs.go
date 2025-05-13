@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"sync"
 
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 )
@@ -14,6 +15,7 @@ import (
 // and the adapter instance injects the default implementation if necessary.
 type Jobs struct {
 	// Routine extensions/overwrites may be provided here.
+	DiscoveryDialer DiscoveryDialerFn
 	NodeReplRequest NodeReplRequestFn
 	NetworksCreator NetworksCreatorFn
 	RelaysBroadcast RelaysBroadcastFn
@@ -21,7 +23,7 @@ type Jobs struct {
 }
 
 // NodeReplRequestFn describes a function that may be run on a separate
-// goroutine and which should open connections to relays if necessary.
+// goroutine and which should send [ChainReplicationRequest] to relays.
 //
 // A write-only [client.BroadcastStatus] channel is used to transmit errors.
 type NodeReplRequestFn func(
@@ -31,19 +33,25 @@ type NodeReplRequestFn func(
 	chan<- client.BroadcastStatus,
 )
 
+// DiscoveryDialerFn describes a function that may be run on a separate
+// goroutine and which should dial relays to enable [ReplicationChannel].
+//
+// A write-only [RelayAddress] channel instance is accepted as errorsCh.
+type DiscoveryDialerFn func(
+	context.Context,
+	[]*RelayAddress,
+	*sync.WaitGroup,
+	chan<- *RelayAddress, // errorsCh
+)
+
 // NetworksCreatorFn describes a function that may be run on a separate
 // goroutine and which should communicate with relays about missing networks.
-//
-// A write-only [client.BroadcastStatus] channel is used to transmit errors.
-// Also a string channel instance is accepted as newChainReadyCh where ChainIDs
-// are pushed when a new network is ready (or is now known through relay).
 type NetworksCreatorFn func(
 	context.Context,
 	map[string][]*RelayAddress,
 	[]string,
-	chan<- client.BroadcastStatus,
-	chan<- string, // newChainReadyCh
-)
+	*sync.WaitGroup,
+) error
 
 // RelaysBroadcastFn describes a function that may be run on a separate
 // goroutine and which should broadcast all transactions to relays.

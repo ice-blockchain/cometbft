@@ -5,8 +5,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	memp2p "github.com/ice-blockchain/cometbft/api/cometbft/mempool/v1"
 	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
@@ -25,6 +27,7 @@ import (
 func (b *MultiplexBackend) GetRoutines() *server.Jobs {
 	if b.routines == nil {
 		b.routines = &server.Jobs{
+			DiscoveryDialer: b.DefaultDiscoveryDialerRoutine(),
 			NodeReplRequest: b.DefaultNodeReplRequestRoutine(),
 			NetworksCreator: b.DefaultNetworksCreatorRoutine(),
 			RelaysBroadcast: b.DefaultRelaysBroadcastRoutine(),
@@ -37,6 +40,48 @@ func (b *MultiplexBackend) GetRoutines() *server.Jobs {
 
 // ----------------------------------------------------------------------------
 // Default routines implementation for a MultiplexBackend
+
+// DefaultDiscoveryDialerRoutine dials relays to enable discovery messages
+// on [server.ReplicationChannel].
+//
+// This method checks for compatibility of relays by executing a connection
+// handshake as defined with [p2p.Switch#DialPeerWithAddress]. The discovery
+// switch is updated to accept [mxp2p.ChainReplicationRequest] messages.
+func (b *MultiplexBackend) DefaultDiscoveryDialerRoutine() server.DiscoveryDialerFn {
+	return func(
+		ctx context.Context,
+		relays []*server.RelayAddress,
+		waitGroup *sync.WaitGroup,
+		errorsCh chan<- *server.RelayAddress,
+	) {
+		// Concurrently dial relays to enable ReplicationChannel messages.
+		// CheckDialCompatibleRelay opens connection for `DiscoveryPort`.
+		for _, relayAddr := range relays {
+			go func(addr *server.RelayAddress) {
+				defer waitGroup.Done()
+				startTz := time.Now()
+
+				// Uses the local P2P switch to dial a remote peer.
+				if err := b.CheckDialCompatibleRelay(ctx, addr); err != nil {
+					// TODO(midas): remove debug logs
+					b.logger.Debug("Error validating relay compatibility",
+						"relay", addr.String(),
+					)
+
+					errorsCh <- addr
+					return
+				}
+				durationMs := time.Since(startTz).Milliseconds()
+
+				// TODO(midas): remove debug logs
+				b.logger.Debug("Successfully dialed relay for discovery",
+					"relay", addr.String(),
+					"time", strconv.Itoa(int(durationMs))+"ms",
+				)
+			}(relayAddr)
+		}
+	}
+}
 
 // DefaultNodeReplRequestRoutine asks relays to replicate a network by
 // attaching the corresponding ChainParams.
@@ -140,9 +185,8 @@ func (b *MultiplexBackend) DefaultNetworksCreatorRoutine() server.NetworksCreato
 		ctx context.Context,
 		relaysByChain map[string][]*server.RelayAddress,
 		missingChains []string,
-		notifyCh chan<- client.BroadcastStatus,
-		newChainReadyCh chan<- string,
-	) {
+		genesisWg *sync.WaitGroup,
+	) error {
 		// Find out if any of the relays told us about some missing networks,
 		// in this case, this is NOT a new network and our relay needs sync.
 		unknownNetworks := []string{}
@@ -153,15 +197,16 @@ func (b *MultiplexBackend) DefaultNetworksCreatorRoutine() server.NetworksCreato
 			}
 
 			// This is NOT a new network (existing on some relay)
-			newChainReadyCh <- missingChainID
+			genesisWg.Done()
 		}
 
-		// If possible,  terminate here.
+		// If possible, terminate here.
 		if len(unknownNetworks) == 0 {
-			return
+			return nil
 		}
 
 		// We must create at least one NEW network.
+		// TODO(midas): TBD on concurrently creating the networks.
 		for _, newChainID := range unknownNetworks {
 			err := func() (err error) {
 				// Recover from potential panic in below block due to inability to create
@@ -169,6 +214,8 @@ func (b *MultiplexBackend) DefaultNetworksCreatorRoutine() server.NetworksCreato
 				// able to react to errors happening in the process, any errors here must
 				// terminate the broadcast process as it is effectively invalidated here.
 				defer func() {
+					defer genesisWg.Done()
+
 					if errRecovered := recover(); errRecovered != nil {
 						// Error happened in MustCreateNetwork process.
 						err = errRecovered.(error)
@@ -187,23 +234,17 @@ func (b *MultiplexBackend) DefaultNetworksCreatorRoutine() server.NetworksCreato
 					return err
 				}
 
-				// TODO(midas): possibly needs to wait for injection
-
 				// Inject a *running* node.Node for the new network.
 				// TODO(midas): currently not passing any node options.
 				return b.reactor.InjectNewRuntime(ctx, newChainID)
 			}()
 			if err != nil {
-				// Terminates the upper broadcast process
-				client.Error(notifyCh, fmt.Errorf(
-					"could not create required networks: %w", err))
-				return
+				return fmt.Errorf(
+					"could not create required networks: %w", err)
 			}
-
-			// We may now proceed with the transaction broadcast, and other
-			// relays will be able to join the newly created network.
-			newChainReadyCh <- newChainID
 		}
+
+		return nil
 	}
 }
 

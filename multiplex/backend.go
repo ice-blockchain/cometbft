@@ -108,9 +108,6 @@ type MultiplexBackend struct {
 	ackResponsesMtx  sync.RWMutex
 	ackResponsesRcvd map[string][]string
 
-	// This channel is used to wait when new networks must be created.
-	newChainReadyCh chan string
-
 	// Internals
 	logger   cmtlog.Logger
 	errorsCh chan error
@@ -231,11 +228,6 @@ func (b *MultiplexBackend) GetAcceptor() client.Acceptor {
 // GetReactor returns the [Reactor] instance.
 func (b *MultiplexBackend) GetReactor() *Reactor {
 	return b.reactor
-}
-
-// GetNewChainReadyCh returns a channel used to communicate ChainID values.
-func (b *MultiplexBackend) GetNewChainReadyCh() chan<- string {
-	return b.newChainReadyCh
 }
 
 // GetRelayID returns the node ID assigned in the reactor.
@@ -463,9 +455,6 @@ func (b *MultiplexBackend) MustStart() {
 	b.relayMtx.Lock()
 	defer b.relayMtx.Unlock() // happens after wg.Wait()
 
-	// Starting a node backend starts internal channels
-	b.newChainReadyCh = make(chan string)
-
 	b.replRequestsMtx.Lock()
 	b.replRequestsSent = map[string][]string{}
 	b.replRequestsMtx.Unlock()
@@ -609,11 +598,6 @@ func (b *MultiplexBackend) Close() error {
 		b.reactor.Reset()
 	}
 
-	// We may close channels now.
-	if b.newChainReadyCh != nil {
-		close(b.newChainReadyCh)
-	}
-
 	// Stop RelayInfo RPC and CometBFT RPC
 	for _, rpcListener := range b.rpcListeners {
 		rpcListener.Close()
@@ -629,22 +613,6 @@ func (b *MultiplexBackend) Close() error {
 	}
 
 	return nil
-}
-
-// WaitForNextAvailableNetwork waits for a chain replication using
-// the internal newChainReadyCh channel and returns a ChainID.
-// WaitForNextAvailableNetwork implements [server.Backend].
-func (b *MultiplexBackend) WaitForNextAvailableNetwork(
-	ctx context.Context,
-) (string, error) {
-	select {
-	case chainID := <-b.newChainReadyCh:
-		return chainID, nil
-
-	case <-ctx.Done():
-		return "", errors.New(
-			"process timed out waiting for network availability")
-	}
 }
 
 // WaitForRelayReplResponse waits for a relay replication response using
@@ -962,33 +930,43 @@ func (b *MultiplexBackend) GetRemoteRelayInfo(
 }
 
 // GetRelaysByNetwork maps each supported network to a slice of relay addresses
-// and it also returns a slice of relays that produced errors,
-// e.g. network error.
+// and it also returns a slice of relays that produced errors, e.g. network error.
 //
-// This method uses [GetRemoteRelayInfo] to find the relay's ID.
+// This method uses [GetRemoteRelayInfo] to find the relay's ID. Given a correct
+// response, we use the [RPCResultRelayInfo] to fill the [RelayAddress#ID] and
+// the full address (with ID) is added to healthyRelays.
+//
 // GetRelaysByNetwork implements [server.Backend].
 func (b *MultiplexBackend) GetRelaysByNetwork(
 	clientCtx context.Context,
 	relayAddresses []*server.RelayAddress,
 ) (
-	enhancedAddresses []*server.RelayAddress,
+	healthyRelays []*server.RelayAddress,
 	chainRelays map[string][]*server.RelayAddress,
 	errorRelays []string,
 ) {
-	relaysWithFailure := map[string]bool{}
-
-	// Connect to all other relays using RPC (discovery server) to find
-	// out their relay ID (CometBFT Node ID) before we can connect with P2P.
+	healthyRelays = make([]*server.RelayAddress, 0, len(relayAddresses))
 	chainRelays = map[string][]*server.RelayAddress{}
 	errorRelays = []string{}
+
+	relaysWithFailure := map[string]bool{}
+
+	// This method should block until it processed all relays' responses.
 	var wg sync.WaitGroup
-	res := make(chan struct {
+	wg.Add(len(relayAddresses))
+
+	// We will call RelayInfo concurrently on every relay. A nil result
+	// means that the relay did not respond (in time) and is unhealthy.
+	relayInfoCh := make(chan struct {
 		start  time.Time
 		result *server.RPCResultRelayInfo
 		addr   *server.RelayAddress
 	}, len(relayAddresses))
+
+	// Connect to all other relays using RPC (discovery server) to find
+	// out their relay ID (CometBFT Node ID) before we can connect with P2P.
 	for _, relAddr := range relayAddresses {
-		wg.Add(1)
+		// Open ephemeral goroutines to request RelayInfo RPC from all relays.
 		go func(relayAddr *server.RelayAddress) {
 			defer wg.Done()
 			startTz := time.Now()
@@ -1002,7 +980,7 @@ func (b *MultiplexBackend) GetRelaysByNetwork(
 					"relay", addrRPC,
 					"err", err,
 				)
-				res <- struct {
+				relayInfoCh <- struct {
 					start  time.Time
 					result *server.RPCResultRelayInfo
 					addr   *server.RelayAddress
@@ -1010,21 +988,24 @@ func (b *MultiplexBackend) GetRelaysByNetwork(
 				return
 			}
 
-			res <- struct {
+			relayInfoCh <- struct {
 				start  time.Time
 				result *server.RPCResultRelayInfo
 				addr   *server.RelayAddress
 			}{result: result, addr: relayAddr, start: startTz}
 		}(relAddr)
 	}
+
+	// Block this process until all relays have responded or timed out.
 	wg.Wait()
-	close(res)
-	enhancedAddresses = make([]*server.RelayAddress, 0, len(relayAddresses))
-	for result := range res {
+	close(relayInfoCh) // No more responses/timeouts expected.
+
+	// Now process responses from relays and extend RelayAddress instances
+	// to contain the CometBFT Node ID when the relay responded correctly.
+	for result := range relayInfoCh {
 		relayAddr := result.addr
 		if result.result == nil {
 			relaysWithFailure[relayAddr.String()] = true
-			enhancedAddresses = append(enhancedAddresses, relayAddr)
 			continue
 		}
 		durationMs := time.Since(result.start).Milliseconds()
@@ -1032,12 +1013,16 @@ func (b *MultiplexBackend) GetRelaysByNetwork(
 		// TODO(midas): remove debug logs
 		b.logger.Debug("Retrieved networks information from relay",
 			"relay", relayAddr,
+			"node_id", result.result.DefaultNodeID,
 			"networks", result.result.Networks,
 			"time", strconv.Itoa(int(durationMs))+"ms",
 		)
+
+		// Fill the CometBFT Node ID
 		relayAddr.SetID(result.result.DefaultNodeID)
-		enhancedAddresses = append(enhancedAddresses, relayAddr)
-		// Populate a map of relay addresses by ChainID.
+		healthyRelays = append(healthyRelays, relayAddr)
+
+		// Also, populate a map of relay addresses by ChainID.
 		for _, chainID := range result.result.Networks {
 			if _, ok := chainRelays[chainID]; !ok {
 				chainRelays[chainID] = []*server.RelayAddress{}
@@ -1054,7 +1039,7 @@ func (b *MultiplexBackend) GetRelaysByNetwork(
 		}
 	}
 
-	return enhancedAddresses, chainRelays, errorRelays
+	return healthyRelays, chainRelays, errorRelays
 }
 
 // CheckDialCompatibleRelay dials the relay using a local [p2p.Switch] instance
@@ -1090,6 +1075,8 @@ func (b *MultiplexBackend) CheckDialCompatibleRelay(
 
 	// Note that this events switch uses `DiscoveryPort`.
 	discoverySwitch := b.CreateOrLoadDiscoveryEventSwitch()
+
+	// TODO(midas): add p2p.Switch#SyncDialPeerWithAddress()
 	if err := discoverySwitch.DialPeerWithAddress(relayDiscovery); err != nil {
 		if b.reactor.IsDialError(err) {
 			return fmt.Errorf(
@@ -1165,6 +1152,7 @@ func (b *MultiplexBackend) ApplyFilterReplRequestRelays(
 	relays []*server.RelayAddress,
 	chainRelays map[string][]*server.RelayAddress,
 ) map[string][]*server.RelayAddress {
+	// Makes sure to avoid mistakenly including self.
 	relaysWithoutSelf := []*server.RelayAddress{}
 	for _, relayAddr := range relays {
 		if relayAddr.ID() != b.reactor.GetNodeKey().ID() {
@@ -1202,12 +1190,13 @@ func (b *MultiplexBackend) ApplyFilterReplRequestRelays(
 		if _, has := catchupRelays[chainID]; !has {
 			catchupRelays[chainID] = append(catchupRelays[chainID], relaysWithoutSelf...)
 		}
-	}
 
-	// Also reset the sent requests cache
-	b.replRequestsMtx.Lock()
-	b.replRequestsSent = map[string][]string{}
-	b.replRequestsMtx.Unlock()
+		// Reset the sent requests cache for required networks
+		// TODO(midas): It is preferrable to move this registry over to the Reactor.
+		b.replRequestsMtx.Lock()
+		b.replRequestsSent[chainID] = []string{}
+		b.replRequestsMtx.Unlock()
+	}
 
 	return catchupRelays
 }

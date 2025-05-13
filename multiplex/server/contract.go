@@ -43,9 +43,6 @@ type Backend interface {
 	// GetRoutines should return an implementation of [Jobs] methods.
 	GetRoutines() *Jobs
 
-	// GetNewChainReadyCh should return a read-only string channel.
-	GetNewChainReadyCh() chan<- string
-
 	// GetRelayID should return a [p2p.ID] instance that identifies a relay.
 	GetRelayID() p2p.ID
 
@@ -62,10 +59,6 @@ type Backend interface {
 	// UpdateAvailableNetworks should update the NodeInfo pointer and p2p switch
 	// to permit communications related to new (or unknown) networks.
 	UpdateAvailableNetworks(networks []string) []string
-
-	// WaitForNextAvailableNetwork should wait for a *local* chain replication
-	// and it should return a ChainID.
-	WaitForNextAvailableNetwork(ctx context.Context) (string, error)
 
 	// WaitForRelayReplResponse should wait for a *remote* relay's replication
 	// response and it should return a relay ID.
