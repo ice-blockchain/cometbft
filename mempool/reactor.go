@@ -206,7 +206,17 @@ func (memR *Reactor) AddPeer(peer p2p.Peer) {
 
 			memR.mempool.metrics.ActiveOutboundConnections.Add(1)
 			defer memR.mempool.metrics.ActiveOutboundConnections.Add(-1)
-			memR.broadcastTxRoutine(peer)
+
+			// BREAKING(midas):
+			//
+			// In a multiplex of chains, the active time of networks is reduced
+			// to the lifetime of client broadcast operations, which makes the
+			// following broadcastTxRoutine call obsolete. The actual broadcast
+			// of transactions is controlled by [multiplex.client#BroadcastTx],
+			// which manually sends transactions to remote mempools after
+			// consensus was reached about said broadcast operation.
+			//
+			// memR.broadcastTxRoutine(peer)
 		}()
 	}
 }
