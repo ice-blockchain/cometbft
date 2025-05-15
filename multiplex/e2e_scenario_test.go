@@ -71,31 +71,96 @@ func mockRelayMapsForChainID(
 	relay *mx.MultiplexBackend,
 	relaysForTestCase []string,
 	useChainID string,
+	useCatchup bool,
 ) (
 	chainRelays map[string][]*server.RelayAddress,
 	catchupRelays map[string][]*server.RelayAddress,
 ) {
 	chainRelays = make(map[string][]*server.RelayAddress, 1)
-	catchupRelays = map[string][]*server.RelayAddress{}
+	catchupRelays = make(map[string][]*server.RelayAddress, 1)
 	for _, relayAddrStr := range relaysForTestCase {
 		ra, err := server.NewRelayAddress(relayAddrStr)
 		require.NoError(tb, err, "expected valid relay address, got: "+relayAddrStr)
 
-		// Do not include SELF in AckTransaction process, nor unhealthy relays
+		// Do not include SELF in AckTransaction/Replication process, nor unhealthy relays
 		if len(string(ra.ID())) == 0 || string(ra.ID()) == string(relay.GetRelayID()) {
 			continue
 		}
 
-		if _, ok := chainRelays[useChainID]; !ok {
-			chainRelays[useChainID] = make([]*server.RelayAddress, 0, len(relaysForTestCase))
-		}
+		if useCatchup {
+			if _, ok := catchupRelays[useChainID]; !ok {
+				catchupRelays[useChainID] = make([]*server.RelayAddress, 0, len(relaysForTestCase))
+			}
 
-		chainRelays[useChainID] = append(chainRelays[useChainID], ra)
+			catchupRelays[useChainID] = append(catchupRelays[useChainID], ra)
+		} else {
+			if _, ok := chainRelays[useChainID]; !ok {
+				chainRelays[useChainID] = make([]*server.RelayAddress, 0, len(relaysForTestCase))
+			}
+
+			chainRelays[useChainID] = append(chainRelays[useChainID], ra)
+		}
 	}
 
 	return
 }
 
+// clientAckReplication mocks the waiting process for chain replication
+// responses from remote relays.
+// Note that in this mock implementation, a relay is considered healthy iff
+// the relay address contains an ID.
+func clientAckReplication(
+	tb testing.TB,
+	ctx context.Context,
+	relay *mx.MultiplexBackend,
+	catchupRelays map[string][]*server.RelayAddress,
+	mustResRelays map[string][]*server.RelayAddress,
+) (relaysPerChain map[string][]string, numExpected int, numReceived int, err error) {
+	tb.Helper()
+
+	multiplexClient := mx.NewClient(
+		mx.WithBackend(relay),
+	)
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+
+	// THREAD 1: Waiting for ChainReplicationResponse messages.
+	go func() {
+		defer wg.Done()
+
+		relaysPerChain,
+			numExpected,
+			numReceived,
+			err = multiplexClient.GetBackend().WaitForRelaysAckChainReplications(ctx,
+			catchupRelays,
+		)
+	}()
+
+	// THREAD 2: Sending mock ChainReplicationResponse messages.
+	go func() {
+		for chainID, catchupRelaysForChain := range catchupRelays {
+			for _, relayAddr := range catchupRelaysForChain {
+				if len(string(relayAddr.ID())) == 0 {
+					continue // don't respond from unhealthy relays!
+				}
+
+				mockChainReplicationResponse := mockChainReplicationResponse(tb, relayAddr, chainID)
+
+				remoteReplResCh := relay.GetReactor().ChannelForAckReplication(chainID)
+				remoteReplResCh <- mockChainReplicationResponse
+			}
+		}
+	}()
+
+	// Coupled to finishing the execution of THREAD 1
+	wg.Wait()
+
+	return
+}
+
+// clientAckTransaction mocks the waiting process for transaction acks
+// from remote relays.
 // Note that in this mock implementation, a relay is considered healthy iff
 // the relay address contains an ID.
 func clientAckTransaction(
@@ -160,13 +225,15 @@ func clientAckTransaction(
 	return
 }
 
+// Mocks relayAddr ack for transaction
 func mockAckTransactionBroadcast(
 	tb testing.TB,
 	relayAddr *server.RelayAddress,
 	transaction client.Transaction,
 	chainID string,
 ) *mxp2p.AckTransactionBroadcast {
-	// Mocks relayAddr ack for transaction
+	tb.Helper()
+
 	txHashes := [][]byte{}
 	txHashes = append(txHashes, transaction.Hash())
 
@@ -174,6 +241,20 @@ func mockAckTransactionBroadcast(
 		TxHashes: txHashes,
 		NodeId:   string(relayAddr.ID()),
 		ChainID:  chainID,
+	}
+}
+
+// Mocks relayAddr response for replication
+func mockChainReplicationResponse(
+	tb testing.TB,
+	relayAddr *server.RelayAddress,
+	chainID string,
+) *mxp2p.ChainReplicationResponse {
+	tb.Helper()
+
+	return &mxp2p.ChainReplicationResponse{
+		NodeId:  string(relayAddr.ID()),
+		ChainID: chainID,
 	}
 }
 
@@ -248,7 +329,7 @@ func TestScenarioClientBroadcastErrors(t *testing.T) {
 	numRelays := 2
 
 	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
-	defer shutdownFn()
+	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
@@ -313,6 +394,73 @@ func TestScenarioClientBroadcastErrors(t *testing.T) {
 	// TODO(midas): add other error cases as forwarded with Client.BroadcastTx.
 }
 
+// With a list of healthy relays, we test the ability to intercept replication
+// channel message: ChainReplicationResponse from each of the relays.
+// In a second iteration, we set 2 relays to be unhealthy and make sure that
+// that the Ack process times out gracefully but still intercepts other Acks.
+func TestScenarioClientBroadcastWaitForReplicationResponses(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	numChains := 0
+	numRelays := 3
+
+	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
+	defer shutdownFn(servers)
+
+	require.NotEmpty(t, servers)
+	require.Len(t, servers, numRelays)
+
+	// Note: relays includes self
+	healthyRelays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
+		servers,
+		2*time.Second,  // Time for backend
+		20*time.Second, // Time for broadcast
+	)
+
+	defer cancelCtxFn()
+
+	require.NotEmpty(t, healthyRelays)
+	require.NotNil(t, broadcastCtx)
+
+	// TEST 1 - Success
+	//
+	// Use the 7 healthy relays including self and make sure we intercepted
+	// ChainReplicationResponse messages (mocked in clientAckReplication).
+	// numRelays=7;numHealthy=7;numErrors=0;withSelf=true
+
+	relaysForTestCase := healthyRelays[:] // with IDs!
+	numHealthy := len(relaysForTestCase)
+	testChainID1 := makeChainID("test-chain-1")
+	testRelayOne := servers[0]
+
+	// Fill chainRelays such that all HEALTHY relays are expected to respond.
+	_, testCatchupRelays := mockRelayMapsForChainID(t,
+		testRelayOne,
+		relaysForTestCase,
+		testChainID1,
+		true, // useCatchup
+	)
+
+	// Block main thread to test ChainReplicationResponse process
+	actualRelaysPerChain,
+		actualExpectedResponses,
+		actualNumReceivedResponses,
+		actualReplicationErr := clientAckReplication(t,
+		broadcastCtx,
+		testRelayOne,
+		testCatchupRelays,
+		testCatchupRelays, // mustResRelays => ALL
+	)
+
+	expectedNumAwaited := numHealthy - 1  // -self
+	expectedNumReceived := numHealthy - 1 // -self
+
+	assert.Equal(t, expectedNumAwaited, actualExpectedResponses)
+	assert.Equal(t, expectedNumReceived, actualNumReceivedResponses)
+	assert.NoError(t, actualReplicationErr, "should complete ChainReplication process")
+	assert.NotEmpty(t, actualRelaysPerChain)
+}
+
 // With a list of healthy relays, we test the ability to intercept broadcast
 // channel message: AckTransactionBroadcast from each of the relays.
 // In a second iteration, we set 2 relays to be unhealthy and make sure that
@@ -324,7 +472,7 @@ func TestScenarioClientBroadcastWaitForAckTransactions(t *testing.T) {
 	numRelays := 7
 
 	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
-	defer shutdownFn()
+	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
@@ -354,7 +502,7 @@ func TestScenarioClientBroadcastWaitForAckTransactions(t *testing.T) {
 
 	// Fill chainRelays such that all HEALTHY relays are expected to respond.
 	testChainRelays,
-		testCatchupRelays := mockRelayMapsForChainID(t, testRelayOne, relaysForTestCase, testChainID1)
+		testCatchupRelays := mockRelayMapsForChainID(t, testRelayOne, relaysForTestCase, testChainID1, false) // false=useCatchup
 
 	testChainInfo1, err := mx.NewExtendedChainIDFromLegacy(testChainID1)
 	require.NoError(t, err, "should create correctly formatted ChainID")
@@ -398,7 +546,7 @@ func TestScenarioClientBroadcastWaitForAckTransactions(t *testing.T) {
 	// testChainRelays contains 2 unhealthy relays (which don't have ID),
 	// but these will be *filtered* out due to not being healthy.
 	testChainRelays,
-		testCatchupRelays = mockRelayMapsForChainID(t, testRelayOne, relaysForErrCase, testChainID2)
+		testCatchupRelays = mockRelayMapsForChainID(t, testRelayOne, relaysForErrCase, testChainID2, false) // false=useCatchup
 
 	// Remove 2 healthy relays to force timeout, as we expect them to Ack
 	// but they will not be sending a AckTransactionBroadcast message.
@@ -460,7 +608,7 @@ func TestScenarioClientBroadcastHealthyRelays(t *testing.T) {
 	numRelays := 7
 
 	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
-	defer shutdownFn()
+	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
@@ -522,7 +670,7 @@ func TestScenarioClientBroadcastEmptyRelays(t *testing.T) {
 	numRelays := 7
 
 	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
-	defer shutdownFn()
+	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
@@ -588,7 +736,7 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 	numHealthy := 3
 
 	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numHealthy)
-	defer shutdownFn()
+	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numHealthy)
@@ -850,7 +998,7 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 	numHealthy := 2
 
 	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numHealthy)
-	defer shutdownFn()
+	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numHealthy)
@@ -1036,7 +1184,7 @@ func TestScenarioClientBroadcastEmptyRelaysProduceBlockWithTx(t *testing.T) {
 	numRelays := 7
 
 	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
-	defer shutdownFn()
+	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
@@ -1116,7 +1264,7 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 	numHealthy := (numRelays / 2) + 1
 
 	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numHealthy)
-	defer shutdownFn()
+	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numHealthy)
@@ -1242,7 +1390,7 @@ func TestScenarioClientBroadcastEnoughEmptyRelays(t *testing.T) {
 	numHealthy := (numRelays / 2) + 1
 
 	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numHealthy)
-	defer shutdownFn()
+	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numHealthy)
@@ -1378,7 +1526,7 @@ func TestScenarioClientBroadcastNotEnoughHealthyRelays(t *testing.T) {
 	numHealthy := 2
 
 	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numHealthy)
-	defer shutdownFn()
+	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numHealthy)
@@ -1489,7 +1637,7 @@ func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 	minHealthy := (numRelays / 2) + 1
 
 	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
-	defer shutdownFn()
+	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
@@ -1623,7 +1771,7 @@ func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 	numHealthy := (numRelays / 2) + 1 // Keep enough healthy relays
 
 	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numHealthy)
-	defer shutdownFn()
+	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numHealthy)
@@ -1809,7 +1957,7 @@ func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
 	numRelays := 7
 
 	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
-	defer shutdownFn()
+	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
@@ -1850,7 +1998,7 @@ func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
 		0, // indexRelay (resetting relay-1)
 		cmtlog.NewNopLogger(),
 	)
-	defer newShutdownFn()
+	defer newShutdownFn(resetRelay)
 
 	resetRelay.MustStart()
 
@@ -1893,7 +2041,7 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	numRelays := 7
 
 	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
-	defer shutdownFn()
+	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
@@ -1968,7 +2116,7 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 		0, // indexRelay (resetting relay-1)
 		cmtlog.NewNopLogger(),
 	)
-	defer newShutdownFn()
+	defer newShutdownFn(resetRelay)
 
 	resetRelay.MustStart()
 
@@ -2050,7 +2198,7 @@ func TestScenarioClientBroadcastConcurrentNewChains(t *testing.T) {
 	numRelays := 7
 
 	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
-	defer shutdownFn()
+	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
@@ -2185,7 +2333,7 @@ func TestScenarioClientBroadcastConcurrentNewChainsAndExistingChains(t *testing.
 	numRelays := 7
 
 	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
-	defer shutdownFn()
+	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
@@ -2331,7 +2479,7 @@ func TestScenarioClientBroadcastConcurrentNewChains3(t *testing.T) {
 	numRelays := 7
 
 	servers, shutdownFn := ResetTestScenarioRelaysWithLogs(t, numChains, numRelays)
-	defer shutdownFn()
+	defer shutdownFn(servers)
 
 	//servers[0].SetLogger(cmtlog.TestingLogger().With("process", "relay-1"))
 
@@ -2514,7 +2662,7 @@ func TestScenarioLegacyBroadcastSevenHealthyRelays(t *testing.T) {
 	numRelays := 7
 
 	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
-	defer shutdownFn()
+	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
@@ -2603,7 +2751,7 @@ func ResetTestScenarioRelaysWithLogs(
 	tb testing.TB,
 	numChains int,
 	numRelays int,
-) ([]*mx.MultiplexBackend, func()) {
+) ([]*mx.MultiplexBackend, func([]*mx.MultiplexBackend)) {
 	tb.Helper()
 	return ResetTestScenarioRelays(tb, numChains, numRelays, cmtlog.TestingLogger())
 }
@@ -2612,7 +2760,7 @@ func ResetTestScenarioRelaysWithoutLogs(
 	tb testing.TB,
 	numChains int,
 	numRelays int,
-) ([]*mx.MultiplexBackend, func()) {
+) ([]*mx.MultiplexBackend, func([]*mx.MultiplexBackend)) {
 	tb.Helper()
 	return ResetTestScenarioRelays(tb, numChains, numRelays, cmtlog.NewNopLogger())
 }
@@ -2624,7 +2772,7 @@ func ResetTestScenarioRelays(
 	numChains int,
 	numRelays int,
 	withLogger cmtlog.Logger,
-) ([]*mx.MultiplexBackend, func()) {
+) ([]*mx.MultiplexBackend, func([]*mx.MultiplexBackend)) {
 	tb.Helper()
 
 	// For debug, change the loggers to cmtlog.TestingLogger()
@@ -2645,17 +2793,26 @@ func ResetTestScenarioRelays(
 	require.Len(tb, rootDirs, numRelays)
 	require.Len(tb, servers, numRelays)
 
-	shutdownFn := func() {
+	shutdownFn := func(backends []*mx.MultiplexBackend) {
 		waitDuration := 10 * time.Second
 		tb.Logf("Waiting %.0fsec for shutdown...", waitDuration.Seconds())
 		time.Sleep(waitDuration)
-		for i := 0; i < len(servers); i++ {
-			if servers[i] == nil {
+
+		wg := sync.WaitGroup{}
+		wg.Add(len(backends))
+		for i := 0; i < len(backends); i++ {
+			if backends[i] == nil {
+				wg.Done()
 				continue // Reset/stopped backends are shutdown manually.
 			}
 
-			go closeAndRemoveAll(tb, rootDirs[i], servers[i])
+			go func() {
+				defer wg.Done()
+				closeAndRemoveAll(tb, rootDirs[i], backends[i])
+			}()
 		}
+		wg.Wait()
+		tb.Logf("Done shutting down all backends")
 	}
 
 	return servers, shutdownFn
@@ -2703,7 +2860,7 @@ func ResetTestSingleCompatibleRelay(
 	otherRelay *mx.MultiplexBackend,
 	indexRelay int,
 	customLogger cmtlog.Logger,
-) (*mx.MultiplexBackend, func()) {
+) (*mx.MultiplexBackend, func(*mx.MultiplexBackend)) {
 	tb.Helper()
 	require.NotNil(tb, otherRelay)
 
@@ -2732,11 +2889,11 @@ func ResetTestSingleCompatibleRelay(
 	)
 	require.NoError(tb, err, "should create another server instance with cursor at "+strconv.Itoa(indexRelay))
 
-	shutdownFn := func() {
+	shutdownFn := func(backend *mx.MultiplexBackend) {
 		defer os.RemoveAll(rootDirRelayX)
 
-		if serverRelayX != nil {
-			err := serverRelayX.Close()
+		if backend != nil {
+			err := backend.Close()
 			assert.NoError(tb, err, "should shutdown reset server at index: "+strconv.Itoa(indexRelay))
 		}
 	}

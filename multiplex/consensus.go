@@ -205,7 +205,11 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 		mempool.EnableTxsAvailable()
 	}
 	mempoolReactor.SetLogger(memplLogger)
-	mempoolReactor.SetSwitch(reactor.cometbftSwitch)
+
+	// NOTE(midas): Set the switch instance early on so that the mempool
+	// can start messaging right at Start and not wait for other reactors.
+	mempoolReactor.SetSwitch(reactor.GetEventSwitchForCometBFT())
+
 	// 2) Create the evidence pool / evidence reactor
 	evidenceDB := evidenceDBProvider(chainID).(dbm.DB)
 	stateStore := stateStoreProvider(chainID).(sm.Store)
@@ -256,6 +260,10 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 		blocksync.WithChainID(chainID),
 	)
 	blockSyncReactor.SetLogger(clogger.With("module", "blocksync"))
+
+	// NOTE(midas): Set the switch instance early on so that the blocksync
+	// can start messaging right at Start and not wait for other reactors.
+	blockSyncReactor.SetSwitch(reactor.GetEventSwitchForCometBFT())
 
 	// 5) Create consensus state / reactor
 	//

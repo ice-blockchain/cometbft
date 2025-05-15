@@ -20,7 +20,7 @@ func TestScenarioValidatorsEmptyRelays(t *testing.T) {
 	numRelays := 7
 
 	servers, shutdownFn := ResetTestScenarioRelaysWithLogs(t, numChains, numRelays)
-	defer shutdownFn()
+	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)

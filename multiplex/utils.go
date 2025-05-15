@@ -2,9 +2,11 @@ package multiplex
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 
 	"github.com/ice-blockchain/cometbft/crypto"
+	"github.com/ice-blockchain/cometbft/multiplex/client"
 	sm "github.com/ice-blockchain/cometbft/state"
 )
 
@@ -52,4 +54,13 @@ func removeDuplicates(input []string) (output []string) {
 		output = append(output, v)
 	}
 	return
+}
+
+// txHashesToHex returns a string-slice with transaction hashes in hex format.
+func txHashesToHex(transactions ...client.Transaction) []string {
+	txHashes := make([]string, 0, len(transactions))
+	for _, tx := range transactions {
+		txHashes = append(txHashes, fmt.Sprintf("%X", tx.Hash()))
+	}
+	return txHashes
 }

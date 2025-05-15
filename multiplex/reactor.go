@@ -164,11 +164,15 @@ type Reactor struct {
 	chainReadyMtx sync.RWMutex
 	chainReadyChs map[string]chan bool
 
-	// ackReplResCh is written on when we intercept a [ChainReplicationResponse]
-	// message on the [server.ReplicationChannel].
-	// Consumed by [MultiplexBackend#WaitForRelayReplResponse].
-	// This channel is closed by the [OnStop] method.
-	ackReplResCh chan *mxp2p.ChainReplicationResponse
+	// ackReplResChs contains channels that are opened on-demand, when the
+	// application expects to receive [ChainReplicationResponse] messages from
+	// relevant relays, mapped by ChainID. Messages forwarded on this channel
+	// must contain a [mxp2p.ChainReplicationResponse].
+	// Channels are consumed by [MultiplexBackend#WaitForRelaysAckChainReplications].
+	// These channels are closed by the [OnStop] method in case they were not yet
+	// closed by the deferral process in [MultiplexBackend#WaitForRelaysAckChainReplications].
+	ackReplResMtx sync.RWMutex
+	ackReplResChs map[string]chan *mxp2p.ChainReplicationResponse
 
 	// ackAcceptTxChs contains channels that are opened on-demand, when the
 	// application expects to receive [AckTransactionBroadcast] messages from
@@ -250,7 +254,7 @@ func NewReactor(
 
 		// Internal channels
 		chainReadyChs:  make(map[string]chan bool),
-		ackReplResCh:   make(chan *mxp2p.ChainReplicationResponse),
+		ackReplResChs:  make(map[string]chan *mxp2p.ChainReplicationResponse),
 		ackAcceptTxChs: make(map[string]chan *mxp2p.AckTransactionBroadcast),
 
 		// Internals
@@ -538,6 +542,41 @@ func (reactor *Reactor) SetRPCMultiplexer(mux *http.ServeMux) {
 	reactor.networkMutex.Lock()
 	defer reactor.networkMutex.Unlock()
 	reactor.rpcMultiplexer = mux
+}
+
+func (reactor *Reactor) ChannelForAckReplication(chainID string) chan *mxp2p.ChainReplicationResponse {
+	reactor.ackReplResMtx.RLock()
+	replResChForChainID, hasChannel := reactor.ackReplResChs[chainID]
+	reactor.ackReplResMtx.RUnlock()
+
+	if !hasChannel {
+		replResChForChainID = make(chan *mxp2p.ChainReplicationResponse)
+
+		reactor.ackReplResMtx.Lock()
+		reactor.ackReplResChs[chainID] = replResChForChainID
+		reactor.ackReplResMtx.Unlock()
+	}
+
+	return replResChForChainID
+}
+
+// CloseAckReplicationChannel closes the replication acceptance channel
+// for chainID and deletes it gracefully from the registry.
+func (reactor *Reactor) CloseAckReplicationChannel(chainID string) {
+	reactor.ackReplResMtx.RLock()
+	ackReplResCh, hasChannel := reactor.ackReplResChs[chainID]
+	reactor.ackReplResMtx.RUnlock()
+	if !hasChannel {
+		return
+	}
+
+	// Close the channel first
+	close(ackReplResCh)
+
+	// And free memory space
+	reactor.ackReplResMtx.Lock()
+	delete(reactor.ackReplResChs, chainID)
+	reactor.ackReplResMtx.Unlock()
 }
 
 // ChannelForAckTransaction creates or returns a buffered channel that accepts
@@ -879,6 +918,8 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			sourcePeer := r.discoverySwitch.UniquePeers().Get(sourceAddr.ID)
 			r.networkMutex.RUnlock()
 
+			csw := r.GetEventSwitchForCometBFT()
+
 			// After having acknowledged the chain replication, process it.
 			//
 			// CAUTION: This modifies the runtime and allocates the necessary resources
@@ -896,7 +937,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			// Opens any missing CometBFT channels for injected network consensus.
 			chs := []byte{} // all channels
 			ids := r.GetNetworks()
-			if err := r.AddConnectionChannels(r.cometbftSwitch, ids, chs, true); err != nil {
+			if err := r.AddConnectionChannels(csw, ids, chs, true); err != nil {
 				r.logger.Error(
 					"ChainReplicationRequest: Error opening MConnection channels",
 					"chain_id", replRequest.ChainID,
@@ -938,7 +979,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 					"peer", sourcePeer,
 					"err", err,
 				)
-				peerById := r.cometbftSwitch.Peers(replRequest.ChainID).Get(sourcePeer.ID())
+				peerById := csw.Peers(replRequest.ChainID).Get(sourcePeer.ID())
 				if peerById != nil {
 					if err = r.sendChainReplicationResponse(peerById, replRequest.ChainID); err != nil {
 						r.Logger.Debug("Error with ChainReplicationResponse",
@@ -952,7 +993,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 				}
 				if peerById == nil || !peerById.IsRunning() {
 					if !peerById.IsRunning() {
-						r.cometbftSwitch.StopPeerGracefully(peerById)
+						csw.StopPeerGracefully(peerById)
 					}
 					peerAddr, err := sourcePeer.NodeInfo().NetAddress()
 					if err != nil {
@@ -964,7 +1005,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 						)
 						return
 					}
-					if err = r.cometbftSwitch.DialPeerWithAddressAndChainID(peerAddr, replRequest.ChainID); err != nil {
+					if err = csw.DialPeerWithAddressAndChainID(peerAddr, replRequest.ChainID); err != nil {
 						if !p2p.IsDialError(err) {
 							err = nil
 						}
@@ -976,7 +1017,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 							"toAddr", peerAddr,
 						)
 					}
-					peerById = r.cometbftSwitch.Peers(replRequest.ChainID).Get(sourcePeer.ID())
+					peerById = csw.Peers(replRequest.ChainID).Get(sourcePeer.ID())
 					if err = r.sendChainReplicationResponse(peerById, replRequest.ChainID); err != nil {
 						r.Logger.Debug("Error with ChainReplicationResponse",
 							"err", err,
@@ -1014,7 +1055,10 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 				return
 			}
 
-			r.ackReplResCh <- replResponse
+			// Channel is mapped by transaction hash
+			replResChForChainID := r.ChannelForAckReplication(replResponse.ChainID)
+			replResChForChainID <- replResponse
+
 			// Done.
 			return
 
@@ -1388,8 +1432,12 @@ func (reactor *Reactor) OnStop() {
 		close(chainReadyCh)
 	}
 
-	if reactor.ackReplResCh != nil {
-		close(reactor.ackReplResCh)
+	reactor.ackReplResMtx.RLock()
+	restAckReplResChs := reactor.ackReplResChs
+	reactor.ackReplResMtx.RUnlock()
+
+	for chainID, _ := range restAckReplResChs {
+		reactor.CloseAckReplicationChannel(chainID)
 	}
 
 	reactor.ackAcceptTxMtx.RLock()

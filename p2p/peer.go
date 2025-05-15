@@ -371,15 +371,15 @@ func (p *peer) metricsReporter() {
 	defer metricsTicker.Stop()
 
 	for {
+		// If we are (also) shutting down, stop here.
+		select {
+		case <-p.Quit():
+			return
+		default:
+		}
+
 		select {
 		case <-metricsTicker.C:
-			// If we are (also) shutting down, stop here.
-			select {
-			case <-p.Quit():
-				return
-			default:
-			}
-
 			status := p.mconn.Status()
 			var sendQueueSize float64
 			for _, chStatus := range status.Channels {

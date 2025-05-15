@@ -24,7 +24,7 @@ func closeAndRemoveAll(tb testing.TB, rootDir string, server *mx.MultiplexBacken
 	defer os.RemoveAll(rootDir)
 
 	err := server.Close()
-	require.NoError(tb, err, "should shutdown server gracefully")
+	assert.NoError(tb, err, "should shutdown server gracefully")
 }
 
 func TestMultiplexBackendNewServer(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 )
 
@@ -31,6 +32,7 @@ type NodeReplRequestFn func(
 	[]*RelayAddress,
 	string,
 	chan<- client.BroadcastStatus,
+	cmtlog.Logger,
 )
 
 // DiscoveryDialerFn describes a function that may be run on a separate
@@ -42,6 +44,7 @@ type DiscoveryDialerFn func(
 	[]*RelayAddress,
 	*sync.WaitGroup,
 	chan<- *RelayAddress, // errorsCh
+	cmtlog.Logger,
 )
 
 // NetworksCreatorFn describes a function that may be run on a separate
@@ -51,6 +54,7 @@ type NetworksCreatorFn func(
 	map[string][]*RelayAddress,
 	[]string,
 	*sync.WaitGroup,
+	cmtlog.Logger,
 ) error
 
 // RelaysBroadcastFn describes a function that may be run on a separate
@@ -64,6 +68,7 @@ type RelaysBroadcastFn func(
 	string,
 	[]client.Transaction,
 	chan<- client.BroadcastStatus,
+	cmtlog.Logger,
 )
 
 // CancelBroadcastFn describes a function that may be run on a separate
@@ -74,4 +79,5 @@ type CancelBroadcastFn func(
 	context.Context,
 	string,
 	[]client.Transaction,
+	cmtlog.Logger,
 )

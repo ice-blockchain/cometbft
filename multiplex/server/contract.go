@@ -60,16 +60,18 @@ type Backend interface {
 	// to permit communications related to new (or unknown) networks.
 	UpdateAvailableNetworks(networks []string) []string
 
-	// WaitForRelayReplResponse should wait for a *remote* relay's replication
-	// response and it should return a relay ID.
-	WaitForRelayReplResponse(ctx context.Context) (string, error)
-
-	// WaitForRelaysReplResponse should wait for a number of *remote* relay's
-	// replication response and it should return their relay IDs.
-	WaitForRelaysReplResponse(
+	// WaitForRelaysAckChainReplications should wait for *remote* relays replication
+	// acceptance and it should return a list of accepting relays per ChainID.
+	// Use this method to wait for a chain replication to be accepted *remotely*.
+	WaitForRelaysAckChainReplications(
 		ctx context.Context,
-		numRelays int,
-	) ([]string, error)
+		catchupRelays map[string][]*RelayAddress,
+	) (
+		relaysPerChain map[string][]string,
+		numExpected int,
+		numReceived int,
+		err error,
+	)
 
 	// WaitForRelaysAckTransactionBatch should wait for *remote* relays transaction
 	// acceptance and it should return a list of accepting relays per tx hash.
@@ -79,7 +81,13 @@ type Backend interface {
 		chainRelays map[string][]*RelayAddress,
 		catchupRelays map[string][]*RelayAddress,
 		transactions []client.Transaction,
-	) (expectedRelaysPerTx, relaysPerTx map[string][]string, numExpected int, numReceived int, err error)
+	) (
+		expectedRelaysPerTx,
+		relaysPerTx map[string][]string,
+		numExpected int,
+		numReceived int,
+		err error,
+	)
 
 	// CancelBroadcastOperation should execute the CancelBroadcast routine
 	// and it should remove transactions from the local mempool.

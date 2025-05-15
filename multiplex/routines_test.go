@@ -69,17 +69,20 @@ func TestMultiplexRoutinesNodeReplRequest(t *testing.T) {
 	}
 
 	// ReplRequest preparations (must dial)
-	testRelayAddrs, chainRelays,
+	_, testChainRelays,
 		errorRelays := servers[0].GetRelaysByNetwork(context.TODO(), testRelayAddrs)
 	require.Len(t, errorRelays, 0) // NO error!
-	require.Len(t, chainRelays, numChains)
+	require.Len(t, testChainRelays, numChains)
 
 	testChainIds := servers[0].GetReactor().GetNetworks()
 	useChainID := testChainIds[0]
-	require.Contains(t, chainRelays, useChainID)
+	require.Contains(t, testChainRelays, useChainID)
 
+	testRemoteRelayAddrs := make([]*server.RelayAddress, 0, len(servers)-1)
 	for i := 1; i < len(servers); i++ {
-		//recipientSwitch := servers[i].CreateOrLoadDiscoveryEventSwitch()
+		// Initializes relay 1 discovery switch
+		servers[i].CreateOrLoadDiscoveryEventSwitch()
+
 		recipientReactor := servers[i].GetReactor()
 		recipientRelayID := string(recipientReactor.GetNodeKey().ID())
 
@@ -95,20 +98,29 @@ func TestMultiplexRoutinesNodeReplRequest(t *testing.T) {
 			testRelayAddr,
 		)
 		require.NoError(t, discoverErr) // NO error!
+
+		testRemoteRelayAddrs = append(testRemoteRelayAddrs, testRelayAddr)
 	}
+
+	servers[0].UpdateAvailableNetworks(testChainIds)
+
+	testCatchupRelays := map[string][]*server.RelayAddress{}
+	testCatchupRelays[useChainID] = make([]*server.RelayAddress, 0, len(testRemoteRelayAddrs))
+	testCatchupRelays[useChainID] = append(testCatchupRelays[useChainID], testRemoteRelayAddrs...)
 
 	// Act - Relay 1 asks Relay 2 AND Relay 3 to replicate chain x
 	nodeReplRequestFn := servers[0].DefaultNodeReplRequestRoutine()
 	nodeReplRequestFn(context.TODO(),
-		chainRelays[useChainID],
+		testCatchupRelays[useChainID],
 		useChainID,
 		make(chan<- client.BroadcastStatus),
+		servers[0].GetLogger().With("tx_hashes", "test-no-txes"),
 	)
 
 	// Test that ChainReplicationRequest was sent to relay 2
 	actualRequestsSent := servers[0].GetReplRequestPeers(useChainID)
 	assert.NotEmpty(t, actualRequestsSent)
-	assert.Len(t, actualRequestsSent, len(chainRelays[useChainID]))
+	assert.Len(t, actualRequestsSent, len(testChainRelays[useChainID]))
 }
 
 func TestMultiplexBackendRoutinesNetworksCreator(t *testing.T) {

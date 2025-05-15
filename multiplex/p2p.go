@@ -258,10 +258,16 @@ func (reactor *Reactor) AddConnectionChannels(
 				// we must add it here so that reactors use correct peer objects.
 				chainPeerSet := sw.Peers(chainID)
 				if !chainPeerSet.Has(peer.ID()) {
+					sw.Logger.Debug("Add missing peer to PeerSet by ChainID",
+						"chain_id", chainID,
+						"size", chainPeerSet.Size(),
+						"peer", peer.ID(),
+					)
+
 					if err = chainPeerSet.Add(peer); err != nil {
 						if _, ok := err.(p2p.ErrPeerRemoval); ok {
 							sw.Logger.Error("Error starting peer ",
-								" err ", "Peer has already errored and removal was attempted.",
+								"err", "Peer has already errored and removal was attempted.",
 								"peer", peer.ID())
 						}
 						return // err

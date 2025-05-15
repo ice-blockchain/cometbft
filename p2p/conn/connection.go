@@ -93,6 +93,7 @@ type MConnection struct {
 	recvMonitor   *flow.Monitor
 	send          chan struct{}
 	pong          chan struct{}
+	channelsMtx   cmtsync.Mutex
 	channels      []*Channel
 	channelsIdx   map[string]map[byte]*Channel
 	onReceive     receiveCbFunc
@@ -220,8 +221,11 @@ func NewMConnectionWithConfig(
 			}
 		}
 	}
+
+	mconn.channelsMtx.Lock()
 	mconn.channels = channels
 	mconn.channelsIdx = channelsIdx
+	mconn.channelsMtx.Unlock()
 
 	mconn.BaseService = *service.NewBaseService(nil, "MConnection", mconn)
 
@@ -246,6 +250,9 @@ func (c *MConnection) SocketAddr() net.Addr {
 // AddChannel registers a ChannelDescriptor in a running mconn for chainID,
 // reactors may then process messages on a new channel for this network.
 func (c *MConnection) AddChannel(chainID string, desc ChannelDescriptor) *Channel {
+	c.channelsMtx.Lock()
+	defer c.channelsMtx.Unlock()
+
 	if _, ok := c.channelsIdx[chainID]; !ok {
 		c.channelsIdx[chainID] = map[byte]*Channel{}
 	}
@@ -402,9 +409,13 @@ func (c *MConnection) stopForError(r any) {
 // getChannel searches for a reactor by ChainID and chID.
 // If none can be found, it will search in shared channels by chID.
 func (c *MConnection) getChannel(chainID string, chID byte) (*Channel, error) {
+	c.channelsMtx.Lock()
+	_, hasChannelsByChain := c.channelsIdx[chainID]
+	c.channelsMtx.Unlock()
+
 	// Searches for the ChainID in the channels index.
 	// If it doesn't exist, see if this channel is shared.
-	if _, ok := c.channelsIdx[chainID]; !ok {
+	if !hasChannelsByChain {
 		channel, err := c.getSharedChannel(chID)
 		if err != nil {
 			return nil, fmt.Errorf("Unknown chain_id %s", chainID)
@@ -413,16 +424,23 @@ func (c *MConnection) getChannel(chainID string, chID byte) (*Channel, error) {
 		return channel, nil
 	}
 
+	c.channelsMtx.Lock()
+	channel, hasChannelByChainAndId := c.channelsIdx[chainID][chID]
+	c.channelsMtx.Unlock()
+
 	// Searches the channel per ChainID.
 	// If it doesn't exist, see if this channel is shared.
-	if _, ok := c.channelsIdx[chainID][chID]; !ok {
+	if !hasChannelByChainAndId {
 		return c.getSharedChannel(chID)
 	}
 
-	return c.channelsIdx[chainID][chID], nil
+	return channel, nil
 }
 
 func (c *MConnection) getSharedChannel(chID byte) (*Channel, error) {
+	c.channelsMtx.Lock()
+	defer c.channelsMtx.Unlock()
+
 	// Do we have shared channels yet? Otherwise stop here.
 	if _, ok := c.channelsIdx[SharedChannelsNamespace]; !ok {
 		return nil, errors.New("Empty shared channels")

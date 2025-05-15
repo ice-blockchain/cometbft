@@ -94,14 +94,6 @@ func (t *timeoutTicker) timeoutRoutine() {
 	t.Logger.Debug("Starting timeout routine")
 	var ti timeoutInfo
 	for {
-		// NOTE(midas): non-blocking select on shutdown channel makes
-		// sure every time before scheduling a timeout, we know to shutdown.
-		select {
-		case <-t.Quit():
-			return
-		default: // Proceed to timeout schedule
-		}
-
 		select {
 		case newti := <-t.tickChan:
 			t.Logger.Debug("Received tick", "old_ti", ti, "new_ti", newti)
