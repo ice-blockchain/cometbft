@@ -85,11 +85,14 @@ type Switch struct {
 	chDescs       map[string][]*conn.ChannelDescriptor
 	reactorsByCh  map[string]map[byte]Reactor
 	msgTypeByChID map[string]map[byte]proto.Message
-	dialing       *cmap.CMap
-	reconnecting  *cmap.CMap
-	nodeInfo      NodeInfo // our node info
-	nodeKey       *NodeKey // our node privkey
-	addrBook      AddrBook
+
+	dialing      *cmap.CMap
+	reconnecting *cmap.CMap
+
+	networksMtx *sync.Mutex
+	nodeInfo    NodeInfo // our node info
+	nodeKey     *NodeKey // our node privkey
+	addrBook    AddrBook
 	// peers addresses with whom we'll maintain constant connection
 	persistentPeersAddrs []*NetAddress
 	unconditionalPeerIDs map[ID]struct{}
@@ -137,6 +140,7 @@ func NewSwitch(
 	sw := &Switch{
 		config:               cfg,
 		reactorsMtx:          new(sync.Mutex),
+		networksMtx:          new(sync.Mutex),
 		reactors:             make(map[string]map[string]Reactor),
 		chDescs:              make(map[string][]*conn.ChannelDescriptor),
 		reactorsByCh:         make(map[string]map[byte]Reactor),
@@ -292,18 +296,27 @@ func (sw *Switch) Reactor(chainID string, name string) Reactor {
 // SetNodeInfo sets the switch's NodeInfo for checking compatibility and handshaking with other nodes.
 // NOTE: Not goroutine safe.
 func (sw *Switch) SetNodeInfo(nodeInfo NodeInfo) {
+	sw.networksMtx.Lock()
+	defer sw.networksMtx.Unlock()
+
 	sw.nodeInfo = nodeInfo
 }
 
 // NodeInfo returns the switch's NodeInfo.
 // NOTE: Not goroutine safe.
 func (sw *Switch) NodeInfo() NodeInfo {
+	sw.networksMtx.Lock()
+	defer sw.networksMtx.Unlock()
+
 	return sw.nodeInfo
 }
 
 // SetNodeKey sets the switch's private key for authenticated encryption.
 // NOTE: Not goroutine safe.
 func (sw *Switch) SetNodeKey(nodeKey *NodeKey) {
+	sw.networksMtx.Lock()
+	defer sw.networksMtx.Unlock()
+
 	sw.nodeKey = nodeKey
 }
 
@@ -735,15 +748,26 @@ func (sw *Switch) reconnectToPeer(addr *NetAddress) {
 
 // SetAddrBook allows to set address book on Switch.
 func (sw *Switch) SetAddrBook(addrBook AddrBook) {
+	sw.networksMtx.Lock()
+	defer sw.networksMtx.Unlock()
+
 	sw.addrBook = addrBook
 }
 
 // GetAddrBook returns the [p2p.AddrBook] instance associated with the Switch.
-func (sw *Switch) GetAddrBook() AddrBook { return sw.addrBook }
+func (sw *Switch) GetAddrBook() AddrBook {
+	sw.networksMtx.Lock()
+	defer sw.networksMtx.Unlock()
+
+	return sw.addrBook
+}
 
 // MarkPeerAsGood marks the given peer as good when it did something useful
 // like contributed to consensus.
 func (sw *Switch) MarkPeerAsGood(peer Peer) {
+	sw.networksMtx.Lock()
+	defer sw.networksMtx.Unlock()
+
 	if sw.addrBook != nil {
 		sw.addrBook.MarkGood(peer.ID())
 	}
@@ -790,6 +814,7 @@ func (sw *Switch) dialPeersAsync(netAddrs []*NetAddress) {
 	// The integration tests depend on the addrBook being saved
 	// right away but maybe we can change that. Recall that
 	// the addrBook is only written to disk every 2min
+	sw.networksMtx.Lock()
 	if sw.addrBook != nil {
 		// add peers to `addrBook`
 		for _, netAddr := range netAddrs {
@@ -808,6 +833,7 @@ func (sw *Switch) dialPeersAsync(netAddrs []*NetAddress) {
 		// NOTE: integration tests depend on this
 		sw.addrBook.Save()
 	}
+	sw.networksMtx.Unlock()
 
 	// permute the list, dial them in random order.
 	perm := sw.rng.Perm(len(netAddrs))
@@ -924,7 +950,9 @@ func (sw *Switch) AddPrivatePeerIDs(ids []string) error {
 		validIDs = append(validIDs, id)
 	}
 
+	sw.networksMtx.Lock()
 	sw.addrBook.AddPrivateIDs(validIDs)
+	sw.networksMtx.Unlock()
 
 	return nil
 }
@@ -956,8 +984,11 @@ func (sw *Switch) acceptRoutine() {
 					// Remove the given address from the address book and add to our addresses
 					// to avoid dialing in the future.
 					addr := err.Addr()
+
+					sw.networksMtx.Lock()
 					sw.addrBook.RemoveAddress(&addr)
 					sw.addrBook.AddOurAddress(&addr)
+					sw.networksMtx.Unlock()
 				}
 
 				sw.Logger.Info(
@@ -1070,10 +1101,12 @@ func (sw *Switch) addOutboundPeerWithConfig(
 	if err != nil {
 		if e, ok := err.(ErrRejected); ok {
 			if e.IsSelf() {
+				sw.networksMtx.Lock()
 				// Remove the given address from the address book and add to our addresses
 				// to avoid dialing in the future.
 				sw.addrBook.RemoveAddress(addr)
 				sw.addrBook.AddOurAddress(addr)
+				sw.networksMtx.Unlock()
 
 				return err
 			}
@@ -1156,7 +1189,7 @@ func (sw *Switch) addPeer(p Peer) error {
 		return nil
 	}
 
-	relevantChainIds, err := sw.nodeInfo.GetCommonChains(p.NodeInfo())
+	relevantChainIds, err := sw.NodeInfo().GetCommonChains(p.NodeInfo())
 	if err != nil {
 		sw.Logger.Error("Won't start a peer - error with common chains",
 			"peer", p,
