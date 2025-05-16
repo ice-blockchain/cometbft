@@ -64,3 +64,17 @@ func txHashesToHex(transactions ...client.Transaction) []string {
 	}
 	return txHashes
 }
+
+// chainIdsFromTransactions accepts a userAddress and transactions,
+// and it returns a slice of ChainID values.
+func chainIdsFromTransactions(
+	userAddress string,
+	transactions ...client.Transaction,
+) []string {
+	chainIds := make([]string, 0, len(transactions))
+	for _, tx := range transactions {
+		chainID := client.GetChainID(userAddress, tx.Fingerprint)
+		chainIds = append(chainIds, chainID)
+	}
+	return chainIds
+}

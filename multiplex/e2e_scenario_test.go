@@ -278,6 +278,14 @@ func clientBroadcastTx(
 		mx.WithBackend(relay),
 	)
 
+	defer func() {
+		// recover from panic caused by timing out, notifyCh already closed
+		// note that any other panic *must* stop tests and print the error.
+		if r := recover(); r != nil {
+			require.Contains(tb, r, "send on closed channel")
+		}
+	}()
+
 	multiplexClient.BroadcastTx(ctx,
 		chainInfo.GetUserAddress(),
 		relays,
@@ -688,7 +696,6 @@ func TestScenarioClientBroadcastEmptyRelays(t *testing.T) {
 	numTransactions := 2
 	testChainID := makeChainID("test chain")
 	notifyCh := make(chan client.BroadcastStatus)
-	defer close(notifyCh)
 
 	go clientBroadcastTx(t,
 		broadcastCtx,
@@ -708,6 +715,8 @@ func TestScenarioClientBroadcastEmptyRelays(t *testing.T) {
 	assert.NotNil(t, resultStatusMsg)
 	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+
+	close(notifyCh)
 
 	// Test that ChainReplicationRequest were sent
 	expectedRequestCnt := len(relays) - 1

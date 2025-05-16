@@ -119,6 +119,8 @@ type Reactor struct {
 	chainRegistry ChainRegistry
 	storagePaths  MultiplexFS
 	configsPaths  MultiplexFS
+	// RuntimeRegistry defines a registry of active and inactive runtimes.
+	runtimeRegistry *server.RuntimeRegistry
 
 	// Networking layer
 	//
@@ -290,6 +292,22 @@ func NewReactor(
 		server.ReplayPoolAcceptor(reactor.acceptorImpl),
 	)
 	reactor.replayPoolMtx.Unlock()
+
+	reactor.runtimesMutex.Lock()
+	reactor.runtimeRegistry = server.NewRuntimeRegistry(
+		reactor.logger.With("module", "idle-manager"),
+		server.RuntimeRegistryOnIdle(func(chainID string) error {
+			reactor.logger.Debug("Now idling inactive node runtime", "chain_id", chainID)
+
+			if err := reactor.StopNodeInstance(chainID); err != nil {
+				reactor.logger.Error("failed to stop node instance (idle-manager)",
+					"err", err)
+			}
+
+			return nil
+		}),
+	)
+	reactor.runtimesMutex.Unlock()
 
 	return reactor
 }
@@ -1252,6 +1270,14 @@ func (reactor *Reactor) OnStart() error {
 	nodeConfig := reactor.GetNodeConfig()
 	chainRegistry := reactor.GetChainRegistry()
 
+	// Before anything else, start the runtimes registry
+	reactor.runtimesMutex.Lock()
+	if err := reactor.runtimeRegistry.Start(); err != nil {
+		reactor.logger.Error(
+			"Error starting the runtimes registry (idle-manager)", "err", err)
+	}
+	reactor.runtimesMutex.Unlock()
+
 	// Initialize filesystem directory structure
 	multiplexFS, err := NewMultiplexFS(nodeConfig, chainRegistry)
 	if err != nil {
@@ -1397,6 +1423,16 @@ func (reactor *Reactor) OnStop() {
 		}
 	}
 	reactor.replayPoolMtx.Unlock()
+
+	// Stop the runtimes registry
+	reactor.runtimesMutex.Lock()
+	if reactor.runtimeRegistry != nil && reactor.runtimeRegistry.IsRunning() {
+		if err := reactor.runtimeRegistry.Stop(); err != nil {
+			reactor.logger.Error(
+				"Error stopping the runtimes registry (idle-manager)", "err", err)
+		}
+	}
+	reactor.runtimesMutex.Unlock()
 
 	// Each database multiplex opens x dbs, no ordering or reversing is
 	// applied here as it doesn't matter which database is closed first.

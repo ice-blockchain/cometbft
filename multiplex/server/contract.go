@@ -43,6 +43,9 @@ type Backend interface {
 	// GetRoutines should return an implementation of [Jobs] methods.
 	GetRoutines() *Jobs
 
+	// GetRuntimeRegistry should return the active node runtime manager.
+	GetRuntimeRegistry() *RuntimeRegistry
+
 	// GetRelayID should return a [p2p.ID] instance that identifies a relay.
 	GetRelayID() p2p.ID
 

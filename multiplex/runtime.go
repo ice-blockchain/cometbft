@@ -2,8 +2,10 @@ package multiplex
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"sync"
 
 	dbm "github.com/cometbft/cometbft-db"
 	"github.com/ice-blockchain/cometbft/config"
@@ -11,6 +13,7 @@ import (
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	"github.com/ice-blockchain/cometbft/crypto/tmhash"
 	cmtjson "github.com/ice-blockchain/cometbft/libs/json"
+	service "github.com/ice-blockchain/cometbft/libs/service"
 	"github.com/ice-blockchain/cometbft/node"
 	"github.com/ice-blockchain/cometbft/privval"
 	sm "github.com/ice-blockchain/cometbft/state"
@@ -382,40 +385,51 @@ func (reactor *Reactor) InjectNewRuntime(
 	return nil
 }
 
-// StartNode calls the Start method of [node.Node] instances and later
-// registers new routes for this ChainID in the RPC server.
-func (reactor *Reactor) StartNode(ctx context.Context, chainID string) error {
+// InitAndStartNode creates a [node.Node] instance and calls the Start method
+// and later registers new routes for this ChainID in the RPC server.
+func (reactor *Reactor) InitAndStartNode(ctx context.Context, chainID string) error {
 	clogger := reactor.logger.With("chain_id", chainID)
 
-	// Locks the reactor's services mutex.
-	servicesProvider := reactor.GetServicesProvider()
+	var (
+		nodeRuntime     *node.Node
+		hasNodeRuntimes bool
+		hasChainRuntime bool
+	)
 
-	// If the node is running already, stop here.
-	if n := servicesProvider(ServiceKeyNodeRuntime, chainID); n != nil {
+	reactor.servicesMutex.RLock()
+	_, hasNodeRuntimes = reactor.servicesRegistry[ServiceKeyNodeRuntime]
+	if hasNodeRuntimes {
+		_, hasChainRuntime = reactor.servicesRegistry[ServiceKeyNodeRuntime][chainID]
+	} else {
+		hasChainRuntime = false
+	}
+	reactor.servicesMutex.RUnlock()
+
+	// We may need to init the [node.Node] instance first.
+	if !hasChainRuntime {
+		// Create a MultiplexMap[*node.Node] with this new network.
+		updatedMx, err := reactor.createMultiplexNodesWithServices(
+			ctx,
+			[]string{chainID},
+		)
+		if err != nil {
+			return err
+		}
+
+		nodeRuntime = updatedMx[chainID].GetInstance().(*node.Node)
+	} else { // hasChainRuntime
+		servicesProvider := reactor.GetServicesProvider()
+		nodeRuntime = servicesProvider(ServiceKeyNodeRuntime, chainID).(*node.Node)
+	}
+
+	// If the node is already running, stop here
+	if nodeRuntime.IsRunning() {
 		return nil
 	}
 
-	// ------------------------------------------------------------------------
-	// Step 5: Create the runnable node.Node instance
-
-	// Create a MultiplexMap[*node.Node] with this new network.
-	updatedMx, err := reactor.createMultiplexNodesWithServices(
-		ctx,
-		[]string{chainID},
-	)
-	if err != nil {
-		return err
-	}
-
-	// ------------------------------------------------------------------------
-	// Step 6: Start the node
-	//
 	// CAUTION:
 	// Note that consensus reactors are not started here to prevent race
 	// conditions between the replication routine and cometbft services.
-
-	// Type-assertion makes sure we have a [*node.Node]
-	runNode := updatedMx[chainID].GetInstance().(*node.Node)
 
 	// Calls the Start method on the node.Node instance.
 	go func(network string, n *node.Node) {
@@ -434,7 +448,7 @@ func (reactor *Reactor) StartNode(ctx context.Context, chainID string) error {
 		clogger.Info("Started node",
 			"nodeInfo", n.Switch().NodeInfo(),
 		)
-	}(chainID, runNode)
+	}(chainID, nodeRuntime)
 
 	// Also hot-plug the RPC routes for added network
 	reactor.networkMutex.RLock()
@@ -451,6 +465,132 @@ func (reactor *Reactor) StartNode(ctx context.Context, chainID string) error {
 	// may now join the network and shall do so when the transaction broadcast
 	// is executed as a follow-up of the networks creation routine.
 	// i.e. a transaction broadcast with chainID may now succeed.
+
+	return nil
+}
+
+// StartAllNodeInstances calls the Start method of [node.Node] instances that
+// are registered in the services multiplex map of the reactor.
+func (b *MultiplexBackend) StartAllNodeInstances() error {
+	chainIds := b.GetNetworks()
+	if len(chainIds) == 0 {
+		return nil
+	}
+
+	servicesProvider := b.reactor.GetServicesProvider()
+	for _, chainID := range chainIds {
+		// Type-assertion makes sure we have a [*node.Node]
+		runNode, ok := servicesProvider(ServiceKeyNodeRuntime, chainID).(*node.Node)
+		if !ok {
+			return errors.New("could not get node runtime in StartAllNodeInstances")
+		}
+
+		// Calls the Start method on the node.Node instance.
+		// This goroutine produces a panic in case of errors.
+		go func(network string, n *node.Node) {
+			b.logger.Info("Starting new node", "chain_id", network)
+			b.logger.Info("Using custom listen addresses",
+				"p2p", n.Config().P2P.ListenAddress,
+				"rpc", n.Config().RPC.ListenAddress,
+			)
+
+			if err := n.Start(); err != nil {
+				b.logger.Error("failed to stop node",
+					"chain_id", network,
+					"err", err,
+				)
+			}
+
+			b.logger.Info("Started node",
+				"chain_id", network,
+				"nodeInfo", n.Switch().NodeInfo(),
+			)
+		}(chainID, runNode)
+	}
+
+	return nil
+}
+
+// StopNodeInstance calls the Stop method of [node.Node] instance by chainID.
+func (reactor *Reactor) StopNodeInstance(chainID string) error {
+	if !reactor.HasNetwork(chainID) {
+		return nil
+	}
+
+	servicesProvider := reactor.GetServicesProvider()
+	runNode, ok := servicesProvider(ServiceKeyNodeRuntime, chainID).(*node.Node)
+	if !ok || !runNode.IsRunning() {
+		return nil
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	// Calls the Stop method on the node.Node instance.
+	go func(network string, n *node.Node) {
+		reactor.logger.Info("Stopping node runtime", "chain_id", network)
+
+		defer wg.Done()
+		if n.IsRunning() {
+			if err := n.Stop(); err != nil {
+				if err != service.ErrAlreadyStopped {
+					reactor.logger.Error("failed to stop node",
+						"chain_id", network,
+						"err", err,
+					)
+				}
+			}
+		}
+
+		reactor.logger.Info("Stopped node runtime", "chain_id", network)
+	}(chainID, runNode)
+
+	wg.Wait()
+	return nil
+}
+
+// StopAllNodeInstances calls the Stop method of [node.Node] instances that
+// are registered in the services multiplex map of the reactor.
+func (reactor *Reactor) StopAllNodeInstances() error {
+	chainIds := reactor.GetNetworks()
+	if len(chainIds) == 0 {
+		return nil
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(len(chainIds))
+
+	servicesProvider := reactor.GetServicesProvider()
+	for _, chainID := range chainIds {
+		// Type-assertion makes sure we have a [*node.Node]
+		runNode, ok := servicesProvider(ServiceKeyNodeRuntime, chainID).(*node.Node)
+		if !ok || !runNode.IsRunning() {
+			wg.Done()
+			continue
+		}
+
+		// Calls the Stop method on the node.Node instance.
+		go func(network string, n *node.Node) {
+			reactor.logger.Info("Stopping node runtime", "chain_id", network)
+
+			defer wg.Done()
+			if n.IsRunning() {
+				if err := n.Stop(); err != nil {
+					if err != service.ErrAlreadyStopped {
+						reactor.logger.Error("failed to stop node",
+							"chain_id", network,
+							"err", err,
+						)
+					}
+				}
+			}
+
+			reactor.logger.Info("Stopped node runtime", "chain_id", network)
+		}(chainID, runNode)
+	}
+
+	// Wait for all nodes to be stopped.
+	wg.Wait()
 
 	return nil
 }

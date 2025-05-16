@@ -19,7 +19,6 @@ import (
 	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
 	"github.com/ice-blockchain/cometbft/config"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
-	service "github.com/ice-blockchain/cometbft/libs/service"
 	mempl "github.com/ice-blockchain/cometbft/mempool"
 	"github.com/ice-blockchain/cometbft/node"
 	"github.com/ice-blockchain/cometbft/p2p"
@@ -123,9 +122,10 @@ type MultiplexBackend struct {
 	ackResponsesRcvd map[string][]string
 
 	// Internals
-	logger   cmtlog.Logger
-	errorsCh chan error
-	metrics  *Metrics
+	logger     cmtlog.Logger
+	errorsCh   chan error
+	shutdownCh chan struct{}
+	metrics    *Metrics
 }
 
 // WithRoutines is an option helper to overwrite the [server.Jobs] instance.
@@ -198,8 +198,9 @@ func NewServer(
 		httpServers:  []*http.Server{},
 		httpClients:  []*http.Client{},
 
-		logger:   nodeLogger,
-		errorsCh: make(chan error),
+		logger:     nodeLogger,
+		errorsCh:   make(chan error, 1),
+		shutdownCh: make(chan struct{}, 1),
 	}
 
 	// Enable overwrite of optional properties
@@ -242,6 +243,14 @@ func (b *MultiplexBackend) GetAcceptor() client.Acceptor {
 // GetReactor returns the [Reactor] instance.
 func (b *MultiplexBackend) GetReactor() *Reactor {
 	return b.reactor
+}
+
+// GetRuntimeRegistry should return the active node runtime manager.
+func (b *MultiplexBackend) GetRuntimeRegistry() *server.RuntimeRegistry {
+	b.reactor.runtimesMutex.Lock()
+	defer b.reactor.runtimesMutex.Unlock()
+
+	return b.reactor.runtimeRegistry
 }
 
 // GetRelayID returns the node ID assigned in the reactor.
@@ -576,10 +585,11 @@ func (b *MultiplexBackend) MustStart() {
 		)
 
 		if b.reactor.Size() > 0 {
-			if err := b.StartNodeInstances(); err != nil {
+			if err := b.StartAllNodeInstances(); err != nil {
 				b.errorsCh <- err
 			}
 		}
+		close(b.errorsCh)
 
 		// This relay can now be used to communicate P2P messages.
 		wg.Done()
@@ -588,15 +598,18 @@ func (b *MultiplexBackend) MustStart() {
 			addTimeSample(b.metrics.StartDurationSeconds, startTime)()
 		}
 
-		for {
-			select {
-			case <-b.reactor.Quit():
-				return
-
-			case err := <-b.errorsCh:
-				b.logger.Error("error with multiplex backend", "err", err)
-				return
+		select {
+		case <-b.shutdownCh:
+			if err := b.Close(); err != nil {
+				b.logger.Error("unable to stop the multiplex backend", "error", err)
 			}
+			return
+
+		case err := <-b.errorsCh:
+			if err != nil {
+				b.logger.Error("error with multiplex backend", "err", err)
+			}
+			return
 		}
 	}()
 
@@ -622,7 +635,7 @@ func (b *MultiplexBackend) Close() error {
 
 	// Stop any running node runtime
 	if b.reactor.Size() > 0 {
-		if err := b.StopNodeInstances(); err != nil {
+		if err := b.reactor.StopAllNodeInstances(); err != nil {
 			return err
 		}
 	}
@@ -1441,7 +1454,7 @@ func (b *MultiplexBackend) StartConsensusInstance(
 		return err
 	}
 
-	return b.reactor.StartNode(ctx, chainID)
+	return b.reactor.InitAndStartNode(ctx, chainID)
 }
 
 // ----------------------------------------------------------------------------
@@ -1865,97 +1878,6 @@ func (b *MultiplexBackend) StartPrometheusServer() error {
 	}()
 
 	b.httpServers = append(b.httpServers, srv)
-	return nil
-}
-
-// StartNodeInstances calls the Start method of [node.Node] instances that
-// are registered in the services multiplex map of the reactor.
-func (b *MultiplexBackend) StartNodeInstances() error {
-	chainIds := b.GetNetworks()
-	if len(chainIds) == 0 {
-		return nil
-	}
-
-	servicesProvider := b.reactor.GetServicesProvider()
-	for _, chainID := range chainIds {
-		// Type-assertion makes sure we have a [*node.Node]
-		runNode, ok := servicesProvider(ServiceKeyNodeRuntime, chainID).(*node.Node)
-		if !ok {
-			return errors.New("could not get node runtime in StartNodeInstances")
-		}
-
-		// TODO(midas): relax some resources at i % 1000 == 0 (set IDLE)
-
-		// Calls the Start method on the node.Node instance.
-		// This goroutine produces a panic in case of errors.
-		go func(network string, n *node.Node) {
-			b.logger.Info("Starting new node", "chain_id", network)
-			b.logger.Info("Using custom listen addresses",
-				"p2p", n.Config().P2P.ListenAddress,
-				"rpc", n.Config().RPC.ListenAddress,
-			)
-
-			if err := n.Start(); err != nil {
-				b.logger.Error("failed to stop node",
-					"chain_id", network,
-					"err", err,
-				)
-			}
-
-			b.logger.Info("Started node",
-				"chain_id", network,
-				"nodeInfo", n.Switch().NodeInfo(),
-			)
-		}(chainID, runNode)
-	}
-
-	return nil
-}
-
-// StopNodeInstances calls the Stop method of [node.Node] instances that
-// are registered in the services multiplex map of the reactor.
-func (b *MultiplexBackend) StopNodeInstances() error {
-	chainIds := b.GetNetworks()
-	if len(chainIds) == 0 {
-		return nil
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(len(chainIds))
-
-	servicesProvider := b.reactor.GetServicesProvider()
-	for _, chainID := range chainIds {
-		// Type-assertion makes sure we have a [*node.Node]
-		runNode, ok := servicesProvider(ServiceKeyNodeRuntime, chainID).(*node.Node)
-		if !ok || !runNode.IsRunning() {
-			wg.Done()
-			continue
-		}
-
-		// Calls the Stop method on the node.Node instance.
-		// This goroutine produces a panic in case of errors.
-		go func(network string, n *node.Node) {
-			b.logger.Info("Stopping node runtime", "chain_id", network)
-
-			defer wg.Done()
-			if n.IsRunning() {
-				if err := n.Stop(); err != nil {
-					if err != service.ErrAlreadyStopped {
-						b.logger.Error("failed to stop node",
-							"chain_id", network,
-							"err", err,
-						)
-					}
-				}
-			}
-
-			b.logger.Info("Stopped node runtime", "chain_id", network)
-		}(chainID, runNode)
-	}
-
-	// Wait for all nodes to be stopped.
-	wg.Wait()
-
 	return nil
 }
 
