@@ -925,6 +925,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 
 		r.logger.Debug("Received from", "src", sourceAddr.String())
 
+		switch msg.(type) {
 		// ChainReplicationRequest
 		// Received a request to replicate a (new) chain.
 		case *mxp2p.Message_ChainReplicationRequest:
