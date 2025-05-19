@@ -360,7 +360,8 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 
 			// Broadcast must happen only if there is at least one healthy relay.
 			// For NEW networks, we don't need to broadcast to other relays,
-			// instead a ChainReplicationRequest will be sent to all of them.
+			// instead a ChainReplicationRequest will be sent to all of them and
+			// the transaction will be included by the relay producing a block.
 			if _, ok := relaysByChain[chainID]; !ok {
 				peers := []string{}
 				for _, relayAddr := range replReqRelays[chainID] {
@@ -371,8 +372,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 				b.reactor.poolRequestsMtx.Lock()
 				b.reactor.poolRequestsSent[txHash] = peers
 				b.reactor.poolRequestsMtx.Unlock()
-				// TODO: we need to broadcast until we fix validators
-				//continue // Do not broadcast to relays
+				continue // Do not broadcast to relays
 			}
 
 			// Force the execution of mempool broadcast to *all* healthy relays.

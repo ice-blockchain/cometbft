@@ -561,6 +561,12 @@ func (reactor *Reactor) SetRPCMultiplexer(mux *http.ServeMux) {
 	reactor.rpcMultiplexer = mux
 }
 
+// ChannelForAckReplication creates or returns an unbuffered channel that accepts
+// ChainReplicationResponse messages for chainID.
+//
+// ackReplResChs contains channels that are opened on-demand, when the
+// application expects to receive [ChainReplicationResponse] messages from
+// relevant relays, about one chainID.
 func (reactor *Reactor) ChannelForAckReplication(chainID string) chan *mxp2p.ChainReplicationResponse {
 	reactor.ackReplResMtx.RLock()
 	replResChForChainID, hasChannel := reactor.ackReplResChs[chainID]
@@ -596,8 +602,8 @@ func (reactor *Reactor) CloseAckReplicationChannel(chainID string) {
 	reactor.ackReplResMtx.Unlock()
 }
 
-// ChannelForAckTransaction creates or returns a buffered channel that accepts
-// numUpdates messages for txHash.
+// ChannelForAckTransaction creates or returns an unbuffered channel that accepts
+// AckTransactionBroadcast messages for txHash.
 //
 // ackAcceptTxChs contains channels that are opened on-demand, when the
 // application expects to receive [AckTransactionBroadcast] messages from
@@ -922,6 +928,9 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 	r.Logger.Debug("Receive", "src", e.Src, "chId", e.ChannelID)
 
 	switch extMsg := e.Message.(type) {
+	// ChainReplicationRequest
+	// ChainReplicationResponse
+	// ChainReplicationComplete
 	case *mxp2p.Message:
 		msg := extMsg.GetSum()
 
@@ -939,7 +948,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 		// ChainReplicationRequest
 		// Received a request to replicate a (new) chain.
 		case *mxp2p.Message_ChainReplicationRequest:
-			r.logger.Debug("Now processing ChainReplicationRequest", "msg", msg)
+			r.logger.Debug("Received ChainReplicationRequest", "msg", msg)
 			replRequest := extMsg.GetChainReplicationRequest()
 
 			// A ChainReplicationResponse will be sent to the source peer.
@@ -999,6 +1008,8 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 
 			// Now respond with a [ChainReplicationResponse].
 			// This serves as a receipt for a chain replication request.
+			//
+			// NOTE(midas): A outbound connection with the peer *must* exist.
 			if err = r.sendChainReplicationResponse(sourcePeer, replRequest.ChainID); err != nil {
 				r.Logger.Error("failed to send ChainReplicationResponse",
 					"chain_id", replRequest.ChainID,
@@ -1015,12 +1026,8 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 		// ChainReplicationResponse
 		// Received a receipt of replication from one of the relays.
 		case *mxp2p.Message_ChainReplicationResponse:
-			// r.logger.Debug("Now processing ChainReplicationResponse", "msg", msg)
+			r.logger.Debug("Received ChainReplicationResponse", "msg", msg)
 			replResponse := extMsg.GetChainReplicationResponse()
-			r.logger.Debug("[ChainReplicationResponse] Relay received replication request",
-				"chain_id", replResponse.ChainID,
-				"relay_id", replResponse.NodeId,
-			)
 
 			// Dials the CometBFT relay to permit faster consensus startup and
 			// make sure communication with this relay is possible for blocksync.
@@ -1175,18 +1182,7 @@ func (r *Reactor) DialBackReplicationPartner(
 	r.networkMutex.RLock()
 	defer r.networkMutex.RUnlock()
 	if err := r.cometbftSwitch.DialPeerWithAddressAndChainID(peerAddr, chainID); err != nil {
-		if !r.IsDialError(err) {
-			// Manually add peers when the switch was already running.
-			dialedPeer := r.cometbftSwitch.Peers(chainID).Get(peerAddr.ID)
-			for _, reactor := range r.cometbftSwitch.Reactors(chainID) {
-				peerForReactor := reactor.InitPeer(dialedPeer)
-				reactor.AddPeer(peerForReactor)
-			}
-
-			err = nil
-		}
-
-		if err != nil {
+		if r.IsDialError(err) {
 			return fmt.Errorf(
 				"could not dial relay %s: %w", peerAddr.DialString(), err)
 		}
@@ -1773,31 +1769,54 @@ func (reactor *Reactor) sendChainReplicationResponse(
 			},
 		}); !success {
 			return fmt.Errorf(
-				"Failed to send ChainReplicationResponse from %s to %s",
+				"could not send message to peer, sender: %s, recipient: %s",
 				string(fromID), string(toPeer.ID()))
 		}
 		return nil
 	}
 
-	// First, try sending to discovery peer and return on success
 	discoverySwitch := reactor.GetEventSwitchForDiscovery()
-	peerDiscovery := discoverySwitch.UniquePeers().Get(sourcePeer.ID())
-	if peerDiscovery != nil {
-		// TODO(midas): remove debug logs
-		reactor.logger.Debug("Sending response to discovery peer",
-			"from_id", myPeerID,
-			"peer_id", sourcePeer.ID(),
-			"peer", peerDiscovery,
-		)
+	peerOut := discoverySwitch.UniquePeers().Get(sourcePeer.ID())
+	if peerOut == nil {
+		// Open a OUTBOUND connection to this peer. This is required to send back
+		// a ChainReplicationResponse message.
+		peerAddr, _ := sourcePeer.NodeInfo().NetAddress()
+		if err := discoverySwitch.DialPeerWithAddressAndChainID(peerAddr, chainID); err != nil {
+			if p2p.IsDialError(err) {
+				reactor.logger.Error("Failed to open outbound connection to discovery peer",
+					"err", err,
+					"peer", peerAddr.String(),
+					"chain_id", chainID,
+				)
+				return errors.New("outbound peer connection cannot be opened")
+			}
+		}
 
-		if err := sendResponseToPeer(myPeerID, peerDiscovery, chainID); err == nil {
-			return nil // sent.
-		} else if !peerDiscovery.IsRunning() { // Errored
-			discoverySwitch.StopPeerGracefully(peerDiscovery)
+		peerOut = discoverySwitch.Peers(chainID).GetOutbound(peerAddr.ID)
+		if peerOut == nil {
+			reactor.logger.Error("Failed to find outbound connection to discovery peer",
+				"peer", peerAddr.String(),
+				"chain_id", chainID,
+			)
+			return errors.New("outbound peer connection is not ready")
 		}
 	}
 
-	return nil // sent.
+	// TODO(midas): remove debug logs
+	reactor.logger.Debug("Sending ChainReplicationResponse to peer",
+		"from_id", myPeerID,
+		"peer_id", sourcePeer.ID(),
+		"peer", peerOut,
+		"chain_id", chainID,
+	)
+
+	// We send the response using the discovery switch. Note that dialing
+	// the peer *must* have happened before.
+	if err := sendResponseToPeer(myPeerID, peerOut, chainID); err != nil {
+		return err
+	}
+
+	return errors.New("outbound peer connection is not ready")
 }
 
 // handleChainReplicationRequest processes a ChainReplicationRequest.

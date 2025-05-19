@@ -120,6 +120,8 @@ func RuntimeRegistryOnIdle(onIdle OnIdleFn) RuntimeRegistryOption {
 // RuntimeRegistry implements [service.Service]
 
 // OnStart implements [service.Service] by spawning the sleeper routine.
+//
+// Setting a nil OnIdle disables the cleaner routine.
 func (reg *RuntimeRegistry) OnStart() error {
 	reg.logger.Debug("Starting runtime registry",
 		"num_active", reg.NumRuntimes(),
@@ -309,7 +311,14 @@ func (reg *RuntimeRegistry) removeSleeping(chainID string) error {
 
 // cleanerRoutine waits for cleanerInterval, then finds node runtimes that have
 // been idle for at least runIdleDuration and executes the OnIdle() extension.
+//
+// Setting a nil OnIdle disables the cleaner routine.
 func (reg *RuntimeRegistry) cleanerRoutine() {
+	if reg.OnIdle == nil {
+		reg.logger.Debug("Disabled sleeping runtime cleaner routine")
+		return
+	}
+
 	// Loops and garbage collects runtimes when timer ticks.
 	for {
 		cleanerInterval := reg.CleanerInterval()

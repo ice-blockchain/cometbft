@@ -1198,10 +1198,12 @@ func (sw *Switch) addPeer(p Peer) error {
 		return nil
 	}
 
-	// If we don't have common chains with p,
+	// If we don't have common chains with p, we are creating a network.
 	runtimeChainID := p.Get(runtimeChainKey)
 	if len(relevantChainIds) == 0 && runtimeChainID != nil {
 		relevantChainIds = []string{runtimeChainID.(string)}
+	} else if runtimeChainID != nil && !slices.Contains(relevantChainIds, runtimeChainID.(string)) {
+		relevantChainIds = append(relevantChainIds, runtimeChainID.(string))
 	}
 
 	// Add some data to the peer, which is required by reactors.
@@ -1212,14 +1214,14 @@ func (sw *Switch) addPeer(p Peer) error {
 		}
 	}
 
+	// Update this peer's MConnection.channelsIdx.
 	sw.reactorsMtx.Lock()
-	chains := []string{}
+	localAvailableChainIds := []string{}
 	for chainID := range sw.chDescs {
-		chains = append(chains, chainID)
+		localAvailableChainIds = append(localAvailableChainIds, chainID)
 	}
 	sw.reactorsMtx.Unlock()
-
-	sw.UpdateChannelsForMConn(chains, []byte{})(p.MConn())
+	sw.UpdateChannelsForMConn(localAvailableChainIds, []byte{})(p.MConn())
 
 	// Start the peer's send/recv routines.
 	// Must start it before adding it to the peer set
@@ -1246,9 +1248,12 @@ func (sw *Switch) addPeer(p Peer) error {
 	sw.peersMtx.Unlock()
 
 	// Then we add it to all internal peersets by ChainID.
-	// TODO(midas): should filter and add only for ChainIDs supported by peer.
 	sw.peersMtx.Lock()
-	for _, peerSet := range sw.peersByChain {
+	for chainID, peerSet := range sw.peersByChain {
+		if !slices.Contains(localAvailableChainIds, chainID) {
+			continue
+		}
+
 		// Add the peer to PeerSet. Do this before starting the reactors
 		// so that if Receive errors, we will find the peer and remove it.
 		// Add should not err since we already checked peers.Has().

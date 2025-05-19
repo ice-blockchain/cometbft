@@ -113,6 +113,28 @@ func (ps *PeerSet) HasIP(peerIP net.IP) bool {
 	return false
 }
 
+func (ps *PeerSet) GetInbound(peerKey ID) Peer {
+	ps.mtx.Lock()
+	defer ps.mtx.Unlock()
+
+	item, ok := ps.lookup[ps.lookupKey(peerKey, false)]
+	if ok {
+		return item.peer
+	}
+	return nil
+}
+
+func (ps *PeerSet) GetOutbound(peerKey ID) Peer {
+	ps.mtx.Lock()
+	defer ps.mtx.Unlock()
+
+	item, ok := ps.lookup[ps.lookupKey(peerKey, true)]
+	if ok {
+		return item.peer
+	}
+	return nil
+}
+
 // Get looks up a peer by the provided peerKey. Returns nil if peer is not
 // found.
 func (ps *PeerSet) Get(peerKey ID) Peer {

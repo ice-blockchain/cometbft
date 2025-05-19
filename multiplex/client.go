@@ -167,6 +167,7 @@ func (c MultiplexClient) BroadcastTx(
 	// TODO(midas): remove debug logs
 	c.backend.GetLogger().Debug("Fetching networks information from relays",
 		"num_relays", len(relayAddresses),
+		"relays", relayAddresses,
 		"tx_hashes", transactionHashes)
 
 	// Determine relay IDs (CometBFT Node ID) and supported networks of each
@@ -390,17 +391,17 @@ func (c MultiplexClient) BroadcastTx(
 	chainCatchupsWg := new(sync.WaitGroup)
 	chainCatchupsWg.Add(totalNumReplRequests)
 
-	// TODO(midas): remove debug logs
-	c.backend.GetLogger().Debug("Requesting chain replication from relays",
-		"num_networks", len(catchupRelays),
-		"num_requests", totalNumReplRequests,
-		"tx_hashes", transactionHashes)
-
 	// Ask the relays to catch-up with the chain by replicating it.
 	for chainID, chainCatchupRelays := range catchupRelays {
 		if len(chainCatchupRelays) == 0 {
 			continue
 		}
+
+		// TODO(midas): remove debug logs
+		c.backend.GetLogger().Debug("Requesting chain replication from relays",
+			"num_requests", len(chainCatchupRelays),
+			"chain_id", chainID,
+			"tx_hashes", transactionHashes)
 
 		routineNodeReplRequest := c.GetBackend().GetRoutines().NodeReplRequest
 		go routineNodeReplRequest(ctx,
@@ -414,7 +415,7 @@ func (c MultiplexClient) BroadcastTx(
 	// TODO(midas): remove debug logs
 	c.backend.GetLogger().Debug("Waiting for chain replication responses",
 		"num_networks", len(catchupRelays),
-		"num_requests", totalNumReplRequests,
+		"total_requests", totalNumReplRequests,
 		"tx_hashes", transactionHashes)
 
 	// The recipients send the relay ID in a ChainReplicationResponse.
@@ -428,13 +429,6 @@ func (c MultiplexClient) BroadcastTx(
 			"CONSENSUS FAILURE: failed to receive replication responses: %w", replErr))
 		return // STOP here
 	}
-
-	// TODO(midas): remove debug logs
-	c.backend.GetLogger().Debug("Relays acknowledged chain replications",
-		"num_networks", len(catchupRelays),
-		"num_requests", totalNumReplRequests,
-		"num_responses", numReceivedResponses,
-		"tx_hashes", transactionHashes)
 
 	// As we use only healthy relays for replication requests, we must receive
 	// replication responses from *all* of them.

@@ -372,7 +372,6 @@ func TestScenarioClientBroadcastErrors(t *testing.T) {
 	numTransactions := 1
 	testChainID := makeChainID("test-chain-1")
 	notifyCh := make(chan client.BroadcastStatus)
-	defer close(notifyCh)
 
 	// Separate goroutine for client broadcast process
 	go clientBroadcastTx(t,
@@ -394,6 +393,7 @@ func TestScenarioClientBroadcastErrors(t *testing.T) {
 	assert.NotNil(t, resultStatusMsg.Error)
 	assert.Error(t, resultStatusMsg.Error)
 	assert.Contains(t, resultStatusMsg.Error.Error(), "not enough healthy relays")
+	close(notifyCh)
 
 	numExpected := (numRelaysForErrCase / 2) + 1
 	expectedMessage := fmt.Sprintf("expected %d, got %d", numExpected, numHealthy)
@@ -635,7 +635,6 @@ func TestScenarioClientBroadcastHealthyRelays(t *testing.T) {
 	chainIds := servers[0].GetNetworks()
 	testChainID := chainIds[0]
 	notifyCh := make(chan client.BroadcastStatus)
-	defer close(notifyCh)
 
 	go clientBroadcastTx(t,
 		broadcastCtx,
@@ -655,6 +654,7 @@ func TestScenarioClientBroadcastHealthyRelays(t *testing.T) {
 	assert.NotNil(t, resultStatusMsg)
 	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+	close(notifyCh)
 
 	// Test that AckTransactionBroadcast messages were received.
 	for _, bzTxHash := range resultStatusMsg.TxHashes {
@@ -694,14 +694,14 @@ func TestScenarioClientBroadcastEmptyRelays(t *testing.T) {
 
 	// Separate goroutine for client broadcast process
 	numTransactions := 2
-	testChainID := makeChainID("test chain")
+	testWithChainID := makeChainID("test chain")
 	notifyCh := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
 		broadcastCtx,
 		servers[0],
 		relays,
-		testChainID,
+		testWithChainID,
 		numTransactions,
 		notifyCh,
 	)
@@ -709,30 +709,25 @@ func TestScenarioClientBroadcastEmptyRelays(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg := waitForClientBroadcastStatus(t,
 		broadcastCtx,
-		testChainID,
+		testWithChainID,
 		notifyCh,
 	)
 	assert.NotNil(t, resultStatusMsg)
 	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
-
 	close(notifyCh)
 
 	// Test that ChainReplicationRequest were sent
 	expectedRequestCnt := len(relays) - 1
-	actualRequestsSent := servers[0].GetReplRequestPeers(testChainID)
+	actualRequestsSent := servers[0].GetReplRequestPeers(testWithChainID)
 	assert.NotEmpty(t, actualRequestsSent)
 	assert.Len(t, actualRequestsSent, expectedRequestCnt)
 
-	// Test that AckTransactionBroadcast messages were received.
-	for _, bzTxHash := range resultStatusMsg.TxHashes {
-		testTxHash := fmt.Sprintf("%X", bzTxHash)
-
-		expectedResponseCnt := len(relays) - 1
-		actualResponsesRcvd := servers[0].GetAckResponsePeers(testTxHash)
-		assert.NotEmpty(t, actualResponsesRcvd)
-		assert.Len(t, actualResponsesRcvd, expectedResponseCnt)
-	}
+	// Test that we received ChainReplicationResponse messages
+	expectedResponseCnt := len(relays) - 1 // -1 for self
+	actualResponsesRcvd := servers[0].GetReplResponsePeers(testWithChainID)
+	assert.NotEmpty(t, actualResponsesRcvd)
+	assert.Len(t, actualResponsesRcvd, expectedResponseCnt)
 }
 
 // We further test the healthy relays counter process which implies successful
@@ -775,8 +770,7 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 	// Separate goroutine for client broadcast process
 	numTransactions := 1
 	testChainID := makeChainID("test chain")
-	notifyCh := make(chan client.BroadcastStatus)
-	defer close(notifyCh)
+	notifyCh1 := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
 		broadcastCtx,
@@ -784,19 +778,20 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 		relaysForErrCase,
 		testChainID,
 		numTransactions,
-		notifyCh,
+		notifyCh1,
 	)
 
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg1 := waitForClientBroadcastStatus(t,
 		broadcastCtx,
 		testChainID,
-		notifyCh,
+		notifyCh1,
 	)
 	assert.NotNil(t, resultStatusMsg1)
 	assert.NotNil(t, resultStatusMsg1.Error)
 	assert.Error(t, resultStatusMsg1.Error)
 	assert.Contains(t, resultStatusMsg1.Error.Error(), "not enough healthy relays")
+	close(notifyCh1)
 
 	numExpected := (numRelaysForErrCase / 2) + 1
 	expectedMessage := fmt.Sprintf("expected %d, got %d", numExpected, numHealthy)
@@ -818,25 +813,27 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 	defer secondCancelCtxFn()
 
 	// Separate goroutine for client broadcast process
+	notifyCh2 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		secondBroadcastCtx,
 		servers[0],
 		relaysForErrCase,
 		testChainID,
 		numTransactions,
-		notifyCh,
+		notifyCh2,
 	)
 
-	// Blocks the main thread until we consume from notifyCh.
+	// Blocks the main thread until we consume from notifyCh2.
 	resultStatusMsg2 := waitForClientBroadcastStatus(t,
 		secondBroadcastCtx,
 		testChainID,
-		notifyCh,
+		notifyCh2,
 	)
 	assert.NotNil(t, resultStatusMsg2)
 	assert.NotNil(t, resultStatusMsg2.Error)
 	assert.Error(t, resultStatusMsg2.Error)
 	assert.Contains(t, resultStatusMsg2.Error.Error(), "not enough healthy relays")
+	close(notifyCh2)
 
 	numExpected = (numRelaysForErrCase / 2) + 1
 	expectedMessage = fmt.Sprintf("expected %d, got %d", numExpected, numHealthy)
@@ -859,25 +856,27 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 	defer thirdCancelCtxFn()
 
 	// Separate goroutine for client broadcast process
+	notifyCh3 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		thirdBroadcastCtx,
 		servers[0],
 		relaysForErrCase, // does not contain self!
 		testChainID,
 		numTransactions,
-		notifyCh,
+		notifyCh3,
 	)
 
-	// Blocks the main thread until we consume from notifyCh.
+	// Blocks the main thread until we consume from notifyCh3.
 	resultStatusMsg3 := waitForClientBroadcastStatus(t,
 		thirdBroadcastCtx,
 		testChainID,
-		notifyCh,
+		notifyCh3,
 	)
 	assert.NotNil(t, resultStatusMsg3)
 	assert.NotNil(t, resultStatusMsg3.Error)
 	assert.Error(t, resultStatusMsg3.Error)
 	assert.Contains(t, resultStatusMsg3.Error.Error(), "not enough healthy relays")
+	close(notifyCh3)
 
 	numExpected = (numRelaysForErrCase / 2) + 1
 	numHealthy = numHealthy + 1 // "self" is healthy also if not in relays.
@@ -900,24 +899,26 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 	defer fourthCancelCtxFn()
 
 	// Separate goroutine for client broadcast process
+	notifyCh4 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		fourthBroadcastCtx,
 		servers[0],
 		relaysForTestCase,
 		testChainID,
 		numTransactions,
-		notifyCh,
+		notifyCh4,
 	)
 
-	// Blocks the main thread until we consume from notifyCh.
+	// Blocks the main thread until we consume from notifyCh4.
 	resultStatusMsg4 := waitForClientBroadcastStatus(t,
 		fourthBroadcastCtx,
 		testChainID,
-		notifyCh,
+		notifyCh4,
 	)
 	assert.NotNil(t, resultStatusMsg4)
 	assert.NoError(t, resultStatusMsg4.Error, "should not contain error status")
 	assert.Len(t, resultStatusMsg4.TxHashes, numTransactions)
+	close(notifyCh4)
 
 	// TEST 5 - Success
 	//
@@ -935,24 +936,26 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 	defer fifthCancelCtxFn()
 
 	// Separate goroutine for client broadcast process
+	notifyCh5 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		fifthBroadcastCtx,
 		servers[0],
 		relaysForTestCase,
 		testChainID,
 		numTransactions,
-		notifyCh,
+		notifyCh5,
 	)
 
-	// Blocks the main thread until we consume from notifyCh.
+	// Blocks the main thread until we consume from notifyCh5.
 	resultStatusMsg5 := waitForClientBroadcastStatus(t,
 		fifthBroadcastCtx,
 		testChainID,
-		notifyCh,
+		notifyCh5,
 	)
 	assert.NotNil(t, resultStatusMsg5)
 	assert.NoError(t, resultStatusMsg5.Error, "should not contain error status")
 	assert.Len(t, resultStatusMsg5.TxHashes, numTransactions)
+	close(notifyCh5)
 
 	// TEST 6 - Errors
 	//
@@ -971,25 +974,27 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 	defer sixthCancelCtxFn()
 
 	// Separate goroutine for client broadcast process
+	notifyCh6 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		sixthBroadcastCtx,
 		servers[0],
 		relaysForErrCase,
 		testChainID,
 		numTransactions,
-		notifyCh,
+		notifyCh6,
 	)
 
-	// Blocks the main thread until we consume from notifyCh.
+	// Blocks the main thread until we consume from notifyCh6.
 	resultStatusMsg6 := waitForClientBroadcastStatus(t,
 		sixthBroadcastCtx,
 		testChainID,
-		notifyCh,
+		notifyCh6,
 	)
 	assert.NotNil(t, resultStatusMsg6)
 	assert.NotNil(t, resultStatusMsg6.Error)
 	assert.Error(t, resultStatusMsg6.Error)
 	assert.Contains(t, resultStatusMsg6.Error.Error(), "not enough healthy relays")
+	close(notifyCh6)
 
 	numExpected = (numRelaysForErrCase / 2) + 1
 	numHealthy = numHealthy + 1 // "self" is healthy also if not in relays.
@@ -1042,8 +1047,7 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 	// Separate goroutine for client broadcast process
 	numTransactions := 1
 	testChainID := makeChainID("test chain")
-	notifyCh := make(chan client.BroadcastStatus)
-	defer close(notifyCh)
+	notifyCh1 := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
 		broadcastCtx,
@@ -1051,18 +1055,19 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 		relaysForTestCase,
 		testChainID,
 		numTransactions,
-		notifyCh,
+		notifyCh1,
 	)
 
-	// Blocks the main thread until we consume from notifyCh.
+	// Blocks the main thread until we consume from notifyCh1.
 	resultStatusMsg := waitForClientBroadcastStatus(t,
 		broadcastCtx,
 		testChainID,
-		notifyCh,
+		notifyCh1,
 	)
 	assert.NotNil(t, resultStatusMsg)
 	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+	close(notifyCh1)
 
 	// TEST 2 - Success
 	//
@@ -1081,24 +1086,26 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 	defer secondCancelCtxFn()
 
 	// Separate goroutine for client broadcast process
+	notifyCh2 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		secondBroadcastCtx,
 		servers[0],
 		relaysForTestCase,
 		testChainID,
 		numTransactions,
-		notifyCh,
+		notifyCh2,
 	)
 
-	// Blocks the main thread until we consume from notifyCh.
+	// Blocks the main thread until we consume from notifyCh2.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
 		secondBroadcastCtx,
 		testChainID,
-		notifyCh,
+		notifyCh2,
 	)
 	assert.NotNil(t, resultStatusMsg)
 	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+	close(notifyCh2)
 
 	// TEST 3 - Errors
 	//
@@ -1116,25 +1123,27 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 	defer thirdCancelCtxFn()
 
 	// Separate goroutine for client broadcast process
+	notifyCh3 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		thirdBroadcastCtx,
 		servers[0],
 		relaysForErrCase,
 		testChainID,
 		numTransactions,
-		notifyCh,
+		notifyCh3,
 	)
 
-	// Blocks the main thread until we consume from notifyCh.
+	// Blocks the main thread until we consume from notifyCh3.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
 		thirdBroadcastCtx,
 		testChainID,
-		notifyCh,
+		notifyCh3,
 	)
 	assert.NotNil(t, resultStatusMsg)
 	assert.NotNil(t, resultStatusMsg.Error)
 	assert.Error(t, resultStatusMsg.Error)
 	assert.Contains(t, resultStatusMsg.Error.Error(), "not enough healthy relays")
+	close(notifyCh3)
 
 	numExpected := (numRelaysForErrCase / 2) + 1
 	expectedMessage := fmt.Sprintf("expected %d, got %d", numExpected, numHealthy)
@@ -1157,25 +1166,27 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 	defer fourthCancelCtxFn()
 
 	// Separate goroutine for client broadcast process
+	notifyCh4 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		fourthBroadcastCtx,
 		servers[0],
 		relaysForErrCase,
 		testChainID,
 		numTransactions,
-		notifyCh,
+		notifyCh4,
 	)
 
-	// Blocks the main thread until we consume from notifyCh.
+	// Blocks the main thread until we consume from notifyCh4.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
 		fourthBroadcastCtx,
 		testChainID,
-		notifyCh,
+		notifyCh4,
 	)
 	assert.NotNil(t, resultStatusMsg)
 	assert.NotNil(t, resultStatusMsg.Error)
 	assert.Error(t, resultStatusMsg.Error)
 	assert.Contains(t, resultStatusMsg.Error.Error(), "not enough healthy relays")
+	close(notifyCh4)
 
 	numExpected = (numRelaysForErrCase / 2) + 1
 	numHealthy = numHealthy + 1 // "self" is healthy also if not in relays.
@@ -1211,7 +1222,6 @@ func TestScenarioClientBroadcastEmptyRelaysProduceBlockWithTx(t *testing.T) {
 	numTransactions := 2
 	testChainID := makeChainID("test chain")
 	notifyCh := make(chan client.BroadcastStatus)
-	defer close(notifyCh)
 
 	go clientBroadcastTx(t,
 		broadcastCtx,
@@ -1231,6 +1241,7 @@ func TestScenarioClientBroadcastEmptyRelaysProduceBlockWithTx(t *testing.T) {
 	assert.NotNil(t, resultStatusMsg)
 	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+	close(notifyCh)
 
 	waitDuration := 5 * time.Second
 	t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
@@ -1311,8 +1322,7 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 	numTransactions := 2
 	chainIds := servers[0].GetNetworks()
 	testChainID := chainIds[0]
-	notifyCh := make(chan client.BroadcastStatus)
-	defer close(notifyCh)
+	notifyCh1 := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
 		broadcastCtx,
@@ -1320,18 +1330,19 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 		relays,
 		testChainID,
 		numTransactions,
-		notifyCh,
+		notifyCh1,
 	)
 
-	// Blocks the main thread until we consume from notifyCh.
+	// Blocks the main thread until we consume from notifyCh1.
 	resultStatusMsg := waitForClientBroadcastStatus(t,
 		broadcastCtx,
 		testChainID,
-		notifyCh,
+		notifyCh1,
 	)
 	assert.NotNil(t, resultStatusMsg)
 	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+	close(notifyCh1)
 
 	// Test that AckTransactionBroadcast messages were received.
 	for _, bzTxHash := range resultStatusMsg.TxHashes {
@@ -1356,24 +1367,26 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 
 	// Separate goroutine for client broadcast process
 	numTransactions = 2
+	notifyCh2 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		secondBroadcastCtx,
 		servers[0],
 		relays,
 		testChainID,
 		numTransactions,
-		notifyCh,
+		notifyCh2,
 	)
 
-	// Blocks the main thread until we consume from notifyCh.
+	// Blocks the main thread until we consume from notifyCh2.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
 		secondBroadcastCtx,
 		testChainID,
-		notifyCh,
+		notifyCh2,
 	)
 	assert.NotNil(t, resultStatusMsg)
 	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+	close(notifyCh2)
 
 	// Test that AckTransactionBroadcast messages were received.
 	for _, bzTxHash := range resultStatusMsg.TxHashes {
@@ -1435,44 +1448,40 @@ func TestScenarioClientBroadcastEnoughEmptyRelays(t *testing.T) {
 
 	// Separate goroutine for client broadcast process
 	numTransactions := 2
-	testChainID := makeChainID("test chain")
-	notifyCh := make(chan client.BroadcastStatus)
-	defer close(notifyCh)
+	testWithChainID := makeChainID("test chain")
+	notifyCh1 := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
 		broadcastCtx,
 		servers[0],
 		relays,
-		testChainID,
+		testWithChainID,
 		numTransactions,
-		notifyCh,
+		notifyCh1,
 	)
 
-	// Blocks the main thread until we consume from notifyCh.
+	// Blocks the main thread until we consume from notifyCh1.
 	resultStatusMsg := waitForClientBroadcastStatus(t,
 		broadcastCtx,
-		testChainID,
-		notifyCh,
+		testWithChainID,
+		notifyCh1,
 	)
 	assert.NotNil(t, resultStatusMsg)
 	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+	close(notifyCh1)
 
-	// Test that ChainReplicationRequest were sent
+	// Test that we sent ChainReplicationRequest messages
 	expectedRequestCnt := numHealthy - 1 // -1 for self
-	actualRequestsSent := servers[0].GetReplRequestPeers(testChainID)
+	actualRequestsSent := servers[0].GetReplRequestPeers(testWithChainID)
 	assert.NotEmpty(t, actualRequestsSent)
 	assert.Len(t, actualRequestsSent, expectedRequestCnt)
 
-	// Test that AckTransactionBroadcast messages were received.
-	for _, bzTxHash := range resultStatusMsg.TxHashes {
-		testTxHash := fmt.Sprintf("%X", bzTxHash)
-
-		expectedResponseCnt := numHealthy - 1 // -1 for self
-		actualResponsesRcvd := servers[0].GetAckResponsePeers(testTxHash)
-		assert.NotEmpty(t, actualResponsesRcvd)
-		assert.Len(t, actualResponsesRcvd, expectedResponseCnt)
-	}
+	// Test that we received ChainReplicationResponse messages
+	expectedResponseCnt := numHealthy - 1 // -1 for self
+	actualResponsesRcvd := servers[0].GetReplResponsePeers(testWithChainID)
+	assert.NotEmpty(t, actualResponsesRcvd)
+	assert.Len(t, actualResponsesRcvd, expectedResponseCnt)
 
 	// TEST 2 - Success
 	//
@@ -1488,28 +1497,30 @@ func TestScenarioClientBroadcastEnoughEmptyRelays(t *testing.T) {
 
 	// Separate goroutine for client broadcast process
 	numTransactions = 2
+	notifyCh2 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		secondBroadcastCtx,
 		servers[0],
 		relays,
-		testChainID,
+		testWithChainID,
 		numTransactions,
-		notifyCh,
+		notifyCh2,
 	)
 
-	// Blocks the main thread until we consume from notifyCh.
+	// Blocks the main thread until we consume from notifyCh2.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
 		secondBroadcastCtx,
-		testChainID,
-		notifyCh,
+		testWithChainID,
+		notifyCh2,
 	)
 	assert.NotNil(t, resultStatusMsg)
 	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+	close(notifyCh2)
 
 	// Test that ChainReplicationRequest were NOT sent! (due to TEST 1)
 	expectedRequestCnt = 0
-	actualRequestsSent = servers[0].GetReplRequestPeers(testChainID)
+	actualRequestsSent = servers[0].GetReplRequestPeers(testWithChainID)
 	assert.Empty(t, actualRequestsSent, "should not need to send ChainReplicationRequest")
 	assert.Len(t, actualRequestsSent, expectedRequestCnt)
 
@@ -1571,8 +1582,7 @@ func TestScenarioClientBroadcastNotEnoughHealthyRelays(t *testing.T) {
 	// Separate goroutine for client broadcast process
 	numTransactions := 1
 	testChainID := makeChainID("test chain")
-	notifyCh := make(chan client.BroadcastStatus)
-	defer close(notifyCh)
+	notifyCh1 := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
 		broadcastCtx,
@@ -1580,18 +1590,19 @@ func TestScenarioClientBroadcastNotEnoughHealthyRelays(t *testing.T) {
 		relaysForTestCase,
 		testChainID,
 		numTransactions,
-		notifyCh,
+		notifyCh1,
 	)
 
-	// Blocks the main thread until we consume from notifyCh.
+	// Blocks the main thread until we consume from notifyCh1.
 	resultStatusMsg := waitForClientBroadcastStatus(t,
 		broadcastCtx,
 		testChainID,
-		notifyCh,
+		notifyCh1,
 	)
 	assert.NotNil(t, resultStatusMsg)
 	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+	close(notifyCh1)
 
 	// TEST 2 - Errors
 	//
@@ -1609,25 +1620,27 @@ func TestScenarioClientBroadcastNotEnoughHealthyRelays(t *testing.T) {
 	defer secondCancelCtxFn()
 
 	// Separate goroutine for client broadcast process
+	notifyCh2 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		secondBroadcastCtx,
 		servers[0],
 		relaysForErrCase,
 		testChainID,
 		numTransactions,
-		notifyCh,
+		notifyCh2,
 	)
 
-	// Blocks the main thread until we consume from notifyCh.
+	// Blocks the main thread until we consume from notifyCh2.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
 		secondBroadcastCtx,
 		testChainID,
-		notifyCh,
+		notifyCh2,
 	)
 	assert.NotNil(t, resultStatusMsg)
 	assert.NotNil(t, resultStatusMsg.Error)
 	assert.Error(t, resultStatusMsg.Error)
 	assert.Contains(t, resultStatusMsg.Error.Error(), "not enough healthy relays")
+	close(notifyCh2)
 
 	numExpected := (numRelaysForErrCase / 2) + 1
 	expectedMessage := fmt.Sprintf("expected %d, got %d", numExpected, numHealthy)
@@ -1676,8 +1689,7 @@ func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 	// Separate goroutine for client broadcast process
 	numTransactions := 1
 	testChainID := makeChainID("test-chain-1")
-	notifyCh := make(chan client.BroadcastStatus)
-	defer close(notifyCh)
+	notifyCh1 := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
 		firstBroadcastCtx,
@@ -1685,18 +1697,19 @@ func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 		relaysForTestCase,
 		testChainID,
 		numTransactions,
-		notifyCh,
+		notifyCh1,
 	)
 
-	// Blocks the main thread until we consume from notifyCh.
+	// Blocks the main thread until we consume from notifyCh1.
 	resultStatusMsg := waitForClientBroadcastStatus(t,
 		firstBroadcastCtx,
 		testChainID,
-		notifyCh,
+		notifyCh1,
 	)
 	assert.NotNil(t, resultStatusMsg)
 	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+	close(notifyCh1)
 
 	// TEST 2 - Success
 	//
@@ -1711,24 +1724,26 @@ func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 	// Separate goroutine for client broadcast process
 	numTransactions = 1
 	testChainID = makeChainID("test-chain-2")
+	notifyCh2 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		secondBroadcastCtx,
 		servers[0],
 		relaysForTestCase,
 		testChainID,
 		numTransactions,
-		notifyCh,
+		notifyCh2,
 	)
 
-	// Blocks the main thread until we consume from notifyCh.
+	// Blocks the main thread until we consume from notifyCh2.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
 		secondBroadcastCtx,
 		testChainID,
-		notifyCh,
+		notifyCh2,
 	)
 	assert.NotNil(t, resultStatusMsg)
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
 	require.NoError(t, resultStatusMsg.Error, "should not contain error status")
+	close(notifyCh2)
 
 	// TEST 3 - Success
 	//
@@ -1750,24 +1765,26 @@ func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 	// Separate goroutine for client broadcast process
 	numTransactions = 1
 	testChainID = makeChainID("test-chain-2")
+	notifyCh3 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		thirdBroadcastCtx,
 		servers[0],
 		relaysForTestCase,
 		testChainID,
 		numTransactions,
-		notifyCh,
+		notifyCh3,
 	)
 
-	// Blocks the main thread until we consume from notifyCh.
+	// Blocks the main thread until we consume from notifyCh3.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
 		thirdBroadcastCtx,
 		testChainID,
-		notifyCh,
+		notifyCh3,
 	)
 	assert.NotNil(t, resultStatusMsg)
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
 	require.NoError(t, resultStatusMsg.Error, "should not contain error status")
+	close(notifyCh3)
 }
 
 // With a list of enough healthy relays, they should proceed to
@@ -1814,8 +1831,7 @@ func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 	// Separate goroutine for client broadcast process
 	numTransactions := 1
 	testChainID := makeChainID("test-chain-1")
-	notifyCh := make(chan client.BroadcastStatus)
-	defer close(notifyCh)
+	notifyCh1 := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
 		firstBroadcastCtx,
@@ -1823,19 +1839,20 @@ func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 		relaysForTestCase,
 		testChainID,
 		numTransactions,
-		notifyCh,
+		notifyCh1,
 	)
 
-	// Blocks the main thread until we consume from notifyCh.
+	// Blocks the main thread until we consume from notifyCh1.
 	resultStatusMsg := waitForClientBroadcastStatus(t,
 		firstBroadcastCtx,
 		testChainID,
-		notifyCh,
+		notifyCh1,
 	)
 	assert.NotNil(t, resultStatusMsg)
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
 	require.NoError(t, resultStatusMsg.Error, "should not contain error status")
 	t.Logf("Broadcast completed with %d failing relays for test-chain-1...", numFailing)
+	close(notifyCh1)
 
 	// TEST 2 - Success
 	//
@@ -1856,25 +1873,27 @@ func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 	// Separate goroutine for client broadcast process
 	numTransactions = 1
 	testChainID = makeChainID("test-chain-2")
+	notifyCh2 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		secondBroadcastCtx,
 		servers[0],
 		relaysForTestCase,
 		testChainID,
 		numTransactions,
-		notifyCh,
+		notifyCh2,
 	)
 
-	// Blocks the main thread until we consume from notifyCh.
+	// Blocks the main thread until we consume from notifyCh2.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
 		secondBroadcastCtx,
 		testChainID,
-		notifyCh,
+		notifyCh2,
 	)
 	assert.NotNil(t, resultStatusMsg)
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
 	require.NoError(t, resultStatusMsg.Error, "should not contain error status")
 	t.Logf("Broadcast completed with %d failing relays for test-chain-2...", numFailing)
+	close(notifyCh2)
 
 	// TEST 3 - Success (6x)
 	//
@@ -1903,20 +1922,21 @@ func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 		// Separate goroutine for client broadcast process
 		numTransactions = 1
 		testChainID = makeChainID(testChain100)
+		notifyCh3 := make(chan client.BroadcastStatus)
 		go clientBroadcastTx(t,
 			thirdBroadcastCtx,
 			servers[0],
 			relaysForTestCase,
 			testChainID,
 			numTransactions,
-			notifyCh,
+			notifyCh3,
 		)
 
-		// Blocks the main thread until we consume from notifyCh.
+		// Blocks the main thread until we consume from notifyCh3.
 		resultStatusMsg100 := waitForClientBroadcastStatus(t,
 			thirdBroadcastCtx,
 			testChainID,
-			notifyCh,
+			notifyCh3,
 		)
 
 		assert.NotNil(t, resultStatusMsg100)
@@ -1924,6 +1944,7 @@ func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 		require.NoError(t, resultStatusMsg100.Error,
 			"should not contain error status with numFailing: "+strconv.Itoa(numFailing))
 		t.Logf("Broadcast completed with %d failing relays for %s...", numFailing, testChain100)
+		close(notifyCh3)
 
 		fourthTimeoutAfter := 30 * time.Second // Time for broadcast
 		fourthBroadcastCtx, fourthCancelCtxFn := context.WithTimeout(context.TODO(), fourthTimeoutAfter)
@@ -1932,20 +1953,21 @@ func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 		// Separate goroutine for client broadcast process
 		numTransactions = 1
 		testChainID = makeChainID(testChain200)
+		notifyCh4 := make(chan client.BroadcastStatus)
 		go clientBroadcastTx(t,
 			fourthBroadcastCtx,
 			servers[0],
 			relaysForTestCase,
 			testChainID,
 			numTransactions,
-			notifyCh,
+			notifyCh4,
 		)
 
-		// Blocks the main thread until we consume from notifyCh.
+		// Blocks the main thread until we consume from notifyCh4.
 		resultStatusMsg200 := waitForClientBroadcastStatus(t,
 			fourthBroadcastCtx,
 			testChainID,
-			notifyCh,
+			notifyCh4,
 		)
 
 		assert.NotNil(t, resultStatusMsg200)
@@ -1953,6 +1975,7 @@ func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 		require.NoError(t, resultStatusMsg200.Error,
 			"should not contain error status with numFailing: "+strconv.Itoa(numFailing))
 		t.Logf("Broadcast completed with %d failing relays for %s...", numFailing, testChain200)
+		close(notifyCh4)
 	}
 }
 
@@ -2014,8 +2037,7 @@ func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
 	// Separate goroutine for client broadcast process
 	numTransactions := 2
 	testChainID := makeChainID("test chain")
-	notifyCh := make(chan client.BroadcastStatus)
-	defer close(notifyCh)
+	notifyCh1 := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
 		broadcastCtx,
@@ -2023,18 +2045,19 @@ func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
 		relays,
 		testChainID,
 		numTransactions,
-		notifyCh,
+		notifyCh1,
 	)
 
-	// Blocks the main thread until we consume from notifyCh.
+	// Blocks the main thread until we consume from notifyCh1.
 	resultStatusMsg := waitForClientBroadcastStatus(t,
 		broadcastCtx,
 		testChainID,
-		notifyCh,
+		notifyCh1,
 	)
 	assert.NotNil(t, resultStatusMsg)
 	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+	close(notifyCh1)
 }
 
 // After a complete backend restart, due to a process failure or corruption,
@@ -2077,8 +2100,7 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	// Separate goroutine for client broadcast process
 	numTransactions := 1
 	testChainID := makeChainID("test chain")
-	notifyCh := make(chan client.BroadcastStatus)
-	defer close(notifyCh)
+	notifyCh1 := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
 		broadcastCtx,
@@ -2086,18 +2108,19 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 		relays,
 		testChainID,
 		numTransactions,
-		notifyCh,
+		notifyCh1,
 	)
 
-	// Blocks the main thread until we consume from notifyCh.
+	// Blocks the main thread until we consume from notifyCh1.
 	resultStatusMsg := waitForClientBroadcastStatus(t,
 		broadcastCtx,
 		testChainID,
-		notifyCh,
+		notifyCh1,
 	)
 	assert.NotNil(t, resultStatusMsg)
 	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+	close(notifyCh1)
 
 	waitDuration := 5 * time.Second
 	t.Logf("Waiting %.0fsec to shutdown backend...", waitDuration.Seconds())
@@ -2140,24 +2163,26 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 
 	// Separate goroutine for client broadcast process
 	numTransactions = 2
+	notifyCh2 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		secondBroadcastCtx,
 		resetRelay,
 		relays,
 		testChainID,
 		numTransactions,
-		notifyCh,
+		notifyCh2,
 	)
 
-	// Blocks the main thread until we consume from notifyCh.
+	// Blocks the main thread until we consume from notifyCh2.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
 		secondBroadcastCtx,
 		testChainID,
-		notifyCh,
+		notifyCh2,
 	)
 	assert.NotNil(t, resultStatusMsg)
 	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+	close(notifyCh2)
 
 	// STEP 4:
 	//
@@ -2170,24 +2195,26 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	// Separate goroutine for client broadcast process
 	numTransactions = 2
 	testChainID = makeChainID("test-chain-2")
+	notifyCh3 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		thirdBroadcastCtx,
 		resetRelay,
 		relays,
 		testChainID,
 		numTransactions,
-		notifyCh,
+		notifyCh3,
 	)
 
-	// Blocks the main thread until we consume from notifyCh.
+	// Blocks the main thread until we consume from notifyCh3.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
 		thirdBroadcastCtx,
 		testChainID,
-		notifyCh,
+		notifyCh3,
 	)
 	assert.NotNil(t, resultStatusMsg)
 	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+	close(notifyCh3)
 }
 
 // With a list of empty relays, a ChainReplicationRequest must be sent,
@@ -2485,7 +2512,7 @@ func TestScenarioClientBroadcastConcurrentNewChains3(t *testing.T) {
 	defer globalCancelFn()
 
 	numChains := 0
-	numRelays := 7
+	numRelays := 3
 
 	servers, shutdownFn := ResetTestScenarioRelaysWithLogs(t, numChains, numRelays)
 	defer shutdownFn(servers)

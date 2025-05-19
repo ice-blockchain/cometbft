@@ -713,14 +713,6 @@ func (b *MultiplexBackend) WaitForRelaysAckChainReplications(
 			relevantRelayIds = append(relevantRelayIds, string(catchupAddr.ID()))
 		}
 
-		// TODO(midas): diverging counts, to be fixed waiting for Send result.
-		reqsSentToPeers := b.GetReplRequestPeers(chainID)
-		if len(reqsSentToPeers) != len(relevantRelayIds) && len(reqsSentToPeers) > 0 {
-			numExpected -= len(relevantRelayIds)
-			numExpected += len(reqsSentToPeers)
-			relevantRelayIds = reqsSentToPeers
-		}
-
 		// TODO(midas): remove debug logs
 		b.logger.Debug("Waiting for replication response from relevant relays",
 			"num_relays", len(chainCatchupRelays),
@@ -773,7 +765,6 @@ func (b *MultiplexBackend) WaitForRelaysAckChainReplications(
 		localResChs map[string]chan *mxp2p.ChainReplicationResponse,
 	) {
 		if ch, ok := shutdownChs[chainID]; ok && ch != nil {
-			ch <- struct{}{}
 			close(ch)
 		}
 
@@ -782,6 +773,11 @@ func (b *MultiplexBackend) WaitForRelaysAckChainReplications(
 		if ch, ok := localResChs[chainID]; ok && ch != nil {
 			close(ch)
 		}
+
+		// TODO(midas): remove debug logs
+		b.logger.Debug("Stopped replication response processor",
+			"chain_id", chainID,
+		)
 	}
 
 	// Cancels any remaining goroutine in case of error, we must iterate
@@ -790,10 +786,16 @@ func (b *MultiplexBackend) WaitForRelaysAckChainReplications(
 		replRelays map[string][]*server.RelayAddress,
 		shutdownChs map[string]chan struct{},
 		localResChs map[string]chan *mxp2p.ChainReplicationResponse,
+		reasonErr error,
 	) {
 		for chainID, _ := range replRelays {
 			shutdownFn(chainID, shutdownChs, localResChs)
 		}
+
+		// TODO(midas): remove debug logs
+		b.logger.Error("Replication response processor stopped with error",
+			"err", reasonErr,
+		)
 	}
 
 	// Waits until we have all required results (or errors).
@@ -803,7 +805,7 @@ func (b *MultiplexBackend) WaitForRelaysAckChainReplications(
 		if replResult.Error != nil {
 			// We stop waiting at first error that occurs.
 			err = replResult.Error
-			shutdownForError(catchupRelays, shutdownWaitChs, localReplResChs)
+			shutdownForError(catchupRelays, shutdownWaitChs, localReplResChs, err)
 			return
 		}
 
@@ -873,35 +875,25 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 	for _, transaction := range transactions {
 		txHash := fmt.Sprintf("%X", transaction.Hash())
 		relevantRelaysForTx := relevantRelays
-
-		// TODO(midas): diverging counts, to be fixed waiting for Send result.
-		b.reactor.poolRequestsMtx.Lock()
-		txSentToPeers := b.reactor.poolRequestsSent[txHash]
-		b.reactor.poolRequestsMtx.Unlock()
-		if len(txSentToPeers) != len(relevantRelays) && len(txSentToPeers) > 0 {
-			numExpected -= len(relevantRelays)
-			numExpected += len(txSentToPeers)
-			relevantRelaysForTx = txSentToPeers
-		}
 		expectedRelaysPerTx[txHash] = relevantRelaysForTx
 
 		// TODO(midas): remove debug logs
-		b.logger.Debug("Waiting only for relevant relays to respond",
-			"num_relays", len(relevantRelays),
+		b.logger.Debug("Waiting for transactions ACK from relevant relays",
+			"num_relays", len(relevantRelaysForTx),
 			"relay_ids", relevantRelaysForTx,
-			"total_ack", numExpected,
+			"acks_tx", len(relevantRelaysForTx),
 			"tx_hash", txHash,
 		)
 
 		// Used to permit expiration of context or forcing shutdown of goroutines.
-		shutdownWaitChs[txHash] = make(chan struct{}, 1)
+		shutdownWaitChs[txHash] = make(chan struct{}, 1) // buffered
 
 		// Used to share acceptance message `id:tx_hash_hex` internally
 		// and forward the acknowledgment to [localAckTransactionConsumer].
-		remoteRelayTxChs[txHash] = make(chan string, len(relevantRelays))
+		remoteRelayTxChs[txHash] = make(chan string, len(relevantRelays)) // buffered
 
 		// Used to intercept AckTransactionBroadcast messages.
-		ackAcceptTxChs[txHash] = b.reactor.ChannelForAckTransaction(txHash)
+		ackAcceptTxChs[txHash] = b.reactor.ChannelForAckTransaction(txHash) // unbuffered
 
 		// NOTE(midas): The order of execution of the following goroutines
 		// does not matter, because the local consumer reads messages that
@@ -939,7 +931,6 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 		remoteTxChs map[string]chan string,
 	) {
 		if ch, ok := shutdownChs[txHash]; ok && ch != nil {
-			ch <- struct{}{}
 			close(ch)
 		}
 
@@ -948,6 +939,11 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 		if ch, ok := remoteTxChs[txHash]; ok && ch != nil {
 			close(ch)
 		}
+
+		// TODO(midas): remove debug logs
+		b.logger.Debug("Stopped transaction ACK processor",
+			"tx_hash", txHash,
+		)
 	}
 
 	// Cancels any remaining goroutine in case of error, we must iterate
@@ -956,11 +952,17 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 		transactions []client.Transaction,
 		shutdownChs map[string]chan struct{},
 		remoteTxChs map[string]chan string,
+		reasonErr error,
 	) {
 		for _, tx := range transactions {
 			txHash := fmt.Sprintf("%X", tx.Hash())
 			shutdownFn(txHash, shutdownChs, remoteTxChs)
 		}
+
+		// TODO(midas): remove debug logs
+		b.logger.Error("Transaction ACK processor stopped with error",
+			"err", reasonErr,
+		)
 	}
 
 	// Waits until we have all required results (or errors).
@@ -970,7 +972,7 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 		if txResult.Error != nil {
 			// We stop waiting at first error that occurs.
 			err = txResult.Error
-			shutdownForError(transactions, shutdownWaitChs, remoteRelayTxChs)
+			shutdownForError(transactions, shutdownWaitChs, remoteRelayTxChs, err)
 			return
 		}
 
@@ -1299,9 +1301,6 @@ func (b *MultiplexBackend) ApplyFilterAckTransactionRelayIds(
 			relevantRelays = slices.DeleteFunc(relevantRelays, func(relayId string) bool {
 				return slices.Contains(catchupRelayIds, relayId)
 			})
-		} else {
-			// All relays must replicate first. We should be waiting for all.
-			relevantRelays = append(relevantRelays, catchupRelayIds...)
 		}
 	}
 

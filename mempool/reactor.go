@@ -176,36 +176,42 @@ func (memR *Reactor) PeerStateKey() string {
 func (memR *Reactor) AddPeer(peer p2p.Peer) {
 	if memR.config.Broadcast {
 		go func() {
+			// BREAKING(midas):
+			//
+			// In a multiplex of chains, the active time of networks is reduced
+			// to the lifetime of client broadcast operations, which makes the
+			// following semaphore acquisition irrelevant.
+
 			// Always forward transactions to unconditional peers.
-			if !memR.Switch.IsPeerUnconditional(peer.ID()) {
-				// Depending on the type of peer, we choose a semaphore to limit the gossiping peers.
-				var peerSemaphore *semaphore.Weighted
-				if peer.IsPersistent() && memR.config.ExperimentalMaxGossipConnectionsToPersistentPeers > 0 {
-					peerSemaphore = memR.activePersistentPeersSemaphore
-				} else if !peer.IsPersistent() && memR.config.ExperimentalMaxGossipConnectionsToNonPersistentPeers > 0 {
-					peerSemaphore = memR.activeNonPersistentPeersSemaphore
-				}
+			// if !memR.Switch.IsPeerUnconditional(peer.ID()) {
+			// 	// Depending on the type of peer, we choose a semaphore to limit the gossiping peers.
+			// 	var peerSemaphore *semaphore.Weighted
+			// 	if peer.IsPersistent() && memR.config.ExperimentalMaxGossipConnectionsToPersistentPeers > 0 {
+			// 		peerSemaphore = memR.activePersistentPeersSemaphore
+			// 	} else if !peer.IsPersistent() && memR.config.ExperimentalMaxGossipConnectionsToNonPersistentPeers > 0 {
+			// 		peerSemaphore = memR.activeNonPersistentPeersSemaphore
+			// 	}
 
-				if peerSemaphore != nil {
-					for peer.IsRunning() {
-						// Block on the semaphore until a slot is available to start gossiping with this peer.
-						// Do not block indefinitely, in case the peer is disconnected before gossiping starts.
-						ctxTimeout, cancel := context.WithTimeout(context.TODO(), 30*time.Second)
-						// Block sending transactions to peer until one of the connections become
-						// available in the semaphore.
-						err := peerSemaphore.Acquire(ctxTimeout, 1)
-						cancel()
+			// 	if peerSemaphore != nil {
+			// 		for peer.IsRunning() {
+			// 			// Block on the semaphore until a slot is available to start gossiping with this peer.
+			// 			// Do not block indefinitely, in case the peer is disconnected before gossiping starts.
+			// 			ctxTimeout, cancel := context.WithTimeout(context.TODO(), 30*time.Second)
+			// 			// Block sending transactions to peer until one of the connections become
+			// 			// available in the semaphore.
+			// 			err := peerSemaphore.Acquire(ctxTimeout, 1)
+			// 			cancel()
 
-						if err != nil {
-							continue
-						}
+			// 			if err != nil {
+			// 				continue
+			// 			}
 
-						// Release semaphore to allow other peer to start sending transactions.
-						defer peerSemaphore.Release(1)
-						break
-					}
-				}
-			}
+			// 			// Release semaphore to allow other peer to start sending transactions.
+			// 			defer peerSemaphore.Release(1)
+			// 			break
+			// 		}
+			// 	}
+			// }
 
 			memR.mempool.metrics.ActiveOutboundConnections.Add(1)
 			defer memR.mempool.metrics.ActiveOutboundConnections.Add(-1)
@@ -287,7 +293,7 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 			return
 		}
 
-		memR.processTxs(e.Src, protoTxs)
+		memR.processTxs(e.Src, protoTxs) // also, ACK this transaction
 
 	default:
 		memR.Logger.Error("Unknown message type", "src", e.Src, "chId", e.ChannelID, "msg", e.Message)
@@ -301,11 +307,16 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 // processTxs forwards transaction to the internal Acceptor to verify their
 // acceptance, then calls [CheckTx] to validate the inclusion and finally
 // it will send a [AckTransactionBroadcast] message.
-func (memR *Reactor) processTxs(peer p2p.Peer, protoTxs [][]byte) {
+func (memR *Reactor) processTxs(
+	peer p2p.Peer,
+	protoTxs [][]byte,
+) {
 	rawTx := []types.Tx{}
+	txHashes := []string{}
 	for _, txBytes := range protoTxs {
 		tx := types.Tx(txBytes)
 		rawTx = append(rawTx, tx)
+		txHashes = append(txHashes, fmt.Sprintf("%X", tx.Hash()))
 	}
 	if aErr := memR.clientAcceptTx(rawTx); aErr != nil {
 		return
@@ -324,63 +335,41 @@ func (memR *Reactor) processTxs(peer p2p.Peer, protoTxs [][]byte) {
 		}
 	}
 
+	peerOut := memR.Switch.UniquePeers().Get(peer.ID())
+	if peerOut == nil {
+		// Open a OUTBOUND connection to this peer. This is required in case no secret
+		// connection is active yet and we send back a AckTransactionBroadcast message.
+		peerAddr, _ := peer.NodeInfo().NetAddress()
+		if err := memR.Switch.DialPeerWithAddressAndChainID(peerAddr, memR.ChainID); err != nil {
+			if p2p.IsDialError(err) {
+				memR.Logger.Error("Failed to open outbound connection to peer",
+					"err", err,
+					"peer", peerAddr.String(),
+					"chain_id", memR.ChainID,
+					"tx_hashes", txHashes,
+				)
+			}
+		}
+
+		peerOut = memR.Switch.Peers(memR.ChainID).GetOutbound(peer.ID())
+		if peerOut == nil {
+			memR.Logger.Error("Failed to find outbound connection to peer",
+				"peer", peerAddr.String(),
+				"chain_id", memR.ChainID,
+				"tx_hashes", txHashes,
+			)
+			return // peerOut may not be nil
+		}
+	}
+
 	// Uses the multiplex server.AckBroadcastChannel to send an acknowledgment
 	// message, or receipt, to describe that the transaction has been checked.
-	if err := memR.sendAckTransactionBroadcast(peer, protoTxs); err != nil {
-		memR.Logger.Debug("Error with AckTransactionBroadcast",
+	if err := memR.sendAckTransactionBroadcast(peerOut, protoTxs); err != nil {
+		memR.Logger.Error("Failed to send AckTransactionBroadcast",
 			"err", err,
 			"chain", memR.ChainID,
-			"toPeer", peer,
-			"peerRunning", peer.IsRunning(),
+			"toPeer", peerOut,
 		)
-		peerById := memR.Switch.Peers(memR.ChainID).Get(peer.ID())
-		if peerById != nil {
-			if err = memR.sendAckTransactionBroadcast(peerById, protoTxs); err != nil {
-				memR.Logger.Debug("Error with AckTransactionBroadcast",
-					"err", err,
-					"chain", memR.ChainID,
-					"toPeer", peerById,
-					"peerRunning", peerById.IsRunning(),
-				)
-				peerById = nil
-			}
-		}
-		if peerById == nil || !peerById.IsRunning() {
-			if !peerById.IsRunning() {
-				memR.Switch.StopPeerGracefully(peerById)
-			}
-			peerAddr, err := peer.NodeInfo().NetAddress()
-			if err != nil {
-				memR.Logger.Debug("Error with AckTransactionBroadcast",
-					"err", err,
-					"chain", memR.ChainID,
-					"toPeer", peer,
-					"peerRunning", peer.IsRunning(),
-				)
-				return
-			}
-			if err = memR.Switch.DialPeerWithAddressAndChainID(peerAddr, memR.ChainID); err != nil {
-				if !p2p.IsDialError(err) {
-					err = nil
-				}
-			}
-			if err != nil {
-				memR.Logger.Debug("Error with AckTransactionBroadcast",
-					"err", err,
-					"chain", memR.ChainID,
-					"toAddr", peerAddr,
-				)
-			}
-			peerById = memR.Switch.Peers(memR.ChainID).Get(peer.ID())
-			if err = memR.sendAckTransactionBroadcast(peerById, protoTxs); err != nil {
-				memR.Logger.Debug("Error with AckTransactionBroadcast",
-					"err", err,
-					"chain", memR.ChainID,
-					"toPeer", peerById,
-					"peerRunning", peerById.IsRunning(),
-				)
-			}
-		}
 		return
 	}
 }
@@ -425,7 +414,7 @@ func (memR *Reactor) EnableInOutTxs() {
 	// Delayed processing of transactions that we received during WaitSync.
 	memR.pendingMsgsMtx.Lock()
 	for k, e := range memR.pendingMsgs {
-		memR.processTxs(e.Src, e.Message.(*protomem.Txs).GetTxs())
+		memR.processTxs(e.Src, e.Message.(*protomem.Txs).GetTxs()) // also, ACK this transaction
 		delete(memR.pendingMsgs, k)
 	}
 	memR.pendingMsgsMtx.Unlock()
@@ -550,31 +539,48 @@ func (memR *Reactor) sendAckTransactionBroadcast(
 	peer p2p.Peer,
 	protoTxs [][]byte,
 ) error {
+	myPeerID := memR.nodeKey.ID()
 	txHashes := [][]byte{}
+	txHashesHex := []string{}
 	for _, rawTx := range protoTxs {
 		memTx := types.Tx(rawTx)
-		txHashes = append(txHashes, memTx.Hash())
+		txHash := memTx.Hash()
+		txHashes = append(txHashes, txHash)
+		txHashesHex = append(txHashesHex, fmt.Sprintf("%X", txHash))
 	}
 
-	myPeerID := "unknown"
-	if memR.nodeKey != nil {
-		myPeerID = string(memR.nodeKey.ID())
-	}
-
-	if success := peer.Send(memR.ChainID, p2p.Envelope{
-		ChannelID: server.AckBroadcastChannel,
-		Message: &mxp2p.Receipt{
-			Sum: &mxp2p.Receipt_AckTransactionBroadcast{
-				AckTransactionBroadcast: &mxp2p.AckTransactionBroadcast{
-					TxHashes: txHashes,
-					NodeId:   myPeerID,
-					ChainID:  memR.ChainID,
+	sendToPeer := func(fromID p2p.ID, toPeer p2p.Peer) error {
+		if success := toPeer.Send(memR.ChainID, p2p.Envelope{
+			ChannelID: server.AckBroadcastChannel,
+			Message: &mxp2p.Receipt{
+				Sum: &mxp2p.Receipt_AckTransactionBroadcast{
+					AckTransactionBroadcast: &mxp2p.AckTransactionBroadcast{
+						TxHashes: txHashes,
+						NodeId:   string(fromID),
+						ChainID:  memR.ChainID,
+					},
 				},
 			},
-		},
-	}); !success {
-		return errors.New("sending was unsuccess")
+		}); !success {
+			return fmt.Errorf(
+				"could not send message to peer, sender: %s, recipient: %s",
+				string(fromID), string(toPeer.ID()))
+		}
+		return nil
 	}
 
-	return nil
+	// TODO(midas): remove debug logs
+	memR.Logger.Debug("Sending AckTransactionBroadcast to peer",
+		"from_id", myPeerID,
+		"peer_id", peer.ID(),
+		"peer", peer,
+		"chain_id", memR.ChainID,
+		"tx_hashes", txHashesHex,
+	)
+
+	if err := sendToPeer(myPeerID, peer); err != nil {
+		return err
+	}
+
+	return errors.New("outbound peer connection is not ready")
 }
