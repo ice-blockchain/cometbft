@@ -1,6 +1,7 @@
 package multiplex_test
 
 import (
+	"context"
 	"errors"
 	"os"
 	"strconv"
@@ -343,6 +344,47 @@ func TestMultiplexReactorRegisterNetwork(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, actualChainNodeInfo)
 	assert.Equal(t, testChainID, actualChainNodeInfo.Network)
+}
+
+func TestMultiplexReactorUpdatedGenesisDocProvider(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	numChainsToInject := 1
+
+	// Initialize and START the nodes multiplex
+	// For debug, change the logger to cmtlog.TestingLogger()
+	testExtChainID,
+		testReactor,
+		shutdownFn := ResetTestMultiplexReactorRuntimeWithInjection(t, numChainsToInject, cmtlog.NewNopLogger())
+
+	// Shutdown routine
+	defer shutdownFn()
+
+	newTestChainID := testExtChainID.String()
+
+	// Inject testChainID
+	injectErr := testReactor.InjectNewNetwork(newTestChainID)
+	require.NoError(t, injectErr, "should create/allocate new network resources")
+
+	// And start its runtime
+	runtimeErr := testReactor.InjectNewRuntime(context.Background(), newTestChainID)
+	require.NoError(t, runtimeErr, "should spawn parallel process for node runtime")
+
+	// Make sure that calling the GenesisProvider returns an up-to-date
+	// GenesisDocSet that contains the injected network
+	testGenesisDocsProvider := testReactor.GetGenesisProvider()
+	assert.NotNil(t, testGenesisDocsProvider)
+
+	// Tests that it includes the newly injected ChainID
+	testGenesisDoc, providerErr := testGenesisDocsProvider(newTestChainID)
+	assert.NoError(t, providerErr)
+	assert.NotNil(t, testGenesisDoc)
+	assert.Equal(t, newTestChainID, testGenesisDoc.ChainID)
+
+	// Sanity check, do we still error for unknown ChainID?!
+	errGenesisDoc, testProviderErr := testGenesisDocsProvider("test-chain-1")
+	assert.Error(t, testProviderErr)
+	assert.Nil(t, errGenesisDoc)
 }
 
 // ----------------------------------------------------------------------------

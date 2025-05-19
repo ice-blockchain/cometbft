@@ -94,9 +94,8 @@ type Reactor struct {
 	p2p.BaseReactor // BaseService + p2p.Switch
 
 	// Registries for node services and network
-	servicesProvider   func(string, string) cmtlibs.Service    // service by name, e.g. "eventBus", and ChainID
-	multiplexProvider  func(string) MultiplexMap[any]          // multiplex by name, e.g. "database", "state", etc.
-	genesisDocProvider func(string) (*types.GenesisDoc, error) // genesis doc by ChainID
+	servicesProvider  func(string, string) cmtlibs.Service // service by name, e.g. "eventBus", and ChainID
+	multiplexProvider func(string) MultiplexMap[any]       // multiplex by name, e.g. "database", "state", etc.
 
 	genesisDocsMutex   sync.RWMutex
 	initialGenesisDocs *ChecksummedGenesisDocSet
@@ -643,7 +642,18 @@ func (reactor *Reactor) CloseAckTransactionChannel(txHash string) {
 
 // GetGenesisProvider returns a genesisDocProviderFn instance.
 func (reactor *Reactor) GetGenesisProvider() genesisDocProviderFn {
-	return reactor.genesisDocProvider // locks genesisDocsMutex
+	// NOTE(midas): We don't need a functor to get an up-to-date genesisDocSet,
+	// we now point to an updated genesisDocSet here, another iteration must
+	// remove the need for a functor that returns the genesisDocProvider.
+	icsGenesisDocSet := reactor.GetChecksummedGenesisDocSet() // locks genesisDocsMutex
+	return func(chainId string) (*types.GenesisDoc, error) {
+		genDoc, err := icsGenesisDocSet.GenesisDocByChainID(chainId)
+		if err != nil {
+			return nil, fmt.Errorf("could not load genesis doc for ChainID %s: %w", chainId, err)
+		}
+
+		return genDoc, nil
+	}
 }
 
 // GetServicesProvider returns a [ServiceProvider] providereactor.
@@ -1480,17 +1490,6 @@ func (reactor *Reactor) WaitForNetworks() error {
 func (reactor *Reactor) initMultiplexProviders(
 	icsGenesisDocSet node.IChecksummedGenesisDoc,
 ) {
-	// Use the initial GenesisDocSet to load individual genesis docs
-	reactor.genesisDocProvider = func(chainId string) (*types.GenesisDoc, error) {
-		icsGenesisDocSet := reactor.GetChecksummedGenesisDocSet()
-		genDoc, err := icsGenesisDocSet.GenesisDocByChainID(chainId)
-		if err != nil {
-			return nil, fmt.Errorf("could not load genesis doc for ChainID %s: %w", chainId, err)
-		}
-
-		return genDoc, nil
-	}
-
 	// Use the services registry to load node services
 	reactor.servicesProvider = func(serviceName string, chainId string) cmtlibs.Service {
 		reactor.servicesMutex.RLock()
