@@ -806,16 +806,20 @@ func (c *MConnection) stopPongTimer() {
 
 // maxPacketMsgSize returns a maximum size of PacketMsg.
 func (c *MConnection) maxPacketMsgSize(chainID string) int {
-	bz, err := proto.Marshal(mustWrapPacket(&tmp2p.PacketMsg{
-		ChainID:   chainID,
-		ChannelID: 0x01,
-		EOF:       true,
-		Data:      make([]byte, c.config.MaxPacketMsgPayloadSize),
-	}))
-	if err != nil {
-		panic(err)
+	var size int
+	{
+		bz, err := proto.Marshal(mustWrapPacket(&tmp2p.PacketMsg{
+			ChainID:   chainID,
+			ChannelID: 0x01,
+			EOF:       true,
+			Data:      make([]byte, c.config.MaxPacketMsgPayloadSize),
+		}))
+		if err != nil {
+			panic(err)
+		}
+		size = len(bz)
 	}
-	return len(bz)
+	return size
 }
 
 type ConnectionStatus struct {

@@ -146,18 +146,21 @@ func (memR *Reactor) OnStart() error {
 // GetChannels implements Reactor by returning the list of channels for this
 // reactor.
 func (memR *Reactor) GetChannels() []*p2p.ChannelDescriptor {
-	largestTx := make([]byte, memR.config.MaxTxBytes)
-	batchMsg := protomem.Message{
-		Sum: &protomem.Message_Txs{
-			Txs: &protomem.Txs{Txs: [][]byte{largestTx}},
-		},
+	var batchMsgSize int
+	{
+		largestTx := make([]byte, memR.config.MaxTxBytes)
+		batchMsg := protomem.Message{
+			Sum: &protomem.Message_Txs{
+				Txs: &protomem.Txs{Txs: [][]byte{largestTx}},
+			},
+		}
+		batchMsgSize = batchMsg.Size()
 	}
-
 	return []*p2p.ChannelDescriptor{
 		{
 			ID:                  MempoolChannel,
 			Priority:            5,
-			RecvMessageCapacity: batchMsg.Size(),
+			RecvMessageCapacity: batchMsgSize,
 			MessageType:         &protomem.Message{},
 		},
 	}

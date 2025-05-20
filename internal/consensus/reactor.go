@@ -181,7 +181,7 @@ func (*Reactor) GetChannels() []*p2p.ChannelDescriptor {
 			// once we gossip the whole block there's nothing left to send until next height or round
 			Priority:            10,
 			SendQueueCapacity:   100,
-			RecvBufferCapacity:  50 * 4096,
+			RecvBufferCapacity:  49 * 4096,
 			RecvMessageCapacity: maxMsgSize,
 			MessageType:         &cmtcons.Message{},
 		},
