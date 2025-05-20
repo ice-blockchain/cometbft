@@ -114,7 +114,6 @@ func clientAckReplication(
 	ctx context.Context,
 	relay *mx.MultiplexBackend,
 	catchupRelays map[string][]*server.RelayAddress,
-	mustResRelays map[string][]*server.RelayAddress,
 ) (relaysPerChain map[string][]string, numExpected int, numReceived int, err error) {
 	tb.Helper()
 
@@ -159,6 +158,60 @@ func clientAckReplication(
 	return
 }
 
+// clientReplicationCompleted mocks the waiting process for chain replication
+// completions from remote relays (ChainReplicationComplete).
+// Note that in this mock implementation, a relay is considered healthy iff
+// the relay address contains an ID.
+func clientReplicationCompleted(
+	tb testing.TB,
+	ctx context.Context,
+	relay *mx.MultiplexBackend,
+	syncingChainIds []string,
+	testTransactions []client.Transaction,
+	completingRelays map[string][]*server.RelayAddress,
+) (numCompleted int, err error) {
+	tb.Helper()
+
+	multiplexClient := mx.NewClient(
+		mx.WithBackend(relay),
+	)
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+
+	// THREAD 1: Waiting for ChainReplicationComplete messages.
+	go func() {
+		defer wg.Done()
+
+		numCompleted,
+			err = multiplexClient.GetBackend().WaitForRelaysReplicationCompleted(ctx,
+			syncingChainIds,
+			testTransactions...,
+		)
+	}()
+
+	// THREAD 2: Sending mock ChainReplicationComplete messages.
+	go func() {
+		for chainID, catchupRelaysForChain := range completingRelays {
+			for _, relayAddr := range catchupRelaysForChain {
+				if len(string(relayAddr.ID())) == 0 {
+					continue // don't respond from unhealthy relays!
+				}
+
+				mockChainReplicationComplete := mockChainReplicationComplete(tb, relayAddr, chainID)
+
+				remoteReplFinCh := relay.GetReactor().ChannelForRuntimeUpdates(chainID)
+				remoteReplFinCh <- mockChainReplicationComplete
+			}
+		}
+	}()
+
+	// Coupled to finishing the execution of THREAD 1
+	wg.Wait()
+
+	return
+}
+
 // clientAckTransaction mocks the waiting process for transaction acks
 // from remote relays.
 // Note that in this mock implementation, a relay is considered healthy iff
@@ -191,7 +244,7 @@ func clientAckTransaction(
 			err = multiplexClient.GetBackend().WaitForRelaysAckTransactionBatch(ctx,
 			mustAckRelays,
 			catchupRelays,
-			testTransactions,
+			testTransactions...,
 		)
 	}()
 
@@ -253,6 +306,20 @@ func mockChainReplicationResponse(
 	tb.Helper()
 
 	return &mxp2p.ChainReplicationResponse{
+		NodeId:  string(relayAddr.ID()),
+		ChainID: chainID,
+	}
+}
+
+// Mocks relayAddr response for replication
+func mockChainReplicationComplete(
+	tb testing.TB,
+	relayAddr *server.RelayAddress,
+	chainID string,
+) *mxp2p.ChainReplicationComplete {
+	tb.Helper()
+
+	return &mxp2p.ChainReplicationComplete{
 		NodeId:  string(relayAddr.ID()),
 		ChainID: chainID,
 	}
@@ -404,13 +471,11 @@ func TestScenarioClientBroadcastErrors(t *testing.T) {
 
 // With a list of healthy relays, we test the ability to intercept replication
 // channel message: ChainReplicationResponse from each of the relays.
-// In a second iteration, we set 2 relays to be unhealthy and make sure that
-// that the Ack process times out gracefully but still intercepts other Acks.
 func TestScenarioClientBroadcastWaitForReplicationResponses(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 0
-	numRelays := 3
+	numRelays := 7
 
 	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
 	defer shutdownFn(servers)
@@ -457,7 +522,6 @@ func TestScenarioClientBroadcastWaitForReplicationResponses(t *testing.T) {
 		broadcastCtx,
 		testRelayOne,
 		testCatchupRelays,
-		testCatchupRelays, // mustResRelays => ALL
 	)
 
 	expectedNumAwaited := numHealthy - 1  // -self
@@ -603,6 +667,158 @@ func TestScenarioClientBroadcastWaitForAckTransactions(t *testing.T) {
 	assert.Len(t, actualAcksReceived, expectedNumReceived)
 	assert.Error(t, actualAcceptErr, "should timeout gracefully")
 	assert.Contains(t, actualAcceptErr.Error(), "process timed out")
+}
+
+// With a list of healthy relays, we test the ability to intercept replication
+// channel message: ChainReplicationComplete from each of the relays.
+func TestScenarioClientBroadcastWaitForReplicationCompleted(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	numChains := 0
+	numRelays := 7
+
+	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
+	defer shutdownFn(servers)
+
+	require.NotEmpty(t, servers)
+	require.Len(t, servers, numRelays)
+
+	// Note: relays includes self
+	healthyRelays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
+		servers,
+		2*time.Second,  // Time for backend
+		20*time.Second, // Time for broadcast
+	)
+
+	defer cancelCtxFn()
+
+	require.NotEmpty(t, healthyRelays)
+	require.NotNil(t, broadcastCtx)
+
+	// TEST 1 - Success
+	//
+	// Use the 7 healthy relays including self and make sure we intercepted
+	// ChainReplicationComplete messages (mocked in clientReplicationCompleted).
+	// numRelays=7;numHealthy=7;numErrors=0;withSelf=true
+
+	relaysForTestCase := healthyRelays[:] // with IDs!
+	numHealthy := len(relaysForTestCase)
+	testChainID1 := makeChainID("test-chain-1")
+	testRelayOne := servers[0]
+
+	// Fill chainRelays such that all HEALTHY relays are expected to respond.
+	_, testCatchupRelays := mockRelayMapsForChainID(t,
+		testRelayOne,
+		relaysForTestCase,
+		testChainID1,
+		true, // useCatchup
+	)
+
+	testSyncingChainIds := []string{}
+	for testSyncingChain, _ := range testCatchupRelays {
+		testSyncingChainIds = append(testSyncingChainIds, testSyncingChain)
+	}
+
+	testChainInfo1, err := mx.NewExtendedChainIDFromLegacy(testChainID1)
+	require.NoError(t, err, "should create correctly formatted ChainID")
+	testTransactions1 := makeClientTransactions(t, testChainInfo1, 1)
+
+	// First we feed some ChainReplicationResponse to fill ackResponsesRcvd.
+	_, _, _, replErr := clientAckReplication(t,
+		broadcastCtx,
+		testRelayOne,
+		testCatchupRelays,
+	)
+	require.NoError(t, replErr, "should pre-fill ReplResponsePeers")
+
+	// Block main thread to test ChainReplicationComplete process
+	actualNumCompleted,
+		actualCompletionError := clientReplicationCompleted(t,
+		broadcastCtx,
+		testRelayOne,
+		testSyncingChainIds,
+		testTransactions1,
+		testCatchupRelays,
+	)
+
+	expectedNumCompleted := numHealthy - 1 // -self
+
+	assert.Equal(t, expectedNumCompleted, actualNumCompleted)
+	assert.NoError(t, actualCompletionError, "should finalize ChainReplicationComplete process")
+
+	// TEST 2 - Error
+	//
+	// Add 2 unhealthy relays to relays including self, and make sure we timeout
+	// correctly for the 2 unhealthy relays
+	// numRelays=7;numHealthy=5;numErrors=2;withSelf=true
+
+	relaysForErrCase := healthyRelays[:len(healthyRelays)-2] // with IDs!
+	numHealthy = len(relaysForErrCase)                       // 5
+	testChainID2 := makeChainID("test-chain-2")
+	numRelaysForErrCase := 7
+	for i := numHealthy; i < numRelaysForErrCase; i++ {
+		relaysForErrCase = append(relaysForErrCase, "1.2.3.4:"+strconv.Itoa(1000+i))
+	}
+
+	// relaysForErrCase contains 2 unhealthy relays (which don't have ID),
+	// but these will be *filtered* out due to not being healthy.
+	_, testCatchupRelays = mockRelayMapsForChainID(t, testRelayOne, relaysForErrCase, testChainID2, true) // trure=useCatchup
+
+	testSyncingChainIds2 := []string{}
+	for testSyncingChain, _ := range testCatchupRelays {
+		testSyncingChainIds2 = append(testSyncingChainIds2, testSyncingChain)
+	}
+
+	testCompletingRelays := make(map[string][]*server.RelayAddress, 1)
+	testCompletingRelays[testChainID2] = testCatchupRelays[testChainID2][:]
+
+	// Now add back the 2 unhealthy relays so that they are expected to Complete.
+	for i := numHealthy; i < numRelaysForErrCase; i++ {
+		// random node key
+		privKey := ed25519.GenPrivKey()
+		nodeKey := &p2p.NodeKey{
+			PrivKey: privKey,
+		}
+
+		fakeRelayAddr, _ := server.NewRelayAddress(string(nodeKey.ID()) + "@1.2.3.4:" + strconv.Itoa(1000+i))
+		testCatchupRelays[testChainID2] = append(testCatchupRelays[testChainID2], fakeRelayAddr)
+	}
+
+	// testCatchupRelays DOES contain the unhealthy relays
+	// testCompletingRelays does NOT contain the unhealthy relays
+
+	secondTimeoutAfter := 20 * time.Second // Time for broadcast
+	secondBroadcastCtx, secondCancelCtxFn := context.WithTimeout(context.TODO(), secondTimeoutAfter)
+	defer secondCancelCtxFn()
+
+	testChainInfo2, err := mx.NewExtendedChainIDFromLegacy(testChainID2)
+	require.NoError(t, err, "should create correctly formatted ChainID")
+	testTransactions2 := makeClientTransactions(t, testChainInfo2, 1)
+
+	// First we feed some ChainReplicationResponse to fill ackResponsesRcvd.
+	// Note that in this test unhealthy peers also send ChainReplicationResponse.
+	_, _, _, replErr = clientAckReplication(t,
+		secondBroadcastCtx,
+		testRelayOne,
+		testCatchupRelays,
+	)
+	require.NoError(t, replErr, "should pre-fill ReplResponsePeers")
+
+	// Block main thread to test ChainReplicationComplete process
+	_, errCaseCompletionError := clientReplicationCompleted(t,
+		secondBroadcastCtx,
+		testRelayOne,
+		testSyncingChainIds2,
+		testTransactions2,
+		testCompletingRelays, // 2 unhealthy are NOT sending ChainReplicationComplete.
+	)
+
+	errCaseExpectedNumCompleted := numHealthy - 1
+	errCaseActualNumCompleted := testRelayOne.GetReplCompletePeers(testChainID2)
+
+	assert.Equal(t, errCaseExpectedNumCompleted, len(errCaseActualNumCompleted))
+	assert.Error(t, errCaseCompletionError, "should timeout gracefully")
+	assert.Contains(t, errCaseCompletionError.Error(), "process timed out")
 }
 
 // With a list of healthy relays, the transactions will be added locally
@@ -2512,12 +2728,10 @@ func TestScenarioClientBroadcastConcurrentNewChains3(t *testing.T) {
 	defer globalCancelFn()
 
 	numChains := 0
-	numRelays := 3
+	numRelays := 7
 
-	servers, shutdownFn := ResetTestScenarioRelaysWithLogs(t, numChains, numRelays)
+	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
 	defer shutdownFn(servers)
-
-	//servers[0].SetLogger(cmtlog.TestingLogger().With("process", "relay-1"))
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)

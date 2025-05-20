@@ -185,6 +185,9 @@ type Reactor struct {
 	ackAcceptTxMtx sync.RWMutex
 	ackAcceptTxChs map[string]chan *mxp2p.AckTransactionBroadcast
 
+	runtimeUpdatesMtx sync.RWMutex
+	runtimeUpdatesChs map[string]chan *mxp2p.ChainReplicationComplete
+
 	// ReplayPool defines a pool for concurrent processing of transaction buckets,
 	// which consist of one or many batches of transactions by user address.
 	replayPoolMtx sync.RWMutex
@@ -254,9 +257,10 @@ func NewReactor(
 		configsPaths:      MultiplexFS{},
 
 		// Internal channels
-		chainReadyChs:  make(map[string]chan bool),
-		ackReplResChs:  make(map[string]chan *mxp2p.ChainReplicationResponse),
-		ackAcceptTxChs: make(map[string]chan *mxp2p.AckTransactionBroadcast),
+		chainReadyChs:     make(map[string]chan bool),
+		ackReplResChs:     make(map[string]chan *mxp2p.ChainReplicationResponse),
+		ackAcceptTxChs:    make(map[string]chan *mxp2p.AckTransactionBroadcast),
+		runtimeUpdatesChs: make(map[string]chan *mxp2p.ChainReplicationComplete),
 
 		// Internals
 		logger: logger,
@@ -460,6 +464,14 @@ func (reactor *Reactor) GetChainRegistry() ChainRegistry {
 	return reactor.chainRegistry
 }
 
+// GetRuntimeRegistry returns the active node runtime manager.
+func (reactor *Reactor) GetRuntimeRegistry() *server.RuntimeRegistry {
+	reactor.runtimesMutex.Lock()
+	defer reactor.runtimesMutex.Unlock()
+
+	return reactor.runtimeRegistry
+}
+
 // GetChecksummedGenesisDocSet returns a [ChecksummedGenesisDocSet] instance.
 // Internal mutex genesisDocsMutex is locked for read.
 func (reactor *Reactor) GetChecksummedGenesisDocSet() *ChecksummedGenesisDocSet {
@@ -641,6 +653,47 @@ func (reactor *Reactor) CloseAckTransactionChannel(txHash string) {
 	reactor.ackAcceptTxMtx.Lock()
 	delete(reactor.ackAcceptTxChs, txHash)
 	reactor.ackAcceptTxMtx.Unlock()
+}
+
+// ChannelForRuntimeUpdates creates or returns an unbuffered channel that accepts
+// ChainReplicationComplete messages for chainID.
+//
+// runtimeUpdatesChs contains channels that are opened on-demand, when the
+// application expects to receive [ChainReplicationComplete] messages from
+// relevant relays, about one chainID.
+func (reactor *Reactor) ChannelForRuntimeUpdates(chainID string) chan *mxp2p.ChainReplicationComplete {
+	reactor.runtimeUpdatesMtx.RLock()
+	runtimeUpdatesChForChainID, hasChannel := reactor.runtimeUpdatesChs[chainID]
+	reactor.runtimeUpdatesMtx.RUnlock()
+
+	if !hasChannel {
+		runtimeUpdatesChForChainID = make(chan *mxp2p.ChainReplicationComplete)
+
+		reactor.runtimeUpdatesMtx.Lock()
+		reactor.runtimeUpdatesChs[chainID] = runtimeUpdatesChForChainID
+		reactor.runtimeUpdatesMtx.Unlock()
+	}
+
+	return runtimeUpdatesChForChainID
+}
+
+// CloseRuntimeUpdatesChannel closes the runtime updates channel
+// for chainID and deletes it gracefully from the registry.
+func (reactor *Reactor) CloseRuntimeUpdatesChannel(chainID string) {
+	reactor.runtimeUpdatesMtx.RLock()
+	runtimeUpdatesCh, hasChannel := reactor.runtimeUpdatesChs[chainID]
+	reactor.runtimeUpdatesMtx.RUnlock()
+	if !hasChannel {
+		return
+	}
+
+	// Close the channel first
+	close(runtimeUpdatesCh)
+
+	// And free memory space
+	reactor.runtimeUpdatesMtx.Lock()
+	delete(reactor.runtimeUpdatesChs, chainID)
+	reactor.runtimeUpdatesMtx.Unlock()
 }
 
 // ----------------------------------------------------------------------------
@@ -905,14 +958,19 @@ func (*Reactor) GetChannels() []*p2p.ChannelDescriptor {
 		{
 			ID: server.ReplicationChannel,
 			// Lower priority than blocksync, evidence, mempool & consensus
+			// i.e. This channel has priority to be gossiped on.
 			Priority:    3,
 			MessageType: &mxp2p.Message{},
 		},
 		{
-			ID: server.AckBroadcastChannel,
-			// Lower priority than blocksync, evidence, mempool & consensus
+			ID:          server.AckBroadcastChannel,
 			Priority:    3,
 			MessageType: &mxp2p.Receipt{},
+		},
+		{
+			ID:          server.RuntimeChannel,
+			Priority:    10, // This channel does not have priority.
+			MessageType: &mxp2p.Message{},
 		},
 	}
 }
@@ -926,6 +984,8 @@ func (r *Reactor) RemovePeer(peer p2p.Peer, _ any) {}
 // Receive implements p2p.Reactor.
 func (r *Reactor) Receive(e p2p.Envelope) {
 	r.Logger.Debug("Receive", "src", e.Src, "chId", e.ChannelID)
+
+	idleManager := r.GetRuntimeRegistry()
 
 	switch extMsg := e.Message.(type) {
 	// ChainReplicationRequest
@@ -996,6 +1056,12 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 				return
 			}
 
+			// Activate this runtime in our runtime registry.
+			//
+			// NOTE(midas): The OnComplete callback must be executed only when
+			// we have completed the full chain replication.
+			idleManager.OnActivate(replRequest.ChainID)
+
 			// Dials the CometBFT relay to permit faster consensus startup.
 			if err := r.DialBackReplicationPartner(e.Src, replRequest.ChainID); err != nil {
 				r.logger.Error(
@@ -1046,6 +1112,16 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 
 			// Done.
 			return
+
+		// ChainReplicationComplete
+		// Received a receipt of replication completeness from a peer.
+		case *mxp2p.Message_ChainReplicationComplete:
+			r.logger.Debug("Received ChainReplicationComplete", "msg", msg)
+			replComplete := extMsg.GetChainReplicationComplete()
+
+			// Channel is mapped by transaction hash
+			runtimeUpdatesChForChainID := r.ChannelForRuntimeUpdates(replComplete.ChainID)
+			runtimeUpdatesChForChainID <- replComplete
 
 		default:
 			r.logger.Error(
@@ -1439,6 +1515,14 @@ func (reactor *Reactor) OnStop() {
 	for txHash, _ := range restAckAcceptTxChs {
 		reactor.CloseAckTransactionChannel(txHash)
 	}
+
+	reactor.runtimeUpdatesMtx.RLock()
+	restRuntimeUpdatesChs := reactor.runtimeUpdatesChs
+	reactor.runtimeUpdatesMtx.RUnlock()
+
+	for chainID, _ := range restRuntimeUpdatesChs {
+		reactor.CloseRuntimeUpdatesChannel(chainID)
+	}
 }
 
 // OnReset implements Service.
@@ -1694,9 +1778,6 @@ func (reactor *Reactor) startNodeListeners(chainID string) error {
 	)
 	if nodeConfig.TxIndex.Indexer == "kv" {
 		databaseProvider := reactor.GetInstanceProvider(InstanceKeyDatabaseIndex)
-
-		// Casting to ChainInstance before is required because the *instanceProviderFn*
-		// implementation provides a `any` typed variable which is not an interface.
 		indexerDatabase := databaseProvider(chainID).(dbm.DB)
 
 		txIndexer = txidxkv.NewTxIndex(indexerDatabase)

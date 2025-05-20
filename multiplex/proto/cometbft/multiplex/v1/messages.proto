@@ -31,11 +31,18 @@ message ChainReplicationResponse {
   string node_id  = 2;
 }
 
+// ChainReplicationComplete announces the completed replication of a new chain.
+message ChainReplicationComplete {
+  string chain_id = 1 [(gogoproto.customname) = "ChainID"];
+  string node_id  = 2;
+}
+
 // Message is an abstract multiplex message.
 message Message {
   // Sum of all possible messages.
   oneof sum {
     ChainReplicationRequest   chain_replication_request   = 1;
     ChainReplicationResponse  chain_replication_response  = 2;
+    ChainReplicationComplete  chain_replication_complete  = 3;
   }
 }

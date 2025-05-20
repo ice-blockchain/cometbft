@@ -69,6 +69,7 @@ type Backend interface {
 	WaitForRelaysAckChainReplications(
 		ctx context.Context,
 		catchupRelays map[string][]*RelayAddress,
+		transactions ...client.Transaction,
 	) (
 		relaysPerChain map[string][]string,
 		numExpected int,
@@ -83,7 +84,7 @@ type Backend interface {
 		ctx context.Context,
 		chainRelays map[string][]*RelayAddress,
 		catchupRelays map[string][]*RelayAddress,
-		transactions []client.Transaction,
+		transactions ...client.Transaction,
 	) (
 		expectedRelaysPerTx,
 		relaysPerTx map[string][]string,
@@ -91,6 +92,18 @@ type Backend interface {
 		numReceived int,
 		err error,
 	)
+
+	// WaitForRelaysReplicationCompleted should wait for *remote* relays replication
+	// finalization and it should return a number of completed replication requests.
+	// Use this method to wait for a chain replication to be *finalized* remotely.
+	//
+	// CAUTION: A chain replication may take hours to complete given a higher
+	// number of blocks to synchronize with the network. Use accordingly.
+	WaitForRelaysReplicationCompleted(
+		ctx context.Context,
+		syncingChainIds []string,
+		transactions ...client.Transaction,
+	) (numCompleted int, err error)
 
 	// CancelBroadcastOperation should execute the CancelBroadcast routine
 	// and it should remove transactions from the local mempool.
@@ -157,6 +170,28 @@ type Backend interface {
 	// RemoveTransactions should remove transactions from the local mempool
 	// if they were added already, e.g. using AddTransactions.
 	RemoveTransactions(
+		userAddress string,
+		transactions ...client.Transaction,
+	) error
+
+	// OnBroadcastComplete should update a runtime completion status.
+	// It accepts a batch of transactions and a list of remoteRelays
+	// that it should wait for until they have completed replication.
+	//
+	// This method should call [server.RuntimeRegistry#OnComplete].
+	OnBroadcastComplete(
+		ctx context.Context,
+		userAddress string,
+		remoteRelays []*RelayAddress,
+		transactions ...client.Transaction,
+	) error
+
+	// OnBroadcastError should update a runtime completion status
+	// and attach and log an error about the broadcast completion.
+	//
+	// This method should call [server.RuntimeRegistry#OnComplete].
+	OnBroadcastError(
+		reason error,
 		userAddress string,
 		transactions ...client.Transaction,
 	) error

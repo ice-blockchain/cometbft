@@ -59,11 +59,15 @@ func (c MultiplexClient) SetBackend(a server.Backend) {
 	c.backend = a
 }
 
+// GetRuntimeRegistry returns the reactor's [server.RuntimeRegistry] implementation.
+func (c MultiplexClient) GetRuntimeRegistry() *server.RuntimeRegistry {
+	return c.backend.GetRuntimeRegistry()
+}
+
 // BroadcastTx sends an error to a notifier if any of the transactions
 // fails basic verification, or if we fail to get a majority approval
 // for the broadcast operation from healthy relays.
 //
-// IMPORTANT:
 // It accepts a slice of relays which should be in the format `host:port`.
 // The relays should contain the port associated with the P2P discovery.
 // i.e. with MultiplexConfig.DiscoveryPort=1000, it should contain `:1000`.
@@ -79,6 +83,13 @@ func (c MultiplexClient) SetBackend(a server.Backend) {
 // - Transactions are now broadcast and accepted by all relays,
 //
 // i.e. The transaction broadcast happens only when consensus succeeded.
+//
+// Also, for every consensus instance, we track active runtimes using the
+// runtime registry and upon completion (or error), we mark the runtimes
+// as completed with [server.RuntimeRegistry#OnComplete].
+// Note that if there are any chain replications happening on one of the
+// remote relays, we will keep alive the active runtimes for these chains
+// and shall mark them as complete only when the replications are done.
 func (c MultiplexClient) BroadcastTx(
 	ctx context.Context,
 	userAddress string,
@@ -89,7 +100,7 @@ func (c MultiplexClient) BroadcastTx(
 	// Can't broadcast without a multiplex backend
 	if c.GetBackend() == nil {
 		client.Error(notifyCh, errors.New(
-			"CONSENSUS FAILURE: failed to find a running multiplex backend"))
+			"CLIENT ERROR: Failed to find a running multiplex backend"))
 		return // STOP here
 	}
 
@@ -107,13 +118,22 @@ func (c MultiplexClient) BroadcastTx(
 	}
 
 	acceptedTxHashes := make([][]byte, 0, len(transactions))
+	acceptedTxHashesStr := make([]string, 0, len(transactions))
 	transactionHashes := txHashesToHex(transactions...)
+	relevantChainIds := chainIdsFromTransactions(userAddress, transactions...)
 
 	// IMPORTANT:
+	// For every consensus instance, we track active runtimes using the
+	// runtime registry and upon completion (or error), we mark the runtimes
+	// as completed.
+	for _, activeChainID := range relevantChainIds {
+		// Marks the runtime active
+		c.GetRuntimeRegistry().OnActivate(activeChainID)
+	}
+
 	// Find out how many relays will be necessary to reach consensus
 	// before evaluating the presence of "self", and we will update
 	// numConsensusRelays later, in case self is not present.
-
 	numConsensusRelays := len(relayAddresses)
 	minHealthyRelays := (numConsensusRelays / 2) + 1
 	maxFailingRelays := numConsensusRelays - minHealthyRelays
@@ -126,6 +146,7 @@ func (c MultiplexClient) BroadcastTx(
 		"max_failing", maxFailingRelays,
 		"num_txes", len(transactions),
 		"tx_hashes", transactionHashes,
+		"chain_ids", relevantChainIds,
 	)
 
 	// ------------------------------------------------------------------------
@@ -224,11 +245,14 @@ func (c MultiplexClient) BroadcastTx(
 
 	// We must have at least 50%+1 healthy relays, otherwise discard the batch.
 	if numHealthyRelays < minHealthyRelays {
-		client.Error(notifyCh, fmt.Errorf(
+		err := fmt.Errorf(
 			"CONSENSUS FAILURE: not enough healthy relays; expected %d, got %d",
 			minHealthyRelays,
 			numHealthyRelays,
-		))
+		)
+
+		c.backend.OnBroadcastError(err, userAddress, transactions...)
+		client.Error(notifyCh, err)
 		return // STOP here
 	}
 
@@ -273,18 +297,14 @@ func (c MultiplexClient) BroadcastTx(
 
 	// We do not allow more than maxFailingRelays to be failing here.
 	if len(errorRelays) > maxFailingRelays {
-		c.backend.GetLogger().Debug("got errors from too many relays; ",
-			"expected", maxFailingRelays,
-			"errorRelaysCount", len(errorRelays),
-			"errorRelays", errorRelays,
-			"tx_hashes", transactionHashes,
-		)
-
-		client.Error(notifyCh, fmt.Errorf(
+		err := fmt.Errorf(
 			"CONSENSUS FAILURE: got errors from too many relays; expected %d, got %d",
 			maxFailingRelays,
 			len(errorRelays),
-		))
+		)
+
+		c.backend.OnBroadcastError(err, userAddress, transactions...)
+		client.Error(notifyCh, err)
 		return // STOP here
 	}
 
@@ -336,16 +356,12 @@ func (c MultiplexClient) BroadcastTx(
 	close(errorGenesisCh)
 
 	for err := range errorGenesisCh {
-		c.backend.GetLogger().Debug("Failed to create required networks locally",
-			"num_networks", len(mustCreateNetworks),
-			"networks", mustCreateNetworks,
-			"tx_hashes", transactionHashes,
-			"err", err,
+		genesisErr := fmt.Errorf(
+			"CONSENSUS FAILURE: failed to create required networks locally: %w", err,
 		)
 
-		client.Error(notifyCh, fmt.Errorf(
-			"CONSENSUS FAILURE: failed to create required networks locally: %w", err,
-		))
+		c.backend.OnBroadcastError(genesisErr, userAddress, transactions...)
+		client.Error(notifyCh, genesisErr)
 		return // STOP here
 	}
 
@@ -423,10 +439,13 @@ func (c MultiplexClient) BroadcastTx(
 	replRelaysPerChainID,
 		numExpectedResponses,
 		numReceivedResponses,
-		replErr := c.GetBackend().WaitForRelaysAckChainReplications(ctx, catchupRelays)
+		replErr := c.GetBackend().WaitForRelaysAckChainReplications(ctx, catchupRelays, transactions...)
 	if replErr != nil {
-		client.Error(notifyCh, fmt.Errorf(
-			"CONSENSUS FAILURE: failed to receive replication responses: %w", replErr))
+		err := fmt.Errorf(
+			"CONSENSUS FAILURE: failed to receive replication responses: %w", replErr)
+
+		c.backend.OnBroadcastError(err, userAddress, transactions...)
+		client.Error(notifyCh, err)
 		return // STOP here
 	}
 
@@ -448,9 +467,12 @@ func (c MultiplexClient) BroadcastTx(
 	for chainID, replRelays := range replRelaysPerChainID {
 		if len(replRelays) < len(catchupRelays[chainID]) {
 			// Not all healthy relays replicated this ChainID.
-			client.Error(notifyCh, fmt.Errorf(
+			err := fmt.Errorf(
 				"CONSENSUS FAILURE: missing relays replication for %s, expected %d, got %d",
-				chainID, len(catchupRelays[chainID]), len(replRelays)))
+				chainID, len(catchupRelays[chainID]), len(replRelays))
+
+			c.backend.OnBroadcastError(err, userAddress, transactions...)
+			client.Error(notifyCh, err)
 			return // STOP here
 		}
 	}
@@ -467,8 +489,11 @@ func (c MultiplexClient) BroadcastTx(
 		// No-op in case the reactors are already running, i.e. this method
 		// calls [mempool.Reactor#IsRunning] before starting.
 		if err := c.backend.StartConsensusInstance(ctx, chainID); err != nil {
-			client.Error(notifyCh, fmt.Errorf(
-				"CONSENSUS FAILURE: failed to start reactors for %s: %w", chainID, err))
+			reactErr := fmt.Errorf(
+				"CONSENSUS FAILURE: failed to start reactors for %s: %w", chainID, err)
+
+			c.backend.OnBroadcastError(reactErr, userAddress, transactions...)
+			client.Error(notifyCh, reactErr)
 			return // STOP here
 		}
 	}
@@ -486,8 +511,11 @@ func (c MultiplexClient) BroadcastTx(
 
 	// Add each transaction to the local mempool, an error stops the process.
 	if err := c.GetBackend().AddTransactions(userAddress, transactions...); err != nil {
-		client.Error(notifyCh, fmt.Errorf(
-			"CONSENSUS FAILURE: error adding txes to mempool: %w", err))
+		memplErr := fmt.Errorf(
+			"CONSENSUS FAILURE: error adding txes to mempool: %w", err)
+
+		c.backend.OnBroadcastError(memplErr, userAddress, transactions...)
+		client.Error(notifyCh, memplErr)
 		return // STOP here
 	}
 
@@ -527,7 +555,7 @@ func (c MultiplexClient) BroadcastTx(
 	// ------------------------------------------------------------------------
 
 	// TODO(midas): remove debug logs
-	c.backend.GetLogger().Debug("Waiting for remote transaction acceptance",
+	c.backend.GetLogger().Debug("Waiting for remote transactions ACK",
 		"num_relays", numHealthyRemote,
 		"num_txes", len(transactions),
 		"tx_hashes", transactionHashes,
@@ -539,7 +567,7 @@ func (c MultiplexClient) BroadcastTx(
 		acceptErr := c.GetBackend().WaitForRelaysAckTransactionBatch(ctx,
 		chainRelays,
 		catchupRelays,
-		transactions,
+		transactions...,
 	)
 
 	// TODO(midas): Refactor cancel broadcast and evaluate all conditions at once.
@@ -551,8 +579,11 @@ func (c MultiplexClient) BroadcastTx(
 			transactions...,
 		)
 
-		client.Error(notifyCh, fmt.Errorf(
-			"CONSENSUS FAILURE: error waiting for relays acceptance: %w", acceptErr))
+		err := fmt.Errorf(
+			"CONSENSUS FAILURE: error waiting for remote transactions ACK: %w", acceptErr)
+
+		c.backend.OnBroadcastError(err, userAddress, transactions...)
+		client.Error(notifyCh, err)
 		return // STOP here
 	}
 
@@ -590,15 +621,26 @@ func (c MultiplexClient) BroadcastTx(
 				transactions...,
 			)
 
-			client.Error(notifyCh, fmt.Errorf(
-				"CONSENSUS FAILURE: missing relays acceptance for %s, expected %d, got %d",
-				txHash, len(expectedRelaysPerTx[txHash]), len(ackedRelays)))
+			// Just log for now, report will be more precise
+			c.backend.GetLogger().Error("Failed to receive required transactions ACK",
+				"num_received", len(ackedRelays),
+				"num_expected", len(expectedRelaysPerTx[txHash]),
+				"relay_acks", ackedRelays,
+				"tx_hash", txHash)
+
+			err := fmt.Errorf(
+				"CONSENSUS FAILURE: missing transaction ACK for %s, expected %d, got %d",
+				txHash, len(expectedRelaysPerTx[txHash]), len(ackedRelays))
+
+			c.backend.OnBroadcastError(err, userAddress, transactions...)
+			client.Error(notifyCh, err)
 			return // STOP here
 		}
 
 		// Will be added to BroadcastStatus.TxHashes in case of success.
 		if hashbz, err := hex.DecodeString(txHash); err == nil {
 			acceptedTxHashes = append(acceptedTxHashes, hashbz)
+			acceptedTxHashesStr = append(acceptedTxHashesStr, txHash)
 		}
 	}
 
@@ -611,9 +653,19 @@ func (c MultiplexClient) BroadcastTx(
 			transactions...,
 		)
 
-		client.Error(notifyCh, fmt.Errorf(
+		// Just log for now, report will be more precise
+		c.backend.GetLogger().Error("Failed to accept required transactions in batch",
+			"num_accepted", len(acceptedTxHashes),
+			"num_expected", len(transactions),
+			"txs_accepted", acceptedTxHashesStr,
+			"tx_hashes", transactionHashes)
+
+		err := fmt.Errorf(
 			"CONSENSUS FAILURE: missing accepted transaction hashes, expected %d, got %d",
-			len(transactions), len(acceptedTxHashes)))
+			len(transactions), len(acceptedTxHashes))
+
+		c.backend.OnBroadcastError(err, userAddress, transactions...)
+		client.Error(notifyCh, err)
 		return // STOP here
 	}
 
@@ -629,6 +681,14 @@ func (c MultiplexClient) BroadcastTx(
 
 	// Done, notify about succeeded broadcast (nil error)
 	client.Success(notifyCh, acceptedTxHashes)
+
+	// NOTE(midas): The OnComplete callback must be executed only if
+	// all relays have completed the broadcast operation (+ sync).
+	defer c.backend.OnBroadcastComplete(context.Background(),
+		userAddress,
+		relaysWithoutSelf,
+		transactions...,
+	)
 }
 
 // BroadcastTxRemoval sends an error to a notifier if any of the removal

@@ -288,6 +288,10 @@ func (reg *RuntimeRegistry) removeSleeping(chainID string) error {
 		delete(reg.Scheduler, chainID)
 	}
 
+	if len(reg.Sleeping) == 0 {
+		return nil
+	}
+
 	// Find runtime index, we always remove the last item.
 	lastRuntimeIdx := len(reg.Sleeping) - 1
 	runtimeIndex := slices.IndexFunc(reg.Sleeping, func(r string) bool {

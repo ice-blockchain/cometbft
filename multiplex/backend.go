@@ -27,6 +27,7 @@ import (
 	rpcclient "github.com/ice-blockchain/cometbft/rpc/jsonrpc/client"
 	rpcserver "github.com/ice-blockchain/cometbft/rpc/jsonrpc/server"
 	sm "github.com/ice-blockchain/cometbft/state"
+	"github.com/ice-blockchain/cometbft/state/txindex"
 	cmttime "github.com/ice-blockchain/cometbft/types/time"
 	"github.com/rs/cors"
 
@@ -50,6 +51,7 @@ const (
 var _ server.Backend = (*MultiplexBackend)(nil)
 
 // AckTransactionResult describes a remote transaction receipt.
+// Used by [MultiplexBackend#WaitForRelaysAckTransactionBatch].
 type AckTransactionResult struct {
 	// Contains relay IDs of relays that acknowledged TxHash.
 	Relays []string
@@ -62,8 +64,21 @@ type AckTransactionResult struct {
 }
 
 // AckReplicationResult describes a remote replication receipt.
+// Used by [MultiplexBackend#WaitForRelaysAckChainReplications].
 type AckReplicationResult struct {
 	// Contains relay IDs of relays that acknowledged ChainID.
+	Relays  []string
+	ChainID string
+
+	// May contain an error
+	Error error
+}
+
+// RuntimeUpdateResult describes a remote status update result.
+// Used by [MultiplexBackend#WaitForRelaysReplicationCompleted].
+type RuntimeUpdateResult struct {
+	// Contains relay IDs of relays that have announced the completion
+	// of their replication for ChainID.
 	Relays  []string
 	ChainID string
 
@@ -116,6 +131,10 @@ type MultiplexBackend struct {
 	// Mapping of relay IDs whom responded to replication, by it's ChainID.
 	replResponsesMtx  sync.RWMutex
 	replResponsesRcvd map[string][]string
+
+	// Mapping of relay IDs whom completed replication, by their ChainID.
+	replCompleteMtx  sync.RWMutex
+	replCompleteRcvd map[string][]string
 
 	// Mapping of relay IDs whom ack'd a transaction, by its' hash.
 	ackResponsesMtx  sync.RWMutex
@@ -295,6 +314,19 @@ func (b *MultiplexBackend) GetReplResponsePeers(chainID string) []string {
 	defer b.replResponsesMtx.RUnlock()
 
 	if peerIds, ok := b.replResponsesRcvd[chainID]; ok {
+		return peerIds
+	}
+
+	return []string{}
+}
+
+// GetReplCompletePeers returns a list of node IDs whom have previously
+// finalized a replication request and sent a ChainReplicationComplete.
+func (b *MultiplexBackend) GetReplCompletePeers(chainID string) []string {
+	b.replCompleteMtx.RLock()
+	defer b.replCompleteMtx.RUnlock()
+
+	if peerIds, ok := b.replCompleteRcvd[chainID]; ok {
 		return peerIds
 	}
 
@@ -501,6 +533,11 @@ func (b *MultiplexBackend) MustStart() {
 	b.replResponsesRcvd = map[string][]string{}
 	b.replResponsesMtx.Unlock()
 
+	// Filled with relay IDs upon receiving ChainReplicationComplete.
+	b.replCompleteMtx.Lock()
+	b.replCompleteRcvd = map[string][]string{}
+	b.replCompleteMtx.Unlock()
+
 	// Filled with relay IDs upon sending mempool.Tx.
 	b.reactor.poolRequestsMtx.Lock()
 	b.reactor.poolRequestsSent = map[string][]string{}
@@ -663,6 +700,172 @@ func (b *MultiplexBackend) Close() error {
 	return nil
 }
 
+// OnBroadcastError updates a runtime completion status and attaches
+// an error which happened during the consensus instance.
+//
+// All node runtimes activated by the consensus instance should be
+// marked as completed with error.
+func (b *MultiplexBackend) OnBroadcastError(
+	reason error,
+	userAddress string,
+	transactions ...client.Transaction,
+) error {
+	// Track active runtimes and relax some resources with idle manager.
+	relevantChainIds := chainIdsFromTransactions(userAddress, transactions...)
+	transactionHashes := txHashesToHex(transactions...)
+
+	// TODO(midas): remove debug logs
+	b.logger.Debug("Node runtimes will be marked as completed with error",
+		"num_networks", len(relevantChainIds),
+		"chain_ids", relevantChainIds,
+		"tx_hashes", transactionHashes,
+		"err", reason,
+	)
+
+	for _, chainID := range relevantChainIds {
+		b.GetRuntimeRegistry().OnComplete(chainID)
+	}
+
+	return reason
+}
+
+// OnBroadcastComplete updates a runtime completion status. It accepts a batch
+// of transactions and a list of remoteRelays that we may have to wait for
+// until they have completed replication.
+//
+// When replication is announced as completed for all the relays currently
+// catching up, we proceed to mark the active runtime as completed.
+//
+// Node runtimes that are not currently processing replications may be safely
+// completed upon querying the indexerService until all transactions
+// are included, and then proceed to mark the active runtime as completed.
+func (b *MultiplexBackend) OnBroadcastComplete(
+	ctx context.Context,
+	userAddress string,
+	remoteRelays []*server.RelayAddress,
+	transactions ...client.Transaction,
+) error {
+	// Track active runtimes and relax some resources with idle manager.
+	relevantChainIds := chainIdsFromTransactions(userAddress, transactions...)
+	transactionHashes := txHashesToHex(transactions...)
+
+	syncingPeersChainIds := []string{}
+	totalNumReplications := 0
+	for _, chainID := range relevantChainIds {
+		// Did we send any ChainReplicationRequest for this ChainiD?
+		chainReplRequests := b.GetReplRequestPeers(chainID)
+		if len(chainReplRequests) == 0 {
+			continue
+		}
+
+		totalNumReplications += len(chainReplRequests)
+		syncingPeersChainIds = append(syncingPeersChainIds, chainID)
+	}
+
+	// Removes syncing chains, as we won't need to check transactions.
+	relevantChainIds = slices.DeleteFunc(relevantChainIds, func(cid string) bool {
+		return slices.Contains(syncingPeersChainIds, cid)
+	})
+
+	// TODO(midas): remove debug logs
+	b.logger.Debug("Now evaluating consensus instance completion",
+		"num_networks", len(relevantChainIds),
+		"num_remotes", len(remoteRelays),
+		"num_waiting", len(syncingPeersChainIds),
+		"num_syncing", totalNumReplications,
+		"tx_hashes", transactionHashes,
+	)
+
+	// If any replication (sync) is in progress for one of the relevant
+	// ChainID values, then we must wait for completion before we may idle.
+	if len(syncingPeersChainIds) > 0 {
+		// TODO(midas): remove debug logs
+		b.logger.Debug("Delaying the idle manager until relays have caught up",
+			"num_networks", len(syncingPeersChainIds),
+			"chain_ids", syncingPeersChainIds,
+			"tx_hashes", transactionHashes,
+		)
+
+		// Wait for the syncing relays to announce a ChainReplicationComplete.
+		go func(syncingChainIds []string) {
+			// Upon completion or error, we may plan to idle the active runtime.
+			defer func() {
+				for _, chainID := range syncingChainIds {
+					b.GetRuntimeRegistry().OnComplete(chainID)
+				}
+			}()
+
+			// TODO(midas): add timeout here to avoid running forever.
+
+			// This goroutine will be locked until relevant relays are done with replication
+			if numCompleted, err := b.WaitForRelaysReplicationCompleted(ctx,
+				syncingChainIds,
+				transactions...,
+			); err != nil {
+				b.logger.Error("Failed to wait for finalization of chain replication",
+					"num_networks", len(syncingChainIds),
+					"num_completed", numCompleted,
+					"chain_ids", syncingChainIds,
+					"tx_hashes", transactionHashes,
+				)
+				return
+			}
+
+			// TODO(midas): remove debug logs
+			b.logger.Debug("All relays have caught up and completed chain replications",
+				"num_networks", len(syncingChainIds),
+				"chain_ids", syncingChainIds,
+				"tx_hashes", transactionHashes,
+			)
+		}(syncingPeersChainIds)
+	}
+
+	// All other relays participated in consensus, thus transactions for
+	// these ChainID should have been indexed by now.
+	indexerProvider := b.reactor.GetServicesProvider()
+	completedChainIds := map[string]bool{}
+	for _, chainID := range relevantChainIds {
+		txesPerChain := slices.DeleteFunc(transactions, func(tx client.Transaction) bool {
+			txChainID := chainIdsFromTransactions(userAddress, tx)[0]
+			return txChainID == chainID
+		})
+
+		for _, tx := range txesPerChain {
+			txChainID := chainIdsFromTransactions(userAddress, tx)[0]
+			indexerService := indexerProvider(ServiceKeyIndexers, txChainID).(*txindex.IndexerService)
+
+			// TODO(midas): If the indexer does not have the transaction, what to do?
+			if _, err := indexerService.GetTxIndexer().Get(tx.Hash()); err != nil {
+				b.logger.Error("Failed to find indexed transaction for broadcast completion",
+					"chain_id", txChainID,
+					"tx_hash", txHashesToHex(tx)[0],
+				)
+			}
+
+			if _, ok := completedChainIds[txChainID]; !ok {
+				b.GetRuntimeRegistry().OnComplete(txChainID)
+				completedChainIds[txChainID] = true
+			}
+		}
+	}
+
+	msgSuccess := "Consensus instance completed"
+	if len(syncingPeersChainIds) > 0 {
+		msgSuccess += " - some relays are replicating in background"
+	}
+
+	// TODO(midas): remove debug logs
+	b.logger.Debug(msgSuccess,
+		"num_networks", len(relevantChainIds),
+		"num_waiting", len(syncingPeersChainIds),
+		"num_syncing", totalNumReplications,
+		"num_remotes", len(remoteRelays),
+		"tx_hashes", transactionHashes,
+	)
+
+	return nil
+}
+
 // WaitForRelaysAckChainReplications waits for a number of healthy relays
 // to respond to replication requests. For this we use a combination of
 // the reactor's `ackReplResChs` which receives updates upon processing
@@ -673,7 +876,13 @@ func (b *MultiplexBackend) Close() error {
 func (b *MultiplexBackend) WaitForRelaysAckChainReplications(
 	ctx context.Context,
 	catchupRelays map[string][]*server.RelayAddress,
-) (relaysPerChain map[string][]string, numExpected int, numReceived int, err error) {
+	transactions ...client.Transaction,
+) (
+	relaysPerChain map[string][]string,
+	numExpected int,
+	numReceived int,
+	err error,
+) {
 	totalNumReplRequests := 0
 	numChainReplications := 0
 	for _, addrs := range catchupRelays {
@@ -686,17 +895,18 @@ func (b *MultiplexBackend) WaitForRelaysAckChainReplications(
 	relaysPerChain = map[string][]string{}
 	numReceived = 0
 	numExpected = totalNumReplRequests
+	transactionHashes := txHashesToHex(transactions...)
 
-	// Written on at the end of this method, when results are returned.
+	// Closed at the end of this method, when results are returned.
 	shutdownWaitChs := make(map[string]chan struct{}, numChainReplications)
-
-	// Written on by [multiplex.Reactor#Receive] when it intercepts
-	// a relevant ChainReplicationResponse message from a relay.
-	remoteReplResChs := make(map[string]chan *mxp2p.ChainReplicationResponse, numChainReplications)
 
 	// Written on by [remoteAckReplicationConsumer] when it processes
 	// a relevant ChainReplicationResponse message from a relevant relay.
 	localReplResChs := make(map[string]chan *mxp2p.ChainReplicationResponse, numChainReplications)
+
+	// Written on by [multiplex.Reactor#Receive] when it intercepts
+	// a relevant ChainReplicationResponse message from a relay.
+	remoteReplResChs := make(map[string]chan *mxp2p.ChainReplicationResponse, numChainReplications)
 
 	// Written on by [remoteAckReplicationConsumer] when it errors, and also
 	// written on by [localAckReplicationConsumer] when it errors and when it
@@ -719,17 +929,18 @@ func (b *MultiplexBackend) WaitForRelaysAckChainReplications(
 			"num_relevant", len(relevantRelayIds),
 			"relay_ids", relevantRelayIds,
 			"chain_id", chainID,
+			"tx_hashes", transactionHashes,
 		)
 
 		// Used to permit expiration of context or forcing shutdown of goroutines.
 		shutdownWaitChs[chainID] = make(chan struct{}, 1)
 
-		// Used to intercept ChainReplicationResponse messages.
-		remoteReplResChs[chainID] = b.reactor.ChannelForAckReplication(chainID)
-
 		// Used to share response message internally
 		// and forward the acknowledgment to [localAckReplicationConsumer].
 		localReplResChs[chainID] = make(chan *mxp2p.ChainReplicationResponse, len(relevantRelayIds))
+
+		// Used to intercept ChainReplicationResponse messages.
+		remoteReplResChs[chainID] = b.reactor.ChannelForAckReplication(chainID)
 
 		// NOTE(midas): The order of execution of the following goroutines
 		// does not matter, because the local consumer reads messages that
@@ -744,6 +955,7 @@ func (b *MultiplexBackend) WaitForRelaysAckChainReplications(
 			localReplResChs[chainID],  // Forwarding to local consumer
 			asyncResultsCh,
 			shutdownWaitChs[chainID],
+			transactions...,
 		)
 
 		// Collects localReplResChs messages and create result object.
@@ -754,6 +966,7 @@ func (b *MultiplexBackend) WaitForRelaysAckChainReplications(
 			localReplResChs[chainID], // Consuming this channel
 			asyncResultsCh,
 			shutdownWaitChs[chainID],
+			transactions...,
 		)
 	}
 
@@ -777,6 +990,7 @@ func (b *MultiplexBackend) WaitForRelaysAckChainReplications(
 		// TODO(midas): remove debug logs
 		b.logger.Debug("Stopped replication response processor",
 			"chain_id", chainID,
+			"tx_hashes", transactionHashes,
 		)
 	}
 
@@ -794,27 +1008,34 @@ func (b *MultiplexBackend) WaitForRelaysAckChainReplications(
 
 		// TODO(midas): remove debug logs
 		b.logger.Error("Replication response processor stopped with error",
+			"tx_hashes", transactionHashes,
 			"err", reasonErr,
 		)
 	}
 
 	// Waits until we have all required results (or errors).
 	for i := 0; i < numChainReplications; i++ {
-		// Wait for one result (it doesn't matter which)
-		replResult := <-asyncResultsCh
-		if replResult.Error != nil {
-			// We stop waiting at first error that occurs.
-			err = replResult.Error
+		select {
+		case replResult := <-asyncResultsCh:
+			if replResult.Error != nil {
+				// We stop waiting at first error that occurs.
+				err = replResult.Error
+				shutdownForError(catchupRelays, shutdownWaitChs, localReplResChs, err)
+				return
+			}
+
+			relaysPerChain[replResult.ChainID] = make([]string, 0, len(replResult.Relays))
+			relaysPerChain[replResult.ChainID] = append(relaysPerChain[replResult.ChainID], replResult.Relays...)
+			numReceived += len(replResult.Relays)
+
+			// Shutdown any living goroutine for this ChainID
+			defer shutdownFn(replResult.ChainID, shutdownWaitChs, localReplResChs)
+
+		case <-b.reactor.Quit():
+			err = errors.New("interrupted by shutdown process")
 			shutdownForError(catchupRelays, shutdownWaitChs, localReplResChs, err)
 			return
 		}
-
-		relaysPerChain[replResult.ChainID] = make([]string, 0, len(replResult.Relays))
-		relaysPerChain[replResult.ChainID] = append(relaysPerChain[replResult.ChainID], replResult.Relays...)
-		numReceived += len(replResult.Relays)
-
-		// Shutdown any living goroutine for this txHash
-		defer shutdownFn(replResult.ChainID, shutdownWaitChs, localReplResChs)
 	}
 
 	return
@@ -831,8 +1052,14 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 	ctx context.Context,
 	chainRelays map[string][]*server.RelayAddress,
 	catchupRelays map[string][]*server.RelayAddress,
-	transactions []client.Transaction,
-) (expectedRelaysPerTx map[string][]string, relaysPerTx map[string][]string, numExpected int, numReceived int, err error) {
+	transactions ...client.Transaction,
+) (
+	expectedRelaysPerTx map[string][]string,
+	relaysPerTx map[string][]string,
+	numExpected int,
+	numReceived int,
+	err error,
+) {
 	relaysPerTx = map[string][]string{}
 	expectedRelaysPerTx = map[string][]string{}
 	numReceived = 0
@@ -849,19 +1076,18 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 		return
 	}
 
-	// Written on at the end of this method, when results are returned.
-	// Consumed and closed in deferral process of this method.
+	// Closed at the end of this method, when results are returned.
 	shutdownWaitChs := make(map[string]chan struct{}, len(transactions))
-
-	// Written on by [multiplex.Reactor#Receive] when it intercepts
-	// a relevant AckTransactionBroadcast message from a relevant relay.
-	// Consumed by [remoteAckTransactionConsumer].
-	ackAcceptTxChs := make(map[string]chan *mxp2p.AckTransactionBroadcast, len(transactions))
 
 	// Written on by [remoteAckTransactionConsumer] when it processes
 	// a relevant AckTransactionBroadcast message from a relevant relay.
 	// Consumed by [localAckTransactionConsumer].
-	remoteRelayTxChs := make(map[string]chan string, len(transactions))
+	localAckAcceptTxChs := make(map[string]chan string, len(transactions))
+
+	// Written on by [multiplex.Reactor#Receive] when it intercepts
+	// a relevant AckTransactionBroadcast message from a relevant relay.
+	// Consumed by [remoteAckTransactionConsumer].
+	remoteAckAcceptTxChs := make(map[string]chan *mxp2p.AckTransactionBroadcast, len(transactions))
 
 	// Written on by [remoteAckTransactionConsumer] when it errors, and also
 	// written on by [localAckTransactionConsumer] when it errors and when it
@@ -890,10 +1116,10 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 
 		// Used to share acceptance message `id:tx_hash_hex` internally
 		// and forward the acknowledgment to [localAckTransactionConsumer].
-		remoteRelayTxChs[txHash] = make(chan string, len(relevantRelays)) // buffered
+		localAckAcceptTxChs[txHash] = make(chan string, len(relevantRelays)) // buffered
 
 		// Used to intercept AckTransactionBroadcast messages.
-		ackAcceptTxChs[txHash] = b.reactor.ChannelForAckTransaction(txHash) // unbuffered
+		remoteAckAcceptTxChs[txHash] = b.reactor.ChannelForAckTransaction(txHash) // unbuffered
 
 		// NOTE(midas): The order of execution of the following goroutines
 		// does not matter, because the local consumer reads messages that
@@ -903,10 +1129,10 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 		// Collects AckTransactionBroadcast messages and proxy to remoteRelayTxCh.
 		// Stopped on shutdownWaitCh.
 		go b.remoteAckTransactionConsumer(ctx,
-			relevantRelaysForTx,      // Accept ACK only from these relays
-			transaction,              // ... and for this transaction
-			ackAcceptTxChs[txHash],   // Consuming this channel
-			remoteRelayTxChs[txHash], // Forwarding to local consumer
+			relevantRelaysForTx,          // Accept ACK only from these relays
+			transaction,                  // ... and for this transaction
+			remoteAckAcceptTxChs[txHash], // Consuming this channel
+			localAckAcceptTxChs[txHash],  // Forwarding to local consumer
 			asyncResultsCh,
 			shutdownWaitChs[txHash],
 		)
@@ -914,9 +1140,9 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 		// Collects remoteRelayTxCh messages and create result object.
 		// Stopped on shutdownWaitCh.
 		go b.localAckTransactionConsumer(ctx,
-			relevantRelaysForTx,      // Wait for ACK only for these relays
-			transaction,              // ... and for these transactions
-			remoteRelayTxChs[txHash], // Consuming this channel
+			relevantRelaysForTx,         // Wait for ACK only for these relays
+			transaction,                 // ... and for these transactions
+			localAckAcceptTxChs[txHash], // Consuming this channel
 			asyncResultsCh,
 			shutdownWaitChs[txHash],
 		)
@@ -967,21 +1193,177 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 
 	// Waits until we have all required results (or errors).
 	for i := 0; i < len(transactions); i++ {
-		// Wait for one result (it doesn't matter which)
-		txResult := <-asyncResultsCh
-		if txResult.Error != nil {
-			// We stop waiting at first error that occurs.
-			err = txResult.Error
-			shutdownForError(transactions, shutdownWaitChs, remoteRelayTxChs, err)
+		select {
+		case txResult := <-asyncResultsCh: // Wait for one result (it doesn't matter which)
+			if txResult.Error != nil {
+				// We stop waiting at first error that occurs.
+				err = txResult.Error
+				shutdownForError(transactions, shutdownWaitChs, localAckAcceptTxChs, err)
+				return
+			}
+
+			relaysPerTx[txResult.TxHash] = make([]string, 0, len(txResult.Relays))
+			relaysPerTx[txResult.TxHash] = append(relaysPerTx[txResult.TxHash], txResult.Relays...)
+			numReceived += len(txResult.Relays)
+
+			// Shutdown any living goroutine for this txHash
+			defer shutdownFn(txResult.TxHash, shutdownWaitChs, localAckAcceptTxChs)
+
+		case <-b.reactor.Quit():
+			err = errors.New("interrupted by shutdown process")
+			shutdownForError(transactions, shutdownWaitChs, localAckAcceptTxChs, err)
 			return
 		}
+	}
 
-		relaysPerTx[txResult.TxHash] = make([]string, 0, len(txResult.Relays))
-		relaysPerTx[txResult.TxHash] = append(relaysPerTx[txResult.TxHash], txResult.Relays...)
-		numReceived += len(txResult.Relays)
+	return
+}
 
-		// Shutdown any living goroutine for this txHash
-		defer shutdownFn(txResult.TxHash, shutdownWaitChs, remoteRelayTxChs)
+// WaitForRelaysReplicationCompleted waits for a number of syncing relays
+// to finalize replication requests. For this we use a combination of
+// the reactor's `runtimeUpdatesChs` which receives updates upon processing
+// ChainReplicatioComplete messages from peers, and a `localReplFinCh`
+// channel to process the messages.
+//
+// CAUTION: A chain replication may take hours to complete given a higher
+// number of blocks to synchronize with the network. Use accordingly.
+//
+// WaitForRelaysReplicationCompleted implements [server.Backend].
+func (b *MultiplexBackend) WaitForRelaysReplicationCompleted(
+	ctx context.Context,
+	syncingChainIds []string,
+	transactions ...client.Transaction,
+) (numCompleted int, err error) {
+	numCompleted = 0
+	transactionHashes := txHashesToHex(transactions...)
+
+	// Closed at the end of this method, when results are returned.
+	shutdownWaitChs := make(map[string]chan struct{}, len(syncingChainIds))
+
+	// Written on by [remoteRuntimeUpdatesConsumer] when it processes
+	// a relevant ChainReplicationComplete message from a relevant relay.
+	localReplFinChs := make(map[string]chan *mxp2p.ChainReplicationComplete, len(syncingChainIds))
+
+	// Written on by [multiplex.Reactor#Receive] when it intercepts
+	// a relevant ChainReplicationComplete message from a relay.
+	remoteReplFinChs := make(map[string]chan *mxp2p.ChainReplicationComplete, len(syncingChainIds))
+
+	// Written on by [remoteRuntimeUpdatesConsumer] when it errors, and also
+	// written on by [localRuntimeUpdatesConsumer] when it errors and when it
+	// is done processing (enough) replication completion messages.
+	asyncResultsCh := make(chan RuntimeUpdateResult, len(syncingChainIds))
+
+	for _, chainID := range syncingChainIds {
+		// Uses the relays that acknowledged the ChainReplicationRequest.
+		relevantRelayIds := b.GetReplResponsePeers(chainID)
+
+		b.logger.Debug("Waiting for completed replication from syncing relays",
+			"num_networks", len(relevantRelayIds),
+			"relay_ids", relevantRelayIds,
+			"chain_id", chainID,
+			"tx_hashes", transactionHashes,
+		)
+
+		// Used to permit expiration of context or forcing shutdown of goroutines.
+		shutdownWaitChs[chainID] = make(chan struct{}, 1)
+
+		// Used to share response message internally and forward the status
+		// to [localRuntimeUpdatesConsumer].
+		localReplFinChs[chainID] = make(chan *mxp2p.ChainReplicationComplete, len(relevantRelayIds))
+
+		// Used to intercept ChainReplicationComplete messages.
+		remoteReplFinChs[chainID] = b.reactor.ChannelForRuntimeUpdates(chainID)
+
+		// NOTE(midas): The order of execution of the following goroutines
+		// does not matter, because the local consumer reads messages that
+		// are issued by the remote consumer, i.e. if the local consumer is
+		// started first, it will lock its goroutine until consuming.
+
+		// Collects ChainReplicationComplete messages.
+		// Stopped on shutdownWaitCh.
+		go b.remoteRuntimeUpdatesConsumer(ctx,
+			chainID,                   // Accept response only for this ChainID
+			remoteReplFinChs[chainID], // Consuming this channel
+			localReplFinChs[chainID],  // Forwarding to local consumer
+			asyncResultsCh,
+			shutdownWaitChs[chainID],
+			transactions...,
+		)
+
+		// Collects localReplFinChs messages and create result object.
+		// Stopped on shutdownWaitCh.
+		go b.localRuntimeUpdatesConsumer(ctx,
+			relevantRelayIds,         // Wait for response only for these relays
+			chainID,                  // ... and for this ChainID
+			localReplFinChs[chainID], // Consuming this channel
+			asyncResultsCh,
+			shutdownWaitChs[chainID],
+			transactions...,
+		)
+	}
+
+	// Gracefully shutdown any living goroutines for a particular
+	// ChainID. This method is called in deferral process, once per ChainID.
+	shutdownFn := func(
+		chainID string,
+		shutdownChs map[string]chan struct{},
+		localFinChs map[string]chan *mxp2p.ChainReplicationComplete,
+	) {
+		if ch, ok := shutdownChs[chainID]; ok && ch != nil {
+			close(ch)
+		}
+
+		if ch, ok := localFinChs[chainID]; ok && ch != nil {
+			close(ch)
+		}
+
+		b.reactor.CloseRuntimeUpdatesChannel(chainID)
+
+		// TODO(midas): remove debug logs
+		b.logger.Debug("Stopped completed replications processor",
+			"chain_id", chainID,
+		)
+	}
+
+	// Cancels any remaining goroutine in case of error, we must iterate
+	// through all chains to make sure we shutdown all remaining goroutines.
+	shutdownForError := func(
+		chainIds []string,
+		shutdownChs map[string]chan struct{},
+		localFinChs map[string]chan *mxp2p.ChainReplicationComplete,
+		reasonErr error,
+	) {
+		for _, chainID := range chainIds {
+			shutdownFn(chainID, shutdownChs, localFinChs)
+		}
+
+		// TODO(midas): remove debug logs
+		b.logger.Error("Completed replications processor stopped with error",
+			"err", reasonErr,
+		)
+	}
+
+	// Waits until we have all required results (or errors).
+	for i := 0; i < len(syncingChainIds); i++ {
+		select {
+		case updateResult := <-asyncResultsCh: // Wait for one result (it doesn't matter which)
+			if updateResult.Error != nil {
+				// We stop waiting at first error that occurs.
+				err = updateResult.Error
+				shutdownForError(syncingChainIds, shutdownWaitChs, localReplFinChs, err)
+				return
+			}
+
+			numCompleted += len(updateResult.Relays)
+
+			// Shutdown any living goroutine for this ChainID
+			defer shutdownFn(updateResult.ChainID, shutdownWaitChs, localReplFinChs)
+
+		case <-b.reactor.Quit():
+			err = errors.New("interrupted by shutdown process")
+			shutdownForError(syncingChainIds, shutdownWaitChs, localReplFinChs, err)
+			return
+		}
 	}
 
 	return
@@ -1880,6 +2262,13 @@ func (b *MultiplexBackend) StartPrometheusServer() error {
 	return nil
 }
 
+// ----------------------------------------------------------------------------
+
+// remoteAckReplicationConsumer reacts to ChainReplicationResponse messages
+// about ChainIDs and proxies to localReplResCh.
+//
+// Note that remoteReplResCh is expected to be written on separately,
+// namely by [Reactor#Receive], when it intercepts a ChainReplicationResponse.
 func (b *MultiplexBackend) remoteAckReplicationConsumer(
 	ctx context.Context,
 	chainID string,
@@ -1887,7 +2276,10 @@ func (b *MultiplexBackend) remoteAckReplicationConsumer(
 	localReplResCh chan *mxp2p.ChainReplicationResponse,
 	resultsCh chan AckReplicationResult,
 	shutdownCh chan struct{},
+	transactions ...client.Transaction,
 ) {
+	transactionHashes := txHashesToHex(transactions...)
+
 	for {
 		select {
 		case res := <-remoteReplResCh:
@@ -1896,6 +2288,7 @@ func (b *MultiplexBackend) remoteAckReplicationConsumer(
 				// TODO(midas): remove debug logs
 				b.logger.Debug("CAUTION: Intercepted nil ChainReplicationResponse (channel closed early)",
 					"chain_id", chainID,
+					"tx_hashes", transactionHashes,
 				)
 				return
 			}
@@ -1903,6 +2296,7 @@ func (b *MultiplexBackend) remoteAckReplicationConsumer(
 			b.logger.Debug("Intercepted relevant ChainReplicationResponse",
 				"relay_id", res.NodeId,
 				"chain_id", res.ChainID,
+				"tx_hashes", transactionHashes,
 			)
 
 			localReplResCh <- res
@@ -1921,6 +2315,12 @@ func (b *MultiplexBackend) remoteAckReplicationConsumer(
 	}
 }
 
+// localAckReplicationConsumer reacts to internal updates on localReplResCh,
+// which are issued after parsing a ChainReplicationResponse message in method
+// remoteAckReplicationConsumer.
+//
+// Collects localReplResCh messages and creates a result object.
+// The resultsCh channel is also used to transmit errors when cancelled.
 func (b *MultiplexBackend) localAckReplicationConsumer(
 	ctx context.Context,
 	relevantRelays []string,
@@ -1928,19 +2328,25 @@ func (b *MultiplexBackend) localAckReplicationConsumer(
 	localReplResCh chan *mxp2p.ChainReplicationResponse,
 	resultsCh chan AckReplicationResult,
 	shutdownCh chan struct{},
+	transactions ...client.Transaction,
 ) {
 	relaysPerChain := make(map[string][]string, 1)
 	numExpected := len(relevantRelays)
 	numReceived := 0
+	transactionHashes := txHashesToHex(transactions...)
 
 	for {
 		select {
 		case res := <-localReplResCh:
-			// TODO(midas): remove debug logs
-			b.logger.Debug("Now processing chain replication response",
-				"relay_id", res.NodeId,
-				"chain_id", res.ChainID,
-			)
+			// In case of channel closing early.
+			if res == nil {
+				// TODO(midas): remove debug logs
+				b.logger.Debug("Intercepted nil ChainReplicationResponse (local channel closed)",
+					"chain_id", chainID,
+					"tx_hashes", transactionHashes,
+				)
+				return
+			}
 
 			relayId := res.NodeId
 			resChainID := res.ChainID
@@ -1964,6 +2370,7 @@ func (b *MultiplexBackend) localAckReplicationConsumer(
 				"chain_id", res.ChainID,
 				"num_rcvd", numReceived,
 				"num_expect", numExpected,
+				"tx_hashes", transactionHashes,
 			)
 
 			if numReceived >= numExpected {
@@ -1972,6 +2379,7 @@ func (b *MultiplexBackend) localAckReplicationConsumer(
 					"chain_id", resChainID,
 					"num_rcvd", numReceived,
 					"num_expect", numExpected,
+					"tx_hashes", transactionHashes,
 				)
 
 				// Result should contain only relevant transactions
@@ -2026,7 +2434,7 @@ func (b *MultiplexBackend) remoteAckTransactionConsumer(
 			// In case of channel closing early.
 			if ackResponse == nil {
 				// TODO(midas): remove debug logs
-				b.logger.Debug("CAUTION: Intercepted nil AckTransactionBroadcast",
+				b.logger.Debug("Intercepted nil AckTransactionBroadcast (remote channel closed)",
 					"consumer_tx", consumerTxHash,
 				)
 				return
@@ -2153,6 +2561,159 @@ func (b *MultiplexBackend) localAckTransactionConsumer(
 				"process timed out waiting for incoming ack messages for tx: %s", consumerTxHash)
 
 			resultsCh <- AckTransactionResult{Error: err}
+			return
+
+		case <-b.reactor.Quit():
+		case <-shutdownCh:
+			return
+		}
+	}
+}
+
+// remoteRuntimeUpdatesConsumer reacts to ChainReplicationComplete messages
+// about ChainIDs and proxies to localReplFinCh.
+//
+// Note that remoteReplFinCh is expected to be written on separately,
+// namely by [Reactor#Receive], when it intercepts a ChainReplicationComplete.
+func (b *MultiplexBackend) remoteRuntimeUpdatesConsumer(
+	ctx context.Context,
+	chainID string,
+	remoteReplFinCh chan *mxp2p.ChainReplicationComplete,
+	localReplFinCh chan *mxp2p.ChainReplicationComplete,
+	resultsCh chan RuntimeUpdateResult,
+	shutdownCh chan struct{},
+	transactions ...client.Transaction,
+) {
+	transactionHashes := txHashesToHex(transactions...)
+
+	for {
+		select {
+		case res := <-remoteReplFinCh:
+			// In case of channel closing early.
+			if res == nil {
+				// TODO(midas): remove debug logs
+				b.logger.Debug("Intercepted nil ChainReplicationComplete (remote channel closed)",
+					"chain_id", chainID,
+					"tx_hashes", transactionHashes,
+				)
+				return
+			}
+
+			b.logger.Debug("Intercepted relevant runtime status update (ChainReplicationComplete)",
+				"relay_id", res.NodeId,
+				"chain_id", res.ChainID,
+				"tx_hashes", transactionHashes,
+			)
+
+			localReplFinCh <- res
+
+		case <-ctx.Done():
+			err := fmt.Errorf(
+				"process timed out waiting for runtime status update for ChainID: %s", chainID)
+
+			resultsCh <- RuntimeUpdateResult{Error: err}
+			return
+
+		case <-b.reactor.Quit():
+		case <-shutdownCh:
+			return
+		}
+	}
+}
+
+// localRuntimeUpdatesConsumer reacts to internal updates on localReplFinCh,
+// which are issued after parsing a ChainReplicationComplete message in method
+// remoteRuntimeUpdatesConsumer.
+//
+// Collects localReplFinCh messages and creates a result object.
+// The resultsCh channel is also used to transmit errors when cancelled.
+func (b *MultiplexBackend) localRuntimeUpdatesConsumer(
+	ctx context.Context,
+	relevantRelays []string,
+	chainID string,
+	localReplFinCh chan *mxp2p.ChainReplicationComplete,
+	resultsCh chan RuntimeUpdateResult,
+	shutdownCh chan struct{},
+	transactions ...client.Transaction,
+) {
+	relaysPerChain := make(map[string][]string, 1)
+	numExpected := len(relevantRelays)
+	numReceived := 0
+
+	transactionHashes := txHashesToHex(transactions...)
+
+	for {
+		select {
+		case res := <-localReplFinCh:
+			// In case of channel closing early.
+			if res == nil {
+				// TODO(midas): remove debug logs
+				b.logger.Debug("Intercepted nil ChainReplicationComplete (local channel closed)",
+					"chain_id", chainID,
+					"tx_hashes", transactionHashes,
+				)
+				return
+			}
+
+			// TODO(midas): remove debug logs
+			b.logger.Debug("Now processing runtime status update (replication)",
+				"relay_id", res.NodeId,
+				"chain_id", res.ChainID,
+				"tx_hashes", transactionHashes,
+			)
+
+			relayId := res.NodeId
+			resChainID := res.ChainID
+
+			b.replCompleteMtx.RLock()
+			_, hasReplComplete := b.replCompleteRcvd[resChainID]
+			b.replCompleteMtx.RUnlock()
+
+			b.replCompleteMtx.Lock()
+			if !hasReplComplete {
+				b.replCompleteRcvd[resChainID] = make([]string, 0, numExpected)
+			}
+			b.replCompleteRcvd[resChainID] = append(b.replCompleteRcvd[resChainID], relayId)
+			b.replCompleteMtx.Unlock()
+
+			numReceived++
+
+			// TODO(midas): remove debug logs
+			b.logger.Debug("Done processing runtime status update",
+				"relay_id", res.NodeId,
+				"chain_id", res.ChainID,
+				"num_rcvd", numReceived,
+				"num_expect", numExpected,
+				"tx_hashes", transactionHashes,
+			)
+
+			if numReceived >= numExpected {
+				// TODO(midas): remove debug logs
+				b.logger.Debug("Processed enough ChainReplicationComplete",
+					"chain_id", resChainID,
+					"num_rcvd", numReceived,
+					"num_expect", numExpected,
+					"tx_hashes", transactionHashes,
+				)
+
+				// Result should contain only relevant transactions
+				b.replResponsesMtx.RLock()
+				relaysPerChain[resChainID] = make([]string, 0, len(b.replCompleteRcvd[resChainID]))
+				relaysPerChain[resChainID] = append(relaysPerChain[resChainID], b.replCompleteRcvd[resChainID]...)
+				b.replResponsesMtx.RUnlock()
+
+				resultsCh <- RuntimeUpdateResult{
+					Relays:  relaysPerChain[resChainID],
+					ChainID: resChainID,
+				}
+				return
+			}
+
+		case <-ctx.Done():
+			err := fmt.Errorf(
+				"process timed out waiting for runtime status updates for %s", chainID)
+
+			resultsCh <- RuntimeUpdateResult{Error: err}
 			return
 
 		case <-b.reactor.Quit():

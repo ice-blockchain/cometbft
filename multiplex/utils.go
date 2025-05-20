@@ -76,5 +76,5 @@ func chainIdsFromTransactions(
 		chainID := client.GetChainID(userAddress, tx.Fingerprint)
 		chainIds = append(chainIds, chainID)
 	}
-	return chainIds
+	return removeDuplicates(chainIds)
 }

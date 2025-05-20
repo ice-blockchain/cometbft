@@ -288,11 +288,17 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 		consensusState,
 		waitSync, // "waitSync"
 		cs.ReactorMetrics(consensusMetricsProvider),
+		cs.WithNodeKey(reactor.GetNodeKey()),
+		cs.WithRuntimeRegistry(reactor.GetRuntimeRegistry()),
 	)
 	consensusReactor.SetLogger(consensusLogger)
 	// services which will be publishing and/or subscribing for messages (events)
 	// consensusReactor will set it on consensusState and blockExecutor
 	consensusReactor.SetEventBus(eventBus)
+
+	// NOTE(midas): Set the switch instance early on so that the consensus
+	// reactor can respond with ChainReplicationComplete when necessary.
+	consensusReactor.SetSwitch(reactor.GetEventSwitchForCometBFT())
 
 	// Prepare registerable instances mapped to ChainID
 	reactor.RegisterService(ServiceKeyMempoolReactor, chainID, mempoolReactor)

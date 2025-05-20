@@ -9,6 +9,7 @@ import (
 	"time"
 
 	cmtcons "github.com/ice-blockchain/cometbft/api/cometbft/consensus/v1"
+	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
 	"github.com/ice-blockchain/cometbft/internal/bits"
 	cstypes "github.com/ice-blockchain/cometbft/internal/consensus/types"
 	cmtevents "github.com/ice-blockchain/cometbft/internal/events"
@@ -16,6 +17,7 @@ import (
 	cmtjson "github.com/ice-blockchain/cometbft/libs/json"
 	"github.com/ice-blockchain/cometbft/libs/log"
 	cmtsync "github.com/ice-blockchain/cometbft/libs/sync"
+	"github.com/ice-blockchain/cometbft/multiplex/server"
 	"github.com/ice-blockchain/cometbft/p2p"
 	sm "github.com/ice-blockchain/cometbft/state"
 	"github.com/ice-blockchain/cometbft/types"
@@ -41,7 +43,10 @@ const (
 type Reactor struct {
 	p2p.BaseReactor // BaseService + p2p.Switch
 
-	conS *State
+	conS    *State
+	nodeKey *p2p.NodeKey
+
+	runtimeRegistry *server.RuntimeRegistry
 
 	waitSync     atomic.Bool
 	eventBus     *types.EventBus
@@ -76,6 +81,24 @@ func NewReactor(consensusState *State, waitSync bool, options ...ReactorOption) 
 	}
 
 	return conR
+}
+
+// WithNodeKey is an option helper to inject a custom nodeKey.
+func WithNodeKey(
+	nodeKey *p2p.NodeKey,
+) func(*Reactor) {
+	return func(r *Reactor) {
+		r.nodeKey = nodeKey
+	}
+}
+
+// WithRuntimeRegistry is an option helper to inject a custom nodeKey.
+func WithRuntimeRegistry(
+	reg *server.RuntimeRegistry,
+) func(*Reactor) {
+	return func(r *Reactor) {
+		r.runtimeRegistry = reg
+	}
 }
 
 // GetState returns a pointer to the consensus state instance.
@@ -163,6 +186,69 @@ conR:
 %+v`, err, conR.conS, conR))
 		}
 	}
+
+	go conR.announceReplicationToPeers(state.ChainID)
+}
+
+// announceReplicationToPeers sends a ChainReplicationComplete message
+// to all peers we are connected to for chainID.
+func (conR *Reactor) announceReplicationToPeers(
+	chainID string,
+) {
+	sendReplCompleteToPeer := func(fromID p2p.ID, toPeer p2p.Peer) error {
+		if success := toPeer.Send(chainID, p2p.Envelope{
+			ChannelID: server.RuntimeChannel,
+			Message: &mxp2p.Message{
+				Sum: &mxp2p.Message_ChainReplicationComplete{
+					ChainReplicationComplete: &mxp2p.ChainReplicationComplete{
+						NodeId:  string(fromID),
+						ChainID: chainID,
+					},
+				},
+			},
+		}); !success {
+			return fmt.Errorf(
+				"could not send message to peer, sender: %s, recipient: %s",
+				string(fromID), string(toPeer.ID()))
+		}
+		return nil
+	}
+
+	myPeerID := conR.nodeKey.ID()
+	peerSet := conR.Switch.Peers(chainID)
+	peersToSend := peerSet.Copy()
+
+	// TODO(midas): remove debug logs
+	conR.Logger.Debug("Sending ChainReplicationComplete to peers",
+		"from_id", myPeerID,
+		"num_peers", len(peersToSend),
+		"peers", peersToSend,
+		"chain_id", chainID,
+	)
+
+	var wg sync.WaitGroup
+	wg.Add(peerSet.Size())
+
+	for _, peer := range peersToSend {
+		go func(peer p2p.Peer) {
+			defer wg.Done()
+
+			if err := sendReplCompleteToPeer(myPeerID, peer); err != nil {
+				conR.Logger.Error("Failed to send ChainReplicationComplete",
+					"chain_id", chainID,
+					"from", conR.nodeKey.ID(),
+					"to", peer.ID(),
+					"err", err,
+				)
+			}
+		}(peer)
+	}
+	wg.Wait()
+
+	// Completes the runtime activated in [multiplex.Reactor#Receive].
+	defer conR.runtimeRegistry.OnComplete(chainID)
+
+	return
 }
 
 // GetChannels implements Reactor.
