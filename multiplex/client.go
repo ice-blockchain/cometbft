@@ -269,6 +269,7 @@ func (c MultiplexClient) BroadcastTx(
 	// TODO(midas): remove debug logs
 	c.backend.GetLogger().Debug("Dialing healthy remote relays",
 		"num_relays", len(relaysWithoutSelf),
+		"relays", relaysWithoutSelf,
 		"tx_batch", transactionHashes)
 
 	discoveryWg := new(sync.WaitGroup)

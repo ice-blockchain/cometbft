@@ -56,15 +56,18 @@ func (b *MultiplexBackend) DefaultDiscoveryDialerRoutine() server.DiscoveryDiale
 		errorsCh chan<- server.RelayDialError,
 		logger cmtlog.Logger,
 	) {
+		// Get the discovery switch setup if not already done.
+		discoverySwitch := b.CreateOrLoadDiscoveryEventSwitch()
+
 		// Concurrently dial relays to enable ReplicationChannel messages.
 		// CheckDialCompatibleRelay opens connection for `DiscoveryPort`.
 		for _, relayAddr := range relays {
-			go func(addr *server.RelayAddress) {
+			go func(sw *p2p.Switch, addr *server.RelayAddress) {
 				defer waitGroup.Done()
 				startTz := time.Now()
 
 				// Uses the local P2P switch to dial a remote peer.
-				if err := b.CheckDialCompatibleRelay(ctx, addr); err != nil {
+				if err := b.CheckDialCompatibleRelay(ctx, sw, addr); err != nil {
 					errorsCh <- server.RelayDialError{
 						Addr:  addr,
 						Error: err,
@@ -78,7 +81,7 @@ func (b *MultiplexBackend) DefaultDiscoveryDialerRoutine() server.DiscoveryDiale
 					"relay", addr.String(),
 					"time", strconv.Itoa(int(durationMs))+"ms",
 				)
-			}(relayAddr)
+			}(discoverySwitch, relayAddr)
 		}
 	}
 }
@@ -317,32 +320,16 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 			)
 
 			for _, relayAddr := range relaysToDial {
-				peerAddr, err := relayAddr.NetAddressForCometBFT()
-				if err != nil {
+				// We need DiscoveryPort+1 to interact with CometBFT.
+				cometbftAddr, _ := server.NewRelayAddress(relayAddr.AddressForCometBFT())
+				if err := b.reactor.DialReplicationPartner(
+					cometbftSwitch,
+					cometbftAddr,
+					chainID,
+				); err != nil {
 					client.Error(notifyCh, fmt.Errorf(
 						"invalid cometbft relay address %s: %w", relayAddr.AddressForCometBFT(), err))
 					return
-				}
-
-				// Note that this events switch uses `DiscoveryPort+1`.
-				if err := cometbftSwitch.DialPeerWithAddressAndChainID(peerAddr, chainID); err != nil {
-					if b.reactor.IsDialError(err) {
-						client.Error(notifyCh, fmt.Errorf(
-							"could not dial relay %s: %w", relayAddr.AddressForCometBFT(), err))
-					} else {
-						// Not an error: peer already exists / duplicate.
-						// Manually add peers when the switch was already running.
-						dialedPeer := cometbftSwitch.UniquePeers().Get(peerAddr.ID)
-						if !dialedPeer.IsRunning() {
-							cometbftSwitch.StopPeerGracefully(dialedPeer)
-							if err = cometbftSwitch.DialPeerWithAddressAndChainID(peerAddr, chainID); err != nil {
-								if b.reactor.IsDialError(err) {
-									client.Error(notifyCh, fmt.Errorf(
-										"could not dial relay %s: %w", relayAddr.AddressForCometBFT(), err))
-								}
-							}
-						}
-					}
 				}
 			}
 		}

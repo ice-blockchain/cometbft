@@ -197,8 +197,10 @@ func TestMultiplexBackendCheckDialCompatibleRelayWithOnlySelfRelay(t *testing.T)
 	)
 	require.NoError(t, err)
 
+	sourceSwitch := backend.CreateOrLoadDiscoveryEventSwitch()
 	discoverErr := backend.CheckDialCompatibleRelay(
 		context.TODO(),
+		sourceSwitch,
 		testRelayAddr,
 	)
 
@@ -237,6 +239,7 @@ func TestMultiplexBackendCheckDialCompatibleRelayWithTwoRelays(t *testing.T) {
 	servers[1].MustStart()
 
 	// server 0 talks to server 1
+	sourceSwitch := servers[0].CreateOrLoadDiscoveryEventSwitch()
 	recipientReactor := servers[1].GetReactor()
 	recipientNodeID := string(recipientReactor.GetNodeKey().ID())
 
@@ -248,6 +251,7 @@ func TestMultiplexBackendCheckDialCompatibleRelayWithTwoRelays(t *testing.T) {
 
 	discoverErr := servers[0].CheckDialCompatibleRelay(
 		context.TODO(),
+		sourceSwitch,
 		testRelayAddr,
 	)
 
@@ -301,15 +305,10 @@ func TestMultiplexBackendCheckDialCompatibleRelaySevenCompatibleRelays(t *testin
 
 	// Test where RELAY_1 talks to RELAY_X
 	sourceSwitch := servers[0].CreateOrLoadDiscoveryEventSwitch()
-	sourceReactor := servers[0].GetReactor()
-	sourceRelayID := string(sourceReactor.GetNodeKey().ID())
 	for i := 1; i < len(servers); i++ {
-		recipientSwitch := servers[i].CreateOrLoadDiscoveryEventSwitch()
+		// recipientSwitch := servers[i].CreateOrLoadDiscoveryEventSwitch()
 		recipientReactor := servers[i].GetReactor()
 		recipientRelayID := string(recipientReactor.GetNodeKey().ID())
-
-		sourceSwitch.AddUnconditionalPeerIDs([]string{recipientRelayID})
-		recipientSwitch.AddUnconditionalPeerIDs([]string{sourceRelayID})
 
 		// Act - Relay 1 communicates with Relay X
 		testBroadcastPort := strconv.Itoa(50001 + (i * 100)) // 50101, 50201, etc.
@@ -320,6 +319,7 @@ func TestMultiplexBackendCheckDialCompatibleRelaySevenCompatibleRelays(t *testin
 
 		discoverErr := servers[0].CheckDialCompatibleRelay(
 			context.TODO(),
+			sourceSwitch,
 			testRelayAddr,
 		)
 

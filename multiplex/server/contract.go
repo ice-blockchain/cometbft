@@ -148,6 +148,7 @@ type Backend interface {
 	// and thereby defining whether a relay is compatible for dialing.
 	CheckDialCompatibleRelay(
 		ctx context.Context,
+		dialWithSw *p2p.Switch,
 		relayAddress *RelayAddress,
 	) error
 

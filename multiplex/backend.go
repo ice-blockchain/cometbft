@@ -1876,6 +1876,7 @@ func (b *MultiplexBackend) GetRelaysByNetwork(
 // CheckDialCompatibleRelay implements [server.Backend].
 func (b *MultiplexBackend) CheckDialCompatibleRelay(
 	_ context.Context,
+	dialWithSw *p2p.Switch,
 	relayAddr *server.RelayAddress,
 ) error {
 	// If this is us, nothing to do.
@@ -1898,11 +1899,7 @@ func (b *MultiplexBackend) CheckDialCompatibleRelay(
 			"invalid relay address %s: %w", relayAddr.String(), err)
 	}
 
-	// Note that this events switch uses `DiscoveryPort`.
-	discoverySwitch := b.CreateOrLoadDiscoveryEventSwitch()
-
-	// TODO(midas): add p2p.Switch#SyncDialPeerWithAddress()
-	if err := discoverySwitch.DialPeerWithAddress(relayDiscovery); err != nil {
+	if err := dialWithSw.DialPeerWithAddress(relayDiscovery); err != nil {
 		if b.reactor.IsDialError(err) {
 			return fmt.Errorf(
 				"could not dial relay %s for discovery: %w", relayAddr.String(), err)

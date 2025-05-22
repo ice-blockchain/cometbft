@@ -78,6 +78,7 @@ func TestMultiplexRoutinesNodeReplRequest(t *testing.T) {
 	useChainID := testChainIds[0]
 	require.Contains(t, testChainRelays, useChainID)
 
+	sourceSwitch := servers[0].CreateOrLoadDiscoveryEventSwitch()
 	testRemoteRelayAddrs := make([]*server.RelayAddress, 0, len(servers)-1)
 	for i := 1; i < len(servers); i++ {
 		// Initializes relay 1 discovery switch
@@ -95,6 +96,7 @@ func TestMultiplexRoutinesNodeReplRequest(t *testing.T) {
 
 		discoverErr := servers[0].CheckDialCompatibleRelay(
 			context.TODO(),
+			sourceSwitch,
 			testRelayAddr,
 		)
 		require.NoError(t, discoverErr) // NO error!

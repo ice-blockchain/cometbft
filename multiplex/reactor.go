@@ -1254,6 +1254,50 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 	}
 }
 
+// DialReplicationPartner uses dialWithSw to dial a relay using its address
+// partnerAddr. Importantly, it will dial the port as passed with partnerAddr.
+//
+// Upon receiving a duplicate or already dialed error, we initialize the
+// peer with reactors in case the switch was already running.
+func (r *Reactor) DialReplicationPartner(
+	dialWithSw *p2p.Switch,
+	partnerAddr *server.RelayAddress,
+	chainID string,
+) error {
+	// Parse the address into a NetAddress
+	peerAddr, err := partnerAddr.NetAddress()
+	if err != nil {
+		return fmt.Errorf(
+			"invalid cometbft relay address %s: %w", partnerAddr.String(), err)
+	}
+
+	// Storage/transports of switches are protected by networkMutex.
+	r.networkMutex.RLock()
+	defer r.networkMutex.RUnlock()
+
+	// Dial the peer for the given chainID
+	if err := dialWithSw.DialPeerWithAddressAndChainID(peerAddr, chainID); err != nil {
+		if !r.IsDialError(err) {
+			// Not an error, handling a duplicate or currently dialing.
+			// Manually add peers when the switch was already running.
+			dialedPeer := dialWithSw.Peers(chainID).Get(peerAddr.ID)
+			for _, reactor := range dialWithSw.Reactors(chainID) {
+				peerForReactor := reactor.InitPeer(dialedPeer)
+				reactor.AddPeer(peerForReactor)
+			}
+
+			err = nil
+		}
+
+		if err != nil {
+			return fmt.Errorf(
+				"could not dial relay %s: %w", peerAddr.DialString(), err)
+		}
+	}
+
+	return nil
+}
+
 // DialBackReplicationPartner dials sourcePeer using its' NetAddressForCometBFT,
 // i.e. `DiscoveryPort+1`.
 // In case the events switch is already running, we must also manually add the
@@ -1271,45 +1315,27 @@ func (r *Reactor) DialBackReplicationPartner(
 			"invalid source address %s: %w", sourcePeer.SocketAddr(), err)
 	}
 
+	// Replication messages are served on `DiscoveryPort`,
+	// but we need `DiscoveryPort+1` for CometBFT messages.
 	sourceAddr, err := server.NewRelayAddress(publicAddr.String())
 	if err != nil {
 		return fmt.Errorf(
 			"invalid source relay address %s: %w", publicAddr.String(), err)
 	}
 
-	// IMPORTANT:
-	//
-	// Finally, dial the relay to permit block-sync to start instantly.
-	// Note that NetAddressForCometBFT should contain `DiscoveryPort+1`.
-
 	// We need DiscoveryPort+1 to interact with CometBFT.
-	peerAddr, err := sourceAddr.NetAddressForCometBFT()
+	cometbftAddr, err := server.NewRelayAddress(sourceAddr.AddressForCometBFT())
 	if err != nil {
 		return fmt.Errorf(
 			"invalid cometbft relay address %s: %w", sourceAddr.AddressForCometBFT(), err)
 	}
 
 	r.networkMutex.RLock()
-	defer r.networkMutex.RUnlock()
-	if err := r.cometbftSwitch.DialPeerWithAddressAndChainID(peerAddr, chainID); err != nil {
-		if !r.IsDialError(err) {
-			// Manually add peers when the switch was already running.
-			dialedPeer := r.cometbftSwitch.Peers(chainID).Get(peerAddr.ID)
-			for _, reactor := range r.cometbftSwitch.Reactors(chainID) {
-				peerForReactor := reactor.InitPeer(dialedPeer)
-				reactor.AddPeer(peerForReactor)
-			}
+	cometbftSwitch := r.cometbftSwitch
+	r.networkMutex.RUnlock()
 
-			err = nil
-		}
-
-		if err != nil {
-			return fmt.Errorf(
-				"could not dial relay %s: %w", peerAddr.DialString(), err)
-		}
-	}
-
-	return nil
+	// Uses `DiscoveryPort+1`
+	return r.DialReplicationPartner(cometbftSwitch, cometbftAddr, chainID)
 }
 
 func (r *Reactor) IsDialError(err error) bool {
