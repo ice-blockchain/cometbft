@@ -105,6 +105,14 @@ type Backend interface {
 		transactions ...client.Transaction,
 	) (numCompleted int, err error)
 
+	// WaitForTransactionsEvents should wait for a number of transaction events
+	// to confirm that transactions got included.
+	WaitForTransactionsEvents(
+		ctx context.Context,
+		userAddress string,
+		transactions ...client.Transaction,
+	) (numCompleted int, err error)
+
 	// CancelBroadcastOperation should execute the CancelBroadcast routine
 	// and it should remove transactions from the local mempool.
 	CancelBroadcastOperation(

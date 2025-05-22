@@ -23,6 +23,10 @@ const (
 
 type OnIdleFn func(chainID string) error
 
+type Idleable interface {
+	OnIdle(chainID string) error
+}
+
 // RuntimeRegistry defines a registry for parallel node runtimes.
 type RuntimeRegistry struct {
 	service.BaseService
@@ -126,6 +130,7 @@ func (reg *RuntimeRegistry) OnStart() error {
 	reg.logger.Debug("Starting runtime registry",
 		"num_active", reg.NumRuntimes(),
 		"num_sleeping", reg.NumSleeping(),
+		"idle_after", reg.IdleDuration(),
 		"timer", reg.CleanerInterval(),
 	)
 

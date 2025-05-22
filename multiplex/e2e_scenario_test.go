@@ -7,8 +7,10 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2433,6 +2435,151 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	close(notifyCh3)
 }
 
+// Tests completion of remote chain replications (using new network),
+// and evaluates OnIdle calls which should automatically trigger when all
+// chain replications have been announce as being completed.
+func TestScenarioClientBroadcastRuntimeRegistryIntegration(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	numChains := 0
+	numRelays := 7
+
+	// Set a testable OnIdle callback on the first relay (testing locally).
+	var testOnIdleCalls atomic.Uint64
+	testOnIdleCallback := func(chainID string) error {
+		testOnIdleCalls.Add(1)
+		return nil
+	}
+
+	// To enable debug logs, change this indexes array to contain the indexes
+	// of the relays for which you want to activate full logging.
+	idxRelaysWithLogs := []int{} // e.g. []int{0, 1} for relay-1 and relay-2
+	servers, shutdownFn := ResetTestScenarioRelaysWithOptions(t, numChains, numRelays, idxRelaysWithLogs, [][]mx.MultiplexBackendOption{
+		[]mx.MultiplexBackendOption{
+			mx.WithRuntimeRegistryOptions(
+				server.RuntimeRegistryCleanerInterval(1*time.Second),   // run cleaner every sec
+				server.RuntimeRegistryIdleDuration(1*time.Millisecond), // 1ms means idle asap
+				server.RuntimeRegistryOnIdle(testOnIdleCallback),
+			),
+		}, // relay-1
+	})
+	defer shutdownFn(servers)
+
+	require.NotEmpty(t, servers)
+	require.Len(t, servers, numRelays)
+
+	// Note: relays includes self
+	relays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
+		servers,
+		2*time.Second,  // Time for backend
+		20*time.Second, // Time for broadcast
+	)
+
+	defer cancelCtxFn()
+
+	require.NotEmpty(t, relays)
+	require.NotNil(t, broadcastCtx)
+	require.Len(t, relays, numRelays)
+
+	// TEST 1:
+	// We execute a complete broadcast process using a new ChainID which should
+	// include the chain replications and thus the OnBroadcastComplete call
+	// should wait for the replications to be finalized
+
+	// Given some chains must be replicated by remote relays, we will have to
+	// wait for the completion of these before we can safely shutdown (idle)
+	// the active node runtime for this ChainID.
+	numChainReplications := numRelays - 1 // -self
+
+	// Separate goroutine for client broadcast process
+	numTransactions := 1
+	testChainID1 := makeChainID("test-chain-1")
+	notifyCh1 := make(chan client.BroadcastStatus)
+
+	go clientBroadcastTx(t,
+		broadcastCtx,
+		servers[0],
+		relays,
+		testChainID1,
+		numTransactions,
+		notifyCh1,
+	)
+
+	// Blocks the main thread until we consume from notifyCh1.
+	resultStatusMsg := waitForClientBroadcastStatus(t,
+		broadcastCtx,
+		testChainID1,
+		notifyCh1,
+	)
+	assert.NotNil(t, resultStatusMsg)
+	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
+	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+	close(notifyCh1)
+
+	// Test that the node runtime has been activated. Since we include 6 replications,
+	// it will take more time for the backend to proceed to calling the OnComplete
+	// method, because it shall wait for all replications to be complete.
+	testRuntimeRegistry := servers[0].GetRuntimeRegistry()
+	expectedNumRuntimes := uint64(1) // test-chain-1
+	actualNumRuntimes := testRuntimeRegistry.NumRuntimes()
+	assert.Equal(t, expectedNumRuntimes, actualNumRuntimes)
+
+	waitDuration := 20 * time.Second
+	t.Logf("Waiting %.0fsec for %d replications then OnIdle...", waitDuration.Seconds(), numChainReplications)
+	time.Sleep(waitDuration)
+
+	// Test that OnIdle was called (through OnBroadcastComplete)
+	expectedNumOnIdleCalls := uint64(1) // test-chain-1
+	assert.Equal(t, expectedNumOnIdleCalls, testOnIdleCalls.Load())
+
+	/////// RESET TESTS STATE
+	testOnIdleCalls.Store(uint64(0))
+
+	// TEST 2:
+	// We execute another complete broadcast process using the previous ChainID
+	// which should NOT include the chain replications and thus the OnBroadcastComplete
+	// call should execute right after broadcast is complete.
+
+	secondTimeoutAfter := 20 * time.Second // Time for broadcast
+	secondBroadcastCtx, secondCancelCtxFn := context.WithTimeout(context.TODO(), secondTimeoutAfter)
+	defer secondCancelCtxFn()
+
+	numTransactions = 1
+	notifyCh2 := make(chan client.BroadcastStatus)
+
+	// Separate goroutine for client broadcast process
+	go clientBroadcastTx(t,
+		secondBroadcastCtx,
+		servers[0],
+		relays,
+		testChainID1, // existing ChainID (0 ChainReplicationRequest)
+		numTransactions,
+		notifyCh2,
+	)
+
+	// Blocks the main thread until we consume from notifyCh2.
+	resultStatusMsg = waitForClientBroadcastStatus(t,
+		secondBroadcastCtx,
+		testChainID1,
+		notifyCh2,
+	)
+	assert.NotNil(t, resultStatusMsg)
+	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
+	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+	close(notifyCh2)
+
+	waitDuration = 10 * time.Second
+	t.Logf("Waiting %.0fsec before evaluating OnIdle calls...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
+
+	// Test that OnIdle was called (through OnBroadcastComplete)
+	expectedNumOnIdleCalls = uint64(1) // test-chain-1
+	assert.Equal(t, expectedNumOnIdleCalls, testOnIdleCalls.Load())
+}
+
+// ----------------------------------------------------------------------------
+// CONCURRENT Broadcast Tests
+
 // With a list of empty relays, a ChainReplicationRequest must be sent,
 // and a response is expected before sharing transactions using a message
 // on mempool channel, to which the relays respond with a Ack message
@@ -2997,13 +3144,50 @@ func TestScenarioLegacyBroadcastSevenHealthyRelays(t *testing.T) {
 // ----------------------------------------------------------------------------
 // Helpers
 
+func ResetTestScenarioRelaysWithOptions(
+	tb testing.TB,
+	numChains int,
+	numRelays int,
+	idxRelaysWithLogs []int,
+	backendOptionsPerRelay [][]mx.MultiplexBackendOption,
+) ([]*mx.MultiplexBackend, func([]*mx.MultiplexBackend)) {
+	tb.Helper()
+	withLogger := cmtlog.NewNopLogger()
+	if len(idxRelaysWithLogs) > 0 {
+		withLogger = cmtlog.TestingLogger()
+	}
+	return ResetTestScenarioRelays(tb,
+		numChains,
+		numRelays,
+		withLogger,
+		idxRelaysWithLogs,
+		backendOptionsPerRelay,
+	)
+}
+
+func ResetTestScenarioRelaysWithSomeLogs(
+	tb testing.TB,
+	numChains int,
+	numRelays int,
+	idxRelaysWithLogs []int,
+) ([]*mx.MultiplexBackend, func([]*mx.MultiplexBackend)) {
+	tb.Helper()
+	if len(idxRelaysWithLogs) == numRelays {
+		return ResetTestScenarioRelaysWithLogs(tb, numChains, numRelays)
+	}
+
+	backendOpts := makeEmptyBackendOptions(numRelays)
+	return ResetTestScenarioRelays(tb, numChains, numRelays, cmtlog.TestingLogger(), idxRelaysWithLogs, backendOpts)
+}
+
 func ResetTestScenarioRelaysWithLogs(
 	tb testing.TB,
 	numChains int,
 	numRelays int,
 ) ([]*mx.MultiplexBackend, func([]*mx.MultiplexBackend)) {
 	tb.Helper()
-	return ResetTestScenarioRelays(tb, numChains, numRelays, cmtlog.TestingLogger())
+	backendOpts := makeEmptyBackendOptions(numRelays)
+	return ResetTestScenarioRelays(tb, numChains, numRelays, cmtlog.TestingLogger(), []int{}, backendOpts)
 }
 
 func ResetTestScenarioRelaysWithoutLogs(
@@ -3012,7 +3196,8 @@ func ResetTestScenarioRelaysWithoutLogs(
 	numRelays int,
 ) ([]*mx.MultiplexBackend, func([]*mx.MultiplexBackend)) {
 	tb.Helper()
-	return ResetTestScenarioRelays(tb, numChains, numRelays, cmtlog.NewNopLogger())
+	backendOpts := makeEmptyBackendOptions(numRelays)
+	return ResetTestScenarioRelays(tb, numChains, numRelays, cmtlog.NewNopLogger(), []int{}, backendOpts)
 }
 
 // Initializes numChains on a number of relays. This helper returns a list of
@@ -3022,21 +3207,30 @@ func ResetTestScenarioRelays(
 	numChains int,
 	numRelays int,
 	withLogger cmtlog.Logger,
+	idxRelaysWithLogs []int,
+	backendOptionsPerRelay [][]mx.MultiplexBackendOption,
 ) ([]*mx.MultiplexBackend, func([]*mx.MultiplexBackend)) {
 	tb.Helper()
 
 	// For debug, change the loggers to cmtlog.TestingLogger()
 	customLoggers := make([]cmtlog.Logger, numRelays)
 	for i := 0; i < numRelays; i++ {
-		customLoggers[i] = withLogger.With("process", "relay-"+strconv.Itoa(i+1))
+		if len(idxRelaysWithLogs) == 0 {
+			customLoggers[i] = withLogger.With("process", "relay-"+strconv.Itoa(i+1))
+		} else if slices.Contains(idxRelaysWithLogs, i) {
+			customLoggers[i] = withLogger.With("process", "relay-"+strconv.Itoa(i+1))
+		} else {
+			customLoggers[i] = cmtlog.NewNopLogger()
+		}
 	}
 
 	// Uses config.TestConfig() and random MultiplexConfig
 	rootDirs,
-		servers := ResetTestMultiplexBackendCompatibleRelays(
+		servers := ResetTestMultiplexBackendCompatibleRelaysWithOptions(
 		tb,
 		numChains,
 		numRelays,
+		backendOptionsPerRelay,
 		customLoggers...,
 	)
 	require.NotEmpty(tb, servers)

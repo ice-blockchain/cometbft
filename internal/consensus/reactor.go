@@ -46,7 +46,8 @@ type Reactor struct {
 	conS    *State
 	nodeKey *p2p.NodeKey
 
-	runtimeRegistry *server.RuntimeRegistry
+	msgStatusToPeers atomic.Bool
+	runtimeRegistry  *server.RuntimeRegistry
 
 	waitSync     atomic.Bool
 	eventBus     *types.EventBus
@@ -80,6 +81,7 @@ func NewReactor(consensusState *State, waitSync bool, options ...ReactorOption) 
 		option(conR)
 	}
 
+	conR.msgStatusToPeers.Store(false)
 	return conR
 }
 
@@ -99,6 +101,11 @@ func WithRuntimeRegistry(
 	return func(r *Reactor) {
 		r.runtimeRegistry = reg
 	}
+}
+
+// SetSendStatusToPeer updates the atomic value of msgStatusToPeers bool.
+func (conR *Reactor) SetSendStatusToPeer(b bool) {
+	conR.msgStatusToPeers.Swap(b)
 }
 
 // GetState returns a pointer to the consensus state instance.
@@ -187,7 +194,9 @@ conR:
 		}
 	}
 
-	go conR.announceReplicationToPeers(state.ChainID)
+	if conR.msgStatusToPeers.Load() {
+		go conR.announceReplicationToPeers(state.ChainID)
+	}
 }
 
 // announceReplicationToPeers sends a ChainReplicationComplete message

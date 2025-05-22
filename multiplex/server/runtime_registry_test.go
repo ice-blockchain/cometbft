@@ -183,6 +183,9 @@ func TestMultiplexServerRuntimeRegistryStartStop(t *testing.T) {
 	assert.Empty(t, actualRuntimes)
 	assert.Equal(t, uint64(0), actualNumRuntimes)
 	assert.Equal(t, uint64(0), actualNumSleeping)
+
+	expectedNumIdleCalls := uint64(2) // test-chain-1 & test-chain-2
+	assert.Equal(t, expectedNumIdleCalls, OnIdleCalls.Load())
 }
 
 func TestMultiplexServerRuntimeRegistryReset(t *testing.T) {

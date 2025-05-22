@@ -316,6 +316,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 func (reactor *Reactor) StartConsensusInstanceReactors(
 	ctx context.Context,
 	chainID string,
+	sendStatusToPeers bool,
 ) error {
 	servicesProvider := reactor.GetServicesProvider()
 
@@ -343,6 +344,10 @@ func (reactor *Reactor) StartConsensusInstanceReactors(
 		ServiceKeyConsensusReactor,
 		chainID,
 	).(*cs.Reactor); ok && !consensusReactor.IsRunning() {
+		// Given sendStatusToPeers, we should send completion updates to
+		// all consensus peers, i.e. send a ChainReplicationComplete msg.
+		consensusReactor.SetSendStatusToPeer(sendStatusToPeers)
+
 		if err := consensusReactor.Start(); err != nil {
 			return fmt.Errorf(
 				"error starting consensus reactor: %w", err)

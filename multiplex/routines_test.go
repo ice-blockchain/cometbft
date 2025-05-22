@@ -114,7 +114,7 @@ func TestMultiplexRoutinesNodeReplRequest(t *testing.T) {
 		testCatchupRelays[useChainID],
 		useChainID,
 		make(chan<- client.BroadcastStatus),
-		servers[0].GetLogger().With("tx_hashes", "test-no-txes"),
+		servers[0].GetLogger().With("tx_batch", "test-no-txes"),
 	)
 
 	// Test that ChainReplicationRequest was sent to relay 2

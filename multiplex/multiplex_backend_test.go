@@ -18,6 +18,15 @@ import (
 	sm "github.com/ice-blockchain/cometbft/state"
 )
 
+func makeEmptyBackendOptions(numRelays int) [][]mx.MultiplexBackendOption {
+	opts := make([][]mx.MultiplexBackendOption, numRelays)
+	for i := 0; i < numRelays; i++ {
+		opts[i] = []mx.MultiplexBackendOption{}
+	}
+
+	return opts
+}
+
 func closeAndRemoveAll(tb testing.TB, rootDir string, server *mx.MultiplexBackend) {
 	tb.Helper()
 
@@ -634,17 +643,14 @@ func ResetTestMultiplexBackendTwoInParallel(
 	}
 }
 
-// CAUTION: This helper uses a random multiplex config on multiple relays.
-func ResetTestMultiplexBackendCompatibleRelays(
+func ResetTestMultiplexBackendCompatibleRelaysWithOptions(
 	tb testing.TB,
 	numChains int,
 	numRelays int,
+	backendOptionsPerRelay [][]mx.MultiplexBackendOption,
 	customLoggers ...cmtlog.Logger,
 ) ([]string, []*mx.MultiplexBackend) {
 	tb.Helper()
-
-	require.Len(tb, customLoggers, numRelays,
-		"count of loggers passed should be equal numRelays")
 
 	rootDirs := make([]string, numRelays)
 	backends := make([]*mx.MultiplexBackend, numRelays)
@@ -663,10 +669,16 @@ func ResetTestMultiplexBackendCompatibleRelays(
 		globalCfgRelay1.ChainSeeds[chainID] = ""
 	}
 
+	emptyBackendOpts := makeEmptyBackendOptions(numRelays)[0]
+	relayBackendOpts := emptyBackendOpts
+	if len(backendOptionsPerRelay) > 0 {
+		relayBackendOpts = backendOptionsPerRelay[0]
+	}
 	serverRelay1, err := mx.NewServer(
 		&client.DefaultAcceptor{},
 		globalCfgRelay1,
 		customLoggers[0],
+		relayBackendOpts...,
 	)
 	require.NoError(tb, err, "should create first server instance")
 
@@ -690,10 +702,91 @@ func ResetTestMultiplexBackendCompatibleRelays(
 			globalCfgRelayX.ChainSeeds[chainID] = ""
 		}
 
+		relayBackendOpts := emptyBackendOpts
+		if len(backendOptionsPerRelay) > r {
+			relayBackendOpts = backendOptionsPerRelay[r]
+		}
 		serverRelayX, err := mx.NewServer(
 			&client.DefaultAcceptor{},
 			globalCfgRelayX,
 			customLoggers[r],
+			relayBackendOpts...,
+		)
+		require.NoError(tb, err, "should create another server instance with cursor at "+strconv.Itoa(r))
+
+		rootDirs[r] = rootDirRelayX
+		backends[r] = serverRelayX
+	}
+
+	return rootDirs, backends
+}
+
+// CAUTION: This helper uses a random multiplex config on multiple relays.
+func ResetTestMultiplexBackendCompatibleRelays(
+	tb testing.TB,
+	numChains int,
+	numRelays int,
+	customLoggers ...cmtlog.Logger,
+) ([]string, []*mx.MultiplexBackend) {
+	tb.Helper()
+
+	require.Len(tb, customLoggers, numRelays,
+		"count of loggers passed should be equal numRelays")
+
+	rootDirs := make([]string, numRelays)
+	backends := make([]*mx.MultiplexBackend, numRelays)
+
+	backendOptionsPerRelay := makeEmptyBackendOptions(numRelays)
+
+	// The first relay is configured with a RANDOM multiplex config.
+	rootDirRelay1,
+		globalCfgRelay1 := ResetTestMultiplexNodeWithRootDirAndPorts(
+		tb,
+		numChains,
+		tb.Name()+"-1", // rootDir
+		50001,
+	)
+
+	// Seeds must be valid (or empty), otherwise dialing will fail
+	for chainID := range globalCfgRelay1.ChainSeeds {
+		globalCfgRelay1.ChainSeeds[chainID] = ""
+	}
+
+	relayBackendOpts := backendOptionsPerRelay[0]
+	serverRelay1, err := mx.NewServer(
+		&client.DefaultAcceptor{},
+		globalCfgRelay1,
+		customLoggers[0],
+		relayBackendOpts...,
+	)
+	require.NoError(tb, err, "should create first server instance")
+
+	rootDirs[0] = rootDirRelay1
+	backends[0] = serverRelay1
+
+	for r := 1; r < numRelays; r++ {
+		// Uses config.TestConfig() and copy MultiplexConfig
+		rootDirRelayX,
+			globalCfgRelayX := ResetTestMultiplexNodeWithConfigAndPorts(
+			tb,
+			tb.Name()+"-"+strconv.Itoa(r+1), // rootDir
+			"_"+strconv.Itoa(r+1),           // metricsSuffix
+			globalCfgRelay1.MultiplexConfig,
+			uint16(50001+(r*100)), // 50101, 50201, 50301, 50401
+			true,                  // create new temp root dir
+		)
+
+		// Seeds must be valid (or empty), otherwise dialing will fail
+		for chainID := range globalCfgRelayX.ChainSeeds {
+			globalCfgRelayX.ChainSeeds[chainID] = ""
+		}
+
+		relayBackendOpts := backendOptionsPerRelay[r]
+		serverRelayX, err := mx.NewServer(
+			&client.DefaultAcceptor{},
+			globalCfgRelayX,
+			customLoggers[r],
+			relayBackendOpts...,
 		)
 		require.NoError(tb, err, "should create another server instance with cursor at "+strconv.Itoa(r))
 

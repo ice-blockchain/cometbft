@@ -299,7 +299,11 @@ func (info *MultiNetworkNodeInfo) GetNodeInfo(chainID string) (p2p.DefaultNodeIn
 			evidence.EvidenceChannel,
 			statesync.SnapshotChannel, statesync.ChunkChannel,
 			pex.PexChannel,
+
+			// AckBroadcastChannel may be used to send AckTransactionBroadcast messages.
 			server.AckBroadcastChannel,
+			// RuntimeChannel may be used to send ChainReplicationComplete messages.
+			server.RuntimeChannel,
 		},
 		Moniker: info.Moniker,
 		Other:   info.Other,

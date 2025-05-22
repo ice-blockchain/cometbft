@@ -28,6 +28,7 @@ import (
 	rpcserver "github.com/ice-blockchain/cometbft/rpc/jsonrpc/server"
 	sm "github.com/ice-blockchain/cometbft/state"
 	"github.com/ice-blockchain/cometbft/state/txindex"
+	"github.com/ice-blockchain/cometbft/types"
 	cmttime "github.com/ice-blockchain/cometbft/types/time"
 	"github.com/rs/cors"
 
@@ -45,6 +46,12 @@ const (
 
 	// Network requests timeout configuration, e.g. [GetRemoteRelayInfo].
 	DefaultRequestTimeout = 2 * time.Second
+
+	// Transaction events timeout configuration. This duration defines the
+	// maximum waiting time for transactions to appear in our indexer.
+	// Used as a failsafe to stop [WaitForTransactionEvents] from waiting
+	// for transactions forever upon completion of broadcast operations.
+	DefaultTransactionTimeout = 60 * time.Second
 )
 
 // Assert that our implementation satisfies the [server.Backend] interface.
@@ -86,6 +93,18 @@ type RuntimeUpdateResult struct {
 	Error error
 }
 
+// TransactionEventResult describes a transaction event result.
+// Used by [MultiplexBackend#WaitForTransactionsEvents].
+type TransactionEventResult struct {
+	// Contains transaction hashes in hex format for transactions
+	// which have been included in a block on ChainID.
+	TxHashes []string
+	ChainID  string
+
+	// May contain an error
+	Error error
+}
+
 // ----------------------------------------------------------------------------
 // MultiplexBackend defines a multiplex backend adapter implementation
 //
@@ -102,7 +121,8 @@ type MultiplexBackend struct {
 
 	// The multiplex reactor is used to find ChainID, last block heights,
 	// and to retrieve the AddrBook and connect to unknown relays.
-	reactor      *Reactor
+	reactor *Reactor
+
 	eventSwitch  *p2p.Switch
 	rpcListeners []net.Listener
 	httpServers  []*http.Server
@@ -115,8 +135,13 @@ type MultiplexBackend struct {
 	cometbftRPCAddr *p2p.NetAddress // CometBFT RPC  (:dp+2)
 	prometheusAddr  *p2p.NetAddress // Prometheus (:dp+3)
 
-	// Defines the duration for network requests to timeout
+	// Defines the duration for network requests to timeout.
+	// Used in [MultiplexBackend#GetRemoteRelayInfo].
 	requestTimeout time.Duration
+
+	// Defines the duration for timeout of transaction completion.
+	// Used in [MultiplexBackend#WaitForTransactionEvents]
+	transactionTimeout time.Duration
 
 	// An acceptor implementation to which transactions will be forwarded.
 	acceptor client.Acceptor
@@ -146,6 +171,8 @@ type MultiplexBackend struct {
 	shutdownCh chan struct{}
 	metrics    *Metrics
 }
+
+type MultiplexBackendOption func(*MultiplexBackend)
 
 // WithRoutines is an option helper to overwrite the [server.Jobs] instance.
 func WithRoutines(jobs *server.Jobs) func(*MultiplexBackend) {
@@ -177,6 +204,21 @@ func WithRequestTimeout(t time.Duration) func(*MultiplexBackend) {
 	}
 }
 
+// WithTransactionTimeout is an option helper to inject a custom timeout duration.
+func WithTransactionTimeout(t time.Duration) func(*MultiplexBackend) {
+	return func(b *MultiplexBackend) {
+		b.transactionTimeout = t
+	}
+}
+
+// WithRuntimeRegistryOptions is an option helper to inject custom options in the
+// reactor's [RuntimeRegistry] just after its instance is created.
+func WithRuntimeRegistryOptions(regOpts ...server.RuntimeRegistryOption) func(*MultiplexBackend) {
+	return func(b *MultiplexBackend) {
+		b.reactor.SetRuntimeRegistryOptions(regOpts...)
+	}
+}
+
 // NewServer initializes a new [MultiplexBackend] around an empty multiplex
 // configuration and prepares the node backend by starting the reactor and
 // configuring the necessary node services, i.e. event bus, mempool, etc.
@@ -185,12 +227,15 @@ func WithRequestTimeout(t time.Duration) func(*MultiplexBackend) {
 // and individual [node.Node] instances can be retrieved using the reactor's
 // services registry: [Reactor#GetServiceProvider].
 //
+// The added reactorOptions slices permits to inject custom option helper
+// calls in the [NewReactor] method.
+//
 // See also: [NewNodesMultiplex]
 func NewServer(
 	impl client.Acceptor,
 	nodeConfig *config.Config,
 	nodeLogger cmtlog.Logger,
-	options ...func(*MultiplexBackend),
+	options ...MultiplexBackendOption,
 ) (*MultiplexBackend, error) {
 	// Force to create blocks only if there is transactions.
 	nodeConfig.Consensus.CreateEmptyBlocks = false
@@ -229,6 +274,10 @@ func NewServer(
 
 	if server.requestTimeout == 0 {
 		server.requestTimeout = DefaultRequestTimeout
+	}
+
+	if server.transactionTimeout == 0 {
+		server.transactionTimeout = DefaultTransactionTimeout
 	}
 
 	if server.metrics != nil {
@@ -513,6 +562,14 @@ func (b *MultiplexBackend) MustStart() {
 		"id", b.reactor.GetNodeKey().ID(),
 	)
 
+	// Before anything else, start the runtimes registry
+	b.reactor.runtimesMutex.Lock()
+	if err := b.reactor.runtimeRegistry.Start(); err != nil {
+		b.logger.Error(
+			"Error starting the runtimes registry (idle-manager)", "err", err)
+	}
+	b.reactor.runtimesMutex.Unlock()
+
 	// We use a wait group to block the process until the transport
 	// and p2p switches are created and until we start listening.
 	var wg sync.WaitGroup
@@ -677,6 +734,16 @@ func (b *MultiplexBackend) Close() error {
 		}
 	}
 
+	// Stop the runtimes registry
+	b.reactor.runtimesMutex.Lock()
+	if b.reactor.runtimeRegistry != nil && b.reactor.runtimeRegistry.IsRunning() {
+		if err := b.reactor.runtimeRegistry.Stop(); err != nil {
+			b.reactor.logger.Error(
+				"Error stopping the runtimes registry (idle-manager)", "err", err)
+		}
+	}
+	b.reactor.runtimesMutex.Unlock()
+
 	if b.reactor != nil {
 		// Must stop the node backend
 		b.reactor.Stop()
@@ -718,7 +785,7 @@ func (b *MultiplexBackend) OnBroadcastError(
 	b.logger.Debug("Node runtimes will be marked as completed with error",
 		"num_networks", len(relevantChainIds),
 		"chain_ids", relevantChainIds,
-		"tx_hashes", transactionHashes,
+		"tx_batch", transactionHashes,
 		"err", reason,
 	)
 
@@ -748,6 +815,7 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 	// Track active runtimes and relax some resources with idle manager.
 	relevantChainIds := chainIdsFromTransactions(userAddress, transactions...)
 	transactionHashes := txHashesToHex(transactions...)
+	transactionsByChain := mapTransactionsByChainID(userAddress, transactions...)
 
 	syncingPeersChainIds := []string{}
 	totalNumReplications := 0
@@ -773,7 +841,7 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 		"num_remotes", len(remoteRelays),
 		"num_waiting", len(syncingPeersChainIds),
 		"num_syncing", totalNumReplications,
-		"tx_hashes", transactionHashes,
+		"tx_batch", transactionHashes,
 	)
 
 	// If any replication (sync) is in progress for one of the relevant
@@ -783,22 +851,26 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 		b.logger.Debug("Delaying the idle manager until relays have caught up",
 			"num_networks", len(syncingPeersChainIds),
 			"chain_ids", syncingPeersChainIds,
-			"tx_hashes", transactionHashes,
+			"tx_batch", transactionHashes,
 		)
 
 		// Wait for the syncing relays to announce a ChainReplicationComplete.
-		go func(syncingChainIds []string) {
+		go func(withReg *server.RuntimeRegistry, syncingChainIds []string) {
 			// Upon completion or error, we may plan to idle the active runtime.
 			defer func() {
 				for _, chainID := range syncingChainIds {
-					b.GetRuntimeRegistry().OnComplete(chainID)
+					withReg.OnComplete(chainID)
 				}
 			}()
 
 			// TODO(midas): add timeout here to avoid running forever.
 
 			// This goroutine will be locked until relevant relays are done with replication
-			if numCompleted, err := b.WaitForRelaysReplicationCompleted(ctx,
+			var (
+				numCompleted int
+				err          error
+			)
+			if numCompleted, err = b.WaitForRelaysReplicationCompleted(ctx,
 				syncingChainIds,
 				transactions...,
 			); err != nil {
@@ -806,7 +878,7 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 					"num_networks", len(syncingChainIds),
 					"num_completed", numCompleted,
 					"chain_ids", syncingChainIds,
-					"tx_hashes", transactionHashes,
+					"tx_batch", transactionHashes,
 				)
 				return
 			}
@@ -814,32 +886,36 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 			// TODO(midas): remove debug logs
 			b.logger.Debug("All relays have caught up and completed chain replications",
 				"num_networks", len(syncingChainIds),
+				"num_synced", numCompleted,
 				"chain_ids", syncingChainIds,
-				"tx_hashes", transactionHashes,
+				"tx_batch", transactionHashes,
 			)
-		}(syncingPeersChainIds)
+		}(b.GetRuntimeRegistry(), syncingPeersChainIds)
 	}
 
 	// All other relays participated in consensus, thus transactions for
 	// these ChainID should have been indexed by now.
 	indexerProvider := b.reactor.GetServicesProvider()
 	completedChainIds := map[string]bool{}
+	transactionsNotFound := make([]client.Transaction, 0, len(transactions))
 	for _, chainID := range relevantChainIds {
-		txesPerChain := slices.DeleteFunc(transactions, func(tx client.Transaction) bool {
-			txChainID := chainIdsFromTransactions(userAddress, tx)[0]
-			return txChainID == chainID
-		})
+		txesPerChain := transactionsByChain[chainID]
 
 		for _, tx := range txesPerChain {
 			txChainID := chainIdsFromTransactions(userAddress, tx)[0]
 			indexerService := indexerProvider(ServiceKeyIndexers, txChainID).(*txindex.IndexerService)
 
-			// TODO(midas): If the indexer does not have the transaction, what to do?
-			if _, err := indexerService.GetTxIndexer().Get(tx.Hash()); err != nil {
-				b.logger.Error("Failed to find indexed transaction for broadcast completion",
+			// First try to find transaction with tx indexer.
+			if idxTx, err := indexerService.GetTxIndexer().Get(
+				tx.Hash(),
+			); idxTx == nil || err != nil {
+				// Transaction is not yet indexed
+				b.logger.Debug("Failed to find indexed transaction (not an error)",
 					"chain_id", txChainID,
 					"tx_hash", txHashesToHex(tx)[0],
 				)
+				transactionsNotFound = append(transactionsNotFound, tx)
+				continue
 			}
 
 			if _, ok := completedChainIds[txChainID]; !ok {
@@ -849,18 +925,72 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 		}
 	}
 
+	// If any transaction is still missing (not indexed), we must wait for
+	// it to be included in a block, before we may idle.
+	if len(transactionsNotFound) > 0 {
+		// TODO(midas): remove debug logs
+		b.logger.Debug("Delaying the idle manager until transactions are included",
+			"num_waiting", len(transactionsNotFound),
+			"waiting_tx", txHashesToHex(transactionsNotFound...),
+			"tx_batch", transactionHashes,
+		)
+
+		// Wait for the transaction to be announced (indexed locally).
+		go func(withReg *server.RuntimeRegistry, txesWaiting []client.Transaction) {
+			// Upon completion or error, we may plan to idle the active runtime.
+			defer func() {
+				waitingChainIds := chainIdsFromTransactions(userAddress, txesWaiting...)
+				for _, chainID := range waitingChainIds {
+					withReg.OnComplete(chainID)
+				}
+			}()
+
+			// This goroutine will be locked until all waiting transactions are indexed.
+			//
+			// NOTE(midas): We use a fallback timeout of transactionTimeout to stop waiting
+			// in case some transactions take too long to be included in a block.
+			var (
+				numCompleted int
+				err          error
+			)
+			if numCompleted, err = b.WaitForTransactionsEvents(ctx,
+				userAddress,
+				txesWaiting...,
+			); err != nil {
+				b.logger.Error("Failed to wait for inclusion of transaction",
+					"num_waiting_tx", len(txesWaiting),
+					"waiting_txes", txHashesToHex(txesWaiting...),
+					"num_completed", numCompleted,
+					"tx_batch", transactionHashes,
+				)
+				return
+			}
+
+			// TODO(midas): remove debug logs
+			b.logger.Debug("All transactions have been included",
+				"num_waiting_tx", len(txesWaiting),
+				"num_completed", numCompleted,
+				"tx_batch", transactionHashes,
+			)
+		}(b.GetRuntimeRegistry(), transactionsNotFound)
+	}
+
 	msgSuccess := "Consensus instance completed"
 	if len(syncingPeersChainIds) > 0 {
 		msgSuccess += " - some relays are replicating in background"
+	}
+	if len(transactionsNotFound) > 0 {
+		msgSuccess += " - some transactions have yet to be included"
 	}
 
 	// TODO(midas): remove debug logs
 	b.logger.Debug(msgSuccess,
 		"num_networks", len(relevantChainIds),
+		"num_remotes", len(remoteRelays),
 		"num_waiting", len(syncingPeersChainIds),
 		"num_syncing", totalNumReplications,
-		"num_remotes", len(remoteRelays),
-		"tx_hashes", transactionHashes,
+		"num_waiting_tx", len(transactionsNotFound),
+		"tx_batch", transactionHashes,
 	)
 
 	return nil
@@ -929,7 +1059,7 @@ func (b *MultiplexBackend) WaitForRelaysAckChainReplications(
 			"num_relevant", len(relevantRelayIds),
 			"relay_ids", relevantRelayIds,
 			"chain_id", chainID,
-			"tx_hashes", transactionHashes,
+			"tx_batch", transactionHashes,
 		)
 
 		// Used to permit expiration of context or forcing shutdown of goroutines.
@@ -976,6 +1106,7 @@ func (b *MultiplexBackend) WaitForRelaysAckChainReplications(
 		chainID string,
 		shutdownChs map[string]chan struct{},
 		localResChs map[string]chan *mxp2p.ChainReplicationResponse,
+		processErr error,
 	) {
 		if ch, ok := shutdownChs[chainID]; ok && ch != nil {
 			close(ch)
@@ -987,10 +1118,15 @@ func (b *MultiplexBackend) WaitForRelaysAckChainReplications(
 			close(ch)
 		}
 
+		msgStatus := ""
+		if processErr == nil {
+			msgStatus = " (SUCCESS)"
+		}
+
 		// TODO(midas): remove debug logs
-		b.logger.Debug("Stopped replication response processor",
+		b.logger.Debug("Stopped replication response processor"+msgStatus,
 			"chain_id", chainID,
-			"tx_hashes", transactionHashes,
+			"tx_batch", transactionHashes,
 		)
 	}
 
@@ -1003,12 +1139,12 @@ func (b *MultiplexBackend) WaitForRelaysAckChainReplications(
 		reasonErr error,
 	) {
 		for chainID, _ := range replRelays {
-			shutdownFn(chainID, shutdownChs, localResChs)
+			shutdownFn(chainID, shutdownChs, localResChs, reasonErr)
 		}
 
 		// TODO(midas): remove debug logs
 		b.logger.Error("Replication response processor stopped with error",
-			"tx_hashes", transactionHashes,
+			"tx_batch", transactionHashes,
 			"err", reasonErr,
 		)
 	}
@@ -1029,7 +1165,7 @@ func (b *MultiplexBackend) WaitForRelaysAckChainReplications(
 			numReceived += len(replResult.Relays)
 
 			// Shutdown any living goroutine for this ChainID
-			defer shutdownFn(replResult.ChainID, shutdownWaitChs, localReplResChs)
+			defer shutdownFn(replResult.ChainID, shutdownWaitChs, localReplResChs, nil)
 
 		case <-b.reactor.Quit():
 			err = errors.New("interrupted by shutdown process")
@@ -1063,6 +1199,7 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 	relaysPerTx = map[string][]string{}
 	expectedRelaysPerTx = map[string][]string{}
 	numReceived = 0
+	transactionHashes := txHashesToHex(transactions...)
 
 	// Contains only relay IDs for which we must wait
 	relevantRelays := b.ApplyFilterAckTransactionRelayIds(
@@ -1109,6 +1246,7 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 			"relay_ids", relevantRelaysForTx,
 			"acks_tx", len(relevantRelaysForTx),
 			"tx_hash", txHash,
+			"tx_batch", transactionHashes,
 		)
 
 		// Used to permit expiration of context or forcing shutdown of goroutines.
@@ -1155,6 +1293,7 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 		txHash string,
 		shutdownChs map[string]chan struct{},
 		remoteTxChs map[string]chan string,
+		processErr error,
 	) {
 		if ch, ok := shutdownChs[txHash]; ok && ch != nil {
 			close(ch)
@@ -1166,8 +1305,13 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 			close(ch)
 		}
 
+		msgStatus := ""
+		if processErr == nil {
+			msgStatus = " (SUCCESS)"
+		}
+
 		// TODO(midas): remove debug logs
-		b.logger.Debug("Stopped transaction ACK processor",
+		b.logger.Debug("Stopped transaction ACK processor"+msgStatus,
 			"tx_hash", txHash,
 		)
 	}
@@ -1182,11 +1326,12 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 	) {
 		for _, tx := range transactions {
 			txHash := fmt.Sprintf("%X", tx.Hash())
-			shutdownFn(txHash, shutdownChs, remoteTxChs)
+			shutdownFn(txHash, shutdownChs, remoteTxChs, reasonErr)
 		}
 
 		// TODO(midas): remove debug logs
 		b.logger.Error("Transaction ACK processor stopped with error",
+			"tx_batch", transactionHashes,
 			"err", reasonErr,
 		)
 	}
@@ -1207,7 +1352,7 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 			numReceived += len(txResult.Relays)
 
 			// Shutdown any living goroutine for this txHash
-			defer shutdownFn(txResult.TxHash, shutdownWaitChs, localAckAcceptTxChs)
+			defer shutdownFn(txResult.TxHash, shutdownWaitChs, localAckAcceptTxChs, nil)
 
 		case <-b.reactor.Quit():
 			err = errors.New("interrupted by shutdown process")
@@ -1258,10 +1403,10 @@ func (b *MultiplexBackend) WaitForRelaysReplicationCompleted(
 		relevantRelayIds := b.GetReplResponsePeers(chainID)
 
 		b.logger.Debug("Waiting for completed replication from syncing relays",
-			"num_networks", len(relevantRelayIds),
+			"num_relays", len(relevantRelayIds),
 			"relay_ids", relevantRelayIds,
 			"chain_id", chainID,
-			"tx_hashes", transactionHashes,
+			"tx_batch", transactionHashes,
 		)
 
 		// Used to permit expiration of context or forcing shutdown of goroutines.
@@ -1308,20 +1453,27 @@ func (b *MultiplexBackend) WaitForRelaysReplicationCompleted(
 		chainID string,
 		shutdownChs map[string]chan struct{},
 		localFinChs map[string]chan *mxp2p.ChainReplicationComplete,
+		processErr error,
 	) {
 		if ch, ok := shutdownChs[chainID]; ok && ch != nil {
 			close(ch)
 		}
 
+		b.reactor.CloseRuntimeUpdatesChannel(chainID)
+
 		if ch, ok := localFinChs[chainID]; ok && ch != nil {
 			close(ch)
 		}
 
-		b.reactor.CloseRuntimeUpdatesChannel(chainID)
+		msgStatus := ""
+		if processErr == nil {
+			msgStatus = " (SUCCESS)"
+		}
 
 		// TODO(midas): remove debug logs
-		b.logger.Debug("Stopped completed replications processor",
+		b.logger.Debug("Stopped completed replications processor"+msgStatus,
 			"chain_id", chainID,
+			"tx_batch", transactionHashes,
 		)
 	}
 
@@ -1334,11 +1486,12 @@ func (b *MultiplexBackend) WaitForRelaysReplicationCompleted(
 		reasonErr error,
 	) {
 		for _, chainID := range chainIds {
-			shutdownFn(chainID, shutdownChs, localFinChs)
+			shutdownFn(chainID, shutdownChs, localFinChs, reasonErr)
 		}
 
 		// TODO(midas): remove debug logs
 		b.logger.Error("Completed replications processor stopped with error",
+			"tx_batch", transactionHashes,
 			"err", reasonErr,
 		)
 	}
@@ -1357,11 +1510,132 @@ func (b *MultiplexBackend) WaitForRelaysReplicationCompleted(
 			numCompleted += len(updateResult.Relays)
 
 			// Shutdown any living goroutine for this ChainID
-			defer shutdownFn(updateResult.ChainID, shutdownWaitChs, localReplFinChs)
+			defer shutdownFn(updateResult.ChainID, shutdownWaitChs, localReplFinChs, nil)
 
 		case <-b.reactor.Quit():
 			err = errors.New("interrupted by shutdown process")
 			shutdownForError(syncingChainIds, shutdownWaitChs, localReplFinChs, err)
+			return
+		}
+	}
+
+	return
+}
+
+// WaitForTransactionsEvents waits for a number of transaction events
+// to confirm that transactions got included.
+//
+// WaitForTransactionsEvents implements [server.Backend].
+func (b *MultiplexBackend) WaitForTransactionsEvents(
+	ctx context.Context,
+	userAddress string,
+	transactions ...client.Transaction,
+) (numCompleted int, err error) {
+	numCompleted = 0
+	transactionHashes := txHashesToHex(transactions...)
+	transactionsByChain := mapTransactionsByChainID(userAddress, transactions...)
+	relevantChainIds := chainIdsFromTransactions(userAddress, transactions...)
+
+	// Closed at the end of this method, when results are returned.
+	shutdownWaitChs := make(map[string]chan struct{}, len(transactionsByChain))
+
+	// Written on by [localTransactionEventsConsumer] when it errors and when it
+	// is done processing (enough) transaction events.
+	asyncResultsCh := make(chan TransactionEventResult, len(transactionsByChain))
+
+	serviceProvider := b.reactor.GetServicesProvider()
+	for chainID, txesForChainID := range transactionsByChain {
+		// Make sure we can retrieve the EventBus, otherwise we won't be able
+		// to wait for the inclusion of txesForChainID, and should error here.
+		serviceEventBus := serviceProvider(ServiceKeyEventBus, chainID)
+		if serviceEventBus == nil {
+			asyncResultsCh <- TransactionEventResult{Error: fmt.Errorf(
+				"Failed to retrieve EventBus for %s - can't wait for transaction events", chainID,
+			)}
+			continue
+		}
+		chainEventBus := serviceEventBus.(*types.EventBus)
+
+		b.logger.Debug("Waiting for transaction events locally",
+			"num_txes", len(txesForChainID),
+			"chain_id", chainID,
+			"tx_batch", transactionHashes,
+		)
+
+		// Used to permit expiration of context or forcing shutdown of goroutines.
+		shutdownWaitChs[chainID] = make(chan struct{}, 1)
+
+		// Collects localReplFinChs messages and create result object.
+		// Stopped on shutdownWaitCh.
+		go b.localTransactionEventsConsumer(ctx,
+			chainEventBus, // Wait for event using this EventBus
+			chainID,       // ... and for this ChainID
+			asyncResultsCh,
+			shutdownWaitChs[chainID],
+			txesForChainID...,
+		)
+	}
+
+	// Gracefully shutdown any living goroutines for a particular
+	// ChainID. This method is called in deferral process, once per ChainID.
+	shutdownFn := func(
+		chainID string,
+		shutdownChs map[string]chan struct{},
+		processErr error,
+	) {
+		if ch, ok := shutdownChs[chainID]; ok && ch != nil {
+			close(ch)
+		}
+
+		msgStatus := ""
+		if processErr == nil {
+			msgStatus = " (SUCCESS)"
+		}
+
+		// TODO(midas): remove debug logs
+		b.logger.Debug("Stopped transaction events processor"+msgStatus,
+			"chain_id", chainID,
+			"tx_batch", transactionHashes,
+		)
+	}
+
+	// Cancels any remaining goroutine in case of error, we must iterate
+	// through all chains to make sure we shutdown all remaining goroutines.
+	shutdownForError := func(
+		chainIds []string,
+		shutdownChs map[string]chan struct{},
+		reasonErr error,
+	) {
+		for _, chainID := range chainIds {
+			shutdownFn(chainID, shutdownChs, reasonErr)
+		}
+
+		// TODO(midas): remove debug logs
+		b.logger.Error("Transaction events processor stopped with error",
+			"tx_batch", transactionHashes,
+			"err", reasonErr,
+		)
+	}
+
+	// Waits until we have all required results (or errors).
+	for i := 0; i < len(transactionsByChain); i++ {
+		select {
+		case txEventResult := <-asyncResultsCh: // Wait for one result (it doesn't matter which)
+			if txEventResult.Error != nil {
+				// We stop waiting at first error that occurs.
+				err = txEventResult.Error
+				shutdownForError(relevantChainIds, shutdownWaitChs, err)
+				return
+			}
+
+			numCompleted += len(txEventResult.TxHashes)
+
+			// Shutdown any living goroutine for this ChainID
+			defer shutdownFn(txEventResult.ChainID, shutdownWaitChs, nil)
+
+		case <-b.reactor.Quit():
+			err = errors.New("interrupted by shutdown process")
+			shutdownForError(relevantChainIds, shutdownWaitChs, err)
 			return
 		}
 	}
@@ -1381,7 +1655,7 @@ func (b *MultiplexBackend) CancelBroadcastOperation(
 	go routineCancelBroadcast(ctx,
 		userAddress,
 		transactions,
-		b.logger.With("tx_hashes", txHashesToHex(transactions...)),
+		b.logger.With("tx_batch", txHashesToHex(transactions...)),
 	)
 
 	return b.RemoveTransactions(userAddress, transactions...)
@@ -1831,7 +2105,10 @@ func (b *MultiplexBackend) StartConsensusInstance(
 	ctx context.Context,
 	chainID string,
 ) error {
-	if err := b.reactor.StartConsensusInstanceReactors(ctx, chainID); err != nil {
+	if err := b.reactor.StartConsensusInstanceReactors(ctx,
+		chainID,
+		false, // disables status updates to peers about replication (ChainReplicationComplete)
+	); err != nil {
 		return err
 	}
 
@@ -2288,7 +2565,7 @@ func (b *MultiplexBackend) remoteAckReplicationConsumer(
 				// TODO(midas): remove debug logs
 				b.logger.Debug("CAUTION: Intercepted nil ChainReplicationResponse (channel closed early)",
 					"chain_id", chainID,
-					"tx_hashes", transactionHashes,
+					"tx_batch", transactionHashes,
 				)
 				return
 			}
@@ -2296,7 +2573,7 @@ func (b *MultiplexBackend) remoteAckReplicationConsumer(
 			b.logger.Debug("Intercepted relevant ChainReplicationResponse",
 				"relay_id", res.NodeId,
 				"chain_id", res.ChainID,
-				"tx_hashes", transactionHashes,
+				"tx_batch", transactionHashes,
 			)
 
 			localReplResCh <- res
@@ -2343,7 +2620,7 @@ func (b *MultiplexBackend) localAckReplicationConsumer(
 				// TODO(midas): remove debug logs
 				b.logger.Debug("Intercepted nil ChainReplicationResponse (local channel closed)",
 					"chain_id", chainID,
-					"tx_hashes", transactionHashes,
+					"tx_batch", transactionHashes,
 				)
 				return
 			}
@@ -2370,7 +2647,7 @@ func (b *MultiplexBackend) localAckReplicationConsumer(
 				"chain_id", res.ChainID,
 				"num_rcvd", numReceived,
 				"num_expect", numExpected,
-				"tx_hashes", transactionHashes,
+				"tx_batch", transactionHashes,
 			)
 
 			if numReceived >= numExpected {
@@ -2379,7 +2656,7 @@ func (b *MultiplexBackend) localAckReplicationConsumer(
 					"chain_id", resChainID,
 					"num_rcvd", numReceived,
 					"num_expect", numExpected,
-					"tx_hashes", transactionHashes,
+					"tx_batch", transactionHashes,
 				)
 
 				// Result should contain only relevant transactions
@@ -2594,7 +2871,7 @@ func (b *MultiplexBackend) remoteRuntimeUpdatesConsumer(
 				// TODO(midas): remove debug logs
 				b.logger.Debug("Intercepted nil ChainReplicationComplete (remote channel closed)",
 					"chain_id", chainID,
-					"tx_hashes", transactionHashes,
+					"tx_batch", transactionHashes,
 				)
 				return
 			}
@@ -2602,7 +2879,7 @@ func (b *MultiplexBackend) remoteRuntimeUpdatesConsumer(
 			b.logger.Debug("Intercepted relevant runtime status update (ChainReplicationComplete)",
 				"relay_id", res.NodeId,
 				"chain_id", res.ChainID,
-				"tx_hashes", transactionHashes,
+				"tx_batch", transactionHashes,
 			)
 
 			localReplFinCh <- res
@@ -2650,17 +2927,10 @@ func (b *MultiplexBackend) localRuntimeUpdatesConsumer(
 				// TODO(midas): remove debug logs
 				b.logger.Debug("Intercepted nil ChainReplicationComplete (local channel closed)",
 					"chain_id", chainID,
-					"tx_hashes", transactionHashes,
+					"tx_batch", transactionHashes,
 				)
 				return
 			}
-
-			// TODO(midas): remove debug logs
-			b.logger.Debug("Now processing runtime status update (replication)",
-				"relay_id", res.NodeId,
-				"chain_id", res.ChainID,
-				"tx_hashes", transactionHashes,
-			)
 
 			relayId := res.NodeId
 			resChainID := res.ChainID
@@ -2684,7 +2954,7 @@ func (b *MultiplexBackend) localRuntimeUpdatesConsumer(
 				"chain_id", res.ChainID,
 				"num_rcvd", numReceived,
 				"num_expect", numExpected,
-				"tx_hashes", transactionHashes,
+				"tx_batch", transactionHashes,
 			)
 
 			if numReceived >= numExpected {
@@ -2693,7 +2963,7 @@ func (b *MultiplexBackend) localRuntimeUpdatesConsumer(
 					"chain_id", resChainID,
 					"num_rcvd", numReceived,
 					"num_expect", numExpected,
-					"tx_hashes", transactionHashes,
+					"tx_batch", transactionHashes,
 				)
 
 				// Result should contain only relevant transactions
@@ -2714,6 +2984,91 @@ func (b *MultiplexBackend) localRuntimeUpdatesConsumer(
 				"process timed out waiting for runtime status updates for %s", chainID)
 
 			resultsCh <- RuntimeUpdateResult{Error: err}
+			return
+
+		case <-b.reactor.Quit():
+		case <-shutdownCh:
+			return
+		}
+	}
+}
+
+// localTransactionEventsConsumer reacts to internal updates on a transaction
+// events subscriber, which are issued by CometBFT when transactions are
+// included in bocks.
+//
+// Collects [types.EventDataTx] messages and creates a result object.
+// The resultsCh channel is also used to transmit errors when cancelled.
+func (b *MultiplexBackend) localTransactionEventsConsumer(
+	ctx context.Context,
+	chainEventBus *types.EventBus,
+	chainID string,
+	resultsCh chan TransactionEventResult,
+	shutdownCh chan struct{},
+	transactions ...client.Transaction,
+) {
+	txHashesFound := make([]string, 0, len(transactions))
+	numExpected := len(transactions)
+	numReceived := 0
+
+	transactionHashes := txHashesToHex(transactions...)
+
+	cancelTimer := time.NewTimer(b.transactionTimeout)
+	txsSub, err := chainEventBus.Subscribe(context.Background(), "multiplexBackend", types.EventQueryTx)
+	if err != nil {
+		resultsCh <- TransactionEventResult{Error: err}
+		return
+	}
+
+	defer cancelTimer.Stop()
+
+	for {
+		select {
+		case tx := <-txsSub.Out():
+			// Interpret received transaction result
+			txResult := tx.Data().(types.EventDataTx).TxResult
+			rawTx := types.Tx(txResult.Tx)
+			foundTx := client.RawTxToTransaction(rawTx)
+
+			txHashesFound = append(txHashesFound, txHashesToHex(foundTx)[0])
+			numReceived++
+
+			// TODO(midas): remove debug logs
+			b.logger.Debug("Done processing transaction event",
+				"chain_id", chainID,
+				"num_rcvd", numReceived,
+				"num_expect", numExpected,
+				"tx_batch", transactionHashes,
+			)
+
+			if numReceived >= numExpected {
+				// TODO(midas): remove debug logs
+				b.logger.Debug("Processed enough transaction events",
+					"chain_id", chainID,
+					"num_rcvd", numReceived,
+					"num_expect", numExpected,
+					"tx_batch", transactionHashes,
+				)
+
+				resultsCh <- TransactionEventResult{
+					TxHashes: txHashesFound,
+					ChainID:  chainID,
+				}
+				return
+			}
+
+		case <-cancelTimer.C:
+			err := fmt.Errorf(
+				"process timed out waiting for transaction events for %s (fallback)", chainID)
+
+			resultsCh <- TransactionEventResult{Error: err}
+			return
+
+		case <-ctx.Done():
+			err := fmt.Errorf(
+				"process timed out waiting for transaction events for %s", chainID)
+
+			resultsCh <- TransactionEventResult{Error: err}
 			return
 
 		case <-b.reactor.Quit():

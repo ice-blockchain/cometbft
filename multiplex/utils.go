@@ -78,3 +78,21 @@ func chainIdsFromTransactions(
 	}
 	return removeDuplicates(chainIds)
 }
+
+// mapTransactionsByChainID maps transactions by their ChainID.
+func mapTransactionsByChainID(
+	userAddress string,
+	transactions ...client.Transaction,
+) map[string][]client.Transaction {
+	txesByChainID := map[string][]client.Transaction{}
+	for _, tx := range transactions {
+		txChainID := chainIdsFromTransactions(userAddress, tx)[0]
+
+		if _, ok := txesByChainID[txChainID]; !ok {
+			txesByChainID[txChainID] = []client.Transaction{}
+		}
+
+		txesByChainID[txChainID] = append(txesByChainID[txChainID], tx)
+	}
+	return txesByChainID
+}

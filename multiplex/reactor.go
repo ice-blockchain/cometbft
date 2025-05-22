@@ -120,6 +120,7 @@ type Reactor struct {
 	configsPaths  MultiplexFS
 	// RuntimeRegistry defines a registry of active and inactive runtimes.
 	runtimeRegistry *server.RuntimeRegistry
+	onIdleCallback  server.OnIdleFn
 
 	// Networking layer
 	//
@@ -197,6 +198,8 @@ type Reactor struct {
 	logger cmtlog.Logger
 }
 
+type ReactorOption func(*Reactor)
+
 // Type assertion to make sure this structure is compatible with snapsapp.
 var _ snapsapp.Reactor = (*Reactor)(nil)
 
@@ -211,7 +214,7 @@ func NewReactor(
 	logger cmtlog.Logger,
 	chainRegistry ChainRegistry,
 	genesisDocsProvider node.GenesisDocProvider,
-	options ...func(*Reactor),
+	options ...ReactorOption,
 ) *Reactor {
 	// CometBFT servers share ports amongst networks
 	p2pListenAddr := overwriteListenPort(
@@ -247,6 +250,10 @@ func NewReactor(
 		// Provides a default acceptor implementation
 		acceptorImpl: &client.DefaultAcceptor{},
 
+		runtimeRegistry: server.NewRuntimeRegistry(
+			logger.With("module", "idle-manager"),
+		),
+
 		// Allocations
 		servicesRegistry:  NamedMultiplexMap[cmtlibs.Service]{},
 		servicesPriority:  map[string]uint32{},
@@ -265,6 +272,11 @@ func NewReactor(
 		// Internals
 		logger: logger,
 	}
+
+	// Set default OnIdle callback in case none is set through options.
+	reactor.SetRuntimeRegistryOptions(
+		server.RuntimeRegistryOnIdle(DefaultOnIdleCallback(reactor)),
+	)
 
 	// Enable overwrite of some optional properties.
 	for _, option := range options {
@@ -296,23 +308,23 @@ func NewReactor(
 	)
 	reactor.replayPoolMtx.Unlock()
 
-	reactor.runtimesMutex.Lock()
-	reactor.runtimeRegistry = server.NewRuntimeRegistry(
-		reactor.logger.With("module", "idle-manager"),
-		server.RuntimeRegistryOnIdle(func(chainID string) error {
-			reactor.logger.Debug("Now idling inactive node runtime", "chain_id", chainID)
-
-			if err := reactor.StopNodeInstance(chainID); err != nil {
-				reactor.logger.Error("failed to stop node instance (idle-manager)",
-					"err", err)
-			}
-
-			return nil
-		}),
-	)
-	reactor.runtimesMutex.Unlock()
-
 	return reactor
+}
+
+// DefaultOnIdleCallback returns a default implementation for the OnIdle
+// callback used by the [server.RuntimeRegistry] when node runtimes are
+// sleeping for a given period of time.
+func DefaultOnIdleCallback(reactor *Reactor) func(chainID string) error {
+	return func(chainID string) error {
+		reactor.logger.Debug("Now idling inactive node runtime", "chain_id", chainID)
+
+		if err := reactor.StopNodeInstance(chainID); err != nil {
+			reactor.logger.Error("failed to stop node instance (idle-manager)",
+				"err", err)
+		}
+
+		return nil
+	}
 }
 
 // WithAcceptor is an option helper to inject a custom acceptor implementation
@@ -325,8 +337,29 @@ func WithAcceptor(
 	}
 }
 
+// WithOnIdleCallback
+func WithOnIdleCallback(
+	onIdle server.OnIdleFn,
+) func(*Reactor) {
+	return func(r *Reactor) {
+		r.onIdleCallback = onIdle
+	}
+}
+
 // ----------------------------------------------------------------------------
 // Reactor public implementation
+
+func (reactor *Reactor) SetOptions(options ...ReactorOption) {
+	for _, option := range options {
+		option(reactor)
+	}
+}
+
+func (reactor *Reactor) SetRuntimeRegistryOptions(options ...server.RuntimeRegistryOption) {
+	for _, option := range options {
+		option(reactor.runtimeRegistry)
+	}
+}
 
 // GetLogger returns a [cmtlog.Logger] instance.
 func (reactor *Reactor) GetLogger() cmtlog.Logger {
@@ -1047,6 +1080,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			if err := r.StartConsensusInstanceReactors(
 				context.Background(),
 				replRequest.ChainID,
+				true, // enable status updates to peers about replication (ChainReplicationComplete)
 			); err != nil {
 				r.logger.Error(
 					"failed to process ChainReplicationRequest: error starting consensus reactors",
@@ -1302,14 +1336,6 @@ func (reactor *Reactor) OnStart() error {
 	nodeConfig := reactor.GetNodeConfig()
 	chainRegistry := reactor.GetChainRegistry()
 
-	// Before anything else, start the runtimes registry
-	reactor.runtimesMutex.Lock()
-	if err := reactor.runtimeRegistry.Start(); err != nil {
-		reactor.logger.Error(
-			"Error starting the runtimes registry (idle-manager)", "err", err)
-	}
-	reactor.runtimesMutex.Unlock()
-
 	// Initialize filesystem directory structure
 	multiplexFS, err := NewMultiplexFS(nodeConfig, chainRegistry)
 	if err != nil {
@@ -1455,16 +1481,6 @@ func (reactor *Reactor) OnStop() {
 		}
 	}
 	reactor.replayPoolMtx.Unlock()
-
-	// Stop the runtimes registry
-	reactor.runtimesMutex.Lock()
-	if reactor.runtimeRegistry != nil && reactor.runtimeRegistry.IsRunning() {
-		if err := reactor.runtimeRegistry.Stop(); err != nil {
-			reactor.logger.Error(
-				"Error stopping the runtimes registry (idle-manager)", "err", err)
-		}
-	}
-	reactor.runtimesMutex.Unlock()
 
 	// Each database multiplex opens x dbs, no ordering or reversing is
 	// applied here as it doesn't matter which database is closed first.

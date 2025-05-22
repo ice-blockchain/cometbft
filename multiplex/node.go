@@ -512,7 +512,11 @@ func makeNodeInfo(
 			evidence.EvidenceChannel,
 			statesync.SnapshotChannel, statesync.ChunkChannel,
 			pex.PexChannel,
+
+			// AckBroadcastChannel may be used to send AckTransactionBroadcast messages.
 			server.AckBroadcastChannel,
+			// RuntimeChannel may be used to send ChainReplicationComplete messages.
+			server.RuntimeChannel,
 		},
 		Moniker: moniker,
 		Other: p2p.DefaultNodeInfoOther{
