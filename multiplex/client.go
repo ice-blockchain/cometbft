@@ -147,6 +147,7 @@ func (c MultiplexClient) BroadcastTx(
 		"num_txes", len(transactions),
 		"tx_batch", transactionHashes,
 		"chain_ids", relevantChainIds,
+		"relays", relayAddresses,
 	)
 
 	// ------------------------------------------------------------------------
@@ -274,7 +275,7 @@ func (c MultiplexClient) BroadcastTx(
 	discoveryWg.Add(len(relaysWithoutSelf))
 
 	// Track completion and failures individually for dialing process.
-	errorRelaysCh := make(chan *server.RelayAddress, len(relaysWithoutSelf))
+	errorRelaysCh := make(chan server.RelayDialError, len(relaysWithoutSelf))
 
 	// Open connections to healthy relays to enable ReplicationChannel.
 	routineDiscoveryDialer := c.GetBackend().GetRoutines().DiscoveryDialer
@@ -289,7 +290,15 @@ func (c MultiplexClient) BroadcastTx(
 	discoveryWg.Wait()
 	close(errorRelaysCh) // No more errors expected.
 
-	for errRelayAddr := range errorRelaysCh {
+	for dialRelayErr := range errorRelaysCh {
+		errRelayAddr := dialRelayErr.Addr
+
+		// TODO(midas): remove debug logs
+		c.backend.GetLogger().Error("Failed to validate relay compatibility",
+			"relay", errRelayAddr.String(),
+			"err", dialRelayErr.Error,
+		)
+
 		if !slices.Contains(errorRelays, errRelayAddr.String()) {
 			errorRelays = append(errorRelays, errRelayAddr.String())
 		}

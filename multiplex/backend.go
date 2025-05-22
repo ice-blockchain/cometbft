@@ -879,6 +879,7 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 					"num_completed", numCompleted,
 					"chain_ids", syncingChainIds,
 					"tx_batch", transactionHashes,
+					"err", err,
 				)
 				return
 			}

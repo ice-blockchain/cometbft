@@ -53,7 +53,7 @@ func (b *MultiplexBackend) DefaultDiscoveryDialerRoutine() server.DiscoveryDiale
 		ctx context.Context,
 		relays []*server.RelayAddress,
 		waitGroup *sync.WaitGroup,
-		errorsCh chan<- *server.RelayAddress,
+		errorsCh chan<- server.RelayDialError,
 		logger cmtlog.Logger,
 	) {
 		// Concurrently dial relays to enable ReplicationChannel messages.
@@ -65,12 +65,10 @@ func (b *MultiplexBackend) DefaultDiscoveryDialerRoutine() server.DiscoveryDiale
 
 				// Uses the local P2P switch to dial a remote peer.
 				if err := b.CheckDialCompatibleRelay(ctx, addr); err != nil {
-					// TODO(midas): remove debug logs
-					logger.Debug("Error validating relay compatibility",
-						"relay", addr.String(),
-					)
-
-					errorsCh <- addr
+					errorsCh <- server.RelayDialError{
+						Addr:  addr,
+						Error: err,
+					}
 					return
 				}
 				durationMs := time.Since(startTz).Milliseconds()

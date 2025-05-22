@@ -23,6 +23,12 @@ type Jobs struct {
 	CancelBroadcast CancelBroadcastFn
 }
 
+// RelayDialError contains an error attached to a relay address.
+type RelayDialError struct {
+	Addr  *RelayAddress
+	Error error
+}
+
 // NodeReplRequestFn describes a function that may be run on a separate
 // goroutine and which should send [ChainReplicationRequest] to relays.
 //
@@ -43,7 +49,7 @@ type DiscoveryDialerFn func(
 	context.Context,
 	[]*RelayAddress,
 	*sync.WaitGroup,
-	chan<- *RelayAddress, // errorsCh
+	chan<- RelayDialError, // errorsCh
 	cmtlog.Logger,
 )
 
