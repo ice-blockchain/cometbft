@@ -1292,7 +1292,18 @@ func (r *Reactor) DialBackReplicationPartner(
 	r.networkMutex.RLock()
 	defer r.networkMutex.RUnlock()
 	if err := r.cometbftSwitch.DialPeerWithAddressAndChainID(peerAddr, chainID); err != nil {
-		if r.IsDialError(err) {
+		if !r.IsDialError(err) {
+			// Manually add peers when the switch was already running.
+			dialedPeer := r.cometbftSwitch.Peers(chainID).Get(peerAddr.ID)
+			for _, reactor := range r.cometbftSwitch.Reactors(chainID) {
+				peerForReactor := reactor.InitPeer(dialedPeer)
+				reactor.AddPeer(peerForReactor)
+			}
+
+			err = nil
+		}
+
+		if err != nil {
 			return fmt.Errorf(
 				"could not dial relay %s: %w", peerAddr.DialString(), err)
 		}
