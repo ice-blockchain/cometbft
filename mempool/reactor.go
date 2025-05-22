@@ -47,6 +47,9 @@ type Reactor struct {
 	// in [EnableInOutTxs] and then deleted.
 	pendingMsgsMtx *sync.RWMutex
 	pendingMsgs    map[string]p2p.Envelope
+
+	// Precalculated max batch size.
+	recvMessageCapacity int
 }
 
 // NewReactor returns a new Reactor with the given config and mempool.
@@ -73,6 +76,16 @@ func NewReactor(
 	mempool.OnUpdate = func(txes []types.Tx) error {
 		err := memR.clientAcceptTx(txes)
 		return err
+	}
+
+	{
+		largestTx := make([]byte, memR.config.MaxTxBytes)
+		batchMsg := protomem.Message{
+			Sum: &protomem.Message_Txs{
+				Txs: &protomem.Txs{Txs: [][]byte{largestTx}},
+			},
+		}
+		memR.recvMessageCapacity = batchMsg.Size()
 	}
 
 	memR.BaseReactor = *p2p.NewBaseReactor("Mempool", memR)
@@ -146,21 +159,11 @@ func (memR *Reactor) OnStart() error {
 // GetChannels implements Reactor by returning the list of channels for this
 // reactor.
 func (memR *Reactor) GetChannels() []*p2p.ChannelDescriptor {
-	var batchMsgSize int
-	{
-		largestTx := make([]byte, memR.config.MaxTxBytes)
-		batchMsg := protomem.Message{
-			Sum: &protomem.Message_Txs{
-				Txs: &protomem.Txs{Txs: [][]byte{largestTx}},
-			},
-		}
-		batchMsgSize = batchMsg.Size()
-	}
 	return []*p2p.ChannelDescriptor{
 		{
 			ID:                  MempoolChannel,
 			Priority:            5,
-			RecvMessageCapacity: batchMsgSize,
+			RecvMessageCapacity: memR.recvMessageCapacity,
 			MessageType:         &protomem.Message{},
 		},
 	}
