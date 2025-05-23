@@ -24,6 +24,7 @@ type RPCResultRelayInfo struct {
 	DefaultNodeID p2p.ID   `json:"id"` // authenticated identifier
 	Networks      []string `json:"networks"`
 	ListenAddress string   `json:"listen_address"`
+	DiscoveryPort uint16   `json:"discovery_port"`
 }
 
 // RelayInfoServer defines a server that is responsible of enabling
@@ -49,6 +50,7 @@ func (s *RelayInfoServer) GetRelayInfo(*rpctypes.Context) (*RPCResultRelayInfo, 
 		DefaultNodeID: s.backend.GetRelayID(),
 		Networks:      s.backend.GetNetworks(),
 		ListenAddress: s.backend.GetListenAddress(),
+		DiscoveryPort: s.backend.GetDiscoveryPort(),
 	}
 
 	return result, nil

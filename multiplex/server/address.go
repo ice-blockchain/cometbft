@@ -99,6 +99,11 @@ func (a *RelayAddress) Port() uint16 {
 	return a.port
 }
 
+// SetPort sets a custom port of a relay address.
+func (a *RelayAddress) SetPort(p uint16) {
+	a.port = p
+}
+
 // Scheme returns the scheme of a relay address.
 func (a *RelayAddress) Scheme() string {
 	return a.scheme

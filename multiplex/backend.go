@@ -24,7 +24,6 @@ import (
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/p2p/conn"
 	rpccore "github.com/ice-blockchain/cometbft/rpc/core"
-	rpcclient "github.com/ice-blockchain/cometbft/rpc/jsonrpc/client"
 	rpcserver "github.com/ice-blockchain/cometbft/rpc/jsonrpc/server"
 	sm "github.com/ice-blockchain/cometbft/state"
 	"github.com/ice-blockchain/cometbft/state/txindex"
@@ -43,9 +42,6 @@ const (
 
 	// Prometheus timeout configuration
 	readHeaderTimeout = 10 * time.Second
-
-	// Network requests timeout configuration, e.g. [GetRemoteRelayInfo].
-	DefaultRequestTimeout = 2 * time.Second
 
 	// Transaction events timeout configuration. This duration defines the
 	// maximum waiting time for transactions to appear in our indexer.
@@ -135,10 +131,6 @@ type MultiplexBackend struct {
 	cometbftRPCAddr *p2p.NetAddress // CometBFT RPC  (:dp+2)
 	prometheusAddr  *p2p.NetAddress // Prometheus (:dp+3)
 
-	// Defines the duration for network requests to timeout.
-	// Used in [MultiplexBackend#GetRemoteRelayInfo].
-	requestTimeout time.Duration
-
 	// Defines the duration for timeout of transaction completion.
 	// Used in [MultiplexBackend#WaitForTransactionEvents]
 	transactionTimeout time.Duration
@@ -200,7 +192,7 @@ func WithLogger(
 // WithRequestTimeout is an option helper to inject a custom timeout duration.
 func WithRequestTimeout(t time.Duration) func(*MultiplexBackend) {
 	return func(b *MultiplexBackend) {
-		b.requestTimeout = t
+		b.reactor.SetOptions(WithRelayInfoTimeout(t))
 	}
 }
 
@@ -216,6 +208,12 @@ func WithTransactionTimeout(t time.Duration) func(*MultiplexBackend) {
 func WithRuntimeRegistryOptions(regOpts ...server.RuntimeRegistryOption) func(*MultiplexBackend) {
 	return func(b *MultiplexBackend) {
 		b.reactor.SetRuntimeRegistryOptions(regOpts...)
+	}
+}
+
+func WithReactorOptions(reactorOpts ...ReactorOption) func(*MultiplexBackend) {
+	return func(b *MultiplexBackend) {
+		b.reactor.SetOptions(reactorOpts...)
 	}
 }
 
@@ -272,8 +270,8 @@ func NewServer(
 		option(server)
 	}
 
-	if server.requestTimeout == 0 {
-		server.requestTimeout = DefaultRequestTimeout
+	if server.reactor.relayInfoTimeout == 0 {
+		server.reactor.relayInfoTimeout = DefaultRequestTimeout
 	}
 
 	if server.transactionTimeout == 0 {
@@ -288,6 +286,8 @@ func NewServer(
 }
 
 // GetLogger returns the [cmtlog.Logger] property.
+//
+// GetLogger implements [server.Backend]
 func (b *MultiplexBackend) GetLogger() cmtlog.Logger {
 	return b.logger
 }
@@ -308,12 +308,19 @@ func (b *MultiplexBackend) GetAcceptor() client.Acceptor {
 	return b.acceptor
 }
 
+func (b *MultiplexBackend) SetAcceptor(acceptorImpl client.Acceptor) {
+	b.acceptor = acceptorImpl
+	b.reactor.SetAcceptor(acceptorImpl)
+}
+
 // GetReactor returns the [Reactor] instance.
 func (b *MultiplexBackend) GetReactor() *Reactor {
 	return b.reactor
 }
 
 // GetRuntimeRegistry should return the active node runtime manager.
+//
+// GetRuntimeRegistry implements [server.Backend]
 func (b *MultiplexBackend) GetRuntimeRegistry() *server.RuntimeRegistry {
 	b.reactor.runtimesMutex.Lock()
 	defer b.reactor.runtimesMutex.Unlock()
@@ -322,11 +329,15 @@ func (b *MultiplexBackend) GetRuntimeRegistry() *server.RuntimeRegistry {
 }
 
 // GetRelayID returns the node ID assigned in the reactor.
+//
+// GetRelayID implements [server.Backend]
 func (b *MultiplexBackend) GetRelayID() p2p.ID {
 	return b.reactor.GetNodeKey().ID()
 }
 
 // GetListenAddress should return the relay's listen address.
+//
+// GetRelayID implements [server.Backend]
 func (b *MultiplexBackend) GetListenAddress() string {
 	return b.broadcastAddr.String()
 }
@@ -340,6 +351,12 @@ func (b *MultiplexBackend) GetNetworks() []string {
 	// Unlocks the reactor mutex before returning
 	chainIds := b.reactor.GetNetworks()
 	return chainIds
+}
+
+// GetDiscoveryPort returns the port used for broadcastAddr,
+// i.e. it should map to the relay's discovery port.
+func (b *MultiplexBackend) GetDiscoveryPort() uint16 {
+	return b.broadcastAddr.Port
 }
 
 // GetReplRequestPeers returns a list of node IDs to whom we have previously
@@ -679,11 +696,32 @@ func (b *MultiplexBackend) MustStart() {
 		)
 
 		if b.reactor.Size() > 0 {
-			if err := b.StartAllNodeInstances(); err != nil {
+			if err := b.reactor.StartAllNodeInstances(); err != nil {
 				b.errorsCh <- err
 			}
 		}
 		close(b.errorsCh)
+
+		// For the above activated runtimes, we may idle some of them due to
+		// not being currently used by any replication/sync process.
+		availableChainIds := b.reactor.GetNetworks()
+		replayingBuckets := b.reactor.GetReplayPool().GetBuckets()
+		for _, runningChainID := range availableChainIds {
+			chainAddr, err := NewExtendedChainIDFromLegacy(runningChainID)
+			if err != nil {
+				b.logger.Error("Failed to parse ChainID of existing/loaded chain", "chainID", runningChainID)
+				continue
+			}
+
+			// If this ChainID is currently replaying blocks, it shouldn't go idle.
+			if slices.Contains(replayingBuckets, chainAddr.GetUserAddress()) {
+				continue
+			}
+
+			// We don't need all nodes to be active and this ChainID may go idle.
+			b.reactor.GetRuntimeRegistry().OnComplete(runningChainID)
+			b.reactor.GetRuntimeRegistry().OnIdle(runningChainID)
+		}
 
 		// This relay can now be used to communicate P2P messages.
 		wg.Done()
@@ -1710,47 +1748,22 @@ func (b *MultiplexBackend) GetRemoteRelayInfo(
 	clientCtx context.Context,
 	relayAddress *server.RelayAddress,
 ) (*server.RPCResultRelayInfo, error) {
-	c, connectErr := rpcclient.New(relayAddress.AddressForRelayInfo())
-	if connectErr != nil {
-		return nil, connectErr
+	relayInfo,
+		httpClient,
+		infoErr := b.reactor.GetRemoteRelayInfo(
+		clientCtx,
+		relayAddress,
+		b.reactor.relayInfoTimeout,
+	)
+	if infoErr != nil {
+		return nil, infoErr
 	}
 
 	b.relayMtx.Lock()
-	b.httpClients = append(b.httpClients, c.GetHTTPClient())
+	b.httpClients = append(b.httpClients, httpClient)
 	b.relayMtx.Unlock()
-	deadline := time.Now().Add(b.requestTimeout)
-	// Each call should timeout after max requestTimeout.
-	if ctxDeadline, withDeadline := clientCtx.Deadline(); withDeadline {
-		deadline = ctxDeadline
-	}
-	timeoutCtx, cancelFn := context.WithDeadline(context.Background(), deadline)
-	defer cancelFn()
 
-	result := &server.RPCResultRelayInfo{}
-	params := map[string]any{}
-	_, callErr := c.Call(timeoutCtx, "info", params, result)
-
-	select {
-	// cancelled by caller
-	case <-clientCtx.Done():
-		cancelledErr := fmt.Errorf(
-			"RelayInfo cancelled with %s", relayAddress.AddressForRelayInfo())
-		b.logger.Error(cancelledErr.Error())
-		return nil, cancelledErr
-	// context timeout (request took too long)
-	case <-timeoutCtx.Done():
-		timeoutErr := fmt.Errorf(
-			"RelayInfo timed out with %s", relayAddress.AddressForRelayInfo())
-		b.logger.Error(timeoutErr.Error())
-		return nil, timeoutErr
-	default:
-	}
-
-	if callErr != nil {
-		return nil, callErr
-	}
-
-	return result, nil
+	return relayInfo, nil
 }
 
 // GetRelaysByNetwork maps each supported network to a slice of relay addresses
@@ -1841,12 +1854,16 @@ func (b *MultiplexBackend) GetRelaysByNetwork(
 			"node_id", result.result.DefaultNodeID,
 			"networks", result.result.Networks,
 			"laddr", result.result.ListenAddress,
+			"dport", strconv.FormatUint(uint64(result.result.DiscoveryPort), 10),
 			"time", strconv.Itoa(int(durationMs))+"ms",
 		)
 
 		// Fill the CometBFT Node ID
 		relayAddr.SetID(result.result.DefaultNodeID)
 		healthyRelays = append(healthyRelays, relayAddr)
+
+		// Save the RelayInfo result as we need it for dialing.
+		b.reactor.SaveRelayInfo(result.result)
 
 		// Also, populate a map of relay addresses by ChainID.
 		for _, chainID := range result.result.Networks {
@@ -2388,6 +2405,10 @@ func (b *MultiplexBackend) StartRPCServerCometBFT() error {
 		for route, rpcFunc := range nodeRoutes {
 			routeKey := route + "/" + chainID
 			routes[routeKey] = rpcFunc
+
+			b.reactor.networkMutex.Lock()
+			b.reactor.rpcRoutes[routeKey] = true
+			b.reactor.networkMutex.Unlock()
 		}
 	}
 

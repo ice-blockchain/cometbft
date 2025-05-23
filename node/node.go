@@ -736,7 +736,7 @@ func (n *Node) OnStop() {
 	}
 
 	// now stop the reactors
-	if n.sw.IsRunning() {
+	if n.shouldStartP2P && n.sw.IsRunning() {
 		if err := n.sw.Stop(); err != nil {
 			n.Logger.Error("Error closing switch", "err", err)
 		}
@@ -756,10 +756,12 @@ func (n *Node) OnStop() {
 	}
 
 	// finally stop the listeners / external services
-	for _, l := range n.rpcListeners {
-		n.Logger.Info("Closing rpc listener", "listener", l)
-		if err := l.Close(); err != nil {
-			n.Logger.Error("Error closing listener", "listener", l, "err", err)
+	if n.shouldStartRPC {
+		for _, l := range n.rpcListeners {
+			n.Logger.Info("Closing rpc listener", "listener", l)
+			if err := l.Close(); err != nil {
+				n.Logger.Error("Error closing listener", "listener", l, "err", err)
+			}
 		}
 	}
 
@@ -769,7 +771,7 @@ func (n *Node) OnStop() {
 		}
 	}
 
-	if n.prometheusSrv != nil {
+	if n.shouldStartMon && n.prometheusSrv != nil {
 		if err := n.prometheusSrv.Shutdown(context.Background()); err != nil {
 			// Error from closing listeners, or context timeout:
 			n.Logger.Error("Prometheus HTTP server Shutdown", "err", err)

@@ -303,7 +303,6 @@ func (sw *Switch) SetNodeInfo(nodeInfo NodeInfo) {
 }
 
 // NodeInfo returns the switch's NodeInfo.
-// NOTE: Not goroutine safe.
 func (sw *Switch) NodeInfo() NodeInfo {
 	sw.networksMtx.Lock()
 	defer sw.networksMtx.Unlock()
@@ -312,7 +311,6 @@ func (sw *Switch) NodeInfo() NodeInfo {
 }
 
 // SetNodeKey sets the switch's private key for authenticated encryption.
-// NOTE: Not goroutine safe.
 func (sw *Switch) SetNodeKey(nodeKey *NodeKey) {
 	sw.networksMtx.Lock()
 	defer sw.networksMtx.Unlock()

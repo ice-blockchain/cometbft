@@ -55,6 +55,9 @@ type Backend interface {
 	// GetNetworks should return a slice of supported ChainID values.
 	GetNetworks() []string
 
+	// GetDiscoveryPort should return the `DiscoveryPort` config value.
+	GetDiscoveryPort() uint16
+
 	// StartConsensusInstance should start the consensus reactors,
 	// including mempool, blocksync, consensus and evidence reactors.
 	StartConsensusInstance(ctx context.Context, chainID string) error

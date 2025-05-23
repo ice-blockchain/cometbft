@@ -471,13 +471,13 @@ func (reactor *Reactor) InitAndStartNode(ctx context.Context, chainID string) er
 
 // StartAllNodeInstances calls the Start method of [node.Node] instances that
 // are registered in the services multiplex map of the reactor.
-func (b *MultiplexBackend) StartAllNodeInstances() error {
-	chainIds := b.GetNetworks()
+func (reactor *Reactor) StartAllNodeInstances() error {
+	chainIds := reactor.GetNetworks()
 	if len(chainIds) == 0 {
 		return nil
 	}
 
-	servicesProvider := b.reactor.GetServicesProvider()
+	servicesProvider := reactor.GetServicesProvider()
 	for _, chainID := range chainIds {
 		// Type-assertion makes sure we have a [*node.Node]
 		runNode, ok := servicesProvider(ServiceKeyNodeRuntime, chainID).(*node.Node)
@@ -488,20 +488,22 @@ func (b *MultiplexBackend) StartAllNodeInstances() error {
 		// Calls the Start method on the node.Node instance.
 		// This goroutine produces a panic in case of errors.
 		go func(network string, n *node.Node) {
-			b.logger.Info("Starting new node", "chain_id", network)
-			b.logger.Info("Using custom listen addresses",
+			defer reactor.GetRuntimeRegistry().OnActivate(network)
+
+			reactor.logger.Info("Starting new node", "chain_id", network)
+			reactor.logger.Info("Using custom listen addresses",
 				"p2p", n.Config().P2P.ListenAddress,
 				"rpc", n.Config().RPC.ListenAddress,
 			)
 
 			if err := n.Start(); err != nil {
-				b.logger.Error("failed to stop node",
+				reactor.logger.Error("failed to start node",
 					"chain_id", network,
 					"err", err,
 				)
 			}
 
-			b.logger.Info("Started node",
+			reactor.logger.Info("Started node",
 				"chain_id", network,
 				"nodeInfo", n.Switch().NodeInfo(),
 			)

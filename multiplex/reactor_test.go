@@ -18,6 +18,7 @@ import (
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	mx "github.com/ice-blockchain/cometbft/multiplex"
 	"github.com/ice-blockchain/cometbft/node"
+	cmtnode "github.com/ice-blockchain/cometbft/node"
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/types"
 	cmttime "github.com/ice-blockchain/cometbft/types/time"
@@ -88,6 +89,8 @@ func TestMultiplexReactorNewReactor(t *testing.T) {
 	// NewReactor may not return nil
 	assert.NotNil(t, reactor)
 
+	defer setReactorNodesStopsServers(reactor)
+
 	testChainIds := reactor.GetNetworks()
 
 	// Networks must be ordered
@@ -118,6 +121,7 @@ func TestMultiplexReactorRegisterService(t *testing.T) {
 
 	// Create a test reactor
 	reactor := makeTestReactor(t, nodeCfg)
+	defer setReactorNodesStopsServers(reactor)
 
 	// Create services per chain
 	for _, chainIds := range nodeCfg.MultiplexConfig.UserChains {
@@ -143,6 +147,7 @@ func TestMultiplexReactorRegisterService(t *testing.T) {
 	// ------------------------------------------------
 	// RESET reactor
 	otherReactor := makeTestReactor(t, nodeCfg)
+	defer setReactorNodesStopsServers(otherReactor)
 
 	// Following tests the mutex for services and makes sure that the service
 	// provider is thread-safe and retrieval of services is always possible.
@@ -188,6 +193,7 @@ func TestMultiplexReactorRegisterInstance(t *testing.T) {
 
 	// Create a test reactor
 	reactor := makeTestReactor(t, nodeCfg)
+	defer setReactorNodesStopsServers(reactor)
 
 	testDBKey := []byte(`testChainId`)
 
@@ -248,6 +254,8 @@ func TestMultiplexReactorRegisterInstance(t *testing.T) {
 	// ------------------------------------------------
 	// RESET reactor
 	otherReactor := makeTestReactor(t, nodeCfg)
+	defer setReactorNodesStopsServers(otherReactor)
+
 	otherChainIds := otherReactor.GetNetworks()
 
 	// Following tests the mutex for services and makes sure that the service
@@ -408,6 +416,8 @@ func ResetTestMultiplexReactorRuntimeWithInjection(
 	shutdownRoutine := func() {
 		defer os.RemoveAll(globalCfg.RootDir)
 
+		setReactorNodesStopsServers(testReactor)
+
 		err := testReactor.Stop()
 		require.NoError(tb, err)
 	}
@@ -493,4 +503,21 @@ func makeTestReactorWithGenesisDocProvider(
 		chainRegistry,
 		genDocProvider,
 	)
+}
+
+func setReactorNodesStopsServers(reactor *mx.Reactor) {
+	testChainIds := reactor.GetNetworks()
+	serviceProvider := reactor.GetServicesProvider()
+	for _, chainID := range testChainIds {
+		nodeForChain := serviceProvider(mx.ServiceKeyNodeRuntime, chainID)
+		if nodeForChain == nil {
+			continue
+		}
+
+		runningNode := nodeForChain.(*cmtnode.Node)
+
+		node.NodeWithStartRPC(true)(runningNode)
+		node.NodeWithStartP2P(true)(runningNode)
+		node.NodeWithStartMonitor(true)(runningNode)
+	}
 }

@@ -145,6 +145,11 @@ func (memR *Reactor) SetChainID(chainID string) {
 	memR.ChainID = chainID
 }
 
+// SetAcceptor sets a custom acceptor implementation.
+func (memR *Reactor) SetAcceptor(acceptor client.Acceptor) {
+	memR.txAcceptor = acceptor
+}
+
 // OnStart implements p2p.BaseReactor.
 func (memR *Reactor) OnStart() error {
 	if memR.WaitSync() {

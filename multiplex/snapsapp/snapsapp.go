@@ -122,6 +122,11 @@ func (app *SnapsApp) GetAcceptor() client.Acceptor {
 	return app.txAcceptor
 }
 
+// SetAcceptor sets a custom acceptor implementation.
+func (app *SnapsApp) SetAcceptor(impl client.Acceptor) {
+	app.txAcceptor = impl
+}
+
 // InitialHeight returns the initial block height for a chainID.
 func (app *SnapsApp) InitialHeight(chainID string) int64 {
 	app.ihMutex.RLock()

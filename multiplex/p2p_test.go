@@ -63,6 +63,10 @@ func TestMultiplexReactorP2PCreateTransportSwitchesWithReactors(t *testing.T) {
 	rootDir, globalCfg, reactor := ResetTestMultiplexP2P(t, numChains)
 	defer func() {
 		defer os.RemoveAll(rootDir)
+
+		// Since we are not using Backend, we must shutdown servers.
+		setReactorNodesStopsServers(reactor)
+
 		err := reactor.Stop()
 		require.NoError(t, err)
 	}()
@@ -110,6 +114,10 @@ func TestMultiplexReactorP2PCreateAddressBooks(t *testing.T) {
 	rootDir, globalCfg, reactor := ResetTestMultiplexP2P(t, numChains)
 	defer func() {
 		defer os.RemoveAll(rootDir)
+
+		// Since we are not using Backend, we must shutdown servers.
+		setReactorNodesStopsServers(reactor)
+
 		err := reactor.Stop()
 		require.NoError(t, err)
 	}()

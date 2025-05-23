@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	dbm "github.com/cometbft/cometbft-db"
 	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
@@ -18,6 +19,7 @@ import (
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	cmtlibs "github.com/ice-blockchain/cometbft/libs/service"
+	mempl "github.com/ice-blockchain/cometbft/mempool"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/server"
 	"github.com/ice-blockchain/cometbft/multiplex/snapsapp"
@@ -26,6 +28,7 @@ import (
 	"github.com/ice-blockchain/cometbft/privval"
 	"github.com/ice-blockchain/cometbft/proxy"
 	rpccore "github.com/ice-blockchain/cometbft/rpc/core"
+	rpcclient "github.com/ice-blockchain/cometbft/rpc/jsonrpc/client"
 	rpcserver "github.com/ice-blockchain/cometbft/rpc/jsonrpc/server"
 	sm "github.com/ice-blockchain/cometbft/state"
 	"github.com/ice-blockchain/cometbft/state/indexer"
@@ -63,6 +66,9 @@ const (
 	ServiceKeyConsensusReactor = "reactor/consensus"
 	ServiceKeyEvidenceReactor  = "reactor/evidence"
 	ServiceKeyNodeRuntime      = "runtime/node"
+
+	// Network requests timeout configuration, e.g. [GetRemoteRelayInfo].
+	DefaultRequestTimeout = 2 * time.Second
 )
 
 // serviceProviderFn provides a [cmtlibs.Service] instance by name and ChainID.
@@ -132,6 +138,12 @@ type Reactor struct {
 	cometbftSwitch  *p2p.Switch
 	transport       *p2p.MultiplexTransport
 	rpcMultiplexer  *http.ServeMux
+	rpcRoutes       map[string]bool
+
+	// Defines the duration for network requests to timeout.
+	// Used in [Reactor#GetRemoteRelayInfo].
+	relayInfoTimeout time.Duration
+	knownRelayInfo   map[string]*server.RPCResultRelayInfo
 
 	// Mapping of mempool partners relay IDs by transaction hash.
 	poolRequestsMtx  sync.RWMutex
@@ -262,6 +274,8 @@ func NewReactor(
 		multiplexMetrics:  NamedMultiplexMap[any]{},
 		storagePaths:      MultiplexFS{},
 		configsPaths:      MultiplexFS{},
+		knownRelayInfo:    map[string]*server.RPCResultRelayInfo{},
+		rpcRoutes:         map[string]bool{},
 
 		// Internal channels
 		chainReadyChs:     make(map[string]chan bool),
@@ -343,6 +357,12 @@ func WithOnIdleCallback(
 ) func(*Reactor) {
 	return func(r *Reactor) {
 		r.onIdleCallback = onIdle
+	}
+}
+
+func WithRelayInfoTimeout(t time.Duration) func(*Reactor) {
+	return func(r *Reactor) {
+		r.relayInfoTimeout = t
 	}
 }
 
@@ -453,6 +473,29 @@ func (reactor *Reactor) SetAcceptor(acceptor client.Acceptor) {
 	reactor.envMutex.Lock()
 	defer reactor.envMutex.Unlock()
 	reactor.acceptorImpl = acceptor
+
+	if reactor.snapsApp != nil {
+		reactor.snapsApp.SetAcceptor(acceptor)
+	}
+
+	serviceProvider := reactor.GetServicesProvider()
+	if serviceProvider == nil {
+		// Acceptor will be set when first mempool reactor is created
+		// i.e. Nothing to do.
+		return
+	}
+
+	relevantChainIds := reactor.GetNetworks()
+	for _, chainID := range relevantChainIds {
+		memplReactorForChain := serviceProvider(ServiceKeyMempoolReactor, chainID)
+		if memplReactorForChain == nil {
+			continue
+		}
+
+		if memplReactor, ok := memplReactorForChain.(*mempl.Reactor); ok {
+			memplReactor.SetAcceptor(acceptor)
+		}
+	}
 }
 
 // GetStoragePaths returns a [MultiplexFS] instance.
@@ -727,6 +770,16 @@ func (reactor *Reactor) CloseRuntimeUpdatesChannel(chainID string) {
 	reactor.runtimeUpdatesMtx.Lock()
 	delete(reactor.runtimeUpdatesChs, chainID)
 	reactor.runtimeUpdatesMtx.Unlock()
+}
+
+// SaveRelayInfo stores the RPC call response with information about the
+// relay in a map where keys are CometBFT Node IDs.
+func (reactor *Reactor) SaveRelayInfo(relayInfo *server.RPCResultRelayInfo) {
+	reactor.networkMutex.Lock()
+	defer reactor.networkMutex.Unlock()
+
+	relayID := string(relayInfo.DefaultNodeID)
+	reactor.knownRelayInfo[relayID] = relayInfo
 }
 
 // ----------------------------------------------------------------------------
@@ -1308,34 +1361,31 @@ func (r *Reactor) DialReplicationPartner(
 
 // DialBackReplicationPartner dials sourcePeer using its' NetAddressForCometBFT,
 // i.e. `DiscoveryPort+1`.
-// In case the events switch is already running, we must also manually add the
-// peer to the running reactors.
+//
+// Parses the remote relay address, i.e. the source of a replication
+// request, because we dial their CometBFT P2P address for block-sync.
+// Note that sourcePeer may contain a secret connection port and must
+// not be used as the DiscoveryPort to determine CometBFT ports.
+// To find the correct discovery port when dialing *back* ("responding"),
+// we must query the RelayInfo RPC and use the returned `DiscoveryPort`.
 func (r *Reactor) DialBackReplicationPartner(
 	sourcePeer p2p.Peer,
 	chainID string,
 ) error {
-	// Parse the remote relay address, i.e. the source of a replication
-	// request, because we dial their CometBFT P2P address for block-sync.
-	// Note that publicAddr should contain the remote's DiscoveryPort.
-	publicAddr, err := sourcePeer.NodeInfo().NetAddress()
+	// Determine "remote relay address" for discovery, this address is used
+	// to determine the correct relay address for CometBFT.
+	discoveryAddr, err := r.GetRemoteDiscoveryAddress(sourcePeer)
 	if err != nil {
 		return fmt.Errorf(
-			"invalid source address %s: %w", sourcePeer.SocketAddr(), err)
+			"failed to determine remote discovery address for %s: %w", string(sourcePeer.ID()), err)
 	}
 
-	// Replication messages are served on `DiscoveryPort`,
-	// but we need `DiscoveryPort+1` for CometBFT messages.
-	sourceAddr, err := server.NewRelayAddress(publicAddr.String())
+	// We can now safely use discoveryAddr as it contains `DiscoveryPort`
+	// of the relay and we need `DiscoveryPort+1` to interact with CometBFT.
+	cometbftAddr, err := server.NewRelayAddress(discoveryAddr.AddressForCometBFT())
 	if err != nil {
 		return fmt.Errorf(
-			"invalid source relay address %s: %w", publicAddr.String(), err)
-	}
-
-	// We need DiscoveryPort+1 to interact with CometBFT.
-	cometbftAddr, err := server.NewRelayAddress(sourceAddr.AddressForCometBFT())
-	if err != nil {
-		return fmt.Errorf(
-			"invalid cometbft relay address %s: %w", sourceAddr.AddressForCometBFT(), err)
+			"invalid cometbft relay address %s: %w", discoveryAddr.AddressForCometBFT(), err)
 	}
 
 	r.networkMutex.RLock()
@@ -1348,6 +1398,116 @@ func (r *Reactor) DialBackReplicationPartner(
 
 func (r *Reactor) IsDialError(err error) bool {
 	return p2p.IsDialError(err)
+}
+
+// GetRemoteRelayInfo connects to relayAddress using a JSONRPC client,
+// and calls the GetRelayInfo remote procedure to retrieve the Relay ID,
+// the supported networks and the listen address for the remote relay.
+//
+// The relayAddress parameter should use `DiscoveryPort` as this method
+// will map it to its corresponding RelayInfo port (`DiscoveryPort - 1`).
+func (r *Reactor) GetRemoteRelayInfo(
+	clientCtx context.Context,
+	relayAddress *server.RelayAddress,
+	requestTimeout time.Duration,
+) (*server.RPCResultRelayInfo, *http.Client, error) {
+	c, connectErr := rpcclient.New(relayAddress.AddressForRelayInfo())
+	if connectErr != nil {
+		return nil, nil, connectErr
+	}
+
+	deadline := time.Now().Add(requestTimeout)
+	// Each call should timeout after max requestTimeout.
+	if ctxDeadline, withDeadline := clientCtx.Deadline(); withDeadline {
+		deadline = ctxDeadline
+	}
+	timeoutCtx, cancelFn := context.WithDeadline(context.Background(), deadline)
+	defer cancelFn()
+
+	result := &server.RPCResultRelayInfo{}
+	params := map[string]any{}
+	_, callErr := c.Call(timeoutCtx, "info", params, result)
+
+	select {
+	// cancelled by caller
+	case <-clientCtx.Done():
+		cancelledErr := fmt.Errorf(
+			"RelayInfo cancelled with %s", relayAddress.AddressForRelayInfo())
+		r.logger.Error(cancelledErr.Error())
+		return nil, nil, cancelledErr
+	// context timeout (request took too long)
+	case <-timeoutCtx.Done():
+		timeoutErr := fmt.Errorf(
+			"RelayInfo timed out with %s", relayAddress.AddressForRelayInfo())
+		r.logger.Error(timeoutErr.Error())
+		return nil, nil, timeoutErr
+	default:
+	}
+
+	if callErr != nil {
+		return nil, nil, callErr
+	}
+
+	return result, c.GetHTTPClient(), nil
+}
+
+// GetRemoteDiscoveryAddress calls the RelayInfo remote procedure for sourcePeer
+// to determine its' discovery address and networks information.
+func (r *Reactor) GetRemoteDiscoveryAddress(
+	sourcePeer p2p.Peer,
+) (*server.RelayAddress, error) {
+	// Note that publicAddr may contain a secret connection port and must
+	// not be used as the DiscoveryPort to determine CometBFT ports.
+	publicAddr, err := sourcePeer.NodeInfo().NetAddress()
+	if err != nil {
+		return nil, fmt.Errorf(
+			"invalid replication source address %s: %w", sourcePeer.SocketAddr(), err)
+	}
+	// CAUTION: do not use as `DiscoveryPort`, may contain secret conn port.
+	sourceAddr, err := server.NewRelayAddress(publicAddr.String())
+	if err != nil {
+		return nil, fmt.Errorf(
+			"invalid replication source relay address %s: %w", publicAddr.String(), err)
+	}
+
+	// Check if we have a RelayInfo and already know this peer.
+	r.networkMutex.RLock()
+	partnerRelayInfo, hasRelayInfo := r.knownRelayInfo[string(sourceAddr.ID())]
+	r.networkMutex.RUnlock()
+
+	var discoveryPort uint16
+
+	// We may first need to call the RelayInfo RPC, to find DiscoveryPort.
+	if !hasRelayInfo {
+		relayInfo, _, infoErr := r.GetRemoteRelayInfo(
+			context.TODO(),
+			sourceAddr,
+			r.relayInfoTimeout,
+		)
+		if infoErr != nil {
+			return nil, infoErr
+		}
+
+		r.networkMutex.Lock()
+		r.knownRelayInfo[string(sourceAddr.ID())] = relayInfo
+		r.networkMutex.Unlock()
+
+		discoveryPort = relayInfo.DiscoveryPort
+	} else {
+		discoveryPort = partnerRelayInfo.DiscoveryPort
+	}
+
+	// Now we know which port is the discovery port on this relay.
+	sourceAddr.SetPort(discoveryPort)
+
+	// We can now safely use sourceAddr as it contains `DiscoveryPort` of the relay.
+	discoveryAddr, err := server.NewRelayAddress(sourceAddr.String())
+	if err != nil {
+		return nil, fmt.Errorf(
+			"invalid discovery relay address %s: %w", publicAddr.String(), err)
+	}
+
+	return discoveryAddr, nil
 }
 
 // ----------------------------------------------------------------------------
@@ -2085,7 +2245,20 @@ func (reactor *Reactor) EnableNewRuntimeRPC(networks []string) error {
 	for chainID, nodeRoutes := range chainRoutes {
 		for route, rpcFunc := range nodeRoutes {
 			routeKey := route + "/" + chainID
+
+			reactor.networkMutex.RLock()
+			_, hasRoute := reactor.rpcRoutes[routeKey]
+			reactor.networkMutex.RUnlock()
+
+			if hasRoute {
+				continue
+			}
+
 			newRoutes[routeKey] = rpcFunc
+
+			reactor.networkMutex.Lock()
+			reactor.rpcRoutes[routeKey] = true
+			reactor.networkMutex.Unlock()
 		}
 	}
 

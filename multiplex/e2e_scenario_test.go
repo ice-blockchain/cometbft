@@ -2435,6 +2435,108 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	close(notifyCh3)
 }
 
+func TestScenarioClientBroadcastAfterRuntimeIdling(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	numChains := 0
+	numRelays := 3
+
+	// To enable debug logs, change this indexes array to contain the indexes
+	// of the relays for which you want to activate full logging.
+	idxRelaysWithLogs := []int{} // e.g. []int{0, 1} for relay-1 and relay-2
+	servers, shutdownFn := ResetTestScenarioRelaysWithOptions(t, numChains, numRelays, idxRelaysWithLogs, [][]mx.MultiplexBackendOption{
+		[]mx.MultiplexBackendOption{
+			mx.WithRuntimeRegistryOptions(
+				server.RuntimeRegistryCleanerInterval(1*time.Second),   // run cleaner every sec
+				server.RuntimeRegistryIdleDuration(1*time.Millisecond), // 1ms means idle asap
+			),
+		}, // relay-1
+	})
+	defer shutdownFn(servers)
+
+	require.NotEmpty(t, servers)
+	require.Len(t, servers, numRelays)
+
+	// Note: relays includes self
+	// Using 0 waitDuration because others have plenty of time due to restart.
+	relays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
+		servers,
+		0*time.Second,  // Time for backend
+		20*time.Second, // Time for broadcast
+	)
+
+	defer cancelCtxFn()
+
+	require.NotEmpty(t, relays)
+	require.NotNil(t, broadcastCtx)
+	require.Len(t, relays, numRelays)
+
+	// STEP 1:
+	// We execute a complete broadcast process.
+
+	// Separate goroutine for client broadcast process
+	numTransactions := 1
+	testChainID1 := makeChainID("test-chain-1")
+	notifyCh1 := make(chan client.BroadcastStatus)
+
+	go clientBroadcastTx(t,
+		broadcastCtx,
+		servers[0],
+		relays,
+		testChainID1,
+		numTransactions,
+		notifyCh1,
+	)
+
+	// Blocks the main thread until we consume from notifyCh1.
+	resultStatusMsg := waitForClientBroadcastStatus(t,
+		broadcastCtx,
+		testChainID1,
+		notifyCh1,
+	)
+	assert.NotNil(t, resultStatusMsg)
+	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
+	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+	close(notifyCh1)
+
+	waitDuration := 5 * time.Second
+	t.Logf("Waiting %.0fsec for cleaner to execute...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
+
+	// TEST 2:
+	// We execute another complete broadcast process using the previous ChainID
+	// which should NOT include the chain replications and thus the OnBroadcastComplete
+	// call should execute right after broadcast is complete.
+
+	secondTimeoutAfter := 20 * time.Second // Time for broadcast
+	secondBroadcastCtx, secondCancelCtxFn := context.WithTimeout(context.TODO(), secondTimeoutAfter)
+	defer secondCancelCtxFn()
+
+	numTransactions = 1
+	notifyCh2 := make(chan client.BroadcastStatus)
+
+	// Separate goroutine for client broadcast process
+	go clientBroadcastTx(t,
+		secondBroadcastCtx,
+		servers[0],
+		relays,
+		testChainID1, // existing ChainID (0 ChainReplicationRequest)
+		numTransactions,
+		notifyCh2,
+	)
+
+	// Blocks the main thread until we consume from notifyCh2.
+	resultStatusMsg = waitForClientBroadcastStatus(t,
+		secondBroadcastCtx,
+		testChainID1,
+		notifyCh2,
+	)
+	assert.NotNil(t, resultStatusMsg)
+	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
+	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+	close(notifyCh2)
+}
+
 // Tests completion of remote chain replications (using new network),
 // and evaluates OnIdle calls which should automatically trigger when all
 // chain replications have been announce as being completed.

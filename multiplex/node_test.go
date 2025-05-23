@@ -338,6 +338,11 @@ func TestMultiplexNodeNewNodesMultiplexSingleNetworkProduceBlocks(t *testing.T) 
 		for _, chainID := range testChainIds {
 			runningNode := testMultiplex[chainID].GetInstance().(*cmtnode.Node)
 
+			// Since we are not using Backend, we must shutdown servers.
+			node.NodeWithStartRPC(true)(runningNode)
+			node.NodeWithStartP2P(true)(runningNode)
+			node.NodeWithStartMonitor(true)(runningNode)
+
 			// Stop the running node instance and continue
 			go func(cn *cmtnode.Node) {
 				defer wg.Done()
@@ -406,6 +411,11 @@ func TestMultiplexNodeNewNodesMultiplexProduceBlocks(t *testing.T) {
 
 		for _, chainID := range testChainIds {
 			runningNode := testMultiplex[chainID].GetInstance().(*cmtnode.Node)
+
+			// Since we are not using Backend, we must shutdown servers.
+			node.NodeWithStartRPC(true)(runningNode)
+			node.NodeWithStartP2P(true)(runningNode)
+			node.NodeWithStartMonitor(true)(runningNode)
 
 			// Stop the running node instance and continue
 			go func(cn *cmtnode.Node) {
