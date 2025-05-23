@@ -555,6 +555,23 @@ func (sw *Switch) HasPeerIP(peerIP net.IP) bool {
 	return sw.uniquePeers.HasIP(peerIP)
 }
 
+// InitPeerForChain adds peers to the reactors. This is necessary when the
+// switch is already running and peers must work with new ChainID values.
+//
+// TODO(midas): Add to subset of reactors as requested or necessary (missing).
+func (sw *Switch) InitPeerForChain(peer Peer, chainID string) {
+	if !peer.IsRunning() {
+		return
+	}
+
+	for _, reactor := range sw.Reactors(chainID) {
+		peerForReactor := reactor.InitPeer(peer)
+		reactor.AddPeer(peerForReactor)
+	}
+
+	sw.Logger.Info("Added peer to reactors", "id", string(peer.ID()))
+}
+
 // StopPeerForError disconnects from a peer due to external error.
 // If the peer is persistent, it will attempt to reconnect.
 // TODO: make record depending on reason.

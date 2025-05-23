@@ -1281,6 +1281,8 @@ func (r *Reactor) DialReplicationPartner(
 		dialWithSw.StopPeerGracefully(peerExist)
 	} else if peerExist != nil {
 		// No dialing to do here, peer is running
+		// Manually add peers when the switch was already running.
+		dialWithSw.InitPeerForChain(peerExist, chainID)
 		return nil
 	}
 
@@ -1291,11 +1293,7 @@ func (r *Reactor) DialReplicationPartner(
 			dialedPeer := dialWithSw.Peers(chainID).Get(peerAddr.ID)
 
 			// Manually add peers when the switch was already running.
-			for _, reactor := range dialWithSw.Reactors(chainID) {
-				peerForReactor := reactor.InitPeer(dialedPeer)
-				reactor.AddPeer(peerForReactor)
-			}
-
+			dialWithSw.InitPeerForChain(dialedPeer, chainID)
 			err = nil
 		}
 
