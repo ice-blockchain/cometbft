@@ -1275,12 +1275,22 @@ func (r *Reactor) DialReplicationPartner(
 	r.networkMutex.RLock()
 	defer r.networkMutex.RUnlock()
 
+	// If the peer exists but is not running, cleanup before dialing.
+	peerExist := dialWithSw.Peers(chainID).Get(peerAddr.ID)
+	if peerExist != nil && !peerExist.IsRunning() {
+		dialWithSw.StopPeerGracefully(peerExist)
+	} else if peerExist != nil {
+		// No dialing to do here, peer is running
+		return nil
+	}
+
 	// Dial the peer for the given chainID
 	if err := dialWithSw.DialPeerWithAddressAndChainID(peerAddr, chainID); err != nil {
 		if !r.IsDialError(err) {
-			// Not an error, handling a duplicate or currently dialing.
-			// Manually add peers when the switch was already running.
+			// Not an error, handling a duplicate or existing address.
 			dialedPeer := dialWithSw.Peers(chainID).Get(peerAddr.ID)
+
+			// Manually add peers when the switch was already running.
 			for _, reactor := range dialWithSw.Reactors(chainID) {
 				peerForReactor := reactor.InitPeer(dialedPeer)
 				reactor.AddPeer(peerForReactor)

@@ -1840,6 +1840,7 @@ func (b *MultiplexBackend) GetRelaysByNetwork(
 			"relay", relayAddr,
 			"node_id", result.result.DefaultNodeID,
 			"networks", result.result.Networks,
+			"laddr", result.result.ListenAddress,
 			"time", strconv.Itoa(int(durationMs))+"ms",
 		)
 
