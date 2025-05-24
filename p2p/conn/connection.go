@@ -757,13 +757,29 @@ FOR_LOOP:
 				// never block
 			}
 		case *tmp2p.Packet_PacketMsg:
+			if pkt.PacketMsg.ChannelID < 0 || pkt.PacketMsg.ChannelID > math.MaxUint8 {
+				err := fmt.Errorf("unknown channel %X", pkt.PacketMsg.ChannelID)
+				c.Logger.Debug("Connection failed @ recvRoutine", "conn", c, "err", err)
+				c.stopForError(err)
+				break FOR_LOOP
+			}
+
 			chainID := pkt.PacketMsg.ChainID
 			channelID := byte(pkt.PacketMsg.ChannelID)
 			channel, ok := c.channelsIdx[chainID][channelID]
-			if pkt.PacketMsg.ChannelID < 0 || pkt.PacketMsg.ChannelID > math.MaxUint8 || !ok || channel == nil {
-				c.Sw.UpdateChannelsForMConn([]string{pkt.PacketMsg.ChainID}, []byte{byte(pkt.PacketMsg.ChannelID)})(c)
+			if !ok || channel == nil {
+				c.Logger.Debug("unknown channel - updating MConn to retry channel",
+					"chain_id", chainID, "chID", channelID)
+
+				// Retry after enabling channel for ChainID
+				c.Sw.UpdateChannelsForMConn(
+					[]string{pkt.PacketMsg.ChainID},
+					[]byte{byte(pkt.PacketMsg.ChannelID)},
+				)(c)
+
+				// Retry
 				channel, ok = c.channelsIdx[chainID][channelID]
-				if pkt.PacketMsg.ChannelID < 0 || pkt.PacketMsg.ChannelID > math.MaxUint8 || !ok || channel == nil {
+				if !ok || channel == nil {
 					err := fmt.Errorf("unknown channel %X", pkt.PacketMsg.ChannelID)
 					c.Logger.Debug("Connection failed @ recvRoutine", "conn", c, "err", err)
 					c.stopForError(err)
@@ -774,7 +790,8 @@ FOR_LOOP:
 			msgBytes, err := channel.recvPacketMsg(*pkt.PacketMsg)
 			if err != nil {
 				if c.IsRunning() {
-					c.Logger.Debug("Connection failed @ recvRoutine", "conn", c, "err", err)
+					c.Logger.Debug("Connection failed @ recvRoutine",
+						"conn", c, "chID", channelID, "err", err)
 					c.stopForError(err)
 				}
 				break FOR_LOOP
@@ -1013,7 +1030,7 @@ func (ch *Channel) writePacketMsgTo(w protoio.Writer) (n int, err error) {
 // Not goroutine-safe.
 func (ch *Channel) recvPacketMsg(packet tmp2p.PacketMsg) ([]byte, error) {
 	if ch.Logger != nil {
-		ch.Logger.Debug("Read PacketMsg", "conn", ch.conn, "packet", packet)
+		ch.Logger.Debug("Read PacketMsg", "conn", ch.conn, "packet", packet, "chID", ch.desc.ID)
 	}
 	recvCap, recvReceived := ch.desc.RecvMessageCapacity, len(ch.recving)+len(packet.Data)
 	if recvCap < recvReceived {

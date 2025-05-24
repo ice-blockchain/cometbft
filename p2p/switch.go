@@ -1236,6 +1236,7 @@ func (sw *Switch) addPeer(p Peer) error {
 		localAvailableChainIds = append(localAvailableChainIds, chainID)
 	}
 	sw.reactorsMtx.Unlock()
+
 	sw.UpdateChannelsForMConn(localAvailableChainIds, []byte{})(p.MConn())
 
 	// Start the peer's send/recv routines.
@@ -1301,11 +1302,31 @@ func (sw *Switch) addPeer(p Peer) error {
 
 func (sw *Switch) UpdateChannelsForMConn(chainIds []string, channels []byte) func(mconn *conn.MConnection) {
 	return func(mconn *conn.MConnection) {
+		// TODO(midas): Refactor this, importing server here won't work.
+		const (
+			replicationChannel  = byte(0x90)
+			ackBroadcastChannel = byte(0x91)
+			runtimeChannel      = byte(0x92)
+		)
+
+		cometMxChannels := []byte{
+			ackBroadcastChannel,
+			runtimeChannel,
+		}
+
 		for _, chainID := range chainIds {
 			for name, r := range sw.Reactors(chainID) {
 				for _, chDesc := range r.GetChannels() {
 					if len(channels) > 0 && !slices.Contains(channels, chDesc.ID) {
 						continue
+					} else if sw.Typ == "discovery" && chDesc.ID != replicationChannel {
+						// Discovery switch needs only ReplicationChannel
+						continue
+					} else if sw.Typ == "cometBFT" && name == "MULTIPLEX" {
+						// CometBFT should add only relevant multiplex channels
+						if !slices.Contains(cometMxChannels, chDesc.ID) {
+							continue
+						}
 					}
 
 					// TODO(midas): remove debug logs

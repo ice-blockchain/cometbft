@@ -240,8 +240,10 @@ func (reactor *Reactor) AddConnectionChannels(
 
 	sw.Transport().Conns().ForEach(func(c net.Conn) {
 		peer := sw.UniquePeers().GetByAddr(c.RemoteAddr())
-		if peer != nil {
-			sw.UpdateChannelsForMConn(chainIds, channels)(peer.MConn())
+		if peer != nil && peer.NodeInfo() != nil {
+			if peerNodeInfo, ok := peer.NodeInfo().(*MultiNetworkNodeInfo); ok {
+				sw.UpdateChannelsForMConn(peerNodeInfo.Networks, channels)(peer.MConn())
+			}
 		}
 	})
 

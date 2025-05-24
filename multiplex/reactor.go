@@ -1105,7 +1105,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			// After having acknowledged the chain replication, process it.
 			//
 			// CAUTION: This modifies the runtime and allocates the necessary resources
-			// for the newly replicated ChainID, and then *dials* the source peer.
+			// for the newly replicated ChainID, calls InjectNewRuntime.
 			if err := r.handleChainReplicationRequest(sourcePeer, replRequest); err != nil {
 				r.logger.Error(
 					"failed to process ChainReplicationRequest: error handling replication",
@@ -1119,7 +1119,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			// Opens any missing CometBFT channels for injected network's consensus.
 			csw := r.GetEventSwitchForCometBFT()
 			chs := []byte{} // all channels
-			ids := r.GetNetworks()
+			ids := []string{replRequest.ChainID}
 			if err := r.AddConnectionChannels(csw, ids, chs, true); err != nil {
 				r.logger.Error(
 					"failed to process ChainReplicationRequest: error opening CometBFT channels",
