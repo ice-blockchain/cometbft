@@ -134,7 +134,7 @@ func (conR *Reactor) OnStart() error {
 	}
 
 	conR.pendingPeers.Range(func(key, value interface{}) bool {
-		conR.AddPeer(value.(p2p.Peer))
+		conR.AddPeer(value.(*p2p.PeerImpl))
 		return true
 	})
 	conR.pendingPeers.Clear()
@@ -204,7 +204,7 @@ conR:
 func (conR *Reactor) announceReplicationToPeers(
 	chainID string,
 ) {
-	sendReplCompleteToPeer := func(fromID p2p.ID, toPeer p2p.Peer) error {
+	sendReplCompleteToPeer := func(fromID p2p.ID, toPeer *p2p.PeerImpl) error {
 		if success := toPeer.Send(chainID, p2p.Envelope{
 			ChannelID: server.RuntimeChannel,
 			Message: &mxp2p.Message{
@@ -238,20 +238,21 @@ func (conR *Reactor) announceReplicationToPeers(
 	var wg sync.WaitGroup
 	wg.Add(peerSet.Size())
 
-	for _, peer := range peersToSend {
-		go func(peer p2p.Peer) {
-			defer wg.Done()
+	peerSet.ForEach(func(peer *p2p.PeerImpl) {
+		defer wg.Done()
+		if !peer.IsOutbound() {
+			return
+		}
 
-			if err := sendReplCompleteToPeer(myPeerID, peer); err != nil {
-				conR.Logger.Error("Failed to send ChainReplicationComplete",
-					"chain_id", chainID,
-					"from", conR.nodeKey.ID(),
-					"to", peer.ID(),
-					"err", err,
-				)
-			}
-		}(peer)
-	}
+		if err := sendReplCompleteToPeer(myPeerID, peer); err != nil {
+			conR.Logger.Error("Failed to send ChainReplicationComplete",
+				"chain_id", chainID,
+				"from", conR.nodeKey.ID(),
+				"to", peer.ID(),
+				"err", err,
+			)
+		}
+	})
 	wg.Wait()
 
 	// Completes the runtime activated in [multiplex.Reactor#Receive].
@@ -305,7 +306,7 @@ func (conR *Reactor) PeerStateKey() string {
 }
 
 // InitPeer implements Reactor by creating a state for the peer.
-func (conR *Reactor) InitPeer(peer p2p.Peer) p2p.Peer {
+func (conR *Reactor) InitPeer(peer *p2p.PeerImpl) *p2p.PeerImpl {
 	peerState := NewPeerState(peer).SetLogger(conR.Logger)
 	peer.Set(conR.PeerStateKey(), peerState)
 	return peer
@@ -313,7 +314,7 @@ func (conR *Reactor) InitPeer(peer p2p.Peer) p2p.Peer {
 
 // AddPeer implements Reactor by spawning multiple gossiping goroutines for the
 // peer.
-func (conR *Reactor) AddPeer(peer p2p.Peer) {
+func (conR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 	if !conR.IsRunning() {
 		conR.pendingPeers.Store(peer.ID(), peer)
 		return
@@ -336,7 +337,7 @@ func (conR *Reactor) AddPeer(peer p2p.Peer) {
 }
 
 // RemovePeer is a noop.
-func (conR *Reactor) RemovePeer(p2p.Peer, any) {
+func (conR *Reactor) RemovePeer(*p2p.PeerImpl, any) {
 	if !conR.IsRunning() {
 		return
 	}
@@ -698,7 +699,7 @@ func makeRoundStepMessage(rs *cstypes.RoundState) (nrsMsg *cmtcons.NewRoundStep)
 	return nrsMsg
 }
 
-func (conR *Reactor) sendNewRoundStepMessage(peer p2p.Peer) {
+func (conR *Reactor) sendNewRoundStepMessage(peer *p2p.PeerImpl) {
 	rs := conR.getRoundState()
 	nrsMsg := makeRoundStepMessage(&rs)
 	peer.Send(conR.conS.state.ChainID, p2p.Envelope{
@@ -716,7 +717,7 @@ func (conR *Reactor) getRoundState() cstypes.RoundState {
 // -----------------------------------------------------------------------------
 // Reactor gossip routines and helpers
 
-func (conR *Reactor) gossipDataRoutine(peer p2p.Peer, ps *PeerState) {
+func (conR *Reactor) gossipDataRoutine(peer *p2p.PeerImpl, ps *PeerState) {
 	logger := conR.Logger.With("peer", peer)
 	rng := cmtrand.NewStdlibRand()
 
@@ -777,7 +778,7 @@ OUTER_LOOP:
 	}
 }
 
-func (conR *Reactor) gossipVotesRoutine(peer p2p.Peer, ps *PeerState) {
+func (conR *Reactor) gossipVotesRoutine(peer *p2p.PeerImpl, ps *PeerState) {
 	logger := conR.Logger.With("peer", peer)
 	rng := cmtrand.NewStdlibRand()
 
@@ -844,7 +845,7 @@ OUTER_LOOP:
 
 // NOTE: `queryMaj23Routine` has a simple crude design since it only comes
 // into play for liveness when there's a signature DDoS attack happening.
-func (conR *Reactor) queryMaj23Routine(peer p2p.Peer, ps *PeerState) {
+func (conR *Reactor) queryMaj23Routine(peer *p2p.PeerImpl, ps *PeerState) {
 OUTER_LOOP:
 	for {
 		// Manage disconnects from self or peer.
@@ -1171,11 +1172,17 @@ func (conR *Reactor) peerStatsRoutine() {
 
 		select {
 		case msg := <-conR.conS.statsMsgQueue:
+			if len(msg.PeerID) == 0 {
+				conR.Logger.Debug("Failed attempt to update peer stats - got empty PeerID")
+				continue
+			}
+
 			// Get peer
-			peer := conR.Switch.Peers(conR.conS.state.ChainID).Get(msg.PeerID)
+			peer := conR.Switch.Peers(conR.conS.state.ChainID).GetInOrOut(msg.PeerID, false) // inbound first
 			if peer == nil {
-				conR.Logger.Debug("Attempt to update stats for non-existent peer",
-					"peer", msg.PeerID)
+				conR.Logger.Debug("Failed attempt to update peer stats - PeerID not found",
+					"peer", msg.PeerID,
+				)
 				continue
 			}
 			// Get peer state
@@ -1214,7 +1221,7 @@ func (*Reactor) String() string {
 func (conR *Reactor) StringIndented(indent string) string {
 	s := "ConsensusReactor{\n"
 	s += indent + "  " + conR.conS.StringIndented(indent+"  ") + "\n"
-	conR.Switch.Peers(conR.conS.state.ChainID).ForEach(func(peer p2p.Peer) {
+	conR.Switch.Peers(conR.conS.state.ChainID).ForEach(func(peer *p2p.PeerImpl) {
 		ps, ok := peer.Get(conR.PeerStateKey()).(*PeerState)
 		if !ok {
 			panic(fmt.Sprintf("Peer %v has no state", peer))
@@ -1237,7 +1244,7 @@ func ReactorMetrics(metrics *Metrics) ReactorOption {
 // NOTE: THIS GETS DUMPED WITH rpc/core/consensus.go.
 // Be mindful of what you Expose.
 type PeerState struct {
-	peer   p2p.Peer
+	peer   *p2p.PeerImpl
 	logger log.Logger
 
 	mtx   sync.Mutex             // NOTE: Modify below using setters, never directly.
@@ -1257,7 +1264,7 @@ func (pss peerStateStats) String() string {
 }
 
 // NewPeerState returns a new PeerState for the given Peer.
-func NewPeerState(peer p2p.Peer) *PeerState {
+func NewPeerState(peer *p2p.PeerImpl) *PeerState {
 	return &PeerState{
 		peer:   peer,
 		logger: log.NewNopLogger(),

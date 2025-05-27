@@ -7,6 +7,7 @@ import (
 	"net"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
@@ -35,7 +36,17 @@ const (
 	// ie. 3**10 = 16hrs.
 	reconnectBackOffAttempts    = 10
 	reconnectBackOffBaseSeconds = 3
+
+	ScopeForDiscovery   = "discovery"
+	replicationChannel  = byte(0x90)
+	ackBroadcastChannel = byte(0x91)
+	runtimeChannel      = byte(0x92)
 )
+
+var cometMxChannels = []byte{
+	ackBroadcastChannel,
+	runtimeChannel,
+}
 
 // MConnConfig returns an MConnConfig with fields updated
 // from the P2PConfig.
@@ -107,20 +118,17 @@ type Switch struct {
 	metrics *Metrics
 
 	peersMtx     *cmtsync.RWMutex
-	peersByChain map[string]*PeerSet
-	uniquePeers  *PeerSet
+	peersByScope map[string]*PeerSet
 	Typ          string
+
+	runtimesMtx       *cmtsync.RWMutex
+	startTz           time.Time
+	runtimesChainIds  map[string]struct{}
+	reactorPeerTimes  map[string]map[string]time.Time
+	totalOpenChannels uint32 // atomic
 }
 
 type peerOption = func(p Peer)
-
-const runtimeChainKey = "runtimeChainID"
-
-func PeerWithChainID(chainID string) func(p Peer) {
-	return func(p Peer) {
-		p.Set(runtimeChainKey, chainID)
-	}
-}
 
 // NetAddress returns the address the switch is listening on.
 func (sw *Switch) NetAddress() *NetAddress {
@@ -146,8 +154,9 @@ func NewSwitch(
 		reactorsByCh:         make(map[string]map[byte]Reactor),
 		msgTypeByChID:        make(map[string]map[byte]proto.Message),
 		peersMtx:             new(cmtsync.RWMutex),
-		peersByChain:         map[string]*PeerSet{"": NewPeerSet()},
-		uniquePeers:          NewPeerSet(),
+		runtimesMtx:          new(cmtsync.RWMutex),
+		runtimesChainIds:     make(map[string]struct{}),
+		reactorPeerTimes:     make(map[string]map[string]time.Time),
 		dialing:              cmap.NewCMap(),
 		reconnecting:         cmap.NewCMap(),
 		metrics:              NopMetrics(),
@@ -157,12 +166,17 @@ func NewSwitch(
 		unconditionalPeerIDs: make(map[ID]struct{}),
 	}
 
+	sw.peersMtx.Lock()
+	sw.peersByScope = map[string]*PeerSet{ScopeForDiscovery: NewPeerSet()}
+	sw.peersMtx.Unlock()
+
 	sw.reactorsMtx.Lock()
 	sw.reactors[conn.SharedChannelsNamespace] = make(map[string]Reactor)
 	sw.chDescs[conn.SharedChannelsNamespace] = make([]*conn.ChannelDescriptor, 0)
 	sw.reactorsByCh[conn.SharedChannelsNamespace] = make(map[byte]Reactor)
 	sw.msgTypeByChID[conn.SharedChannelsNamespace] = make(map[byte]proto.Message)
 	sw.reactorsMtx.Unlock()
+	atomic.StoreUint32(&sw.totalOpenChannels, 0)
 
 	// Ensure we have a completely undeterministic PRNG.
 	sw.rng = rand.NewRand()
@@ -199,20 +213,49 @@ func WithMetrics(metrics *Metrics) SwitchOption {
 // ---------------------------------------------------------------------
 // Switch setup
 
+// AddRuntime adds a ChainID
+// thread safe.
+func (sw *Switch) AddActiveRuntime(chainID string) {
+	sw.runtimesMtx.RLock()
+	_, hasRuntime := sw.runtimesChainIds[chainID]
+	sw.runtimesMtx.RUnlock()
+
+	if !hasRuntime {
+		sw.runtimesMtx.Lock()
+		sw.runtimesChainIds[chainID] = struct{}{}
+		sw.runtimesMtx.Unlock()
+	}
+}
+
+// RemoveRuntime adds a ChainID
+// thread safe.
+func (sw *Switch) RemoveActiveRuntime(chainID string) {
+	sw.runtimesMtx.RLock()
+	_, hasRuntime := sw.runtimesChainIds[chainID]
+	sw.runtimesMtx.RUnlock()
+
+	if hasRuntime {
+		sw.runtimesMtx.Lock()
+		delete(sw.runtimesChainIds, chainID)
+		sw.runtimesMtx.Unlock()
+	}
+}
+
 // AddReactor adds the given reactor to the switch.
-// NOTE: Not goroutine safe.
 func (sw *Switch) AddReactor(chainID string, name string, reactor Reactor) Reactor {
 	// JiT initialize the map of peers by ChainID because when the switch
 	// is created, we may not know about all (or any) ChainID.
 	sw.peersMtx.RLock()
-	_, hasPeerSet := sw.peersByChain[chainID]
+	_, hasPeerSet := sw.peersByScope[chainID]
 	sw.peersMtx.RUnlock()
 
 	if !hasPeerSet {
 		sw.peersMtx.Lock()
-		sw.peersByChain[chainID] = NewPeerSet()
+		sw.peersByScope[chainID] = NewPeerSet()
 		sw.peersMtx.Unlock()
 	}
+
+	sw.AddActiveRuntime(chainID)
 
 	sw.reactorsMtx.Lock()
 	defer sw.reactorsMtx.Unlock()
@@ -237,7 +280,7 @@ func (sw *Switch) AddReactor(chainID string, name string, reactor Reactor) React
 		// TODO(midas): removed panic must be evaluated by callers, i.e. (Reactor, err).
 		if _, exists := sw.reactorsByCh[chainID][chID]; exists {
 			sw.Logger.Error("Failed to add reactor: channel has multiple reactors",
-				"chID", fmt.Sprintf("%X", chID),
+				"chID", fmt.Sprintf("%d (0x%X)", chID, chID),
 				"chain_id", chainID,
 				"reactor_1", sw.reactorsByCh[chainID][chID],
 				"reactor_2", reactor,
@@ -255,8 +298,9 @@ func (sw *Switch) AddReactor(chainID string, name string, reactor Reactor) React
 }
 
 // RemoveReactor removes the given Reactor from the Switch.
-// NOTE: Not goroutine safe.
 func (sw *Switch) RemoveReactor(chainID string, name string, reactor Reactor) {
+	sw.RemoveActiveRuntime(chainID)
+
 	sw.reactorsMtx.Lock()
 	defer sw.reactorsMtx.Unlock()
 
@@ -276,7 +320,6 @@ func (sw *Switch) RemoveReactor(chainID string, name string, reactor Reactor) {
 }
 
 // Reactors returns a map of reactors registered on the switch.
-// NOTE: Not goroutine safe.
 func (sw *Switch) Reactors(chainID string) map[string]Reactor {
 	sw.reactorsMtx.Lock()
 	defer sw.reactorsMtx.Unlock()
@@ -285,7 +328,6 @@ func (sw *Switch) Reactors(chainID string) map[string]Reactor {
 }
 
 // Reactor returns the reactor with the given name.
-// NOTE: Not goroutine safe.
 func (sw *Switch) Reactor(chainID string, name string) Reactor {
 	sw.reactorsMtx.Lock()
 	defer sw.reactorsMtx.Unlock()
@@ -294,7 +336,6 @@ func (sw *Switch) Reactor(chainID string, name string) Reactor {
 }
 
 // SetNodeInfo sets the switch's NodeInfo for checking compatibility and handshaking with other nodes.
-// NOTE: Not goroutine safe.
 func (sw *Switch) SetNodeInfo(nodeInfo NodeInfo) {
 	sw.networksMtx.Lock()
 	defer sw.networksMtx.Unlock()
@@ -355,6 +396,10 @@ func (sw *Switch) Metrics() *Metrics {
 
 // OnStart implements BaseService. It starts all the reactors and peers.
 func (sw *Switch) OnStart() error {
+	sw.runtimesMtx.Lock()
+	sw.startTz = time.Now()
+	sw.runtimesMtx.Unlock()
+
 	sw.reactorsMtx.Lock()
 	safeReactors := sw.reactors
 	sw.reactorsMtx.Unlock()
@@ -379,9 +424,7 @@ func (sw *Switch) OnStart() error {
 // OnStop implements BaseService. It stops all peers and reactors.
 func (sw *Switch) OnStop() {
 	// Stop all peers
-	sw.peersMtx.RLock()
-	peers := sw.uniquePeers.Copy()
-	sw.peersMtx.RUnlock()
+	peers := sw.AllPeers()
 
 	// stopAndRemove locks the mutex
 	for _, p := range peers {
@@ -417,8 +460,8 @@ func (sw *Switch) Broadcast(chainID string, e Envelope) {
 	sw.peersMtx.RLock()
 	defer sw.peersMtx.RUnlock()
 
-	if peerSet, ok := sw.peersByChain[chainID]; ok {
-		peerSet.ForEach(func(p Peer) {
+	if peerSet, ok := sw.peersByScope[chainID]; ok {
+		peerSet.ForEach(func(p *PeerImpl) {
 			go func(peer Peer) {
 				success := peer.Send(chainID, e)
 				_ = success
@@ -436,8 +479,8 @@ func (sw *Switch) TryBroadcast(chainID string, e Envelope) {
 	sw.peersMtx.RLock()
 	defer sw.peersMtx.RUnlock()
 
-	if peerSet, ok := sw.peersByChain[chainID]; ok {
-		peerSet.ForEach(func(p Peer) {
+	if peerSet, ok := sw.peersByScope[chainID]; ok {
+		peerSet.ForEach(func(p *PeerImpl) {
 			go func(peer Peer) {
 				peer.TrySend(chainID, e)
 			}(p)
@@ -452,11 +495,11 @@ func (sw *Switch) NumPeers(chainID string) (outbound, inbound, dialing int) {
 	sw.peersMtx.RLock()
 	defer sw.peersMtx.RUnlock()
 
-	if peerSet, ok := sw.peersByChain[chainID]; ok {
-		peerSet.ForEach(func(peer Peer) {
-			if peer.IsOutbound() && !sw.IsPeerUnconditional(peer.ID()) {
+	if peerSet, ok := sw.peersByScope[chainID]; ok {
+		peerSet.ForEach(func(p *PeerImpl) {
+			if p.IsOutbound() && !sw.IsPeerUnconditional(p.ID()) {
 				outbound++
-			} else if !sw.IsPeerUnconditional(peer.ID()) {
+			} else if !sw.IsPeerUnconditional(p.ID()) {
 				inbound++
 			}
 		})
@@ -472,33 +515,15 @@ func (sw *Switch) TotalNumPeers() (outbound, inbound, dialing int) {
 	sw.peersMtx.RLock()
 	defer sw.peersMtx.RUnlock()
 
-	for _, peerSet := range sw.peersByChain {
-		peerSet.ForEach(func(peer Peer) {
-			if peer.IsOutbound() && !sw.IsPeerUnconditional(peer.ID()) {
+	for _, peerSet := range sw.peersByScope {
+		peerSet.ForEach(func(p *PeerImpl) {
+			if p.IsOutbound() && !sw.IsPeerUnconditional(p.ID()) {
 				outbound++
-			} else if !sw.IsPeerUnconditional(peer.ID()) {
+			} else if !sw.IsPeerUnconditional(p.ID()) {
 				inbound++
 			}
 		})
 	}
-
-	dialing = sw.dialing.Size()
-	return outbound, inbound, dialing
-}
-
-// NumUniquePeers returns the count of unique outbound/inbound and outbound-dialing
-// peers across all ChainIDs. Unconditional peers are not counted here.
-func (sw *Switch) NumUniquePeers() (outbound, inbound, dialing int) {
-	sw.peersMtx.RLock()
-	defer sw.peersMtx.RUnlock()
-
-	sw.uniquePeers.ForEach(func(peer Peer) {
-		if peer.IsOutbound() && !sw.IsPeerUnconditional(peer.ID()) {
-			outbound++
-		} else if !sw.IsPeerUnconditional(peer.ID()) {
-			inbound++
-		}
-	})
 
 	dialing = sw.dialing.Size()
 	return outbound, inbound, dialing
@@ -514,11 +539,25 @@ func (sw *Switch) MaxNumOutboundPeers() int {
 	return sw.config.MaxNumOutboundPeers
 }
 
-// Peers returns the set of peers that are connected to the switch.
-// Requires a chainID to filter the returned peers instances.
-func (sw *Switch) Peers(chainID string) *PeerSet {
+// AllPeers returns a flattened slice of Peer.
+func (sw *Switch) AllPeers() []*PeerImpl {
 	sw.peersMtx.RLock()
-	if peerSet, ok := sw.peersByChain[chainID]; ok {
+	defer sw.peersMtx.RUnlock()
+
+	allPeers := []*PeerImpl{}
+	for _, peerSet := range sw.peersByScope {
+		allPeers = append(allPeers, peerSet.Copy()...)
+	}
+
+	return allPeers
+}
+
+// Peers returns the set of peers that are connected to the switch.
+// Requires a scope to filter the returned peers instances, note that
+// the scope may contain a ChainID, or "discovery".
+func (sw *Switch) Peers(scope string) *PeerSet {
+	sw.peersMtx.RLock()
+	if peerSet, ok := sw.peersByScope[scope]; ok {
 		defer sw.peersMtx.RUnlock()
 		return peerSet
 	}
@@ -527,53 +566,89 @@ func (sw *Switch) Peers(chainID string) *PeerSet {
 	peerSet := NewPeerSet()
 	sw.peersMtx.Lock()
 	defer sw.peersMtx.Unlock()
-	sw.peersByChain[chainID] = peerSet
+	sw.peersByScope[scope] = peerSet
 
 	return peerSet
 }
 
-// UniquePeers returns the set of unique peer that are connected to the switch.
-func (sw *Switch) UniquePeers() *PeerSet {
+func (sw *Switch) HasPeer(peer *PeerImpl) bool {
 	sw.peersMtx.RLock()
 	defer sw.peersMtx.RUnlock()
-	return sw.uniquePeers
+
+	for _, peerSet := range sw.peersByScope {
+		if peerSet.HasPeer(peer) {
+			return true
+		}
+	}
+
+	return false
 }
 
-// HasPeerID iterates peersByChain to find a peer by its ID.
-func (sw *Switch) HasPeerID(id ID) bool {
+// HasPeerID iterates peersByScope to find a peer by its ID.
+func (sw *Switch) HasPeerID(id ID, outbound bool) bool {
 	sw.peersMtx.RLock()
 	defer sw.peersMtx.RUnlock()
-	return sw.uniquePeers.Has(id)
+
+	for _, peerSet := range sw.peersByScope {
+		if outbound && peerSet.HasOutbound(id) {
+			return true
+		} else if !outbound && peerSet.HasInbound(id) {
+			return true
+		}
+	}
+
+	return false
 }
 
-// HasPeerIP iterates peersByChain to find a peer by its IP.
+// HasPeerIP iterates peersByScope to find a peer by its IP.
 func (sw *Switch) HasPeerIP(peerIP net.IP) bool {
 	sw.peersMtx.RLock()
 	defer sw.peersMtx.RUnlock()
-	return sw.uniquePeers.HasIP(peerIP)
+
+	for _, peerSet := range sw.peersByScope {
+		if peerSet.HasIP(peerIP) {
+			return true
+		}
+	}
+
+	return false
 }
 
-// InitPeerForChain adds peers to the reactors. This is necessary when the
+// InitPeerForScope adds peers to the reactors. This is necessary when the
 // switch is already running and peers must work with new ChainID values.
 //
 // TODO(midas): Add to subset of reactors as requested or necessary (missing).
-func (sw *Switch) InitPeerForChain(peer Peer, chainID string) {
+func (sw *Switch) InitPeerForScope(peer *PeerImpl, scope string) {
 	if !peer.IsRunning() {
 		return
 	}
 
-	for _, reactor := range sw.Reactors(chainID) {
-		peerForReactor := reactor.InitPeer(peer)
-		reactor.AddPeer(peerForReactor)
+	var reactors map[string]Reactor
+	switch {
+	case scope == ScopeForDiscovery: // "discovery" => _shared_channels
+		reactors = sw.Reactors(conn.SharedChannelsNamespace)
+	default:
+		reactors = sw.Reactors(scope)
 	}
 
-	sw.Logger.Info("Added peer to reactors", "id", string(peer.ID()))
+	for rname, reactor := range reactors {
+		if !sw.IsPeerActiveInReactor(peer, scope, rname) {
+			peerForReactor := reactor.InitPeer(peer)
+			reactor.AddPeer(peerForReactor)
+			sw.MarkPeerActiveInReactor(peer, scope, rname)
+		}
+	}
+
+	sw.Logger.Info("Added peer to reactors",
+		"scope", scope,
+		"id", string(peer.ID()),
+	)
 }
 
 // StopPeerForError disconnects from a peer due to external error.
 // If the peer is persistent, it will attempt to reconnect.
 // TODO: make record depending on reason.
-func (sw *Switch) StopPeerForError(peer Peer, reason any) {
+func (sw *Switch) StopPeerForError(peer *PeerImpl, reason any) {
 	if !peer.IsRunning() {
 		return
 	}
@@ -600,14 +675,14 @@ func (sw *Switch) StopPeerForError(peer Peer, reason any) {
 
 // StopPeerGracefully disconnects from a peer gracefully.
 // TODO: handle graceful disconnects.
-func (sw *Switch) StopPeerGracefully(peer Peer) {
-	sw.Logger.Info("Stopping peer gracefully")
+func (sw *Switch) StopPeerGracefully(peer *PeerImpl) {
+	sw.Logger.Info("Stopping peer gracefully", "peer", peer)
 	sw.stopAndRemovePeer(peer, nil)
 }
 
 // stopPeer calls the Stop method on a peer, then cleans up
 // the transport instance and removes the peer from all reactors.
-func (sw *Switch) stopPeer(peer Peer, reason any) error {
+func (sw *Switch) stopPeer(peer *PeerImpl, reason any) error {
 	if err := peer.Stop(); err != nil {
 		return fmt.Errorf(
 			"error stopping peer for ID %s: %w", string(peer.ID()), err,
@@ -629,51 +704,30 @@ func (sw *Switch) stopPeer(peer Peer, reason any) error {
 }
 
 // removePeer removes the peer from all PeerSet instances.
-func (sw *Switch) removePeer(peer Peer, reason any) error {
+func (sw *Switch) removePeer(peer *PeerImpl, reason any) error {
 	sw.peersMtx.Lock()
 	defer sw.peersMtx.Unlock()
 
-	if err := sw.uniquePeers.RemoveByAddr(peer.RemoteAddr()); err != nil {
-		if extra, ok := err.(ErrHasExtraPeer); ok {
-			err = sw.stopPeer(extra.Peer, reason)
-			if errors.Is(err, service.ErrAlreadyStopped) {
-				err = nil
-			}
+	for scope, peerSet := range sw.peersByScope {
+		if !peerSet.HasPeer(peer) {
+			continue
 		}
-		if err != nil {
+
+		if ok := peerSet.Remove(peer); !ok {
 			return fmt.Errorf(
-				"error on unique peer removal for ID %s: %w", string(peer.ID()), err,
+				"failed to remove peer#%s for scope %s: %v", string(peer.ID()), scope, reason,
 			)
 		}
 	}
 
-	for _, peerSet := range sw.peersByChain {
-		if peerSet.Has(peer.ID()) {
-			if err := peerSet.RemoveByAddr(peer.RemoteAddr()); err != nil {
-				if extra, ok := err.(ErrHasExtraPeer); ok {
-					err = sw.stopPeer(extra.Peer, reason)
-					if errors.Is(err, service.ErrAlreadyStopped) {
-						err = nil
-					}
-				}
-				if err != nil {
-					return fmt.Errorf(
-						"error on peer removal for ID %s: %w", string(peer.ID()), err,
-					)
-				}
-			}
-			if peerSet.Has(peer.ID()) {
-				peerSet.Remove(peer)
-			}
-		}
-	}
+	sw.metrics.Peers.Add(float64(-1))
 
 	return nil
 }
 
 // stopAndRemovePeer first stops the peer, then removes it from all PeerSet
 // instances. Returns early from stopping the peer in case it errors.
-func (sw *Switch) stopAndRemovePeer(peer Peer, reason any) {
+func (sw *Switch) stopAndRemovePeer(peer *PeerImpl, reason any) {
 	// Returning early if the peer is already stopped prevents data races because
 	// this function may be called from multiple places at once.
 	if err := sw.stopPeer(peer, reason); err != nil {
@@ -698,8 +752,6 @@ func (sw *Switch) stopAndRemovePeer(peer Peer, reason any) {
 		sw.Logger.Debug("error on peer removal", "peer", peer.ID(), "err", err)
 		return
 	}
-
-	sw.metrics.Peers.Add(float64(-1))
 }
 
 // reconnectToPeer tries to reconnect to the addr, first repeatedly
@@ -892,22 +944,6 @@ func (sw *Switch) DialPeerWithAddress(addr *NetAddress) error {
 	return sw.addOutboundPeerWithConfig(addr, sw.config)
 }
 
-// DialPeerWithAddressAndChainID dials the given peer and adds a runtimeChainID
-// to its configuration before it runs sw.addPeer if it connects and
-// authenticates successfully.
-// If we're currently dialing this address or it belongs to an existing peer,
-// ErrCurrentlyDialingOrExistingAddress is returned.
-func (sw *Switch) DialPeerWithAddressAndChainID(addr *NetAddress, chainID string) error {
-	if sw.IsDialingOrExistingAddress(addr) {
-		return ErrCurrentlyDialingOrExistingAddress{addr.String()}
-	}
-
-	sw.dialing.Set(string(addr.ID), addr)
-	defer sw.dialing.Delete(string(addr.ID))
-
-	return sw.addOutboundPeerWithConfig(addr, sw.config, PeerWithChainID(chainID))
-}
-
 // sleep for interval plus some random amount of ms on [0, dialRandomizerIntervalMilliseconds].
 func (sw *Switch) randomSleep(interval time.Duration) {
 	r := time.Duration(sw.rng.Int63n(dialRandomizerIntervalMilliseconds)) * time.Millisecond
@@ -918,7 +954,7 @@ func (sw *Switch) randomSleep(interval time.Duration) {
 // address or dialing it at the moment.
 func (sw *Switch) IsDialingOrExistingAddress(addr *NetAddress) bool {
 	return sw.dialing.Has(string(addr.ID)) ||
-		sw.HasPeerID(addr.ID) ||
+		sw.HasPeerID(addr.ID, true) ||
 		(!sw.config.AllowDuplicateIP && sw.HasPeerIP(addr.IP))
 }
 
@@ -972,6 +1008,20 @@ func (sw *Switch) AddPrivatePeerIDs(ids []string) error {
 	return nil
 }
 
+// GetActiveRuntimes returns the list of active ChainIDs.
+// thread safe.
+func (sw *Switch) GetActiveRuntimes() []string {
+	sw.runtimesMtx.RLock()
+	defer sw.runtimesMtx.RUnlock()
+
+	runtimes := make([]string, 0, len(sw.runtimesChainIds))
+	for chainID, _ := range sw.runtimesChainIds {
+		runtimes = append(runtimes, chainID)
+	}
+
+	return runtimes
+}
+
 func (sw *Switch) IsPeerPersistent(na *NetAddress) bool {
 	for _, pa := range sw.persistentPeersAddrs {
 		if pa.Equals(na) {
@@ -982,7 +1032,7 @@ func (sw *Switch) IsPeerPersistent(na *NetAddress) bool {
 }
 
 func (sw *Switch) acceptRoutine() {
-	outbound, inbound, _ := sw.NumUniquePeers()
+	outbound, inbound, _ := sw.TotalNumPeers()
 	numPeers := outbound + inbound
 	for {
 		safePeerConfig := sw.GetPeerConfig()
@@ -1048,22 +1098,22 @@ func (sw *Switch) acceptRoutine() {
 		// NOTE(midas): We disable MaxNumInboundPeers here because a limit on the
 		// number of peers is undesired for a multiplex of nodes with many ChainIDs.
 
-		if !sw.IsPeerUnconditional(p.NodeInfo().ID()) {
-			// Ignore connection if we already have enough peers.
-			_, in, _ := sw.NumUniquePeers()
-			if in >= sw.config.MaxNumInboundPeers {
-				sw.Logger.Info(
-					"Ignoring inbound connection: already have enough inbound peers",
-					"address", p.SocketAddr(),
-					"have", in,
-					"max", sw.config.MaxNumInboundPeers,
-				)
+		// if !sw.IsPeerUnconditional(p.NodeInfo().ID()) {
+		// 	// Ignore connection if we already have enough peers.
+		// 	_, in, _ := sw.NumUniquePeers()
+		// 	if in >= sw.config.MaxNumInboundPeers {
+		// 		sw.Logger.Info(
+		// 			"Ignoring inbound connection: already have enough inbound peers",
+		// 			"address", p.SocketAddr(),
+		// 			"have", in,
+		// 			"max", sw.config.MaxNumInboundPeers,
+		// 		)
 
-				sw.transport.Cleanup(p)
+		// 		sw.transport.Cleanup(p)
 
-				continue
-			}
-		}
+		// 		continue
+		// 	}
+		// }
 
 		if err := sw.addPeer(p); err != nil {
 			sw.transport.Cleanup(p)
@@ -1152,7 +1202,7 @@ func (sw *Switch) addOutboundPeerWithConfig(
 	return nil
 }
 
-func (sw *Switch) filterPeer(p Peer) error {
+func (sw *Switch) filterPeer(p *PeerImpl) error {
 	// NOTE(midas):
 	// We don't need to throw a rejection error on duplicate peers at this
 	// stage because we skip known peers in [PeerSet#Add].
@@ -1161,10 +1211,10 @@ func (sw *Switch) filterPeer(p Peer) error {
 	// 	return ErrRejected{id: p.ID(), isDuplicate: true}
 	// }
 
-	errc := make(chan error, len(sw.peersByChain)*len(sw.peerFilters))
+	errc := make(chan error, len(sw.peersByScope)*len(sw.peerFilters))
 
 	sw.peersMtx.RLock()
-	for _, peerSet := range sw.peersByChain {
+	for _, peerSet := range sw.peersByScope {
 		for _, f := range sw.peerFilters {
 			go func(f PeerFilterFunc, p Peer, errc chan<- error) {
 				errc <- f(peerSet, p)
@@ -1187,57 +1237,94 @@ func (sw *Switch) filterPeer(p Peer) error {
 	return nil
 }
 
-// addPeer starts up the Peer and adds it to the Switch. Error is returned if
-// the peer is filtered out or failed to start or can't be added.
-func (sw *Switch) addPeer(p Peer) error {
-	if err := sw.filterPeer(p); err != nil {
-		return err
+func (sw *Switch) GetPeerActiveChainID(p *PeerImpl) ([]string, error) {
+	var (
+		commonChainIds []string
+		activeChainIds []string
+		err            error
+	)
+
+	// Find ChainID values that we share with p.
+	if commonChainIds, err = sw.NodeInfo().GetCommonChains(p.NodeInfo()); err != nil {
+		return []string{}, fmt.Errorf(
+			"failed to fetch common chains with peer %s: %w", p.ID(), err)
 	}
 
-	p.SetLogger(sw.Logger.With("peer", p.SocketAddr()))
+	// Find ChainID values that are currently active or being created,
+	// i.e. when creating new networks, they are not yet in NodeInfo.
+	runtimeChainIds := sw.GetActiveRuntimes()
+	activeChainIds = slices.DeleteFunc(runtimeChainIds, func(aid string) bool {
+		return slices.Contains(commonChainIds, aid)
+	})
+
+	// Relevant ChainIDs are all networks we and p may know about.
+	numRelevant := len(commonChainIds) + len(runtimeChainIds)
+	relevantChainIds := make([]string, 0, numRelevant)
+	relevantChainIds = append(relevantChainIds, commonChainIds...)
+	relevantChainIds = append(relevantChainIds, activeChainIds...)
+
+	return relevantChainIds, nil
+}
+
+// addPeer starts up the Peer and adds it to the Switch. Error is returned if
+// the peer is filtered out or failed to start or can't be added.
+func (sw *Switch) addPeer(p *PeerImpl) (err error) {
+	if err = sw.filterPeer(p); err != nil {
+		return
+	}
+
+	pubAddr, _ := p.NodeInfo().NetAddress()
+	peerLogger := sw.Logger.With("conn", p.SocketAddr()).With("addr", pubAddr.String())
+	p.SetLogger(peerLogger)
 
 	// Handle the shut down case where the switch has stopped but we're
 	// concurrently trying to add a peer.
 	if !sw.IsRunning() {
-		// XXX should this return an error or just log and terminate?
 		sw.Logger.Error("Won't start a peer - switch is not running", "peer", p)
-		return nil
+		return // err
 	}
 
-	relevantChainIds, err := sw.NodeInfo().GetCommonChains(p.NodeInfo())
+	// Find ChainID values that we share with p.
+	relevantChainIds, err := sw.GetPeerActiveChainID(p)
 	if err != nil {
-		sw.Logger.Error("Won't start a peer - error with common chains",
-			"peer", p,
+		p.GetLogger().Error("Won't start a peer - failed to determine compatibility",
 			"err", err,
 		)
-		return nil
+		return // err
 	}
 
-	// If we don't have common chains with p, we are creating a network.
-	runtimeChainID := p.Get(runtimeChainKey)
-	if len(relevantChainIds) == 0 && runtimeChainID != nil {
-		relevantChainIds = []string{runtimeChainID.(string)}
-	} else if runtimeChainID != nil && !slices.Contains(relevantChainIds, runtimeChainID.(string)) {
-		relevantChainIds = append(relevantChainIds, runtimeChainID.(string))
+	// For replication channel, we add the peer to _shared_channels reactors.
+	// For CometBFT channels, we add the peer to relevantChainIds reactors.
+	// reactorsGroup := []string{conn.SharedChannelsNamespace}
+	relevantScopes := []string{ScopeForDiscovery} // i.e. sw.Peers(p2p.ScopeForDiscovery)
+	if sw.Typ != "discovery" {
+		// reactorsGroup = relevantChainIds[:]
+		relevantScopes = relevantChainIds[:]                       // i.e. sw.Peers(ChainID)
+		relevantScopes = append(relevantScopes, ScopeForDiscovery) // AckTransactionBroadcast
 	}
 
-	// Add some data to the peer, which is required by reactors.
-	for _, chainID := range relevantChainIds {
-		reactors := sw.Reactors(chainID)
-		for _, reactor := range reactors {
-			p = reactor.InitPeer(p)
+	// We may need to add new channels to accept messages from this new peer.
+	// CAUTION: This updates MConnection.channelsIdx.
+	var connUpdaterFn func(*conn.MConnection)
+	connUpdaterFn = sw.OpenChannelsForScopes(relevantScopes)
+	connUpdaterFn(p.MConn())
+
+	// Add the peer to our internal PeerSet storage.
+	for _, peerSetScope := range relevantScopes {
+		peerSet := sw.Peers(peerSetScope)
+		if !peerSet.HasPeer(p) {
+			if err = peerSet.Add(p); err != nil {
+				if _, ok := err.(ErrPeerRemoval); ok {
+					peerLogger.Error("Error starting peer ",
+						"err", "Peer has already errored and removal was attempted.",
+						"peer", p)
+				}
+				return // err
+			}
+
+			sw.metrics.Peers.Add(float64(1))
 		}
 	}
-
-	// Update this peer's MConnection.channelsIdx.
-	sw.reactorsMtx.Lock()
-	localAvailableChainIds := []string{}
-	for chainID := range sw.chDescs {
-		localAvailableChainIds = append(localAvailableChainIds, chainID)
-	}
-	sw.reactorsMtx.Unlock()
-
-	sw.UpdateChannelsForMConn(localAvailableChainIds, []byte{})(p.MConn())
 
 	// Start the peer's send/recv routines.
 	// Must start it before adding it to the peer set
@@ -1248,59 +1335,98 @@ func (sw *Switch) addPeer(p Peer) error {
 		return err
 	}
 
-	// First we add it to the unique peers if necessary
-	sw.peersMtx.Lock()
-	if !sw.uniquePeers.Has(p.ID()) {
-		if err := sw.uniquePeers.Add(p); err != nil {
-			if _, ok := err.(ErrPeerRemoval); ok {
-				sw.Logger.Error("Error starting peer ",
-					" err ", "Peer has already errored and removal was attempted.",
-					"peer", p.ID())
-			}
-			sw.peersMtx.Unlock()
-			return err
-		}
-	}
-	sw.peersMtx.Unlock()
-
-	// Then we add it to all internal peersets by ChainID.
-	sw.peersMtx.Lock()
-	for chainID, peerSet := range sw.peersByChain {
-		if !slices.Contains(localAvailableChainIds, chainID) {
-			continue
-		}
-
-		// Add the peer to PeerSet. Do this before starting the reactors
-		// so that if Receive errors, we will find the peer and remove it.
-		// Add should not err since we already checked peers.Has().
-		if err := peerSet.Add(p); err != nil {
-			if _, ok := err.(ErrPeerRemoval); ok {
-				sw.Logger.Error("Error starting peer ",
-					" err ", "Peer has already errored and removal was attempted.",
-					"peer", p.ID())
-			}
-			sw.peersMtx.Unlock()
-			return err
-		}
-	}
-	sw.peersMtx.Unlock()
-
-	sw.metrics.Peers.Add(float64(1))
-
-	// Start all the reactor protocols on the peer.
-	for _, chainID := range relevantChainIds {
-		reactors := sw.Reactors(chainID)
-		for _, reactor := range reactors {
-			reactor.AddPeer(p)
+	// In case of INBOUND peer, we need to add the peer to the reactors.
+	if !p.IsOutbound() {
+		// Start all the reactor protocols on the peer.
+		for _, relevantScope := range relevantScopes {
+			sw.InitPeerForScope(p, relevantScope)
 		}
 	}
 
-	sw.Logger.Debug("Added peer", "peer", p)
+	peerLogger.Debug("Added peer",
+		"peer", p,
+	)
 
 	return nil
 }
 
-func (sw *Switch) UpdateChannelsForMConn(chainIds []string, channels []byte) func(mconn *conn.MConnection) {
+// IsPeerActiveInReactor returns true if the peer has been initialized
+// after the switch started running.
+func (sw *Switch) IsPeerActiveInReactor(p *PeerImpl, scope string, reactor string) bool {
+	sw.runtimesMtx.RLock()
+	_, hasReactorsForChain := sw.reactorPeerTimes[scope]
+	sw.runtimesMtx.RUnlock()
+
+	if !hasReactorsForChain {
+		return false
+	}
+
+	sw.runtimesMtx.RLock()
+	peerInitTimeTz,
+		hasPeerTime := sw.reactorPeerTimes[scope][reactor]
+	swStartTimeTz := sw.startTz
+	sw.runtimesMtx.RUnlock()
+
+	if !sw.IsRunning() || !hasPeerTime {
+		return false
+	}
+
+	// The switch must have started before the peer, otherwise consider inactive.
+	return swStartTimeTz.Before(peerInitTimeTz)
+}
+
+func (sw *Switch) MarkPeerActiveInReactor(p *PeerImpl, scope string, reactor string) {
+	sw.runtimesMtx.RLock()
+	_, hasReactorsForChain := sw.reactorPeerTimes[scope]
+	sw.runtimesMtx.RUnlock()
+
+	if !hasReactorsForChain {
+		sw.runtimesMtx.Lock()
+		sw.reactorPeerTimes[scope] = make(map[string]time.Time)
+		sw.runtimesMtx.Unlock()
+	}
+
+	sw.reactorPeerTimes[scope][reactor] = time.Now()
+}
+
+func (sw *Switch) CloseChannelsForScopes(scopes []string) func(mconn *conn.MConnection) {
+	return func(mconn *conn.MConnection) {
+		for _, scope := range scopes {
+			reactorsScope := scope // ChainID or "discovery"
+			if scope == ScopeForDiscovery {
+				reactorsScope = conn.SharedChannelsNamespace // "_shared_channels"
+			}
+
+			for name, r := range sw.Reactors(reactorsScope) {
+				for _, chDesc := range r.GetChannels() {
+					if sw.Typ == "discovery" && chDesc.ID != replicationChannel {
+						// Discovery switch needs only remove ReplicationChannel
+						continue
+					} else if sw.Typ == "cometBFT" && name == "MULTIPLEX" {
+						// CometBFT should remove only relevant multiplex channels
+						if !slices.Contains(cometMxChannels, chDesc.ID) {
+							continue
+						}
+					}
+
+					channelRemoved := mconn.RemoveChannel(scope, chDesc)
+					if channelRemoved {
+						atomic.AddUint32(&sw.totalOpenChannels, ^uint32(0)) // -1
+					}
+				}
+			}
+		}
+
+		// TODO(midas): remove debug logs
+		sw.Logger.Debug("Removed connection channels",
+			"scopes", scopes,
+			"conn", mconn.SocketAddr().String(),
+			"num_chs", atomic.LoadUint32(&sw.totalOpenChannels),
+		)
+	}
+}
+
+func (sw *Switch) OpenChannelsForScopes(scopes []string) func(mconn *conn.MConnection) {
 	return func(mconn *conn.MConnection) {
 		// TODO(midas): Refactor this, importing server here won't work.
 		const (
@@ -1314,12 +1440,15 @@ func (sw *Switch) UpdateChannelsForMConn(chainIds []string, channels []byte) fun
 			runtimeChannel,
 		}
 
-		for _, chainID := range chainIds {
-			for name, r := range sw.Reactors(chainID) {
+		for _, scope := range scopes {
+			reactorsGroup := scope // ChainID or "discovery"
+			if scope == ScopeForDiscovery {
+				reactorsGroup = conn.SharedChannelsNamespace // "_shared_channels"
+			}
+
+			for name, r := range sw.Reactors(reactorsGroup) {
 				for _, chDesc := range r.GetChannels() {
-					if len(channels) > 0 && !slices.Contains(channels, chDesc.ID) {
-						continue
-					} else if sw.Typ == "discovery" && chDesc.ID != replicationChannel {
+					if sw.Typ == "discovery" && chDesc.ID != replicationChannel {
 						// Discovery switch needs only ReplicationChannel
 						continue
 					} else if sw.Typ == "cometBFT" && name == "MULTIPLEX" {
@@ -1329,17 +1458,19 @@ func (sw *Switch) UpdateChannelsForMConn(chainIds []string, channels []byte) fun
 						}
 					}
 
-					// TODO(midas): remove debug logs
-					sw.Logger.Debug("Adding connection channel",
-						"chain_id", chainID,
-						"reactor", name,
-						"chID", chDesc.ID,
-						"peer", mconn.SocketAddr().String(),
-					)
-
-					mconn.AddChannel(chainID, *chDesc)
+					_, channelAdded := mconn.AddChannel(scope, chDesc)
+					if channelAdded {
+						atomic.AddUint32(&sw.totalOpenChannels, uint32(1))
+					}
 				}
 			}
 		}
+
+		// TODO(midas): remove debug logs
+		sw.Logger.Debug("Added connection channels",
+			"scopes", scopes,
+			"conn", mconn.SocketAddr().String(),
+			"num_chs", atomic.LoadUint32(&sw.totalOpenChannels),
+		)
 	}
 }

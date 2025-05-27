@@ -60,7 +60,7 @@ func (env *Environment) DumpConsensusState(*rpctypes.Context) (*ctypes.ResultDum
 	// Get Peer consensus states.
 	peerStates := make([]ctypes.PeerStateInfo, 0)
 	var err error
-	env.P2PPeers.Peers(env.GenDoc.ChainID).ForEach(func(peer p2p.Peer) {
+	env.P2PPeers.Peers(env.GenDoc.ChainID).ForEach(func(peer *p2p.PeerImpl) {
 		chainStateKey := types.PeerStateKey + "_" + env.ConsensusState.GetState().ChainID
 		peerState, ok := peer.Get(chainStateKey).(*cm.PeerState)
 		if !ok { // peer does not have a state yet

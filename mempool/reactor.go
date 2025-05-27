@@ -20,6 +20,9 @@ import (
 	"github.com/ice-blockchain/cometbft/types"
 )
 
+// RelayDialerFn can be used to implement a custom dialing process for peers.
+type RelayDialerFn func(*p2p.Switch, *p2p.PeerImpl, string) (p2p.ID, error)
+
 // Reactor handles mempool tx broadcasting amongst peers.
 // It maintains a map from peer ID to counter, to prevent gossiping txs to the
 // peers you received it from.
@@ -42,6 +45,7 @@ type Reactor struct {
 	txAcceptor  client.Acceptor
 	userAddress string
 	ChainID     string // Exported.
+	dialerFn    RelayDialerFn
 
 	// Stores messages received during WaitSync() which are processed
 	// in [EnableInOutTxs] and then deleted.
@@ -129,6 +133,15 @@ func WithNodeKey(
 	}
 }
 
+// WithDialerFn is an option helper to inject a custom [RelayDialerFn].
+func WithDialerFn(
+	dialerFn RelayDialerFn,
+) func(*Reactor) {
+	return func(r *Reactor) {
+		r.dialerFn = dialerFn
+	}
+}
+
 // GetMempoolPtr returns a pointer to the CListMempool object.
 func (memR *Reactor) GetMempoolPtr() *CListMempool {
 	return memR.mempool
@@ -181,7 +194,7 @@ func (memR *Reactor) PeerStateKey() string {
 
 // AddPeer implements Reactor.
 // It starts a broadcast routine ensuring all txs are forwarded to the given peer.
-func (memR *Reactor) AddPeer(peer p2p.Peer) {
+func (memR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 	if memR.config.Broadcast {
 		go func() {
 			// BREAKING(midas):
@@ -316,7 +329,7 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 // acceptance, then calls [CheckTx] to validate the inclusion and finally
 // it will send a [AckTransactionBroadcast] message.
 func (memR *Reactor) processTxs(
-	peer p2p.Peer,
+	peer *p2p.PeerImpl,
 	protoTxs [][]byte,
 ) {
 	rawTx := []types.Tx{}
@@ -343,40 +356,27 @@ func (memR *Reactor) processTxs(
 		}
 	}
 
-	peerOut := memR.Switch.UniquePeers().Get(peer.ID())
-	if peerOut == nil {
-		// Open a OUTBOUND connection to this peer. This is required in case no secret
-		// connection is active yet and we send back a AckTransactionBroadcast message.
-		peerAddr, _ := peer.NodeInfo().NetAddress()
-		if err := memR.Switch.DialPeerWithAddressAndChainID(peerAddr, memR.ChainID); err != nil {
-			if p2p.IsDialError(err) {
-				memR.Logger.Error("Failed to open outbound connection to peer",
-					"err", err,
-					"peer", peerAddr.String(),
-					"chain_id", memR.ChainID,
-					"tx_hashes", txHashes,
-				)
-			}
-		}
-
-		peerOut = memR.Switch.Peers(memR.ChainID).GetOutbound(peer.ID())
-		if peerOut == nil {
-			memR.Logger.Error("Failed to find outbound connection to peer",
-				"peer", peerAddr.String(),
-				"chain_id", memR.ChainID,
-				"tx_hashes", txHashes,
-			)
-			return // peerOut may not be nil
-		}
+	// dialerFn is an extension that permits to run [Reactor#GetRemoteDiscoveryAddress]
+	// which returns a public discovery address which can be used to find CometBFT addr.
+	publicPeerID, err := memR.dialerFn(memR.Switch, peer, memR.ChainID)
+	if err != nil {
+		memR.Logger.Error(
+			"failed to process transaction: error dialing outbound peer",
+			"chain_id", memR.ChainID,
+			"peer", peer,
+			"err", err,
+		)
+		return
 	}
 
 	// Uses the multiplex server.AckBroadcastChannel to send an acknowledgment
 	// message, or receipt, to describe that the transaction has been checked.
-	if err := memR.sendAckTransactionBroadcast(peerOut, protoTxs); err != nil {
+	peerOutbound := memR.Switch.Peers(memR.ChainID).GetOutbound(publicPeerID)
+	if err := memR.sendAckTransactionBroadcast(peerOutbound, protoTxs); err != nil {
 		memR.Logger.Error("Failed to send AckTransactionBroadcast",
 			"err", err,
 			"chain", memR.ChainID,
-			"toPeer", peerOut,
+			"toPeer", peerOutbound,
 		)
 		return
 	}
@@ -438,7 +438,7 @@ type PeerState interface {
 }
 
 // Send new mempool txs to peer.
-func (memR *Reactor) broadcastTxRoutine(peer p2p.Peer) {
+func (memR *Reactor) broadcastTxRoutine(peer *p2p.PeerImpl) {
 	// If the node is catching up, don't start this routine immediately.
 	if memR.WaitSync() {
 		select {
@@ -544,7 +544,7 @@ func (memR *Reactor) broadcastTxRoutine(peer p2p.Peer) {
 // This object may be used to determine that a relay acknowledges
 // the receipt (and will process acceptance) of a transaction broadcast.
 func (memR *Reactor) sendAckTransactionBroadcast(
-	peer p2p.Peer,
+	peer *p2p.PeerImpl,
 	protoTxs [][]byte,
 ) error {
 	myPeerID := memR.nodeKey.ID()
@@ -557,7 +557,7 @@ func (memR *Reactor) sendAckTransactionBroadcast(
 		txHashesHex = append(txHashesHex, fmt.Sprintf("%X", txHash))
 	}
 
-	sendToPeer := func(fromID p2p.ID, toPeer p2p.Peer) error {
+	sendToPeer := func(fromID p2p.ID, toPeer *p2p.PeerImpl) error {
 		if success := toPeer.Send(memR.ChainID, p2p.Envelope{
 			ChannelID: server.AckBroadcastChannel,
 			Message: &mxp2p.Receipt{

@@ -106,7 +106,7 @@ func (*Reactor) OnStart() error {
 }
 
 // AddPeer implements p2p.Reactor.
-func (r *Reactor) AddPeer(peer p2p.Peer) {
+func (r *Reactor) AddPeer(peer *p2p.PeerImpl) {
 	r.mtx.RLock()
 	defer r.mtx.RUnlock()
 	if r.syncer != nil {
@@ -115,7 +115,7 @@ func (r *Reactor) AddPeer(peer p2p.Peer) {
 }
 
 // RemovePeer implements p2p.Reactor.
-func (r *Reactor) RemovePeer(peer p2p.Peer, _ any) {
+func (r *Reactor) RemovePeer(peer *p2p.PeerImpl, _ any) {
 	r.mtx.RLock()
 	defer r.mtx.RUnlock()
 	if r.syncer != nil {

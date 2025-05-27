@@ -90,7 +90,7 @@ func (evR *Reactor) PeerStateKey() string {
 }
 
 // AddPeer implements Reactor.
-func (evR *Reactor) AddPeer(peer p2p.Peer) {
+func (evR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 	go evR.broadcastEvidenceRoutine(peer)
 }
 
@@ -131,7 +131,7 @@ func (evR *Reactor) SetEventBus(b *types.EventBus) {
 // sending available evidence to the peer.
 // - If we're waiting for new evidence and the list is not empty,
 // start iterating from the beginning again.
-func (evR *Reactor) broadcastEvidenceRoutine(peer p2p.Peer) {
+func (evR *Reactor) broadcastEvidenceRoutine(peer *p2p.PeerImpl) {
 	var next *clist.CElement
 	for {
 		// This happens because the CElement we were looking at got garbage
@@ -191,7 +191,7 @@ func (evR *Reactor) broadcastEvidenceRoutine(peer p2p.Peer) {
 // Returns the message to send to the peer, or nil if the evidence is invalid for the peer.
 // If message is nil, we should sleep and try again.
 func (evR Reactor) prepareEvidenceMessage(
-	peer p2p.Peer,
+	peer *p2p.PeerImpl,
 	ev types.Evidence,
 ) (evis []types.Evidence) {
 	// make sure the peer is up to date

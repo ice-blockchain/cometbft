@@ -227,6 +227,11 @@ func (bs *BaseService) IsRunning() bool {
 	return atomic.LoadUint32(&bs.started) == 1 && atomic.LoadUint32(&bs.stopped) == 0
 }
 
+// Name returns the name of this service instance.
+func (bs *BaseService) Name() string {
+	return bs.name
+}
+
 // Wait blocks until the service is stopped.
 func (bs *BaseService) Wait() {
 	<-bs.quit

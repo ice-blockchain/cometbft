@@ -79,7 +79,7 @@ func createOutboundPeerAndPerformHandshake(
 	addr *NetAddress,
 	config *config.P2PConfig,
 	mConfig cmtconn.MConnConfig,
-) (*peer, error) {
+) (*PeerImpl, error) {
 	chDescs := map[string][]*cmtconn.ChannelDescriptor{
 		"": []*cmtconn.ChannelDescriptor{{
 			ID:       testCh,

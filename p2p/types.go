@@ -15,7 +15,7 @@ type (
 
 // Envelope contains a message with sender routing info.
 type Envelope struct {
-	Src       Peer          // sender (empty if outbound)
+	Src       *PeerImpl     // sender (empty if outbound)
 	Message   proto.Message // message payload
 	ChannelID byte
 }

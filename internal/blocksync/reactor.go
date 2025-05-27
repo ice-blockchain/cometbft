@@ -216,7 +216,7 @@ func (*Reactor) GetChannels() []*p2p.ChannelDescriptor {
 }
 
 // AddPeer implements Reactor by sending our state to peer.
-func (bcR *Reactor) AddPeer(peer p2p.Peer) {
+func (bcR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 	peer.Send(bcR.ChainID(), p2p.Envelope{
 		ChannelID: BlocksyncChannel,
 		Message: &bcproto.StatusResponse{
@@ -231,13 +231,13 @@ func (bcR *Reactor) AddPeer(peer p2p.Peer) {
 }
 
 // RemovePeer implements Reactor by removing peer from the pool.
-func (bcR *Reactor) RemovePeer(peer p2p.Peer, _ any) {
+func (bcR *Reactor) RemovePeer(peer *p2p.PeerImpl, _ any) {
 	bcR.pool.RemovePeer(peer.ID())
 }
 
 // respondToPeer loads a block and sends it to the requesting peer,
 // if we have it. Otherwise, we'll respond saying we don't have it.
-func (bcR *Reactor) respondToPeer(msg *bcproto.BlockRequest, src p2p.Peer) (queued bool) {
+func (bcR *Reactor) respondToPeer(msg *bcproto.BlockRequest, src *p2p.PeerImpl) (queued bool) {
 	block, _ := bcR.store.LoadBlock(msg.Height)
 	if block == nil {
 		bcR.Logger.Info("Peer asking for a block we don't have", "src", src, "height", msg.Height)
@@ -276,7 +276,7 @@ func (bcR *Reactor) respondToPeer(msg *bcproto.BlockRequest, src p2p.Peer) (queu
 	})
 }
 
-func (bcR *Reactor) handlePeerResponse(msg *bcproto.BlockResponse, src p2p.Peer) {
+func (bcR *Reactor) handlePeerResponse(msg *bcproto.BlockResponse, src *p2p.PeerImpl) {
 	bi, err := types.BlockFromProto(msg.Block)
 	if err != nil {
 		bcR.Logger.Error("Peer sent us invalid block", "peer", src, "msg", msg, "err", err)
@@ -383,7 +383,7 @@ func (bcR *Reactor) poolRoutine(stateSynced bool) {
 			case <-bcR.pool.Quit():
 				return
 			case request := <-bcR.requestsCh:
-				peer := bcR.Switch.Peers(bcR.ChainID()).Get(request.PeerID)
+				peer := bcR.Switch.Peers(bcR.ChainID()).GetInbound(request.PeerID)
 				if peer == nil {
 					continue
 				}
@@ -395,7 +395,7 @@ func (bcR *Reactor) poolRoutine(stateSynced bool) {
 					bcR.Logger.Debug("Send queue is full, drop block request", "peer", peer.ID(), "height", request.Height)
 				}
 			case err := <-bcR.errorsCh:
-				peer := bcR.Switch.Peers(bcR.ChainID()).Get(err.peerID)
+				peer := bcR.Switch.Peers(bcR.ChainID()).GetInbound(err.peerID)
 				if peer != nil {
 					bcR.Switch.StopPeerForError(peer, err)
 				}
@@ -545,14 +545,14 @@ FOR_LOOP:
 			if err != nil {
 				bcR.Logger.Error("Invalid block", "height", first.Height, "err", err)
 				peerID := bcR.pool.RemovePeerAndRedoAllPeerRequests(first.Height)
-				peer := bcR.Switch.Peers(bcR.ChainID()).Get(peerID)
+				peer := bcR.Switch.Peers(bcR.ChainID()).GetInbound(peerID)
 				if peer != nil {
 					// NOTE: we've already removed the peer's request, but we
 					// still need to clean up the rest.
 					bcR.Switch.StopPeerForError(peer, ErrReactorValidation{Err: err})
 				}
 				peerID2 := bcR.pool.RemovePeerAndRedoAllPeerRequests(second.Height)
-				peer2 := bcR.Switch.Peers(bcR.ChainID()).Get(peerID2)
+				peer2 := bcR.Switch.Peers(bcR.ChainID()).GetInbound(peerID2)
 				if peer2 != nil && peer2 != peer {
 					// NOTE: we've already removed the peer's request, but we
 					// still need to clean up the rest.

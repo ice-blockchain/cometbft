@@ -15,7 +15,7 @@ import (
 	"github.com/ice-blockchain/cometbft/p2p/conn"
 )
 
-type Peer = p2p.Peer
+type Peer = p2p.PeerImpl
 
 const (
 	// PexChannel is a channel for PEX messages.
@@ -220,7 +220,7 @@ func (*Reactor) GetChannels() []*conn.ChannelDescriptor {
 
 // AddPeer implements Reactor by adding peer to the address book (if inbound)
 // or by requesting more addresses (if outbound).
-func (r *Reactor) AddPeer(p Peer) {
+func (r *Reactor) AddPeer(p *p2p.PeerImpl) {
 	if p.IsOutbound() {
 		// For outbound peers, the address is already in the books -
 		// either via DialPeersAsync or r.Receive.
@@ -247,7 +247,7 @@ func (r *Reactor) AddPeer(p Peer) {
 }
 
 // RemovePeer implements Reactor by resetting peer's requests info.
-func (r *Reactor) RemovePeer(p Peer, _ any) {
+func (r *Reactor) RemovePeer(p *p2p.PeerImpl, _ any) {
 	id := string(p.ID())
 	r.requestsSent.Delete(id)
 	r.lastReceivedRequests.Delete(id)
@@ -329,7 +329,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 }
 
 // enforces a minimum amount of time between requests.
-func (r *Reactor) receiveRequest(src Peer) error {
+func (r *Reactor) receiveRequest(src *p2p.PeerImpl) error {
 	id := string(src.ID())
 	v := r.lastReceivedRequests.Get(id)
 	if v == nil {
@@ -364,7 +364,7 @@ func (r *Reactor) receiveRequest(src Peer) error {
 
 // RequestAddrs asks peer for more addresses if we do not already have a
 // request out for this peer.
-func (r *Reactor) RequestAddrs(p Peer) {
+func (r *Reactor) RequestAddrs(p *p2p.PeerImpl) {
 	id := string(p.ID())
 	if r.requestsSent.Has(id) {
 		return
@@ -380,7 +380,7 @@ func (r *Reactor) RequestAddrs(p Peer) {
 // ReceiveAddrs adds the given addrs to the addrbook if there's an open
 // request for this peer and deletes the open request.
 // If there's no open request for the src peer, it returns an error.
-func (r *Reactor) ReceiveAddrs(addrs []*p2p.NetAddress, src Peer) error {
+func (r *Reactor) ReceiveAddrs(addrs []*p2p.NetAddress, src *p2p.PeerImpl) error {
 	id := string(src.ID())
 	if r.requestsSent.Has(id) {
 		r.requestsSent.Delete(id)
@@ -417,7 +417,7 @@ func (r *Reactor) ReceiveAddrs(addrs []*p2p.NetAddress, src Peer) error {
 }
 
 // SendAddrs sends addrs to the peer.
-func (r *Reactor) SendAddrs(p Peer, netAddrs []*p2p.NetAddress) {
+func (r *Reactor) SendAddrs(p *p2p.PeerImpl, netAddrs []*p2p.NetAddress) {
 	e := p2p.Envelope{
 		//ChainID:   r.chainID,
 		ChannelID: PexChannel,
@@ -765,7 +765,7 @@ func (r *Reactor) crawlPeers(addrs []*p2p.NetAddress) {
 			continue
 		}
 
-		peer := r.Switch.Peers(r.ChainID).Get(addr.ID)
+		peer := r.Switch.Peers(r.ChainID).GetOutbound(addr.ID)
 		if peer != nil {
 			r.RequestAddrs(peer)
 		}

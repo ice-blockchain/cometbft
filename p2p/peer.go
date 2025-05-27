@@ -45,9 +45,12 @@ type Peer interface {
 
 	Set(key string, value any)
 	Get(key string) any
+	Has(key string) bool
 
 	SetRemovalFailed()
 	GetRemovalFailed() bool
+
+	GetLogger() log.Logger
 }
 
 // ----------------------------------------------------------
@@ -107,7 +110,7 @@ func (pc peerConn) RemoteIP() net.IP {
 // peer implements Peer.
 //
 // Before using a peer, you will need to perform a handshake on connection.
-type peer struct {
+type PeerImpl struct {
 	service.BaseService
 
 	// raw peerConn and the multiplex connection
@@ -130,7 +133,7 @@ type peer struct {
 	removalAttemptFailed bool
 }
 
-type PeerOption func(*peer)
+type PeerOption func(*PeerImpl)
 
 func newPeer(
 	pc peerConn,
@@ -139,10 +142,10 @@ func newPeer(
 	reactorsByCh map[string]map[byte]Reactor,
 	msgTypeByChID map[string]map[byte]proto.Message,
 	chDescs map[string][]*cmtconn.ChannelDescriptor,
-	onPeerError func(Peer, any),
+	onPeerError func(*PeerImpl, any),
 	options ...PeerOption,
-) *peer {
-	p := &peer{
+) *PeerImpl {
+	p := &PeerImpl{
 		peerConn:       pc,
 		nodeInfo:       nodeInfo,
 		channels:       nodeInfo.GetChannels(),
@@ -169,7 +172,7 @@ func newPeer(
 }
 
 // String representation.
-func (p *peer) String() string {
+func (p *PeerImpl) String() string {
 	if p.outbound {
 		return fmt.Sprintf("Peer{%v %v out}", p.mconn, p.ID())
 	}
@@ -177,7 +180,7 @@ func (p *peer) String() string {
 	return fmt.Sprintf("Peer{%v %v in}", p.mconn, p.ID())
 }
 
-func (p *peer) MConn() *cmtconn.MConnection {
+func (p *PeerImpl) MConn() *cmtconn.MConnection {
 	return p.mconn
 }
 
@@ -185,13 +188,18 @@ func (p *peer) MConn() *cmtconn.MConnection {
 // Implements service.Service
 
 // SetLogger implements BaseService.
-func (p *peer) SetLogger(l log.Logger) {
+func (p *PeerImpl) SetLogger(l log.Logger) {
 	p.Logger = l
 	p.mconn.SetLogger(l)
 }
 
+// GetLogger returns the Logger.
+func (p *PeerImpl) GetLogger() log.Logger {
+	return p.Logger
+}
+
 // OnStart implements BaseService.
-func (p *peer) OnStart() error {
+func (p *PeerImpl) OnStart() error {
 	if err := p.BaseService.OnStart(); err != nil {
 		return err
 	}
@@ -200,7 +208,9 @@ func (p *peer) OnStart() error {
 		return err
 	}
 
-	go p.metricsReporter()
+	if p.mconn.HasStartedRoutines() {
+		go p.metricsReporter()
+	}
 	return nil
 }
 
@@ -208,12 +218,12 @@ func (p *peer) OnStart() error {
 // .Send() calls will get flushed before closing the connection.
 //
 // NOTE: it is not safe to call this method more than once.
-func (p *peer) FlushStop() {
+func (p *PeerImpl) FlushStop() {
 	p.mconn.FlushStop() // stop everything and close the conn
 }
 
 // OnStop implements BaseService.
-func (p *peer) OnStop() {
+func (p *PeerImpl) OnStop() {
 	if err := p.mconn.Stop(); err != nil { // stop everything and close the conn
 		p.Logger.Debug("Error while stopping peer", "err", err)
 	}
@@ -223,22 +233,22 @@ func (p *peer) OnStop() {
 // Implements Peer
 
 // ID returns the peer's ID - the hex encoded hash of its pubkey.
-func (p *peer) ID() ID {
+func (p *PeerImpl) ID() ID {
 	return p.nodeInfo.ID()
 }
 
 // IsOutbound returns true if the connection is outbound, false otherwise.
-func (p *peer) IsOutbound() bool {
+func (p *PeerImpl) IsOutbound() bool {
 	return p.peerConn.outbound
 }
 
 // IsPersistent returns true if the peer is persistent, false otherwise.
-func (p *peer) IsPersistent() bool {
+func (p *PeerImpl) IsPersistent() bool {
 	return p.peerConn.persistent
 }
 
 // NodeInfo returns a copy of the peer's NodeInfo.
-func (p *peer) NodeInfo() NodeInfo {
+func (p *PeerImpl) NodeInfo() NodeInfo {
 	return p.nodeInfo
 }
 
@@ -246,12 +256,12 @@ func (p *peer) NodeInfo() NodeInfo {
 // For outbound peers, it's the address dialed (after DNS resolution).
 // For inbound peers, it's the address returned by the underlying connection
 // (not what's reported in the peer's NodeInfo).
-func (p *peer) SocketAddr() *NetAddress {
+func (p *PeerImpl) SocketAddr() *NetAddress {
 	return p.peerConn.socketAddr
 }
 
 // Status returns the peer's ConnectionStatus.
-func (p *peer) Status() cmtconn.ConnectionStatus {
+func (p *PeerImpl) Status() cmtconn.ConnectionStatus {
 	return p.mconn.Status()
 }
 
@@ -259,7 +269,7 @@ func (p *peer) Status() cmtconn.ConnectionStatus {
 // send queue is full after timeout, specified by MConnection.
 //
 // thread safe.
-func (p *peer) Send(chainID string, e Envelope) bool {
+func (p *PeerImpl) Send(chainID string, e Envelope) bool {
 	return p.send(chainID, e.ChannelID, e.Message, p.mconn.Send)
 }
 
@@ -267,11 +277,11 @@ func (p *peer) Send(chainID string, e Envelope) bool {
 // false if the send queue is full.
 //
 // thread safe.
-func (p *peer) TrySend(chainID string, e Envelope) bool {
+func (p *PeerImpl) TrySend(chainID string, e Envelope) bool {
 	return p.send(chainID, e.ChannelID, e.Message, p.mconn.TrySend)
 }
 
-func (p *peer) send(
+func (p *PeerImpl) send(
 	chainID string,
 	chID byte,
 	msg proto.Message,
@@ -298,23 +308,30 @@ func (p *peer) send(
 	return res
 }
 
+// Has checks if data is present for the given key.
+//
+// thread safe.
+func (p *PeerImpl) Has(key string) bool {
+	return p.Data.Has(key)
+}
+
 // Get the data for a given key.
 //
 // thread safe.
-func (p *peer) Get(key string) any {
+func (p *PeerImpl) Get(key string) any {
 	return p.Data.Get(key)
 }
 
 // Set sets the data for the given key.
 //
 // thread safe.
-func (p *peer) Set(key string, data any) {
+func (p *PeerImpl) Set(key string, data any) {
 	p.Data.Set(key, data)
 }
 
 // hasChannel returns true if the peer reported
 // knowing about the given chID.
-func (p *peer) hasChannel(chID byte) bool {
+func (p *PeerImpl) hasChannel(chID byte) bool {
 	for _, ch := range p.channels {
 		if ch == chID {
 			return true
@@ -324,15 +341,15 @@ func (p *peer) hasChannel(chID byte) bool {
 }
 
 // CloseConn closes original connection. Used for cleaning up in cases where the peer had not been started at all.
-func (p *peer) CloseConn() error {
+func (p *PeerImpl) CloseConn() error {
 	return p.peerConn.conn.Close()
 }
 
-func (p *peer) SetRemovalFailed() {
+func (p *PeerImpl) SetRemovalFailed() {
 	p.removalAttemptFailed = true
 }
 
-func (p *peer) GetRemovalFailed() bool {
+func (p *PeerImpl) GetRemovalFailed() bool {
 	return p.removalAttemptFailed
 }
 
@@ -346,12 +363,12 @@ func (pc *peerConn) CloseConn() {
 }
 
 // RemoteAddr returns peer's remote network address.
-func (p *peer) RemoteAddr() net.Addr {
+func (p *PeerImpl) RemoteAddr() net.Addr {
 	return p.peerConn.conn.RemoteAddr()
 }
 
 // CanSend returns true if the send queue is not full, false otherwise.
-func (p *peer) CanSend(chainID string, chID byte) bool {
+func (p *PeerImpl) CanSend(chainID string, chID byte) bool {
 	if !p.IsRunning() {
 		return false
 	}
@@ -361,12 +378,12 @@ func (p *peer) CanSend(chainID string, chID byte) bool {
 // ---------------------------------------------------
 
 func PeerMetrics(metrics *Metrics) PeerOption {
-	return func(p *peer) {
+	return func(p *PeerImpl) {
 		p.metrics = metrics
 	}
 }
 
-func (p *peer) metricsReporter() {
+func (p *PeerImpl) metricsReporter() {
 	metricsTicker := time.NewTicker(metricsTickerDuration)
 	defer metricsTicker.Stop()
 
@@ -418,11 +435,11 @@ func (p *peer) metricsReporter() {
 
 func createMConnection(
 	conn net.Conn,
-	p *peer,
+	p *PeerImpl,
 	reactorsByCh map[string]map[byte]Reactor,
 	msgTypeByChID map[string]map[byte]proto.Message,
 	chDescs map[string][]*cmtconn.ChannelDescriptor,
-	onPeerError func(Peer, any),
+	onPeerError func(*PeerImpl, any),
 	config cmtconn.MConnConfig,
 ) *cmtconn.MConnection {
 	onReceive := func(chainID string, chID byte, msgBytes []byte) {

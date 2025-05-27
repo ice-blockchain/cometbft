@@ -95,13 +95,13 @@ func (*NopMempoolReactor) WaitSync() bool { return false }
 func (*NopMempoolReactor) GetChannels() []*p2p.ChannelDescriptor { return nil }
 
 // AddPeer does nothing.
-func (*NopMempoolReactor) AddPeer(p2p.Peer) {}
+func (*NopMempoolReactor) AddPeer(*p2p.PeerImpl) {}
 
 // InitPeer always returns nil.
-func (*NopMempoolReactor) InitPeer(p2p.Peer) p2p.Peer { return nil }
+func (*NopMempoolReactor) InitPeer(*p2p.PeerImpl) *p2p.PeerImpl { return nil }
 
 // RemovePeer does nothing.
-func (*NopMempoolReactor) RemovePeer(p2p.Peer, any) {}
+func (*NopMempoolReactor) RemovePeer(*p2p.PeerImpl, any) {}
 
 // Receive does nothing.
 func (*NopMempoolReactor) Receive(p2p.Envelope) {}

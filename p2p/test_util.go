@@ -35,16 +35,16 @@ func (mockNodeInfo) Validate() error                            { return nil }
 func (mockNodeInfo) CompatibleWith(NodeInfo) error              { return nil }
 func (mockNodeInfo) GetCommonChains(NodeInfo) ([]string, error) { return []string{}, nil }
 
-func AddPeerToSwitchPeerSet(sw *Switch, peer Peer) {
+func AddPeerToSwitchPeerSet(sw *Switch, peer *PeerImpl) {
 	sw.peersMtx.RLock()
 	defer sw.peersMtx.RUnlock()
 
-	sw.peersByChain[""].Add(peer) //nolint:errcheck // ignore error
+	sw.peersByScope[""].Add(peer) //nolint:errcheck // ignore error
 }
 
 func CreateRandomPeer(outbound bool) Peer {
 	addr, netAddr := CreateRoutableAddr()
-	p := &peer{
+	p := &PeerImpl{
 		peerConn: peerConn{
 			outbound:   outbound,
 			socketAddr: netAddr,

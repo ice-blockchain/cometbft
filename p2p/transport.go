@@ -45,7 +45,7 @@ type accept struct {
 // TODO(xla): Refactor out with more static Reactor setup and PeerBehaviour.
 type peerConfig struct {
 	chDescs     map[string][]*conn.ChannelDescriptor
-	onPeerError func(Peer, any)
+	onPeerError func(*PeerImpl, any)
 	outbound    bool
 	// isPersistent allows you to set a function, which, given socket address
 	// (for outbound peers) OR self-reported address (for inbound peers), tells
@@ -75,13 +75,13 @@ type Transport interface {
 	NetAddress() NetAddress
 
 	// Accept returns a newly connected Peer.
-	Accept(config peerConfig) (Peer, error)
+	Accept(config peerConfig) (*PeerImpl, error)
 
 	// Dial connects to the Peer for the address.
-	Dial(addr NetAddress, config peerConfig) (Peer, error)
+	Dial(addr NetAddress, config peerConfig) (*PeerImpl, error)
 
 	// Cleanup any resources associated with Peer.
-	Cleanup(peer Peer)
+	Cleanup(peer *PeerImpl)
 
 	// Flags when transport is being closed.
 	IsClosing() bool
@@ -247,7 +247,7 @@ func (mt *MultiplexTransport) NetAddress() NetAddress {
 }
 
 // Accept implements Transport.
-func (mt *MultiplexTransport) Accept(cfg peerConfig) (Peer, error) {
+func (mt *MultiplexTransport) Accept(cfg peerConfig) (*PeerImpl, error) {
 	select {
 	// This case should never have any side-effectful/blocking operations to
 	// ensure that quality peers are ready to be used.
@@ -268,7 +268,7 @@ func (mt *MultiplexTransport) Accept(cfg peerConfig) (Peer, error) {
 func (mt *MultiplexTransport) Dial(
 	addr NetAddress,
 	cfg peerConfig,
-) (Peer, error) {
+) (*PeerImpl, error) {
 	c, err := addr.DialTimeout(mt.dialTimeout)
 	if err != nil {
 		return nil, err
@@ -451,7 +451,7 @@ func (mt *MultiplexTransport) IsClosing() bool {
 
 // Cleanup removes the given address from the connections set and
 // closes the connection.
-func (mt *MultiplexTransport) Cleanup(p Peer) {
+func (mt *MultiplexTransport) Cleanup(p *PeerImpl) {
 	mt.conns.RemoveAddr(p.RemoteAddr())
 	_ = p.CloseConn()
 }
@@ -606,7 +606,7 @@ func (mt *MultiplexTransport) wrapPeer(
 	cfg peerConfig,
 	socketAddr *NetAddress,
 	sw *Switch,
-) Peer {
+) *PeerImpl {
 	persistent := false
 	if cfg.isPersistent != nil {
 		if cfg.outbound {
@@ -635,9 +635,6 @@ func (mt *MultiplexTransport) wrapPeer(
 		cfg.chDescs,
 		cfg.onPeerError,
 		PeerMetrics(cfg.metrics),
-		func(p *peer) {
-			p.mconn.Sw = mt.sw
-		},
 	)
 
 	return p
