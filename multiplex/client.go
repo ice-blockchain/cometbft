@@ -376,21 +376,7 @@ func (c MultiplexClient) BroadcastTx(
 	}
 
 	// ------------------------------------------------------------------------
-	// Step 4: Update events switch for Discovery and CometBFT to make newly
-	// created (or required) networks available at the P2P layer.
-	// ------------------------------------------------------------------------
-
-	// TODO(midas): remove debug logs
-	c.backend.GetLogger().Debug("Updating events switch for required networks",
-		"num_networks", len(requiredNetworks),
-		"tx_batch", transactionHashes)
-
-	// Updates the supported ChainIDs of NodeInfo and p2p.Switch.
-	// This enables internal P2P channels for Discovery and CometBFT.
-	c.GetBackend().UpdateAvailableNetworks(requiredNetworks)
-
-	// ------------------------------------------------------------------------
-	// Step 5: Ask relays to replicate chains.
+	// Step 4: Ask relays to replicate chains.
 	//
 	// catchupRelays contains relay addresses that will receive a message
 	// with a `ChainReplicationRequest` on [server.ReplicationChannel].
@@ -488,7 +474,7 @@ func (c MultiplexClient) BroadcastTx(
 	}
 
 	// ------------------------------------------------------------------------
-	// Step 6: We can start the node services after full ACK of replication
+	// Step 5: We can start the node services after full ACK of replication
 	// and after re-start of services in case the nodes are not yet running.
 	//
 	// Starting the reactors here fixes a race condition between the multiplex
@@ -509,7 +495,7 @@ func (c MultiplexClient) BroadcastTx(
 	}
 
 	// ------------------------------------------------------------------------
-	// Step 7: Add transactions to local mempool.
+	// Step 6: Add transactions to local mempool.
 	//
 	// We shall store the transaction as accepted in the local mempool.
 	// ------------------------------------------------------------------------
@@ -530,7 +516,7 @@ func (c MultiplexClient) BroadcastTx(
 	}
 
 	// ------------------------------------------------------------------------
-	// Step 8: Broadcast transactions to relays.
+	// Step 7: Broadcast transactions to relays.
 	//
 	// If any of the healthy relays fails to accept the transactions, a rollback
 	// will happen because we added the transactions to our local mempool.
@@ -555,7 +541,7 @@ func (c MultiplexClient) BroadcastTx(
 	)
 
 	// ------------------------------------------------------------------------
-	// Step 9: Wait for remote transaction acceptance (ACK).
+	// Step 8: Wait for remote transaction acceptance (ACK).
 	//
 	// Healthy relays are expected to send us back a message which contains
 	// a `AckTransactionBroadcast` on [server.AckBroadcastChannel].
@@ -680,7 +666,7 @@ func (c MultiplexClient) BroadcastTx(
 	}
 
 	// ------------------------------------------------------------------------
-	// Step 10: Transactions are now broadcast and accepted by all relays,
+	// Step 9: Transactions are now broadcast and accepted by all relays,
 	// i.e. consensus succeeded.
 
 	// TODO(midas): remove debug logs

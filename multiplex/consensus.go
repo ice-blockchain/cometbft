@@ -200,6 +200,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 		),
 		mempl.WithChainID(chainID),
 		mempl.WithNodeKey(reactor.GetNodeKey()),
+		mempl.WithDialerFn(reactor.GetRelayDialerForCometBFT()),
 	)
 	if cfgOverwrite.Consensus.WaitForTxs() {
 		mempool.EnableTxsAvailable()
@@ -347,6 +348,7 @@ func (reactor *Reactor) StartConsensusInstanceReactors(
 		// Given sendStatusToPeers, we should send completion updates to
 		// all consensus peers, i.e. send a ChainReplicationComplete msg.
 		consensusReactor.SetSendStatusToPeer(sendStatusToPeers)
+		consensusReactor.SetRuntimeRegistry(reactor.GetRuntimeRegistry())
 
 		if err := consensusReactor.Start(); err != nil {
 			return fmt.Errorf(

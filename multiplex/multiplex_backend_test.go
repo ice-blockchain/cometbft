@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	mx "github.com/ice-blockchain/cometbft/multiplex"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/server"
+	"github.com/ice-blockchain/cometbft/p2p"
 	sm "github.com/ice-blockchain/cometbft/state"
 )
 
@@ -239,7 +241,6 @@ func TestMultiplexBackendCheckDialCompatibleRelayWithTwoRelays(t *testing.T) {
 	servers[1].MustStart()
 
 	// server 0 talks to server 1
-	sourceSwitch := servers[0].CreateOrLoadDiscoveryEventSwitch()
 	recipientReactor := servers[1].GetReactor()
 	recipientNodeID := string(recipientReactor.GetNodeKey().ID())
 
@@ -248,14 +249,27 @@ func TestMultiplexBackendCheckDialCompatibleRelayWithTwoRelays(t *testing.T) {
 		recipientNodeID + "@127.0.0.1:50010",
 	)
 	require.NoError(t, err)
+	require.NotNil(t, testRelayAddr)
 
-	discoverErr := servers[0].CheckDialCompatibleRelay(
-		context.TODO(),
-		sourceSwitch,
-		testRelayAddr,
-	)
+	sourceSwitch := servers[0].CreateOrLoadDiscoveryEventSwitch()
+	require.NotNil(t, sourceSwitch)
 
-	assert.NoError(t, discoverErr) // NO error!
+	waitDial := sync.WaitGroup{}
+	waitDial.Add(1)
+
+	go func(sw *p2p.Switch, addr *server.RelayAddress) {
+		defer waitDial.Done()
+
+		discoverErr := servers[0].CheckDialCompatibleRelay(
+			context.TODO(),
+			sourceSwitch,
+			testRelayAddr,
+		)
+
+		assert.NoError(t, discoverErr)
+	}(sourceSwitch, testRelayAddr) // relay-1 to relay-2
+
+	waitDial.Wait()
 }
 
 func TestMultiplexBackendCheckDialCompatibleRelaySevenCompatibleRelays(t *testing.T) {
@@ -292,7 +306,6 @@ func TestMultiplexBackendCheckDialCompatibleRelaySevenCompatibleRelays(t *testin
 	require.Len(t, servers, numRelays)
 
 	defer func() {
-		time.Sleep(5 * time.Second)
 		for i := 0; i < len(servers); i++ {
 			go closeAndRemoveAll(t, rootDirs[i], servers[i])
 		}
@@ -351,7 +364,6 @@ func TestMultiplexBackendGetRemoteRelayInfo(t *testing.T) {
 	require.Len(t, servers, numRelays)
 
 	defer func() {
-		time.Sleep(10 * time.Second)
 		for i := 0; i < len(servers); i++ {
 			go closeAndRemoveAll(t, rootDirs[i], servers[i])
 		}
@@ -402,7 +414,6 @@ func TestMultiplexBackendGetRemoteRelayInfoWithFourRelays(t *testing.T) {
 	require.Len(t, servers, numRelays)
 
 	defer func() {
-		time.Sleep(10 * time.Second)
 		for i := 0; i < len(servers); i++ {
 			go closeAndRemoveAll(t, rootDirs[i], servers[i])
 		}
@@ -451,7 +462,6 @@ func TestMultiplexBackendGetRelaysByNetwork(t *testing.T) {
 	require.Len(t, servers, numRelays)
 
 	defer func() {
-		time.Sleep(10 * time.Second)
 		for i := 0; i < len(servers); i++ {
 			go closeAndRemoveAll(t, rootDirs[i], servers[i])
 		}
@@ -463,14 +473,8 @@ func TestMultiplexBackendGetRelaysByNetwork(t *testing.T) {
 	}
 
 	// server 0 talks to server 1
-	sourceSwitch := servers[0].CreateOrLoadDiscoveryEventSwitch()
-	sourceReactor := servers[0].GetReactor()
-	recipientSwitch := servers[1].CreateOrLoadDiscoveryEventSwitch()
 	recipientReactor := servers[1].GetReactor()
 	recipientNodeID := string(recipientReactor.GetNodeKey().ID())
-
-	sourceSwitch.AddUnconditionalPeerIDs([]string{string(recipientReactor.GetNodeKey().ID())})
-	recipientSwitch.AddUnconditionalPeerIDs([]string{string(sourceReactor.GetNodeKey().ID())})
 
 	// Act - Relay 1 fetches addresses of Relay 2
 	testBroadcastPort := strconv.Itoa(50001 + (1 * 100)) // 50101 (second relay)
@@ -488,6 +492,76 @@ func TestMultiplexBackendGetRelaysByNetwork(t *testing.T) {
 		assert.NotEmpty(t, testChainID)
 		assert.NotEmpty(t, testChainRelays)
 	}
+}
+
+func TestMultiplexBackendGetRelaysByNetworkEmptyRelays(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	numChains := 0
+	numRelays := 2
+
+	// For debug, change the loggers to cmtlog.TestingLogger()
+	loggerRelay1 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
+	loggerRelay2 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-2")
+
+	// Uses config.TestConfig() and random MultiplexConfig
+	rootDirs,
+		servers := ResetTestMultiplexBackendCompatibleRelays(
+		t,
+		numChains,
+		numRelays,
+		loggerRelay1,
+		loggerRelay2,
+	)
+	require.NotEmpty(t, servers)
+	require.Len(t, rootDirs, numRelays)
+	require.Len(t, servers, numRelays)
+
+	defer func() {
+		for i := 0; i < len(servers); i++ {
+			go closeAndRemoveAll(t, rootDirs[i], servers[i])
+		}
+	}()
+
+	// Start the node backends
+	for i := 0; i < len(servers); i++ {
+		servers[i].MustStart()
+	}
+
+	// server 0 talks to server 1
+	recipientReactor := servers[1].GetReactor()
+	recipientNodeID := string(recipientReactor.GetNodeKey().ID())
+
+	// Act - Relay 1 fetches addresses of Relay 2
+	testDiscoveryPort := 50001 + (1 * 100)
+	testBroadcastPort := strconv.Itoa(testDiscoveryPort) // 50101 (second relay)
+	testRelayAddr, err := server.NewRelayAddress(recipientNodeID + "@127.0.0.1:" + testBroadcastPort)
+	require.NoError(t, err)
+
+	_, chainRelays, errorRelays := servers[0].GetRelaysByNetwork(context.TODO(), []*server.RelayAddress{
+		testRelayAddr,
+	})
+
+	assert.Len(t, errorRelays, 0) // NO error!
+	assert.Len(t, chainRelays, numChains)
+
+	for testChainID, testChainRelays := range chainRelays {
+		assert.NotEmpty(t, testChainID)
+		assert.NotEmpty(t, testChainRelays) // must return a healthy relay
+	}
+
+	expectedRelayID := testRelayAddr.ID()
+	expectedListenAddr := testRelayAddr.StringWithoutScheme() // no tcp:// !
+	expectedDiscoveryPort := uint16(testDiscoveryPort)
+
+	actualRelayInfo := servers[0].GetReactor().GetRelayInfo(testRelayAddr.ID())
+	require.NotNil(t, actualRelayInfo)
+	assert.Equal(t, expectedRelayID, actualRelayInfo.DefaultNodeID,
+		"should return correct DefaultNodeID in RelayInfo RPC")
+	assert.Equal(t, expectedListenAddr, actualRelayInfo.ListenAddress,
+		"should return correct ListenAddress in RelayInfo RPC")
+	assert.Equal(t, expectedDiscoveryPort, actualRelayInfo.DiscoveryPort,
+		"should return correct DiscoveryPort in RelayInfo RPC")
 }
 
 func TestMultiplexBackendAddTransactions(t *testing.T) {

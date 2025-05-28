@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"path/filepath"
 	"slices"
@@ -17,6 +18,7 @@ import (
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/crypto"
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
+	"github.com/ice-blockchain/cometbft/crypto/tmhash"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	cmtlibs "github.com/ice-blockchain/cometbft/libs/service"
 	mempl "github.com/ice-blockchain/cometbft/mempool"
@@ -208,6 +210,10 @@ type Reactor struct {
 
 	// Internal
 	logger cmtlog.Logger
+
+	// Precalculated max message sizes.
+	broadcastRecvMessageCapacity int
+	runtimeRecvMessageCapacity   int
 }
 
 type ReactorOption func(*Reactor)
@@ -321,6 +327,46 @@ func NewReactor(
 		server.ReplayPoolAcceptor(reactor.acceptorImpl),
 	)
 	reactor.replayPoolMtx.Unlock()
+
+	// Pre-allocate an example AckTransactionBroadcast message to realistically
+	// estimate the message capacity needed for AckBroadcastChannel.
+	{
+		allocChainID := strings.Join([]string{GetMultiplexPrefix(),
+			RandomUserAddress().String(),
+			MakeFingerprint(""),
+		}, "-")
+		allocNodeId := make([]byte, p2p.IDByteLength)
+		allocTxHash := [][]byte{make([]byte, tmhash.Size)}
+		ackTxMsg := mxp2p.Receipt{
+			Sum: &mxp2p.Receipt_AckTransactionBroadcast{
+				AckTransactionBroadcast: &mxp2p.AckTransactionBroadcast{
+					ChainID:  allocChainID,
+					NodeId:   string(allocNodeId),
+					TxHashes: allocTxHash,
+				},
+			},
+		}
+		reactor.broadcastRecvMessageCapacity = ackTxMsg.Size()
+	}
+
+	// Pre-allocate an example ChainReplicationComplete message to realistically
+	// estimate the message capacity needed for RuntimeChannel.
+	{
+		allocChainID := strings.Join([]string{GetMultiplexPrefix(),
+			RandomUserAddress().String(),
+			MakeFingerprint(""),
+		}, "-")
+		allocNodeId := make([]byte, p2p.IDByteLength)
+		runtimeUpdateMsg := mxp2p.Message{
+			Sum: &mxp2p.Message_ChainReplicationComplete{
+				ChainReplicationComplete: &mxp2p.ChainReplicationComplete{
+					ChainID: allocChainID,
+					NodeId:  string(allocNodeId),
+				},
+			},
+		}
+		reactor.runtimeRecvMessageCapacity = runtimeUpdateMsg.Size()
+	}
 
 	return reactor
 }
@@ -1088,7 +1134,7 @@ func (reactor *Reactor) GetReplayPool() *server.ReplayPool {
 // Reactor implements p2p.Reactor
 
 // GetChannels implements p2p.Reactor.
-func (*Reactor) GetChannels() []*p2p.ChannelDescriptor {
+func (mxR *Reactor) GetChannels() []*p2p.ChannelDescriptor {
 	return []*p2p.ChannelDescriptor{
 		{
 			ID: server.ReplicationChannel,
@@ -1101,11 +1147,13 @@ func (*Reactor) GetChannels() []*p2p.ChannelDescriptor {
 			ID:          server.AckBroadcastChannel,
 			Priority:    3,
 			MessageType: &mxp2p.Receipt{},
+			//RecvMessageCapacity: mxR.broadcastRecvMessageCapacity,
 		},
 		{
 			ID:          server.RuntimeChannel,
 			Priority:    10, // This channel does not have priority.
 			MessageType: &mxp2p.Message{},
+			//RecvMessageCapacity: mxR.runtimeRecvMessageCapacity,
 		},
 	}
 }
@@ -1677,13 +1725,39 @@ func (reactor *Reactor) OnStart() error {
 func (reactor *Reactor) OnStop() {
 	// Shutdown all network resources atomically
 	reactor.networkMutex.Lock()
+	//cleanupWg := new(sync.WaitGroup)
 
 	// Stop the P2P Discovery Server that is injected
-	if reactor.discoverySwitch != nil && reactor.discoverySwitch.IsRunning() {
-		allPeers := reactor.discoverySwitch.AllPeers()
-		for _, p := range allPeers {
-			reactor.discoverySwitch.StopPeerGracefully(p)
+	if reactor.discoverySwitch != nil {
+		reactor.discoverySwitch.CleanupChannels()
+
+		allPeers := reactor.discoverySwitch.PeersByScopes()
+		for _, peerSet := range allPeers {
+			peers := peerSet.Copy()
+			for _, p := range peers {
+				func(peer *p2p.PeerImpl) {
+					//cleanupWg.Add(1)
+					defer func() {
+						if r := recover(); r != nil {
+							// ignore peer error during shutdown
+							//defer cleanupWg.Done()
+							return
+						}
+					}()
+
+					go func() {
+						//defer cleanupWg.Done()
+						reactor.discoverySwitch.StopPeerGracefully(peer)
+					}()
+				}(p)
+			}
 		}
+		//cleanupWg.Wait()
+
+		// Ping timer must be killed for outbound peers
+		reactor.discoverySwitch.Transport().Conns().ForEach(func(c net.Conn) {
+			c.Close()
+		})
 
 		// Must stop listening for P2P messages on broadcast port
 		if ts := reactor.discoverySwitch.Transport(); ts != nil {
@@ -1694,13 +1768,43 @@ func (reactor *Reactor) OnStop() {
 		reactor.discoverySwitch.Stop()
 		reactor.discoverySwitch = nil
 	}
+	// Done shutting down network resources
+	reactor.networkMutex.Unlock()
+
+	// Shutdown all network resources atomically
+	reactor.networkMutex.Lock()
 
 	// Stop the P2P CometBFT Server that is injected
-	if reactor.cometbftSwitch != nil && reactor.cometbftSwitch.IsRunning() {
-		allPeers := reactor.cometbftSwitch.AllPeers()
-		for _, p := range allPeers {
-			reactor.cometbftSwitch.StopPeerGracefully(p)
+	if reactor.cometbftSwitch != nil {
+		reactor.cometbftSwitch.CleanupChannels()
+
+		allPeers := reactor.cometbftSwitch.PeersByScopes()
+		for _, peerSet := range allPeers {
+			peers := peerSet.Copy()
+			for _, p := range peers {
+				func(peer *p2p.PeerImpl) {
+					//cleanupWg.Add(1)
+					defer func() {
+						if r := recover(); r != nil {
+							// ignore peer error during shutdown
+							//defer cleanupWg.Done()
+							return
+						}
+					}()
+
+					go func() {
+						//defer cleanupWg.Done()
+						reactor.cometbftSwitch.StopPeerGracefully(p)
+					}()
+				}(p)
+			}
+			//cleanupWg.Wait()
 		}
+
+		// Ping timer must be killed for outbound peers
+		reactor.cometbftSwitch.Transport().Conns().ForEach(func(c net.Conn) {
+			c.Close()
+		})
 
 		if ts := reactor.cometbftSwitch.Transport(); ts != nil {
 			ts.Close()

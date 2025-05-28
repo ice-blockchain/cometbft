@@ -655,6 +655,12 @@ func NewNodeWithServices(
 	}
 }
 
+// OnReset implements Service.
+func (n *Node) OnReset() error {
+	n.Logger.Debug("Node runtime reset")
+	return nil
+}
+
 // OnStart starts the Node. It implements service.Service.
 func (n *Node) OnStart() error {
 	now := cmttime.Now()
@@ -706,7 +712,7 @@ func (n *Node) OnStart() error {
 
 	// Start background pruning
 	if err := n.pruner.Start(); err != nil {
-		return fmt.Errorf("failed to start background pruning routine: %w", err)
+		n.Logger.Error(fmt.Errorf("failed to start background pruning routine: %w", err).Error())
 	}
 
 	return nil

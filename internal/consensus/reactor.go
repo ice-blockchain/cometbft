@@ -19,6 +19,7 @@ import (
 	cmtsync "github.com/ice-blockchain/cometbft/libs/sync"
 	"github.com/ice-blockchain/cometbft/multiplex/server"
 	"github.com/ice-blockchain/cometbft/p2p"
+	"github.com/ice-blockchain/cometbft/p2p/conn"
 	sm "github.com/ice-blockchain/cometbft/state"
 	"github.com/ice-blockchain/cometbft/types"
 	cmterrors "github.com/ice-blockchain/cometbft/types/errors"
@@ -112,6 +113,10 @@ func (conR *Reactor) SetSendStatusToPeer(b bool) {
 // GetState returns a pointer to the consensus state instance.
 func (conR *Reactor) GetState() *State {
 	return conR.conS
+}
+
+func (conR *Reactor) SetRuntimeRegistry(reg *server.RuntimeRegistry) {
+	conR.runtimeRegistry = reg
 }
 
 // OnStart implements BaseService by subscribing to events, which later will be
@@ -256,7 +261,7 @@ func (conR *Reactor) announceReplicationToPeers(
 	wg.Wait()
 
 	// Completes the runtime activated in [multiplex.Reactor#Receive].
-	defer conR.runtimeRegistry.OnComplete(chainID)
+	conR.runtimeRegistry.OnComplete(chainID)
 
 	return
 }
@@ -296,6 +301,11 @@ func (*Reactor) GetChannels() []*p2p.ChannelDescriptor {
 			RecvBufferCapacity:  1024,
 			RecvMessageCapacity: maxMsgSize,
 			MessageType:         &cmtcons.Message{},
+		},
+		{
+			ID:          server.RuntimeChannel,
+			Priority:    10, // This channel does not have priority.
+			MessageType: &mxp2p.Message{},
 		},
 	}
 }
@@ -360,6 +370,15 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 		conR.Logger.Debug("Receive", "src", e.Src, "chId", e.ChannelID)
 		return
 	}
+
+	if e.ChannelID == server.RuntimeChannel {
+		mxReactor := conR.Switch.Reactor(conn.SharedChannelsNamespace, "MULTIPLEX")
+		if mxReactor != nil && mxReactor.IsRunning() {
+			mxReactor.Receive(e)
+			return // Forwarded
+		}
+	}
+
 	msg, err := MsgFromProto(e.Message)
 	if err != nil {
 		conR.Logger.Error("Error decoding message", "src", e.Src, "chId", e.ChannelID, "err", err)
@@ -512,6 +531,9 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 			// don't punish (leave room for soft upgrades)
 			conR.Logger.Error(fmt.Sprintf("Unknown message type %v", reflect.TypeOf(msg)))
 		}
+
+	case server.RuntimeChannel:
+		return
 
 	default:
 		conR.Logger.Error(fmt.Sprintf("Unknown chId %X", e.ChannelID))

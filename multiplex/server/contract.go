@@ -62,9 +62,13 @@ type Backend interface {
 	// including mempool, blocksync, consensus and evidence reactors.
 	StartConsensusInstance(ctx context.Context, chainID string) error
 
-	// UpdateAvailableNetworks should update the NodeInfo pointer and p2p switch
-	// to permit communications related to new (or unknown) networks.
-	UpdateAvailableNetworks(networks []string) []string
+	// OpenChannels should update the NodeInfo pointer and
+	// add connection channels to permit communication of messages
+	// related to new (or unknown for this relay) networks.
+	OpenRequiredChannels(
+		switchType string,
+		requiredNetworks []string,
+	) error
 
 	// WaitForRelaysAckChainReplications should wait for *remote* relays replication
 	// acceptance and it should return a list of accepting relays per ChainID.

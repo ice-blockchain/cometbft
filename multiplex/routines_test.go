@@ -3,8 +3,8 @@ package multiplex_test
 import (
 	"context"
 	"strconv"
+	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -13,12 +13,13 @@ import (
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/server"
+	"github.com/ice-blockchain/cometbft/p2p"
 )
 
-func TestMultiplexRoutinesNodeReplRequest(t *testing.T) {
+func TestMultiplexRoutinesNodeReplRequestEmptyRelays(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	numChains := 3
+	numChains := 0
 	numRelays := 3
 
 	// For debug, change the loggers to cmtlog.TestingLogger()
@@ -41,7 +42,6 @@ func TestMultiplexRoutinesNodeReplRequest(t *testing.T) {
 	require.Len(t, servers, numRelays)
 
 	defer func() {
-		time.Sleep(10 * time.Second)
 		for i := 0; i < len(servers); i++ {
 			go closeAndRemoveAll(t, rootDirs[i], servers[i])
 		}
@@ -51,10 +51,6 @@ func TestMultiplexRoutinesNodeReplRequest(t *testing.T) {
 	for i := 0; i < len(servers); i++ {
 		servers[i].MustStart()
 	}
-
-	// To debug the service execution (excluding startup) change this logger
-	backendLogger := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "backend-1")
-	servers[0].SetLogger(backendLogger)
 
 	testRelayAddrs := []*server.RelayAddress{}
 	for i := 1; i < len(servers); i++ {
@@ -68,22 +64,36 @@ func TestMultiplexRoutinesNodeReplRequest(t *testing.T) {
 		testRelayAddrs = append(testRelayAddrs, testRelayAddr)
 	}
 
-	// ReplRequest preparations (must dial)
-	_, testChainRelays,
-		errorRelays := servers[0].GetRelaysByNetwork(context.TODO(), testRelayAddrs)
-	require.Len(t, errorRelays, 0) // NO error!
-	require.Len(t, testChainRelays, numChains)
+	// ------------
+	// ReplRequest preparations:
+	// (1) must GET RelayInfo
+	// (2) must INJECT new network
+	// (3) must DIAL discovery peers
 
-	testChainIds := servers[0].GetReactor().GetNetworks()
-	useChainID := testChainIds[0]
-	require.Contains(t, testChainRelays, useChainID)
+	// (1) fetch the relay information
+	_, testChainRelays, errorRelays := servers[0].GetRelaysByNetwork(context.TODO(), testRelayAddrs)
+	require.Len(t, errorRelays, 0)    // NO error!
+	require.Empty(t, testChainRelays) // both relays MUST replicate for this test.
 
-	sourceSwitch := servers[0].CreateOrLoadDiscoveryEventSwitch()
+	// testChainIds := servers[0].GetReactor().GetNetworks()
+	// useChainID := testChainIds[0]
+	// require.Contains(t, testChainRelays, useChainID)
+	useChainID := makeChainID("test-chain-1")
+	testReactorRelayOne := servers[0].GetReactor()
+
+	// (2) inject new networks GenesisDoc
+	injectErr := testReactorRelayOne.InjectNewNetwork(useChainID)
+	require.NoError(t, injectErr)
+	runtimeErr := testReactorRelayOne.InjectNewRuntime(context.Background(), useChainID)
+	require.NoError(t, runtimeErr)
+
+	waitGroup := sync.WaitGroup{}
+	waitGroup.Add(len(servers) - 1) // -self
+
+	// (3) dial the discovery peers
+	sourceDiscoverySwitch := testReactorRelayOne.GetEventSwitchForDiscovery()
 	testRemoteRelayAddrs := make([]*server.RelayAddress, 0, len(servers)-1)
 	for i := 1; i < len(servers); i++ {
-		// Initializes relay 1 discovery switch
-		servers[i].CreateOrLoadDiscoveryEventSwitch()
-
 		recipientReactor := servers[i].GetReactor()
 		recipientRelayID := string(recipientReactor.GetNodeKey().ID())
 
@@ -94,45 +104,76 @@ func TestMultiplexRoutinesNodeReplRequest(t *testing.T) {
 		)
 		require.NoError(t, err)
 
-		discoverErr := servers[0].CheckDialCompatibleRelay(
-			context.TODO(),
-			sourceSwitch,
-			testRelayAddr,
-		)
-		require.NoError(t, discoverErr) // NO error!
+		go func(sw *p2p.Switch, relayToDial *server.RelayAddress) {
+			defer waitGroup.Done()
+			discoverErr := servers[0].CheckDialCompatibleRelay(
+				context.TODO(),
+				sw,
+				relayToDial,
+			)
+			require.NoError(t, discoverErr) // NO error!
+		}(sourceDiscoverySwitch, testRelayAddr)
 
 		testRemoteRelayAddrs = append(testRemoteRelayAddrs, testRelayAddr)
 	}
 
-	servers[0].UpdateAvailableNetworks(testChainIds)
+	waitGroup.Wait()
 
 	testCatchupRelays := map[string][]*server.RelayAddress{}
 	testCatchupRelays[useChainID] = make([]*server.RelayAddress, 0, len(testRemoteRelayAddrs))
 	testCatchupRelays[useChainID] = append(testCatchupRelays[useChainID], testRemoteRelayAddrs...)
 
-	// Act - Relay 1 asks Relay 2 AND Relay 3 to replicate chain x
-	nodeReplRequestFn := servers[0].DefaultNodeReplRequestRoutine()
-	nodeReplRequestFn(context.TODO(),
-		testCatchupRelays[useChainID],
-		useChainID,
-		make(chan<- client.BroadcastStatus),
-		servers[0].GetLogger().With("tx_batch", "test-no-txes"),
-	)
+	// ------------
+	// ReplRequest TEST (Act)
+	// - Relay 1 asks Relay 2 AND Relay 3 to replicate chain x
 
-	// Test that ChainReplicationRequest was sent to relay 2
+	nodeReplRequestFn := servers[0].DefaultNodeReplRequestRoutine()
+	go func() {
+		nodeReplRequestFn(context.TODO(),
+			testCatchupRelays[useChainID],
+			useChainID,
+			make(chan<- client.BroadcastStatus, 1),
+			loggerRelay1.With("tx_batch", "test-no-txes"),
+		)
+	}()
+
+	// The recipients send the relay ID in a ChainReplicationResponse.
+	// Blocks the broadcast thread until all networks have been acknowledged by relays.
+	_,
+		expectedNumResponses,
+		actualNumResponses,
+		replErr := servers[0].WaitForRelaysAckChainReplications(context.TODO(),
+		testCatchupRelays,
+		client.Transaction{},
+	)
+	assert.NoError(t, replErr)
+	assert.GreaterOrEqual(t, actualNumResponses, expectedNumResponses) // actual >= expected
+
+	// Wait also to receive ChainReplicationComplete, only then we should shutdown.
+	// actualNumCompleted, compErr := servers[0].WaitForRelaysReplicationCompleted(context.TODO(),
+	// 	[]string{useChainID},
+	// 	client.Transaction{},
+	// )
+	// assert.NoError(t, compErr)
+	// assert.GreaterOrEqual(t, actualNumCompleted, expectedNumResponses)
+
+	// Test that ChainReplicationRequest was sent to relay-2 and relay-3
 	actualRequestsSent := servers[0].GetReplRequestPeers(useChainID)
 	assert.NotEmpty(t, actualRequestsSent)
-	assert.Len(t, actualRequestsSent, len(testChainRelays[useChainID]))
+	assert.Len(t, actualRequestsSent, len(testCatchupRelays[useChainID]))
+
+	assert.Contains(t, actualRequestsSent, string(testCatchupRelays[useChainID][0].ID()))
+	assert.Contains(t, actualRequestsSent, string(testCatchupRelays[useChainID][1].ID()))
 }
 
-func TestMultiplexBackendRoutinesNetworksCreator(t *testing.T) {
+func TestMultiplexRoutinesNetworksCreator(t *testing.T) {
 
 }
 
-func TestMultiplexBackendRoutinesRelaysBroadcast(t *testing.T) {
+func TestMultiplexRoutinesRelaysBroadcast(t *testing.T) {
 
 }
 
-func TestMultiplexBackendRoutinesCancelBroadcast(t *testing.T) {
+func TestMultiplexRoutinesCancelBroadcast(t *testing.T) {
 
 }

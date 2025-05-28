@@ -91,7 +91,8 @@ func (evR *Reactor) PeerStateKey() string {
 
 // AddPeer implements Reactor.
 func (evR *Reactor) AddPeer(peer *p2p.PeerImpl) {
-	go evR.broadcastEvidenceRoutine(peer)
+	// TODO(midas): correct shutdown procedure
+	// go evR.broadcastEvidenceRoutine(peer)
 }
 
 // Receive implements Reactor.

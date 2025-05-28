@@ -208,9 +208,9 @@ func (p *PeerImpl) OnStart() error {
 		return err
 	}
 
-	if p.mconn.HasStartedRoutines() {
-		go p.metricsReporter()
-	}
+	// if p.mconn.HasStartedRoutines() {
+	// 	go p.metricsReporter()
+	// }
 	return nil
 }
 

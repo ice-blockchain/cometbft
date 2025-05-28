@@ -15,6 +15,7 @@ import (
 	cmtjson "github.com/ice-blockchain/cometbft/libs/json"
 	service "github.com/ice-blockchain/cometbft/libs/service"
 	"github.com/ice-blockchain/cometbft/node"
+	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/privval"
 	sm "github.com/ice-blockchain/cometbft/state"
 	bs "github.com/ice-blockchain/cometbft/store"
@@ -307,7 +308,12 @@ func (reactor *Reactor) InjectNewRuntime(
 
 	// Waits until the reactor started the required node listeners
 	// Blocks the main thread intentionally to wait for node services.
-	<-chainReadyCh
+	select {
+	case <-chainReadyCh:
+		break
+	case <-reactor.Quit():
+		return errors.New("failed network injection: interrupted by shutdown")
+	}
 
 	// ------------------------------------------------------------------------
 	// Step 2: Execute consensus handshake
@@ -529,8 +535,8 @@ func (reactor *Reactor) StopNodeInstance(chainID string) error {
 	wg.Add(1)
 
 	// Calls the Stop method on the node.Node instance.
-	go func(network string, n *node.Node) {
-		reactor.logger.Info("Stopping node runtime", "chain_id", network)
+	go func(network string, n *node.Node, r *Reactor) {
+		r.logger.Info("Stopping node runtime", "chain_id", network)
 
 		defer wg.Done()
 		if n.IsRunning() {
@@ -542,13 +548,56 @@ func (reactor *Reactor) StopNodeInstance(chainID string) error {
 					)
 				}
 			}
+			n.Reset()
 		}
 
-		reactor.logger.Info("Stopped node runtime", "chain_id", network)
-	}(chainID, runNode)
+		cometbftSwitch := r.GetEventSwitchForCometBFT()
+		r.StopPeersByScope(cometbftSwitch, network)
+
+		discoverySwitch := r.GetEventSwitchForDiscovery()
+		r.StopPeersByScope(discoverySwitch, network)
+
+		r.logger.Info("Stopped node runtime", "chain_id", network)
+	}(chainID, runNode, reactor)
 
 	wg.Wait()
 	return nil
+}
+
+func (reactor *Reactor) StopPeersByScope(sw *p2p.Switch, scope string) (size int) {
+	peersByScope := sw.Peers(scope).Copy()
+	size = len(peersByScope)
+
+	reactor.logger.Info("Stopping connections for scope", "scope", scope, "num_peers", size)
+	for _, p := range peersByScope {
+		relevantScopes := map[string]bool{}
+		relevantScopes[scope] = true
+
+		activeRuntimes := sw.GetActiveRuntimes()
+		for _, activeChainID := range activeRuntimes {
+			relevantScopes[activeChainID] = true
+		}
+
+		remainingChannelsForPeer := p.MConn().GetChannelsIdx()
+		for chScope, _ := range remainingChannelsForPeer {
+			relevantScopes[chScope] = true
+		}
+
+		// Cleanup the MConnection channels from switch
+		sw.CloseChannelsForScopes(func(scopes map[string]bool) (out []string) {
+			out = make([]string, 0, len(scopes))
+			for scope, _ := range scopes {
+				out = append(out, scope)
+			}
+			return // out
+		}(relevantScopes))(p.MConn())
+
+		// And stop the peer gracefully to remove from reactors.
+		sw.StopPeerGracefully(p)
+		sw.Transport().Cleanup(p)
+	}
+
+	return // size
 }
 
 // StopAllNodeInstances calls the Stop method of [node.Node] instances that

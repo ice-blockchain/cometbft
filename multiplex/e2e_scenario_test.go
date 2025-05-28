@@ -1906,14 +1906,14 @@ func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 
 	// Separate goroutine for client broadcast process
 	numTransactions := 1
-	testChainID := makeChainID("test-chain-1")
+	testChainID1 := makeChainID("test-chain-1")
 	notifyCh1 := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
 		firstBroadcastCtx,
 		servers[0],
 		relaysForTestCase,
-		testChainID,
+		testChainID1,
 		numTransactions,
 		notifyCh1,
 	)
@@ -1921,7 +1921,7 @@ func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh1.
 	resultStatusMsg := waitForClientBroadcastStatus(t,
 		firstBroadcastCtx,
-		testChainID,
+		testChainID1,
 		notifyCh1,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -1941,13 +1941,13 @@ func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 
 	// Separate goroutine for client broadcast process
 	numTransactions = 1
-	testChainID = makeChainID("test-chain-2")
+	testChainID2 := makeChainID("test-chain-2")
 	notifyCh2 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		secondBroadcastCtx,
 		servers[0],
 		relaysForTestCase,
-		testChainID,
+		testChainID2,
 		numTransactions,
 		notifyCh2,
 	)
@@ -1955,7 +1955,7 @@ func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh2.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
 		secondBroadcastCtx,
-		testChainID,
+		testChainID2,
 		notifyCh2,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -1982,13 +1982,13 @@ func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 
 	// Separate goroutine for client broadcast process
 	numTransactions = 1
-	testChainID = makeChainID("test-chain-2")
+	testChainID3 := makeChainID("test-chain-3")
 	notifyCh3 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		thirdBroadcastCtx,
 		servers[0],
 		relaysForTestCase,
-		testChainID,
+		testChainID3,
 		numTransactions,
 		notifyCh3,
 	)
@@ -1996,7 +1996,7 @@ func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh3.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
 		thirdBroadcastCtx,
-		testChainID,
+		testChainID3,
 		notifyCh3,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -2451,6 +2451,18 @@ func TestScenarioClientBroadcastAfterRuntimeIdling(t *testing.T) {
 				server.RuntimeRegistryIdleDuration(1*time.Millisecond), // 1ms means idle asap
 			),
 		}, // relay-1
+		[]mx.MultiplexBackendOption{
+			mx.WithRuntimeRegistryOptions(
+				server.RuntimeRegistryCleanerInterval(1*time.Second),   // run cleaner every sec
+				server.RuntimeRegistryIdleDuration(1*time.Millisecond), // 1ms means idle asap
+			),
+		}, // relay-2
+		[]mx.MultiplexBackendOption{
+			mx.WithRuntimeRegistryOptions(
+				server.RuntimeRegistryCleanerInterval(1*time.Second),   // run cleaner every sec
+				server.RuntimeRegistryIdleDuration(1*time.Millisecond), // 1ms means idle asap
+			),
+		}, // relay-3
 	})
 	defer shutdownFn(servers)
 
@@ -2458,10 +2470,9 @@ func TestScenarioClientBroadcastAfterRuntimeIdling(t *testing.T) {
 	require.Len(t, servers, numRelays)
 
 	// Note: relays includes self
-	// Using 0 waitDuration because others have plenty of time due to restart.
 	relays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
 		servers,
-		0*time.Second,  // Time for backend
+		2*time.Second,  // Time for backend
 		20*time.Second, // Time for broadcast
 	)
 
@@ -2499,8 +2510,8 @@ func TestScenarioClientBroadcastAfterRuntimeIdling(t *testing.T) {
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
 	close(notifyCh1)
 
-	waitDuration := 5 * time.Second
-	t.Logf("Waiting %.0fsec for cleaner to execute...", waitDuration.Seconds())
+	waitDuration := 15 * time.Second
+	t.Logf("Waiting %.0fsec for completion of replications and cleaner to execute...", waitDuration.Seconds())
 	time.Sleep(waitDuration)
 
 	// TEST 2:
@@ -2535,6 +2546,10 @@ func TestScenarioClientBroadcastAfterRuntimeIdling(t *testing.T) {
 	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
 	close(notifyCh2)
+
+	waitDuration = 5 * time.Second
+	t.Logf("Waiting %.0fsec for completion broadcast operation...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
 }
 
 // Tests completion of remote chain replications (using new network),
@@ -2555,7 +2570,7 @@ func TestScenarioClientBroadcastRuntimeRegistryIntegration(t *testing.T) {
 
 	// To enable debug logs, change this indexes array to contain the indexes
 	// of the relays for which you want to activate full logging.
-	idxRelaysWithLogs := []int{} // e.g. []int{0, 1} for relay-1 and relay-2
+	idxRelaysWithLogs := []int{0, 1} // e.g. []int{0, 1} for relay-1 and relay-2
 	servers, shutdownFn := ResetTestScenarioRelaysWithOptions(t, numChains, numRelays, idxRelaysWithLogs, [][]mx.MultiplexBackendOption{
 		[]mx.MultiplexBackendOption{
 			mx.WithRuntimeRegistryOptions(
@@ -2569,6 +2584,9 @@ func TestScenarioClientBroadcastRuntimeRegistryIntegration(t *testing.T) {
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
+
+	// servers[0].SetLogger(cmtlog.TestingLogger().With("process", "relay-1"))
+	// servers[1].SetLogger(cmtlog.TestingLogger().With("process", "relay-2"))
 
 	// Note: relays includes self
 	relays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
@@ -3079,6 +3097,78 @@ func TestScenarioClientBroadcastConcurrentNewChains3(t *testing.T) {
 	assert.Equal(t, numConcurrent, cntDone)
 	assert.NoError(t, errBroadcast, "concurrent broadcasts should not error")
 }
+
+// ----------------------------------------------------------------------------
+// Client Callbacks Tests
+
+func TestScenarioCallbacksCallsAcceptBroadcastTx(t *testing.T) {
+
+	defer goleak.VerifyNone(t)
+
+	numChains := 0
+	numRelays := 7
+
+	// To enable debug logs, change this indexes array to contain the indexes
+	// of the relays for which you want to activate full logging.
+	idxRelaysWithLogs := []int{} // e.g. []int{0, 1} for relay-1 and relay-2
+	servers, shutdownFn := ResetTestScenarioRelaysWithOptions(t, numChains, numRelays, idxRelaysWithLogs, [][]mx.MultiplexBackendOption{})
+	defer shutdownFn(servers)
+
+	servers[0].SetAcceptor(client.NewMockAcceptorImpl())
+	servers[1].SetAcceptor(client.NewMockAcceptorImpl())
+
+	servers[0].SetLogger(cmtlog.TestingLogger().With("process", "relay-1"))
+
+	require.NotEmpty(t, servers)
+	require.Len(t, servers, numRelays)
+
+	// Note: relays includes self
+	relays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
+		servers,
+		2*time.Second,  // Time for backend
+		20*time.Second, // Time for broadcast
+	)
+
+	defer cancelCtxFn()
+
+	// Separate goroutine for client broadcast process
+	numTransactions := 2
+	testWithChainID := makeChainID("test-chain-1")
+	notifyCh := make(chan client.BroadcastStatus)
+
+	go clientBroadcastTx(t,
+		broadcastCtx,
+		servers[0],
+		relays,
+		testWithChainID,
+		numTransactions,
+		notifyCh,
+	)
+
+	// Blocks the main thread until we consume from notifyCh.
+	resultStatusMsg := waitForClientBroadcastStatus(t,
+		broadcastCtx,
+		testWithChainID,
+		notifyCh,
+	)
+	assert.NotNil(t, resultStatusMsg)
+	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
+	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+	close(notifyCh)
+
+	testAcceptorRelay1 := servers[0].GetAcceptor().(*client.MockAcceptorImpl)
+	testAcceptorRelay2 := servers[1].GetAcceptor().(*client.MockAcceptorImpl)
+
+	// Test that client callbacks were executed correctly.
+	assert.Equal(t, uint64(numTransactions), testAcceptorRelay1.TxCommitCalls.Load(),
+		"should locally execute CommitBroadcastTx callback for each transaction")
+	assert.Equal(t, uint64(numTransactions), testAcceptorRelay2.TxAcceptCalls.Load(),
+		"should remotely execute AcceptBroadcastTx callback for each transaction")
+}
+
+// TODO(midas): TestScenarioClientBroadcastCallsCommitBroadcastTx
+// TODO(midas): TestScenarioClientBroadcastCallsReplayBroadcastTxBatch
+// TODO(midas): TestScenarioClientBroadcastCallsRollbackTx
 
 // ----------------------------------------------------------------------------
 // LEGACY Broadcast Test (Using CometBFT RPC Server)

@@ -121,7 +121,7 @@ type MultiplexBackend struct {
 
 	eventSwitch  *p2p.Switch
 	rpcListeners []net.Listener
-	httpServers  []*http.Server
+	httpServers  map[string]*http.Server
 	httpClients  []*http.Client
 
 	multiNodeInfo   *MultiNetworkNodeInfo
@@ -257,7 +257,7 @@ func NewServer(
 		reactor:      reactor,
 		acceptor:     impl,
 		rpcListeners: []net.Listener{},
-		httpServers:  []*http.Server{},
+		httpServers:  make(map[string]*http.Server),
 		httpClients:  []*http.Client{},
 
 		logger:     nodeLogger,
@@ -483,69 +483,71 @@ func (b *MultiplexBackend) CreateOrLoadDiscoveryEventSwitch() *p2p.Switch {
 	return sw
 }
 
-// UpdateAvailableNetworks updates the NodeInfo pointer and event switch
+// OpenChannels updates the NodeInfo pointer and event switch
 // to permit communications related to a given list of ChainIDs.
-func (b *MultiplexBackend) UpdateAvailableNetworks(networks []string) []string {
-	discoverySwitch := b.reactor.GetEventSwitchForDiscovery()
-	cometbftSwitch := b.reactor.GetEventSwitchForCometBFT()
+func (b *MultiplexBackend) OpenRequiredChannels(
+	switchType string,
+	requiredNetworks []string,
+) error {
+	var (
+		sw             *p2p.Switch
+		relevantScopes []string
+		connUpdaterFn  func(*conn.MConnection)
+	)
+	switch {
+	default:
+	case switchType == "discovery":
+		sw = b.reactor.GetEventSwitchForDiscovery()
+		// A Discovery peer never needs more than server.ReplicationChannel.
+		relevantScopes = []string{p2p.ScopeForDiscovery}
 
-	// If we don't have a discovery switch, return the current list of ChainIDs.
-	if discoverySwitch == nil {
-		b.relayMtx.Lock()
-		defer b.relayMtx.Unlock()
-		return b.multiNodeInfo.Networks
+	case switchType == "cometbft":
+		sw = b.reactor.GetEventSwitchForCometBFT()
+		// A CometBFT  peer on the other hand, needs all reactor's channels.
+		relevantScopes = requiredNetworks[:]
 	}
 
+	// Lock and read currently known ChainIDs.
 	b.relayMtx.Lock()
 	availableNetworks := b.multiNodeInfo.Networks
 	availableVersions := b.multiNodeInfo.ProtocolVersions
 	b.relayMtx.Unlock()
 
-	// TODO(midas): remove debug logs
-	b.logger.Debug("Updating available networks",
-		"num_versions", len(availableVersions),
-		"num_before", len(availableNetworks),
-		"num_adding", len(networks),
-	)
+	// Keep only missing ChainIDs.
+	missingChainIds := slices.DeleteFunc(requiredNetworks, func(chainID string) bool {
+		return slices.Contains(availableNetworks, chainID)
+	})
 
-	for _, chainID := range networks {
-		if !slices.Contains(availableNetworks, chainID) {
-			availableNetworks = append(availableNetworks, chainID)
-			availableVersions = append(availableVersions,
-				NewChainProtocolVersion(
-					chainID,
-					DefaultProtocolVersion,
-				),
-			)
-		}
+	for _, chainID := range missingChainIds {
+		availableNetworks = append(availableNetworks, chainID)
+		availableVersions = append(availableVersions,
+			NewChainProtocolVersion(
+				chainID,
+				DefaultProtocolVersion,
+			),
+		)
 	}
 
 	// Updates the MultiNetworkNodeInfo instance
 	b.relayMtx.Lock()
 	b.multiNodeInfo.SetNetworks(availableNetworks)
 	b.multiNodeInfo.SetProtocolVersions(availableVersions)
-	discoverySwitch.SetNodeInfo(b.multiNodeInfo)
+	sw.SetNodeInfo(b.multiNodeInfo)
 	b.relayMtx.Unlock()
 
-	// We must upgrade the mconn channels for P2P discovery peers
+	// We must upgrade the mconn channels for the peers, that's necessary
 	// for injected networks that were not present at time of creation.
-	b.reactor.AddConnectionChannels(
-		discoverySwitch,
-		availableNetworks,
-		[]byte{server.ReplicationChannel},
-		false,
-	)
+	connUpdaterFn = sw.OpenChannelsForScopes(relevantScopes)
+	for _, chainOrScope := range relevantScopes {
+		sw.Peers(chainOrScope).ForEach(func(peer *p2p.PeerImpl) {
+			// If we are handling an OUTBOUND peer, make sure channels are open.
+			if peer.IsOutbound() {
+				connUpdaterFn(peer.MConn())
+			}
+		})
+	}
 
-	// We must also upgrade the mconn channels for P2P cometbft peers
-	// for injected networks that were not present at time of creation.
-	b.reactor.AddConnectionChannels(
-		cometbftSwitch,
-		availableNetworks,
-		[]byte{}, // all channels
-		true,
-	)
-
-	return availableNetworks
+	return nil
 }
 
 // recoverFromPanics tries to close the backend after a panic.
@@ -768,7 +770,8 @@ func (b *MultiplexBackend) Close() error {
 	// Stop any running node runtime
 	if b.reactor.Size() > 0 {
 		if err := b.reactor.StopAllNodeInstances(); err != nil {
-			return err
+			b.logger.Error(
+				"Error stopping node instances during shutdown", "err", err)
 		}
 	}
 
@@ -776,7 +779,7 @@ func (b *MultiplexBackend) Close() error {
 	b.reactor.runtimesMutex.Lock()
 	if b.reactor.runtimeRegistry != nil && b.reactor.runtimeRegistry.IsRunning() {
 		if err := b.reactor.runtimeRegistry.Stop(); err != nil {
-			b.reactor.logger.Error(
+			b.logger.Error(
 				"Error stopping the runtimes registry (idle-manager)", "err", err)
 		}
 	}
@@ -799,7 +802,11 @@ func (b *MultiplexBackend) Close() error {
 
 	// Stop any custom HTTP servers (e.g. prometheus)
 	for _, httpServer := range b.httpServers {
-		httpServer.Close()
+		// Shutdown instantly stops [http#Server.ListenAndServe].
+		if err := httpServer.Shutdown(context.Background()); err != nil {
+			b.logger.Error(
+				"Error stopping HTTP server while shutting down", "err", err)
+		}
 	}
 
 	return nil
@@ -956,6 +963,12 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 				transactionsNotFound = append(transactionsNotFound, tx)
 				continue
 			}
+
+			// Transaction is not yet indexed
+			b.logger.Debug("Found indexed transaction",
+				"chain_id", txChainID,
+				"tx_hash", txHashesToHex(tx)[0],
+			)
 
 			if _, ok := completedChainIds[txChainID]; !ok {
 				b.GetRuntimeRegistry().OnComplete(txChainID)
@@ -1376,7 +1389,7 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 	}
 
 	// Waits until we have all required results (or errors).
-	for i := 0; i < len(transactions); i++ {
+	for numReceived < numExpected {
 		select {
 		case txResult := <-asyncResultsCh: // Wait for one result (it doesn't matter which)
 			if txResult.Error != nil {
@@ -1904,20 +1917,13 @@ func (b *MultiplexBackend) CheckDialCompatibleRelay(
 
 	// (1)
 	// Dial the relay to find out whether it is compatible (handshake).
-	// Using the switch here affects the internal AddrBook.
 
 	// TODO(midas): remove debug logs
 	b.logger.Debug("Process now dialing remote relay (discovery)",
 		"relay", relayAddr.String(),
 	)
 
-	relayDiscovery, err := relayAddr.NetAddress()
-	if err != nil {
-		return fmt.Errorf(
-			"invalid relay address %s: %w", relayAddr.String(), err)
-	}
-
-	if err := dialWithSw.DialPeerWithAddress(relayDiscovery); err != nil {
+	if err := b.reactor.DialRelayForScope(dialWithSw, relayAddr, p2p.ScopeForDiscovery); err != nil {
 		if b.reactor.IsDialError(err) {
 			return fmt.Errorf(
 				"could not dial relay %s for discovery: %w", relayAddr.String(), err)
@@ -2548,14 +2554,20 @@ func (b *MultiplexBackend) StartPrometheusServer() error {
 		),
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
-	go func() {
-		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+	b.httpServers[relayAddr.StringHostname()] = srv
+
+	go func(host string, httpServer *http.Server) {
+		// defer func() {
+		// 	b.httpServers[host] = nil // inaccessible (GC)
+		// 	delete(b.httpServers, host)
+		// }()
+
+		if err := httpServer.ListenAndServe(); err != http.ErrServerClosed {
 			// Error starting or closing listener:
 			b.logger.Error("Error serving Prometheus HTTP server", "err", err)
 		}
-	}()
+	}(relayAddr.StringHostname(), srv)
 
-	b.httpServers = append(b.httpServers, srv)
 	return nil
 }
 
@@ -2631,6 +2643,13 @@ func (b *MultiplexBackend) localAckReplicationConsumer(
 	numExpected := len(relevantRelays)
 	numReceived := 0
 	transactionHashes := txHashesToHex(transactions...)
+	if numExpected == 0 {
+		resultsCh <- AckReplicationResult{
+			Relays:  []string{},
+			ChainID: chainID,
+		}
+		return
+	}
 
 	for {
 		select {
@@ -2722,6 +2741,10 @@ func (b *MultiplexBackend) remoteAckTransactionConsumer(
 	shutdownCh chan struct{},
 ) {
 	consumerTxHash := fmt.Sprintf("%X", transaction.Hash())
+	numExpected := len(relevantRelays)
+	if numExpected == 0 {
+		return
+	}
 
 	for {
 		select {
@@ -2782,6 +2805,13 @@ func (b *MultiplexBackend) localAckTransactionConsumer(
 	relaysPerTx := make(map[string][]string, 1)
 	numExpected := len(relevantRelays)
 	numReceived := 0
+	if numExpected == 0 {
+		resultsCh <- AckTransactionResult{
+			Relays: []string{},
+			TxHash: consumerTxHash,
+		}
+		return
+	}
 
 	for {
 		select {
@@ -2936,6 +2966,13 @@ func (b *MultiplexBackend) localRuntimeUpdatesConsumer(
 	relaysPerChain := make(map[string][]string, 1)
 	numExpected := len(relevantRelays)
 	numReceived := 0
+	if numExpected == 0 {
+		resultsCh <- RuntimeUpdateResult{
+			Relays:  []string{},
+			ChainID: chainID,
+		}
+		return
+	}
 
 	transactionHashes := txHashesToHex(transactions...)
 
@@ -3030,11 +3067,18 @@ func (b *MultiplexBackend) localTransactionEventsConsumer(
 	txHashesFound := make([]string, 0, len(transactions))
 	numExpected := len(transactions)
 	numReceived := 0
+	if numExpected == 0 {
+		resultsCh <- TransactionEventResult{
+			TxHashes: []string{},
+			ChainID:  chainID,
+		}
+		return
+	}
 
 	transactionHashes := txHashesToHex(transactions...)
 
 	cancelTimer := time.NewTimer(b.transactionTimeout)
-	txsSub, err := chainEventBus.Subscribe(context.Background(), "multiplexBackend", types.EventQueryTx)
+	txsSub, err := chainEventBus.SubscribeUnbuffered(context.Background(), "multiplexBackend", types.EventQueryTx)
 	if err != nil {
 		resultsCh <- TransactionEventResult{Error: err}
 		return

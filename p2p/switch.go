@@ -213,6 +213,20 @@ func WithMetrics(metrics *Metrics) SwitchOption {
 // ---------------------------------------------------------------------
 // Switch setup
 
+// GetActiveRuntimes returns the list of active ChainIDs.
+// thread safe.
+func (sw *Switch) GetActiveRuntimes() []string {
+	sw.runtimesMtx.RLock()
+	defer sw.runtimesMtx.RUnlock()
+
+	runtimes := make([]string, 0, len(sw.runtimesChainIds))
+	for chainID, _ := range sw.runtimesChainIds {
+		runtimes = append(runtimes, chainID)
+	}
+
+	return runtimes
+}
+
 // AddRuntime adds a ChainID
 // thread safe.
 func (sw *Switch) AddActiveRuntime(chainID string) {
@@ -424,11 +438,14 @@ func (sw *Switch) OnStart() error {
 // OnStop implements BaseService. It stops all peers and reactors.
 func (sw *Switch) OnStop() {
 	// Stop all peers
-	peers := sw.AllPeers()
+	peerSets := sw.PeersByScopes()
 
 	// stopAndRemove locks the mutex
-	for _, p := range peers {
-		sw.stopAndRemovePeer(p, nil)
+	for _, peerSet := range peerSets {
+		peers := peerSet.Copy()
+		for _, p := range peers {
+			sw.stopAndRemovePeer(p, nil)
+		}
 	}
 
 	sw.reactorsMtx.Lock()
@@ -537,6 +554,13 @@ func (sw *Switch) IsPeerUnconditional(id ID) bool {
 // MaxNumOutboundPeers returns a maximum number of outbound peers.
 func (sw *Switch) MaxNumOutboundPeers() int {
 	return sw.config.MaxNumOutboundPeers
+}
+
+func (sw *Switch) PeersByScopes() map[string]*PeerSet {
+	sw.peersMtx.RLock()
+	defer sw.peersMtx.RUnlock()
+
+	return sw.peersByScope
 }
 
 // AllPeers returns a flattened slice of Peer.
@@ -705,20 +729,48 @@ func (sw *Switch) stopPeer(peer *PeerImpl, reason any) error {
 
 // removePeer removes the peer from all PeerSet instances.
 func (sw *Switch) removePeer(peer *PeerImpl, reason any) error {
-	sw.peersMtx.Lock()
-	defer sw.peersMtx.Unlock()
+	relevantScopes := map[string]bool{}
+	relevantScopes[conn.SharedChannelsNamespace] = true
+	relevantScopes[ScopeForDiscovery] = true
 
-	for scope, peerSet := range sw.peersByScope {
+	sw.peersMtx.RLock()
+	peersByScope := sw.peersByScope
+	sw.peersMtx.RUnlock()
+
+	for scope, peerSet := range peersByScope {
 		if !peerSet.HasPeer(peer) {
 			continue
 		}
 
+		relevantScopes[scope] = true
 		if ok := peerSet.Remove(peer); !ok {
 			return fmt.Errorf(
 				"failed to remove peer#%s for scope %s: %v", string(peer.ID()), scope, reason,
 			)
 		}
 	}
+
+	remainingChannelsForPeer := peer.MConn().GetChannelsIdx()
+	for chScope, _ := range remainingChannelsForPeer {
+		relevantScopes[chScope] = true
+	}
+
+	// We may need to remove channels we added for this peer.
+	// CAUTION: This updates MConnection.channelsIdx.
+	var connCleanupFn func(*conn.MConnection)
+	connCleanupFn = sw.CloseChannelsForScopes(func(scopes map[string]bool) (out []string) {
+		out = make([]string, 0, len(scopes))
+		for scope, _ := range scopes {
+			out = append(out, scope)
+		}
+		return // out
+	}(relevantScopes))
+
+	sw.peersMtx.Lock()
+	connCleanupFn(peer.MConn())
+	sw.peersMtx.Unlock()
+
+	sw.Logger.Debug("Removed all channels for peer", "peer", peer, "scopes", relevantScopes)
 
 	sw.metrics.Peers.Add(float64(-1))
 
@@ -1008,20 +1060,6 @@ func (sw *Switch) AddPrivatePeerIDs(ids []string) error {
 	return nil
 }
 
-// GetActiveRuntimes returns the list of active ChainIDs.
-// thread safe.
-func (sw *Switch) GetActiveRuntimes() []string {
-	sw.runtimesMtx.RLock()
-	defer sw.runtimesMtx.RUnlock()
-
-	runtimes := make([]string, 0, len(sw.runtimesChainIds))
-	for chainID, _ := range sw.runtimesChainIds {
-		runtimes = append(runtimes, chainID)
-	}
-
-	return runtimes
-}
-
 func (sw *Switch) IsPeerPersistent(na *NetAddress) bool {
 	for _, pa := range sw.persistentPeersAddrs {
 		if pa.Equals(na) {
@@ -1274,7 +1312,7 @@ func (sw *Switch) addPeer(p *PeerImpl) (err error) {
 	}
 
 	pubAddr, _ := p.NodeInfo().NetAddress()
-	peerLogger := sw.Logger.With("conn", p.SocketAddr()).With("addr", pubAddr.String())
+	peerLogger := sw.Logger.With("conn", p.SocketAddr()).With("addr", pubAddr.String()).With("peer", p)
 	p.SetLogger(peerLogger)
 
 	// Handle the shut down case where the switch has stopped but we're
@@ -1389,6 +1427,52 @@ func (sw *Switch) MarkPeerActiveInReactor(p *PeerImpl, scope string, reactor str
 	sw.reactorPeerTimes[scope][reactor] = time.Now()
 }
 
+func (sw *Switch) CleanupChannels() {
+	relevantScopes := map[string]bool{}
+	relevantScopes[conn.SharedChannelsNamespace] = true
+	relevantScopes[ScopeForDiscovery] = true
+
+	activeRuntimes := sw.GetActiveRuntimes()
+	for _, activeChainID := range activeRuntimes {
+		relevantScopes[activeChainID] = true
+	}
+
+	//cleanupWg := new(sync.WaitGroup)
+
+	remainingPeerSets := sw.PeersByScopes()
+	for _, peerSet := range remainingPeerSets {
+		//cleanupWg.Add(peerSet.Size())
+		peers := peerSet.Copy()
+		for _, peer := range peers {
+			//go func(p *PeerImpl, wg *sync.WaitGroup) {
+			go func(p *PeerImpl) {
+				remainingChannelsForPeer := p.MConn().GetChannelsIdx()
+				for chScope, _ := range remainingChannelsForPeer {
+					relevantScopes[chScope] = true
+				}
+
+				// We may need to remove channels we added for this peer.
+				// CAUTION: This updates MConnection.channelsIdx.
+				var connCleanupFn func(*conn.MConnection)
+				connCleanupFn = sw.CloseChannelsForScopes(func(scopes map[string]bool) (out []string) {
+					out = make([]string, 0, len(scopes))
+					for scope, _ := range scopes {
+						out = append(out, scope)
+					}
+					return // out
+				}(relevantScopes))
+
+				sw.peersMtx.Lock()
+				connCleanupFn(p.MConn())
+				sw.peersMtx.Unlock()
+
+				sw.Logger.Debug("Removed all channels for peer from cleanup", "peer", p, "scopes", relevantScopes)
+			}(peer)
+		}
+		// cleanupWg.Wait()
+	}
+}
+
 func (sw *Switch) CloseChannelsForScopes(scopes []string) func(mconn *conn.MConnection) {
 	return func(mconn *conn.MConnection) {
 		for _, scope := range scopes {
@@ -1397,21 +1481,38 @@ func (sw *Switch) CloseChannelsForScopes(scopes []string) func(mconn *conn.MConn
 				reactorsScope = conn.SharedChannelsNamespace // "_shared_channels"
 			}
 
-			for name, r := range sw.Reactors(reactorsScope) {
-				for _, chDesc := range r.GetChannels() {
-					if sw.Typ == "discovery" && chDesc.ID != replicationChannel {
-						// Discovery switch needs only remove ReplicationChannel
-						continue
-					} else if sw.Typ == "cometBFT" && name == "MULTIPLEX" {
-						// CometBFT should remove only relevant multiplex channels
-						if !slices.Contains(cometMxChannels, chDesc.ID) {
+			for _, r := range sw.Reactors(reactorsScope) {
+				channels := r.GetChannels()
+				for _, chDesc := range channels {
+					channelRemoved := mconn.RemoveChannel(scope, chDesc)
+					if channelRemoved && atomic.LoadUint32(&sw.totalOpenChannels) > 0 {
+						atomic.AddUint32(&sw.totalOpenChannels, ^uint32(0)) // -1
+					}
+				}
+			}
+
+			// Close remaining channels from outbound peers.
+			if scope != ScopeForDiscovery {
+				channelsIdx := mconn.GetChannelsIdx()
+				for _, channels := range channelsIdx {
+					replChannel := channels[replicationChannel]
+					ackChannel := channels[ackBroadcastChannel]
+					runChannel := channels[runtimeChannel]
+
+					shutdownChannels := []*conn.Channel{
+						replChannel,
+						ackChannel,
+						runChannel,
+					}
+					for _, channel := range shutdownChannels {
+						if channel == nil {
 							continue
 						}
-					}
 
-					channelRemoved := mconn.RemoveChannel(scope, chDesc)
-					if channelRemoved {
-						atomic.AddUint32(&sw.totalOpenChannels, ^uint32(0)) // -1
+						channelRemoved := mconn.RemoveChannel(scope, channel.Desc())
+						if channelRemoved && atomic.LoadUint32(&sw.totalOpenChannels) > 0 {
+							atomic.AddUint32(&sw.totalOpenChannels, ^uint32(0)) // -1
+						}
 					}
 				}
 			}
@@ -1428,18 +1529,6 @@ func (sw *Switch) CloseChannelsForScopes(scopes []string) func(mconn *conn.MConn
 
 func (sw *Switch) OpenChannelsForScopes(scopes []string) func(mconn *conn.MConnection) {
 	return func(mconn *conn.MConnection) {
-		// TODO(midas): Refactor this, importing server here won't work.
-		const (
-			replicationChannel  = byte(0x90)
-			ackBroadcastChannel = byte(0x91)
-			runtimeChannel      = byte(0x92)
-		)
-
-		cometMxChannels := []byte{
-			ackBroadcastChannel,
-			runtimeChannel,
-		}
-
 		for _, scope := range scopes {
 			reactorsGroup := scope // ChainID or "discovery"
 			if scope == ScopeForDiscovery {
@@ -1447,7 +1536,8 @@ func (sw *Switch) OpenChannelsForScopes(scopes []string) func(mconn *conn.MConne
 			}
 
 			for name, r := range sw.Reactors(reactorsGroup) {
-				for _, chDesc := range r.GetChannels() {
+				channels := r.GetChannels()
+				for _, chDesc := range channels {
 					if sw.Typ == "discovery" && chDesc.ID != replicationChannel {
 						// Discovery switch needs only ReplicationChannel
 						continue

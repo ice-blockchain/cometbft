@@ -17,6 +17,7 @@ import (
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/server"
 	"github.com/ice-blockchain/cometbft/p2p"
+	"github.com/ice-blockchain/cometbft/p2p/conn"
 	"github.com/ice-blockchain/cometbft/types"
 )
 
@@ -184,6 +185,11 @@ func (memR *Reactor) GetChannels() []*p2p.ChannelDescriptor {
 			RecvMessageCapacity: memR.recvMessageCapacity,
 			MessageType:         &protomem.Message{},
 		},
+		{
+			ID:          server.AckBroadcastChannel,
+			Priority:    3,
+			MessageType: &mxp2p.Receipt{},
+		},
 	}
 }
 
@@ -255,6 +261,15 @@ func (memR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 // It adds any received transactions to the mempool.
 func (memR *Reactor) Receive(e p2p.Envelope) {
 	memR.Logger.Debug("Receive", "src", e.Src, "chId", e.ChannelID, "msg", e.Message)
+
+	if e.ChannelID == server.AckBroadcastChannel {
+		mxReactor := memR.Switch.Reactor(conn.SharedChannelsNamespace, "MULTIPLEX")
+		if mxReactor != nil && mxReactor.IsRunning() {
+			mxReactor.Receive(e)
+		}
+		return
+	}
+
 	switch msg := e.Message.(type) {
 	case *protomem.RollbackTxs:
 		protoTxs := msg.GetTxs()
@@ -590,5 +605,5 @@ func (memR *Reactor) sendAckTransactionBroadcast(
 		return err
 	}
 
-	return errors.New("outbound peer connection is not ready")
+	return nil
 }

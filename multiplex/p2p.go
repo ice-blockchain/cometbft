@@ -3,7 +3,6 @@ package multiplex
 import (
 	"context"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -176,7 +175,7 @@ func (reactor *Reactor) CreateAddressBooks(
 		return fmt.Errorf("could not open address book file %s: %w", addrBookFile, err)
 	}
 
-	addrBook := pex.NewAddrBook(addrBookFile, nodeConfig.P2P.AddrBookStrict)
+	addrBook := pex.NewAddrBook(addrBookFile, false) // routabilityStrict=false
 	addrBook.SetLogger(p2pLogger.With("book", addrBookFile))
 
 	cometbftSwitch := reactor.GetEventSwitchForCometBFT()
@@ -226,61 +225,42 @@ func (reactor *Reactor) CreateAddressBooks(
 	return nil
 }
 
-// AddConnectionChannels opens reactor channels for listening to new messages.
-// Accepts a [p2p.Switch], a list of ChainIDs and an optional list of channels.
-// Leave channels empty to register all reactor's channels.
-func (reactor *Reactor) AddConnectionChannels(
+// RemoveConnectionChannels closes reactor channels to stop listening.
+// Accepts a [p2p.Switch], and a list of scopes which may contain ChainIDs.
+func (reactor *Reactor) RemoveConnectionChannels(
 	sw *p2p.Switch,
-	chainIds []string,
-	channels []byte,
-	initChainPeerSet bool,
+	scopes []string,
 ) error {
 	reactor.networkMutex.RLock()
 	defer reactor.networkMutex.RUnlock()
 
-	sw.Transport().Conns().ForEach(func(c net.Conn) {
-		peer := sw.UniquePeers().GetByAddr(c.RemoteAddr())
-		if peer != nil && peer.NodeInfo() != nil {
-			if peerNodeInfo, ok := peer.NodeInfo().(*MultiNetworkNodeInfo); ok {
-				sw.UpdateChannelsForMConn(peerNodeInfo.Networks, channels)(peer.MConn())
-			}
-		}
-	})
-
-	if !initChainPeerSet {
-		return nil
+	// CAUTION: Updates the MConnection.channelsIdx to contain channels for scopes.
+	connCleanupFn := sw.CloseChannelsForScopes(scopes)
+	for _, chainOrScope := range scopes {
+		sw.Peers(chainOrScope).ForEach(func(peer *p2p.PeerImpl) {
+			connCleanupFn(peer.MConn())
+		})
 	}
 
-	// Also, make sure that peers are available in per-chain-PeerSet instances
-	// as these are used internally in CometBFT reactors (e.g. mempool).
-	err := func() (err error) {
-		sw.UniquePeers().ForEach(func(peer p2p.Peer) {
-			for _, chainID := range chainIds {
-				// In case we have not yet added this peer to the cometbft peerset,
-				// we must add it here so that reactors use correct peer objects.
-				chainPeerSet := sw.Peers(chainID)
-				if !chainPeerSet.Has(peer.ID()) {
-					sw.Logger.Debug("Add missing peer to PeerSet by ChainID",
-						"chain_id", chainID,
-						"size", chainPeerSet.Size(),
-						"peer", peer.ID(),
-					)
+	return nil
+}
 
-					if err = chainPeerSet.Add(peer); err != nil {
-						if _, ok := err.(p2p.ErrPeerRemoval); ok {
-							sw.Logger.Error("Error starting peer ",
-								"err", "Peer has already errored and removal was attempted.",
-								"peer", peer.ID())
-						}
-						return // err
-					}
-				}
-			}
+// AddConnectionChannels opens reactor channels for listening to new messages.
+// Accepts a [p2p.Switch], and a list of scopes which may contain ChainIDs.
+func (reactor *Reactor) AddConnectionChannels(
+	sw *p2p.Switch,
+	scopes []string,
+) error {
+	reactor.networkMutex.RLock()
+	defer reactor.networkMutex.RUnlock()
+
+	// CAUTION: Updates the MConnection.channelsIdx to contain channels for scopes.
+	connUpdaterFn := sw.OpenChannelsForScopes(scopes)
+	for _, chainOrScope := range scopes {
+		sw.Peers(chainOrScope).ForEach(func(peer *p2p.PeerImpl) {
+			connUpdaterFn(peer.MConn())
 		})
+	}
 
-		return err
-	}()
-
-	// Contains last error or nil
-	return err
+	return nil
 }

@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/ice-blockchain/cometbft/crypto"
+	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	"github.com/ice-blockchain/cometbft/crypto/tmhash"
 )
 
@@ -163,4 +165,16 @@ func NewExtendedChainIDFromLegacy(chainID string) (ExtendedChainID, error) {
 // GetMultitplexPrefix returns the value for constant multiplexPrefix.
 func GetMultiplexPrefix() string {
 	return multiplexPrefix
+}
+
+// MakeFingerprint creates a fingerprint from input.
+func MakeFingerprint(input string) string {
+	return strings.ToUpper(hex.EncodeToString(
+		tmhash.Sum([]byte(input))[:fingerprintSize], // 8 bytes only
+	))
+}
+
+// RandomUserAddress generate a random user address.
+func RandomUserAddress() crypto.Address {
+	return ed25519.GenPrivKey().PubKey().Address()
 }

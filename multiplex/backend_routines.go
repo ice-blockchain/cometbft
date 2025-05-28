@@ -56,8 +56,8 @@ func (b *MultiplexBackend) DefaultDiscoveryDialerRoutine() server.DiscoveryDiale
 		errorsCh chan<- server.RelayDialError,
 		logger cmtlog.Logger,
 	) {
-		// Get the discovery switch setup if not already done.
-		discoverySwitch := b.CreateOrLoadDiscoveryEventSwitch()
+		// We dial using discovery, init'd in [MultiplexBackend#MustStart].
+		discoverySwitch := b.reactor.GetEventSwitchForDiscovery()
 
 		// Concurrently dial relays to enable ReplicationChannel messages.
 		// CheckDialCompatibleRelay opens connection for `DiscoveryPort`.
@@ -99,20 +99,16 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 		notifyCh chan<- client.BroadcastStatus,
 		logger cmtlog.Logger,
 	) {
-		replRequestPeers := []string{}
-		replReqPeers := []string{}
+		// ReplicationChannel is listened on discovery.
+		discoverySwitch := b.reactor.GetEventSwitchForDiscovery()
+
+		requestSentPeerIds := []string{}
+		replRequestPeerIds := []string{}
 		for _, relayAddr := range relays {
 			if relayAddr.HasID() {
-				replReqPeers = append(replReqPeers, string(relayAddr.ID()))
+				replRequestPeerIds = append(replRequestPeerIds, string(relayAddr.ID()))
 			}
 		}
-
-		// TODO(midas): remove debug logs
-		logger.Debug("Preparing to send ChainReplicationRequest",
-			"chain_id", chainID,
-			"relays", relays,
-			"ids", replReqPeers,
-		)
 
 		// Retrieve the GenesisDoc for this chain
 		genesisDocProvider := b.reactor.GetGenesisProvider()
@@ -133,17 +129,24 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 
 		// Broadcast the ChainReplicationRequest.
 		// Note that this events switch uses `DiscoveryPort`.
-		eventsSwitch := b.CreateOrLoadDiscoveryEventSwitch()
-		uniquePeerSet := eventsSwitch.UniquePeers()
+		discoveryPeers := discoverySwitch.Peers(p2p.ScopeForDiscovery)
 		requestsWg := sync.WaitGroup{}
-		requestsWg.Add(uniquePeerSet.Size())
+		requestsWg.Add(discoveryPeers.Size())
 
-		uniquePeerSet.ForEach(func(peer p2p.Peer) {
+		// TODO(midas): remove debug logs
+		logger.Debug("Preparing to send ChainReplicationRequest",
+			"chain_id", chainID,
+			"relays", relays,
+			"num_validators", len(genesisDoc.Validators),
+			"num_peers", discoveryPeers.Size(),
+		)
+
+		discoveryPeers.ForEach(func(peer *p2p.PeerImpl) {
 			defer requestsWg.Done()
 
 			// Send only to relays we are interested in.
 			peerID := string(peer.ID())
-			if !slices.Contains(replReqPeers, peerID) {
+			if !slices.Contains(replRequestPeerIds, peerID) || !peer.IsOutbound() {
 				return
 			}
 
@@ -165,7 +168,7 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 				},
 			})
 
-			replRequestPeers = append(replRequestPeers, peerID)
+			requestSentPeerIds = append(requestSentPeerIds, peerID)
 		})
 
 		// Waits to have sent all ChainReplicationRequest.
@@ -173,14 +176,14 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 
 		// Keep track of node IDs
 		b.replRequestsMtx.Lock()
-		b.replRequestsSent[chainID] = replRequestPeers
+		b.replRequestsSent[chainID] = requestSentPeerIds
 		b.replRequestsMtx.Unlock()
 
 		// TODO(midas): remove debug logs
 		logger.Debug("Done sending ChainReplicationRequest to peers",
 			"chain_id", chainID,
-			"num_sent", len(replRequestPeers),
-			"relay_ids", replRequestPeers,
+			"num_sent", len(requestSentPeerIds),
+			"relay_ids", requestSentPeerIds,
 		)
 	}
 }
@@ -278,9 +281,6 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 	) {
 		broadcastTxHashes := make([][]byte, len(transactions))
 
-		// Note that this events switch uses `DiscoveryPort+1`.
-		cometbftSwitch := b.reactor.GetEventSwitchForCometBFT()
-
 		// (1)
 		// First dial the CometBFT P2P addresses to make sure
 		// communication with this relay is possible using mempool.
@@ -319,25 +319,45 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 				"num_dial", len(relaysToDial),
 			)
 
-			for _, relayAddr := range relaysToDial {
-				// We need DiscoveryPort+1 to interact with CometBFT.
-				cometbftAddr, _ := server.NewRelayAddress(relayAddr.AddressForCometBFT())
-				if err := b.reactor.DialReplicationPartner(
-					cometbftSwitch,
-					cometbftAddr,
-					chainID,
-				); err != nil {
-					client.Error(notifyCh, fmt.Errorf(
-						"invalid cometbft relay address %s: %w", relayAddr.AddressForCometBFT(), err))
-					return
-				}
+			dialingWg := sync.WaitGroup{}
+			dialingWg.Add(len(relaysToDial))
+
+			for _, addrToDial := range relaysToDial {
+				go func(relayAddr *server.RelayAddress) {
+					defer dialingWg.Done()
+
+					// We need DiscoveryPort+1 to interact with CometBFT.
+					cometbftSwitch := b.reactor.GetEventSwitchForCometBFT()
+					cometbftAddr, _ := server.NewRelayAddress(relayAddr.AddressForCometBFT())
+
+					// TODO(midas): remove debug logs
+					logger.Debug("Now dialing relay for CometBFT",
+						"chain_id", chainID,
+						"relay", relayAddr.String(),
+						"addr", relayAddr.AddressForCometBFT(),
+					)
+					if err := b.reactor.DialRelayForScope(
+						cometbftSwitch,
+						cometbftAddr,
+						chainID,
+					); err != nil {
+						client.Error(notifyCh, fmt.Errorf(
+							"invalid cometbft relay address %s: %w", relayAddr.AddressForCometBFT(), err))
+						return
+					}
+				}(addrToDial)
 			}
+
+			// Wait for all concurrent pre-dialing to be complete.
+			dialingWg.Wait()
 		}
 
 		// (2)
 		// Iterate through transaction and broadcast each of them to other relays
 		for i, transaction := range transactions {
 			chainID := client.GetChainID(userAddress, transaction.Fingerprint)
+			poolRequestPeers := []string{}
+			relaysAccepted := 0
 
 			// Encode and get transaction hash
 			rawTx := client.TransactionToRawTx(transaction)
@@ -360,7 +380,15 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 				continue // Do not broadcast to relays
 			}
 
+			// Reset the sent requests cache for this txHash
+			b.reactor.poolRequestsMtx.Lock()
+			if _, ok := b.reactor.poolRequestsSent[txHash]; ok {
+				b.reactor.poolRequestsSent[txHash] = []string{}
+			}
+			b.reactor.poolRequestsMtx.Unlock()
+
 			// Force the execution of mempool broadcast to *all* healthy relays.
+			// chainHealthyRelays is used to filter relevant peer IDs.
 			minHealthyRelays := numRemotesByChain[chainID]
 			chainHealthyPeers := []string{}
 			for _, relayAddr := range relaysByChain[chainID] {
@@ -368,11 +396,15 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 					chainHealthyPeers = append(chainHealthyPeers, string(relayAddr.ID()))
 				}
 			}
+			// Add replication partners to the healthy relays.
 			for _, relayAddr := range replReqRelays[chainID] {
 				chainHealthyPeers = append(chainHealthyPeers, string(relayAddr.ID()))
 			}
 
+			cometbftSwitch := b.reactor.GetEventSwitchForCometBFT()
 			chainPeerSet := cometbftSwitch.Peers(chainID)
+			sentWg := sync.WaitGroup{}
+			sentWg.Add(chainPeerSet.Size())
 
 			// TODO(midas): remove debug logs
 			logger.Debug("Keeping only healthy relays for broadcast",
@@ -382,69 +414,57 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 				"num_peers", chainPeerSet.Size(),
 			)
 
-			// Reset the sent requests cache for this txHash
-			b.reactor.poolRequestsMtx.Lock()
-			if _, ok := b.reactor.poolRequestsSent[txHash]; ok {
-				b.reactor.poolRequestsSent[txHash] = []string{}
-			}
-			b.reactor.poolRequestsMtx.Unlock()
-
 			// Broadcast the transaction to all healthy relays.
-			poolRequestPeers := []string{}
-			relaysAccepted := 0
+			chainPeerSet.ForEach(func(peer *p2p.PeerImpl) {
+				defer sentWg.Done()
+				if !peer.IsOutbound() {
+					return
+				}
 
-			sentWg := sync.WaitGroup{}
-			s := chainPeerSet.Copy()
-			sentWg.Add(len(s))
-			for _, peer := range s {
-				func(peer p2p.Peer) {
-					defer sentWg.Done()
-
-					// Send only to relays we are interested in (healthy relays).
-					// Skip unhealthy relays because they would produce an error.
-					peerID := string(peer.ID())
-					if !slices.Contains(chainHealthyPeers, peerID) {
-						// TODO(midas): remove debug logs
-						logger.Debug("Skipping broadcast to unhealthy relay",
-							"chain_id", chainID,
-							"tx_hash", txHash,
-							"peer", peerID,
-						)
-						return
-					}
-
+				// Send only to relays we are interested in (healthy relays).
+				// Skip unhealthy relays because they would produce an error.
+				peerID := string(peer.ID())
+				if !slices.Contains(chainHealthyPeers, peerID) {
 					// TODO(midas): remove debug logs
-					logger.Debug("Sending transaction to remote mempool",
+					logger.Debug("Skipping broadcast to unhealthy relay",
 						"chain_id", chainID,
 						"tx_hash", txHash,
 						"peer", peerID,
-						"peerRunning", peer.IsRunning(),
+					)
+					return
+				}
+
+				// TODO(midas): remove debug logs
+				logger.Debug("Sending transaction to remote mempool",
+					"chain_id", chainID,
+					"tx_hash", txHash,
+					"peer", peerID,
+					"peerRunning", peer.IsRunning(),
+				)
+
+				// Send transaction to relay mempool, after checks the mempool
+				// reactor shall send a AckTransactionBroadcast back to us which
+				// sends a AckTransactionBroadcast object on ackTxAcceptCh
+				if success := peer.Send(chainID, p2p.Envelope{
+					ChannelID: mempl.MempoolChannel,
+					Message:   &memp2p.Txs{Txs: [][]byte{rawTx}},
+				}); !success {
+					logger.Error("could not send message on mempool channel",
+						"chain_id", chainID,
+						"tx_hash", txHash,
+						"peer", peerID,
 					)
 
-					// Send transaction to relay mempool, after checks the mempool
-					// reactor shall send a AckTransactionBroadcast back to us which
-					// sends a AckTransactionBroadcast object on ackTxAcceptCh
-					if success := peer.Send(chainID, p2p.Envelope{
-						ChannelID: mempl.MempoolChannel,
-						Message:   &memp2p.Txs{Txs: [][]byte{rawTx}},
-					}); !success {
-						logger.Error("could not send message on mempool channel",
-							"chain_id", chainID,
-							"tx_hash", txHash,
-							"peer", peerID,
-						)
+					// Note: we do not push an error on the notifyCh channel
+					// because a failure in sending to one relay must not
+					// prevent the transaction broadcast operation.
 
-						// Note: we do not push an error on the notifyCh channel
-						// because a failure in sending to one relay must not
-						// prevent the transaction broadcast operation.
+					return
+				}
 
-						return
-					}
-
-					poolRequestPeers = append(poolRequestPeers, peerID)
-					relaysAccepted++
-				}(peer)
-			}
+				poolRequestPeers = append(poolRequestPeers, peerID)
+				relaysAccepted++
+			})
 
 			// Waits until we have sent to all required peers
 			sentWg.Wait()

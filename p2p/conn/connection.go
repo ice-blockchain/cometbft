@@ -305,11 +305,11 @@ func (c *MConnection) RemoveChannel(chainID string, desc *ChannelDescriptor) boo
 	defer c.channelsMtx.Unlock()
 
 	if _, ok := c.channelsIdx[chainID]; !ok {
-		return false // Nothing to do
+		return false // not removed
 	}
 
 	if _, ok := c.channelsIdx[chainID][desc.ID]; !ok {
-		return false // Nothing to do
+		return false // not removed
 	}
 
 	c.channelsIdx[chainID][desc.ID] = nil // inaccessible (GC).
@@ -318,7 +318,17 @@ func (c *MConnection) RemoveChannel(chainID string, desc *ChannelDescriptor) boo
 	c.channels = slices.DeleteFunc(c.channels, func(channel *Channel) bool {
 		return channel.ChainID == chainID && channel.desc.ID == desc.ID
 	})
-	atomic.AddUint32(&c.numOpenChannels, ^uint32(0)) // -1
+
+	if atomic.LoadUint32(&c.numOpenChannels) > 0 {
+		atomic.AddUint32(&c.numOpenChannels, ^uint32(0)) // -1
+	}
+
+	c.Logger.Debug("Removed MConnection channel",
+		"chain_id", chainID,
+		"chID", desc.ID,
+		"num_mconn_chs", atomic.LoadUint32(&c.numOpenChannels),
+		"remaining", c.channelsIdx,
+	)
 
 	// Only stop if channelsIdx is empty (no more channels).
 	if atomic.LoadUint32(&c.numOpenChannels) == 0 {
@@ -472,6 +482,9 @@ func (c *MConnection) FlushStop() {
 	}
 
 	c.conn.Close()
+	c.recvMonitor.Stop()
+	c.sendMonitor.Stop()
+
 	// We can't close pong safely here because
 	// recvRoutine may write to it after we've stopped.
 	// Though it doesn't need to get closed at all,
@@ -487,6 +500,8 @@ func (c *MConnection) OnStop() {
 	}
 
 	c.conn.Close()
+	c.recvMonitor.Stop()
+	c.sendMonitor.Stop()
 
 	// We can't close pong safely here because
 	// recvRoutine may write to it after we've stopped.
@@ -571,6 +586,13 @@ func (c *MConnection) getSharedChannel(chID byte) (*Channel, error) {
 	}
 
 	return c.channelsIdx[SharedChannelsNamespace][chID], nil
+}
+
+func (c *MConnection) GetChannelsIdx() map[string]map[byte]*Channel {
+	c.channelsMtx.Lock()
+	defer c.channelsMtx.Unlock()
+
+	return c.channelsIdx
 }
 
 // Queues a message to be sent to channel.
@@ -1056,6 +1078,10 @@ func newChannel(chainID string, conn *MConnection, desc *ChannelDescriptor) *Cha
 
 func (ch *Channel) SetLogger(l log.Logger) {
 	ch.Logger = l
+}
+
+func (ch *Channel) Desc() *ChannelDescriptor {
+	return ch.desc
 }
 
 // Queues message to send to this channel.
