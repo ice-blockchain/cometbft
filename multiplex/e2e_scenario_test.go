@@ -2443,7 +2443,7 @@ func TestScenarioClientBroadcastAfterRuntimeIdling(t *testing.T) {
 
 	// To enable debug logs, change this indexes array to contain the indexes
 	// of the relays for which you want to activate full logging.
-	idxRelaysWithLogs := []int{} // e.g. []int{0, 1} for relay-1 and relay-2
+	idxRelaysWithLogs := []int{0, 1, 2} // e.g. []int{0, 1} for relay-1 and relay-2
 	servers, shutdownFn := ResetTestScenarioRelaysWithOptions(t, numChains, numRelays, idxRelaysWithLogs, [][]mx.MultiplexBackendOption{
 		[]mx.MultiplexBackendOption{
 			mx.WithRuntimeRegistryOptions(

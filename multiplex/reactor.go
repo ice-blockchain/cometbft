@@ -1737,15 +1737,16 @@ func (reactor *Reactor) OnStop() {
 			for _, p := range peers {
 				func(peer *p2p.PeerImpl) {
 					//cleanupWg.Add(1)
-					defer func() {
-						if r := recover(); r != nil {
-							// ignore peer error during shutdown
-							//defer cleanupWg.Done()
-							return
-						}
-					}()
 
 					go func() {
+						defer func() {
+							if r := recover(); r != nil {
+								// ignore peer error during shutdown
+								//defer cleanupWg.Done()
+								return
+							}
+						}()
+
 						//defer cleanupWg.Done()
 						reactor.discoverySwitch.StopPeerGracefully(peer)
 					}()
