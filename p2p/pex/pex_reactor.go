@@ -182,14 +182,14 @@ func (r *Reactor) OnStart() error {
 
 	r.seedAddrs = seedAddrs
 
-	r.peersRoutineWg.Add(1)
+	//r.peersRoutineWg.Add(1)
 	// Check if this node should run
 	// in seed/crawler mode
-	if r.config.SeedMode {
-		go r.crawlPeersRoutine()
-	} else {
-		go r.ensurePeersRoutine()
-	}
+	// if r.config.SeedMode {
+	// 	//go r.crawlPeersRoutine()
+	// } else {
+	// 	//go r.ensurePeersRoutine()
+	// }
 	return nil
 }
 

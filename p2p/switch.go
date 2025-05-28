@@ -1426,6 +1426,7 @@ func (sw *Switch) MarkPeerActiveInReactor(p *PeerImpl, scope string, reactor str
 }
 
 func (sw *Switch) CleanupChannels() {
+	scopesMtx := sync.Mutex{}
 	relevantScopes := map[string]bool{}
 	relevantScopes[conn.SharedChannelsNamespace] = true
 	relevantScopes[ScopeForDiscovery] = true
@@ -1447,7 +1448,9 @@ func (sw *Switch) CleanupChannels() {
 				mconn := p.MConn()
 				remainingChannelsForPeer := mconn.GetChannelsIdx()
 				for chScope, _ := range remainingChannelsForPeer {
+					scopesMtx.Lock()
 					relevantScopes[chScope] = true
+					scopesMtx.Unlock()
 				}
 
 				// We may need to remove channels we added for this peer.
