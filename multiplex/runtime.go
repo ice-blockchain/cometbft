@@ -565,6 +565,18 @@ func (reactor *Reactor) StopNodeInstance(chainID string) error {
 }
 
 func (reactor *Reactor) StopPeersByScope(sw *p2p.Switch, scope string) (size int) {
+	defer func() {
+		if r := recover(); r != nil {
+			// do not panic when cleaning up peers.
+			reactor.logger.Error(
+				"stopping peers by scope panicked",
+				"scope", scope,
+				"err", r,
+			)
+			return
+		}
+	}()
+
 	peersByScope := sw.Peers(scope).Copy()
 	size = len(peersByScope)
 

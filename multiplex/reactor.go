@@ -1417,13 +1417,22 @@ func (r *Reactor) DialRelayForScope(
 	dialWithSw *p2p.Switch,
 	partnerAddr *server.RelayAddress,
 	partnerScope string,
-) error {
+) (err error) {
 	// Parse the address into a NetAddress
 	peerAddr, err := partnerAddr.NetAddress()
 	if err != nil {
 		return fmt.Errorf(
 			"invalid partner relay address %s: %w", partnerAddr.String(), err)
 	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			// do not panic when dialing fails.
+			err = fmt.Errorf(
+				"dialing relay panicked %s: %w", partnerAddr.String(), r.(error))
+			return
+		}
+	}()
 
 	// Storage/transports of switches are protected by networkMutex.
 	r.networkMutex.RLock()
@@ -1460,14 +1469,15 @@ func (r *Reactor) DialRelayForScope(
 	}
 
 	// Dial the peer by address
-	if err := dialWithSw.DialPeerWithAddress(peerAddr); err != nil {
+	if err = dialWithSw.DialPeerWithAddress(peerAddr); err != nil {
 		if r.IsDialError(err) {
 			return fmt.Errorf(
 				"could not dial discovery relay %s: %w", peerAddr.DialString(), err)
 		}
+		err = nil
 	}
 
-	return nil
+	return
 }
 
 // DialRelayForDiscovery dials uusing discoveryAddr,
@@ -1724,14 +1734,16 @@ func (reactor *Reactor) OnStart() error {
 // database connection is independent of other database connections.
 func (reactor *Reactor) OnStop() {
 	// Shutdown all network resources atomically
-	reactor.networkMutex.Lock()
+	reactor.networkMutex.RLock()
+	discoverySwitch := reactor.discoverySwitch
+	reactor.networkMutex.RUnlock()
 	//cleanupWg := new(sync.WaitGroup)
 
 	// Stop the P2P Discovery Server that is injected
-	if reactor.discoverySwitch != nil {
-		reactor.discoverySwitch.CleanupChannels()
+	if discoverySwitch != nil {
+		discoverySwitch.CleanupChannels()
 
-		allPeers := reactor.discoverySwitch.PeersByScopes()
+		allPeers := discoverySwitch.PeersByScopes()
 		for _, peerSet := range allPeers {
 			peers := peerSet.Copy()
 			for _, p := range peers {
@@ -1748,7 +1760,7 @@ func (reactor *Reactor) OnStop() {
 						}()
 
 						//defer cleanupWg.Done()
-						reactor.discoverySwitch.StopPeerGracefully(peer)
+						discoverySwitch.StopPeerGracefully(peer)
 					}()
 				}(p)
 			}
@@ -1756,46 +1768,48 @@ func (reactor *Reactor) OnStop() {
 		//cleanupWg.Wait()
 
 		// Ping timer must be killed for outbound peers
-		reactor.discoverySwitch.Transport().Conns().ForEach(func(c net.Conn) {
+		discoverySwitch.Transport().Conns().ForEach(func(c net.Conn) {
 			c.Close()
 		})
 
 		// Must stop listening for P2P messages on broadcast port
-		if ts := reactor.discoverySwitch.Transport(); ts != nil {
+		if ts := discoverySwitch.Transport(); ts != nil {
 			ts.Close()
 		}
 
 		// Must stop reactors and listener channels
-		reactor.discoverySwitch.Stop()
+		discoverySwitch.Stop()
+		reactor.networkMutex.Lock()
 		reactor.discoverySwitch = nil
+		reactor.networkMutex.Unlock()
 	}
-	// Done shutting down network resources
-	reactor.networkMutex.Unlock()
 
-	// Shutdown all network resources atomically
-	reactor.networkMutex.Lock()
+	reactor.networkMutex.RLock()
+	cometbftSwitch := reactor.cometbftSwitch
+	reactor.networkMutex.RUnlock()
 
 	// Stop the P2P CometBFT Server that is injected
-	if reactor.cometbftSwitch != nil {
-		reactor.cometbftSwitch.CleanupChannels()
+	if cometbftSwitch != nil {
+		cometbftSwitch.CleanupChannels()
 
-		allPeers := reactor.cometbftSwitch.PeersByScopes()
+		allPeers := cometbftSwitch.PeersByScopes()
 		for _, peerSet := range allPeers {
 			peers := peerSet.Copy()
 			for _, p := range peers {
 				func(peer *p2p.PeerImpl) {
 					//cleanupWg.Add(1)
-					defer func() {
-						if r := recover(); r != nil {
-							// ignore peer error during shutdown
-							//defer cleanupWg.Done()
-							return
-						}
-					}()
 
 					go func() {
+						defer func() {
+							if r := recover(); r != nil {
+								// ignore peer error during shutdown
+								//defer cleanupWg.Done()
+								return
+							}
+						}()
+
 						//defer cleanupWg.Done()
-						reactor.cometbftSwitch.StopPeerGracefully(p)
+						cometbftSwitch.StopPeerGracefully(p)
 					}()
 				}(p)
 			}
@@ -1803,20 +1817,19 @@ func (reactor *Reactor) OnStop() {
 		}
 
 		// Ping timer must be killed for outbound peers
-		reactor.cometbftSwitch.Transport().Conns().ForEach(func(c net.Conn) {
+		cometbftSwitch.Transport().Conns().ForEach(func(c net.Conn) {
 			c.Close()
 		})
 
-		if ts := reactor.cometbftSwitch.Transport(); ts != nil {
+		if ts := cometbftSwitch.Transport(); ts != nil {
 			ts.Close()
 		}
 
-		reactor.cometbftSwitch.Stop()
+		cometbftSwitch.Stop()
+		reactor.networkMutex.Lock()
 		reactor.cometbftSwitch = nil
+		reactor.networkMutex.Unlock()
 	}
-
-	// Done shutting down network resources
-	reactor.networkMutex.Unlock()
 
 	// Shutdown all registered services atomically
 	reactor.servicesMutex.RLock()
