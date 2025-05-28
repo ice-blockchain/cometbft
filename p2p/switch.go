@@ -713,7 +713,7 @@ func (sw *Switch) stopPeer(peer *PeerImpl, reason any) error {
 		)
 	}
 
-	sw.transport.Cleanup(peer)
+	//sw.transport.Cleanup(peer)
 
 	sw.reactorsMtx.Lock()
 	safeReactors := sw.reactors
@@ -766,9 +766,7 @@ func (sw *Switch) removePeer(peer *PeerImpl, reason any) error {
 		return // out
 	}(relevantScopes))
 
-	sw.peersMtx.Lock()
 	connCleanupFn(peer.MConn())
-	sw.peersMtx.Unlock()
 
 	sw.Logger.Debug("Removed all channels for peer", "peer", peer, "scopes", relevantScopes)
 
@@ -1446,7 +1444,8 @@ func (sw *Switch) CleanupChannels() {
 		for _, peer := range peers {
 			//go func(p *PeerImpl, wg *sync.WaitGroup) {
 			go func(p *PeerImpl) {
-				remainingChannelsForPeer := p.MConn().GetChannelsIdx()
+				mconn := p.MConn()
+				remainingChannelsForPeer := mconn.GetChannelsIdx()
 				for chScope, _ := range remainingChannelsForPeer {
 					relevantScopes[chScope] = true
 				}
@@ -1462,9 +1461,7 @@ func (sw *Switch) CleanupChannels() {
 					return // out
 				}(relevantScopes))
 
-				sw.peersMtx.Lock()
-				connCleanupFn(p.MConn())
-				sw.peersMtx.Unlock()
+				connCleanupFn(mconn)
 
 				sw.Logger.Debug("Removed all channels for peer from cleanup", "peer", p, "scopes", relevantScopes)
 			}(peer)
@@ -1481,7 +1478,8 @@ func (sw *Switch) CloseChannelsForScopes(scopes []string) func(mconn *conn.MConn
 				reactorsScope = conn.SharedChannelsNamespace // "_shared_channels"
 			}
 
-			for _, r := range sw.Reactors(reactorsScope) {
+			reactorsByScope := sw.Reactors(reactorsScope)
+			for _, r := range reactorsByScope {
 				channels := r.GetChannels()
 				for _, chDesc := range channels {
 					channelRemoved := mconn.RemoveChannel(scope, chDesc)
@@ -1535,7 +1533,8 @@ func (sw *Switch) OpenChannelsForScopes(scopes []string) func(mconn *conn.MConne
 				reactorsGroup = conn.SharedChannelsNamespace // "_shared_channels"
 			}
 
-			for name, r := range sw.Reactors(reactorsGroup) {
+			reactorsByScope := sw.Reactors(reactorsGroup)
+			for name, r := range reactorsByScope {
 				channels := r.GetChannels()
 				for _, chDesc := range channels {
 					if sw.Typ == "discovery" && chDesc.ID != replicationChannel {

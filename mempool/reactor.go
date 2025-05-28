@@ -592,6 +592,12 @@ func (memR *Reactor) sendAckTransactionBroadcast(
 		return nil
 	}
 
+	if peer == nil {
+		return fmt.Errorf(
+			"failed sending AckTransactionBroadcast, got empty peer for ChainID %s and txHash %v",
+			string(memR.ChainID), txHashesHex)
+	}
+
 	// TODO(midas): remove debug logs
 	memR.Logger.Debug("Sending AckTransactionBroadcast to peer",
 		"from_id", myPeerID,

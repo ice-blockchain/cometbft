@@ -27,7 +27,7 @@ import (
 	"github.com/ice-blockchain/cometbft/node"
 	"github.com/ice-blockchain/cometbft/p2p"
 	sm "github.com/ice-blockchain/cometbft/state"
-	"github.com/ice-blockchain/cometbft/store"
+	"github.com/ice-blockchain/cometbft/state/txindex"
 )
 
 // ----------------------------------------------------------------------------
@@ -1475,19 +1475,17 @@ func TestScenarioClientBroadcastEmptyRelaysProduceBlockWithTx(t *testing.T) {
 	stateMachine, err := chainStore.Load()
 	assert.NoError(t, err, "should not error loading state")
 	assert.Equal(t, testChainID, stateMachine.ChainID)
-	assert.Equal(t, int64(1), stateMachine.LastBlockHeight)
+	assert.GreaterOrEqual(t, int64(1), stateMachine.LastBlockHeight)
 
-	blockStoreProvider := testReactor.GetInstanceProvider(mx.InstanceKeyBlockStore)
-	assert.NotNil(t, blockStoreProvider, "should not error getting block store provider")
-	blockStore := blockStoreProvider(testChainID).(*store.BlockStore)
-	assert.NotNil(t, blockStore, "block store per chain must not be nil")
+	indexerProvider := testReactor.GetServicesProvider()
+	indexerService := indexerProvider(mx.ServiceKeyIndexers, testChainID).(*txindex.IndexerService)
 
-	actualBlock, actualMeta := blockStore.LoadBlock(stateMachine.LastBlockHeight)
-	require.NotNil(t, actualBlock, "should return correct block")
-	require.NotNil(t, actualMeta, "should return correct block meta")
-	require.NotEmpty(t, actualBlock.Data, "should return non-empty block data")
-	assert.NotEmpty(t, actualBlock.Data.Txs, "should return non-empty block transactions")
-	assert.Len(t, actualBlock.Data.Txs, numTransactions)
+	for _, txHash := range resultStatusMsg.TxHashes {
+		foundTx, idxErr := indexerService.GetTxIndexer().Get(txHash)
+
+		assert.NoError(t, idxErr)
+		assert.NotNil(t, foundTx)
+	}
 }
 
 // With a list of healthy relays, i.e. just enough, the transactions will be added

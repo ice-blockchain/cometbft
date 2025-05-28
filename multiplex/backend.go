@@ -3078,7 +3078,7 @@ func (b *MultiplexBackend) localTransactionEventsConsumer(
 	transactionHashes := txHashesToHex(transactions...)
 
 	cancelTimer := time.NewTimer(b.transactionTimeout)
-	txsSub, err := chainEventBus.SubscribeUnbuffered(context.Background(), "multiplexBackend", types.EventQueryTx)
+	txsSub, err := chainEventBus.SubscribeUnbuffered(context.Background(), "multiplexBackend_"+chainID, types.EventQueryTx)
 	if err != nil {
 		resultsCh <- TransactionEventResult{Error: err}
 		return

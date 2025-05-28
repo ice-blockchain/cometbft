@@ -302,13 +302,13 @@ func (c *MConnection) AddChannel(chainID string, desc *ChannelDescriptor) (*Chan
 
 func (c *MConnection) RemoveChannel(chainID string, desc *ChannelDescriptor) bool {
 	c.channelsMtx.Lock()
-	defer c.channelsMtx.Unlock()
-
 	if _, ok := c.channelsIdx[chainID]; !ok {
+		defer c.channelsMtx.Unlock()
 		return false // not removed
 	}
 
 	if _, ok := c.channelsIdx[chainID][desc.ID]; !ok {
+		defer c.channelsMtx.Unlock()
 		return false // not removed
 	}
 
@@ -318,6 +318,7 @@ func (c *MConnection) RemoveChannel(chainID string, desc *ChannelDescriptor) boo
 	c.channels = slices.DeleteFunc(c.channels, func(channel *Channel) bool {
 		return channel.ChainID == chainID && channel.desc.ID == desc.ID
 	})
+	c.channelsMtx.Unlock()
 
 	if atomic.LoadUint32(&c.numOpenChannels) > 0 {
 		atomic.AddUint32(&c.numOpenChannels, ^uint32(0)) // -1
@@ -327,7 +328,6 @@ func (c *MConnection) RemoveChannel(chainID string, desc *ChannelDescriptor) boo
 		"chain_id", chainID,
 		"chID", desc.ID,
 		"num_mconn_chs", atomic.LoadUint32(&c.numOpenChannels),
-		"remaining", c.channelsIdx,
 	)
 
 	// Only stop if channelsIdx is empty (no more channels).
@@ -411,9 +411,6 @@ func (c *MConnection) startServices() error {
 // if the quitSendRoutine was already closed, it returns true, otherwise it returns false.
 // It uses the stopMtx to ensure only one of FlushStop and OnStop can do this at a time.
 func (c *MConnection) stopServices() (alreadyStopped bool) {
-	c.stopMtx.Lock()
-	defer c.stopMtx.Unlock()
-
 	if atomic.CompareAndSwapUint32(&c.stoppedRoutines, 0, 1) {
 		if atomic.LoadUint32(&c.startedRoutines) == 0 {
 			c.Logger.Error(fmt.Sprintf("Not stopping %v routines -- has not been started yet", c.Name()),
@@ -433,6 +430,7 @@ func (c *MConnection) stopServices() (alreadyStopped bool) {
 		// IMPORTANT:
 		// Stopping service, flush timer, ping timer, stats, send/recv routines
 
+		c.stopMtx.Lock()
 		c.BaseService.OnStop()
 		c.flushTimer.Stop()
 		c.pingTimer.Stop()
@@ -443,6 +441,7 @@ func (c *MConnection) stopServices() (alreadyStopped bool) {
 		// inform the routines that we are shutting down
 		close(c.quitSendRoutine)
 		close(c.quitRecvRoutine)
+		defer c.stopMtx.Unlock()
 
 		return true
 	}
@@ -482,8 +481,8 @@ func (c *MConnection) FlushStop() {
 	}
 
 	c.conn.Close()
-	c.recvMonitor.Stop()
-	c.sendMonitor.Stop()
+	// c.recvMonitor.Stop()
+	// c.sendMonitor.Stop()
 
 	// We can't close pong safely here because
 	// recvRoutine may write to it after we've stopped.
@@ -500,8 +499,8 @@ func (c *MConnection) OnStop() {
 	}
 
 	c.conn.Close()
-	c.recvMonitor.Stop()
-	c.sendMonitor.Stop()
+	// c.recvMonitor.Stop()
+	// c.sendMonitor.Stop()
 
 	// We can't close pong safely here because
 	// recvRoutine may write to it after we've stopped.
@@ -510,6 +509,9 @@ func (c *MConnection) OnStop() {
 }
 
 func (c *MConnection) String() string {
+	if c.conn == nil {
+		return fmt.Sprintf("nil-MConn")
+	}
 	return fmt.Sprintf("MConn{%v}", c.conn.RemoteAddr())
 }
 

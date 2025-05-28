@@ -237,9 +237,12 @@ func (reactor *Reactor) RemoveConnectionChannels(
 	// CAUTION: Updates the MConnection.channelsIdx to contain channels for scopes.
 	connCleanupFn := sw.CloseChannelsForScopes(scopes)
 	for _, chainOrScope := range scopes {
-		sw.Peers(chainOrScope).ForEach(func(peer *p2p.PeerImpl) {
-			connCleanupFn(peer.MConn())
-		})
+		peers := sw.Peers(chainOrScope).Copy()
+		for _, p := range peers {
+			func(peer *p2p.PeerImpl) {
+				connCleanupFn(peer.MConn())
+			}(p)
+		}
 	}
 
 	return nil

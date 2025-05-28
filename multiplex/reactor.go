@@ -1768,9 +1768,14 @@ func (reactor *Reactor) OnStop() {
 		//cleanupWg.Wait()
 
 		// Ping timer must be killed for outbound peers
+		// NOTE(midas): ForEach() and Close() both lock the conn.
+		conns := []net.Conn{}
 		discoverySwitch.Transport().Conns().ForEach(func(c net.Conn) {
-			c.Close()
+			conns = append(conns, c)
 		})
+		for _, c := range conns {
+			c.Close()
+		}
 
 		// Must stop listening for P2P messages on broadcast port
 		if ts := discoverySwitch.Transport(); ts != nil {
@@ -1809,7 +1814,7 @@ func (reactor *Reactor) OnStop() {
 						}()
 
 						//defer cleanupWg.Done()
-						cometbftSwitch.StopPeerGracefully(p)
+						cometbftSwitch.StopPeerGracefully(peer)
 					}()
 				}(p)
 			}
