@@ -302,6 +302,9 @@ func (reg *RuntimeRegistry) removeSleeping(chainID string) error {
 	runtimeIndex := slices.IndexFunc(reg.Sleeping, func(r string) bool {
 		return r == chainID
 	})
+	if runtimeIndex == -1 {
+		return nil
+	}
 
 	// If it's not the last item, swap it.
 	if runtimeIndex != lastRuntimeIdx {
