@@ -139,7 +139,9 @@ func (conR *Reactor) OnStart() error {
 	}
 
 	conR.pendingPeers.Range(func(key, value interface{}) bool {
-		conR.AddPeer(value.(*p2p.PeerImpl))
+		// Ensure that we have a PeerState for this peer.
+		peer := conR.InitPeer(value.(*p2p.PeerImpl))
+		conR.AddPeer(peer)
 		return true
 	})
 	conR.pendingPeers.Clear()
@@ -332,7 +334,11 @@ func (conR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 
 	peerState, ok := peer.Get(conR.PeerStateKey()).(*PeerState)
 	if !ok {
-		panic(fmt.Sprintf("peer %v has no state", peer))
+		// Try to init the peer and attempt to find peer state again.
+		peer = conR.InitPeer(peer)
+		if peerState, ok = peer.Get(conR.PeerStateKey()).(*PeerState); !ok {
+			panic(fmt.Sprintf("Peer %v has no state for %v", peer, conR.PeerStateKey()))
+		}
 	}
 	// Begin routines for this peer.
 	go conR.gossipDataRoutine(peer, peerState)
@@ -401,7 +407,7 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 	if !ok {
 		e.Src = conR.InitPeer(e.Src)
 		if ps, ok = e.Src.Get(conR.PeerStateKey()).(*PeerState); !ok {
-			panic(fmt.Sprintf("Peer %v has no state", e.Src))
+			panic(fmt.Sprintf("Peer %v has no state for %v", e.Src, conR.PeerStateKey()))
 		}
 	}
 
@@ -1210,7 +1216,11 @@ func (conR *Reactor) peerStatsRoutine() {
 			// Get peer state
 			ps, ok := peer.Get(conR.PeerStateKey()).(*PeerState)
 			if !ok {
-				panic(fmt.Sprintf("Peer %v has no state", peer))
+				// Try to init the peer and attempt to find peer state again.
+				peer = conR.InitPeer(peer)
+				if ps, ok = peer.Get(conR.PeerStateKey()).(*PeerState); !ok {
+					panic(fmt.Sprintf("Peer %v has no state for %v", peer, conR.PeerStateKey()))
+				}
 			}
 			switch msg.Msg.(type) {
 			case *VoteMessage:
@@ -1246,7 +1256,10 @@ func (conR *Reactor) StringIndented(indent string) string {
 	conR.Switch.Peers(conR.conS.state.ChainID).ForEach(func(peer *p2p.PeerImpl) {
 		ps, ok := peer.Get(conR.PeerStateKey()).(*PeerState)
 		if !ok {
-			panic(fmt.Sprintf("Peer %v has no state", peer))
+			peer = conR.InitPeer(peer)
+			if ps, ok = peer.Get(conR.PeerStateKey()).(*PeerState); !ok {
+				panic(fmt.Sprintf("Peer %v has no state for %v", peer, conR.PeerStateKey()))
+			}
 		}
 		s += indent + "  " + ps.StringIndented(indent+"  ") + "\n"
 	})

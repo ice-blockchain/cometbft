@@ -23,8 +23,8 @@ func TestMultiplexRoutinesNodeReplRequestEmptyRelays(t *testing.T) {
 	numRelays := 3
 
 	// For debug, change the loggers to cmtlog.TestingLogger()
-	loggerRelay1 := cmtlog.TestingLogger().With("process", "relay-1")
-	loggerRelay2 := cmtlog.TestingLogger().With("process", "relay-2")
+	loggerRelay1 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
+	loggerRelay2 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-2")
 	loggerRelay3 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-3")
 
 	// Uses config.TestConfig() and random MultiplexConfig

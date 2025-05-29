@@ -13,10 +13,67 @@ import (
 	cs "github.com/ice-blockchain/cometbft/internal/consensus"
 	"github.com/ice-blockchain/cometbft/internal/evidence"
 	mempl "github.com/ice-blockchain/cometbft/mempool"
+	"github.com/ice-blockchain/cometbft/multiplex/server"
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/p2p/conn"
 	"github.com/ice-blockchain/cometbft/p2p/pex"
 )
+
+func (reactor *Reactor) CreateOrLoadCometBFTEventSwitch(addr *p2p.NetAddress) *p2p.Switch {
+	cometbftSwitch := reactor.GetEventSwitchForCometBFT()
+	if cometbftSwitch != nil {
+		return cometbftSwitch
+	}
+
+	var (
+		nodeKey  *p2p.NodeKey          = reactor.GetNodeKey()
+		nodeInfo *MultiNetworkNodeInfo = reactor.GetMultiNetworkNodeInfo()
+	)
+
+	// TODO(midas): remove debug logs
+	reactor.logger.Debug("Creating switch for P2P cometbft",
+		"addr", addr.String(),
+	)
+
+	p2pLogger := reactor.logger.With("module", "p2p")
+	nodeConfig := reactor.GetNodeConfig()
+
+	p2pMetricsId := strings.Join([]string{
+		nodeConfig.Instrumentation.Namespace,
+		string(nodeKey.ID()),
+	}, "_")
+	p2pMetricsProvider := p2p.PrometheusMetrics(p2pMetricsId,
+		"node_id", string(nodeKey.ID()),
+	)
+
+	mConnConfig := p2p.MConnConfig(nodeConfig.P2P)
+	localTransport := p2p.NewMultiplexTransportWithCustomHandshake(
+		nodeInfo,
+		*nodeKey,
+		mConnConfig,
+		MultiplexTransportHandshake,
+	)
+	cometbftSwitch = p2p.NewSwitch(
+		nodeConfig.P2P,
+		localTransport,
+		p2p.WithMetrics(p2pMetricsProvider),
+		func(s *p2p.Switch) {
+			s.Typ = "cometBFT"
+		},
+	)
+	localTransport.SetSwitch(cometbftSwitch)
+	cometbftSwitch.SetLogger(p2pLogger)
+	cometbftSwitch.SetNodeInfo(nodeInfo)
+	cometbftSwitch.SetNodeKey(nodeKey)
+
+	// Make sure we accept ChainReplicationRequest messages
+	cometbftSwitch.AddReactor(conn.SharedChannelsNamespace, "MULTIPLEX", reactor)
+
+	reactor.SetEventSwitchForCometBFT(cometbftSwitch)
+	reactor.SetTransportForCometBFT(localTransport)
+
+	return cometbftSwitch
+}
 
 // CreateTransportSwitches initializes P2P transports using the legacy
 // structure [p2p.MultiplexTransport], but injects a *custom TLS handshake*
@@ -47,44 +104,24 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 		int(cometbftConfig.DiscoveryPort)+1, // defaults to 30002
 	)
 
-	var (
-		transport   *p2p.MultiplexTransport = reactor.GetTransportForCometBFT()
-		eventSwitch *p2p.Switch             = reactor.GetEventSwitchForCometBFT()
-		nodeKey     *p2p.NodeKey            = reactor.GetNodeKey()
-		nodeInfo    *MultiNetworkNodeInfo   = reactor.GetMultiNetworkNodeInfo()
-	)
-	if eventSwitch == nil {
-		p2pMetricsId := strings.Join([]string{
-			globalConfig.Instrumentation.Namespace,
-			string(nodeKey.ID()),
-		}, "_")
-		p2pMetricsProvider := p2p.PrometheusMetrics(p2pMetricsId,
-			"node_id", string(nodeKey.ID()),
-		)
-
-		mConnConfig := p2p.MConnConfig(cometbftConfig.P2P)
-		transport = p2p.NewMultiplexTransportWithCustomHandshake(
-			nodeInfo,
-			*nodeKey,
-			mConnConfig,
-			MultiplexTransportHandshake,
-		)
-		eventSwitch = p2p.NewSwitch(
-			cometbftConfig.P2P,
-			transport,
-			p2p.WithMetrics(p2pMetricsProvider),
-			func(s *p2p.Switch) {
-				s.Typ = "cometBFT"
-			},
-		)
-		transport.SetSwitch(eventSwitch)
-		eventSwitch.SetLogger(p2pLogger)
-		eventSwitch.SetNodeInfo(nodeInfo)
-		eventSwitch.SetNodeKey(nodeKey)
-
-		// Make sure we accept ChainReplicationRequest messages
-		eventSwitch.AddReactor(conn.SharedChannelsNamespace, "MULTIPLEX", reactor)
+	relayAddr, err := server.NewRelayAddress(cometbftConfig.P2P.ListenAddress)
+	if err != nil {
+		return fmt.Errorf(
+			"could not create relay address for P2P: %w", err)
 	}
+
+	relayAddr.SetID(reactor.GetNodeKey().ID())
+	netAddr, err := relayAddr.NetAddress()
+	if err != nil {
+		return fmt.Errorf(
+			"could not create p2p listen address: %w", err)
+	}
+
+	var (
+		eventSwitch *p2p.Switch           = reactor.CreateOrLoadCometBFTEventSwitch(netAddr)
+		nodeKey     *p2p.NodeKey          = reactor.GetNodeKey()
+		nodeInfo    *MultiNetworkNodeInfo = reactor.GetMultiNetworkNodeInfo()
+	)
 
 	// Used to retrieve configuration and state per chain.
 	serviceProvider := reactor.GetServicesProvider()
@@ -137,9 +174,6 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 			}
 		}
 	}
-
-	reactor.SetEventSwitchForCometBFT(eventSwitch)
-	reactor.SetTransportForCometBFT(transport)
 
 	p2pLogger.Info("P2P Node ID",
 		"ID", nodeKey.ID(),

@@ -1579,6 +1579,10 @@ func (sw *Switch) CleanupChannels() {
 
 func (sw *Switch) CloseChannelsForScopes(scopes []string) func(mconn *conn.MConnection) {
 	return func(mconn *conn.MConnection) {
+		channelsIdx := mconn.GetChannelsIdx()
+		sw.runtimesMtx.Lock()
+		defer sw.runtimesMtx.Unlock()
+
 		for _, scope := range scopes {
 			reactorsScope := scope // ChainID or "discovery"
 			if scope == ScopeForDiscovery {
@@ -1598,8 +1602,6 @@ func (sw *Switch) CloseChannelsForScopes(scopes []string) func(mconn *conn.MConn
 
 			// Close remaining channels from outbound peers.
 			if scope != ScopeForDiscovery {
-				channelsIdx := mconn.GetChannelsIdx()
-				sw.runtimesMtx.Lock()
 				for _, channels := range channelsIdx {
 					replChannel := channels[replicationChannel]
 					ackChannel := channels[ackBroadcastChannel]
@@ -1621,7 +1623,6 @@ func (sw *Switch) CloseChannelsForScopes(scopes []string) func(mconn *conn.MConn
 						}
 					}
 				}
-				sw.runtimesMtx.Unlock()
 			}
 		}
 
@@ -1636,6 +1637,9 @@ func (sw *Switch) CloseChannelsForScopes(scopes []string) func(mconn *conn.MConn
 
 func (sw *Switch) OpenChannelsForScopes(scopes []string) func(mconn *conn.MConnection) {
 	return func(mconn *conn.MConnection) {
+		sw.runtimesMtx.Lock()
+		defer sw.runtimesMtx.Unlock()
+
 		for _, scope := range scopes {
 			reactorsGroup := scope // ChainID or "discovery"
 			if scope == ScopeForDiscovery {

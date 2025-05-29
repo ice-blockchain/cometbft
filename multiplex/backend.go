@@ -2305,24 +2305,38 @@ func (b *MultiplexBackend) StartRPCServerDiscovery(
 func (b *MultiplexBackend) StartP2PServerCometBFT() error {
 	nodeConfig := b.reactor.GetNodeConfig()
 
+	promoteAddr := nodeConfig.P2P.ExternalAddress
+	if promoteAddr == "" {
+		promoteAddr = nodeConfig.P2P.ListenAddress
+	}
+
 	// P2P CometBFT Port is always: `discovery_port+1`
 	p2pListenAddr := overwriteListenPort(
-		nodeConfig.P2P.ListenAddress,
+		promoteAddr,
 		int(nodeConfig.DiscoveryPort+1), // always DiscoveryPort+1
 	)
 
+	relayAddr, err := server.NewRelayAddress(p2pListenAddr)
+	if err != nil {
+		return fmt.Errorf(
+			"could not create relay address for P2P: %w", err)
+	}
+
+	relayAddr.SetID(b.reactor.GetNodeKey().ID())
+	if b.cometbftP2PAddr, err = relayAddr.NetAddress(); err != nil {
+		return fmt.Errorf(
+			"could not create p2p listen address: %w", err)
+	}
+
+	b.logger.Info("Process is now setting up P2P cometbft",
+		"addr", relayAddr.String(),
+	)
+
 	// uses DiscoveryPort+1
-	sw := b.reactor.GetEventSwitchForCometBFT()
+	sw := b.reactor.CreateOrLoadCometBFTEventSwitch(b.cometbftP2PAddr)
 
 	// Start the transport.
-	addr, err := p2p.NewNetAddressString(p2p.IDAddressString(
-		b.reactor.GetNodeKey().ID(),
-		p2pListenAddr,
-	))
-	if err != nil {
-		return err
-	}
-	if err := sw.Transport().Listen(*addr); err != nil {
+	if err := sw.Transport().Listen(*b.cometbftP2PAddr); err != nil {
 		return err
 	}
 
@@ -2331,8 +2345,6 @@ func (b *MultiplexBackend) StartP2PServerCometBFT() error {
 	if err != nil {
 		return err
 	}
-
-	b.cometbftP2PAddr = addr
 
 	// Always connect to chain seed nodes, if any available
 	if len(nodeConfig.P2P.Seeds) > 0 {
