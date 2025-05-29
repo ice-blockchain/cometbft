@@ -37,13 +37,9 @@ func NewConnSet() ConnSet {
 func (cs *connSet) Has(c net.Conn, outbound bool) bool {
 	cs.RLock()
 	defer cs.RUnlock()
+	key := cs.key(c.RemoteAddr(), outbound)
 
-	suffix := "in"
-	if outbound {
-		suffix = "out"
-	}
-
-	_, ok := cs.conns[c.RemoteAddr().String()+"_"+suffix]
+	_, ok := cs.conns[key]
 
 	return ok
 }
@@ -66,15 +62,19 @@ func (cs *connSet) HasIP(ip net.IP) bool {
 func (cs *connSet) Remove(c net.Conn) {
 	cs.Lock()
 	defer cs.Unlock()
-
-	delete(cs.conns, c.RemoteAddr().String())
+	key1 := cs.key(c.RemoteAddr(), true)
+	key2 := cs.key(c.RemoteAddr(), false)
+	delete(cs.conns, key1)
+	delete(cs.conns, key2)
 }
 
 func (cs *connSet) RemoveAddr(addr net.Addr) {
 	cs.Lock()
 	defer cs.Unlock()
-
-	delete(cs.conns, addr.String())
+	key1 := cs.key(addr, true)
+	key2 := cs.key(addr, false)
+	delete(cs.conns, key1)
+	delete(cs.conns, key2)
 }
 
 func (cs *connSet) ForEach(fn func(c net.Conn)) {
@@ -88,13 +88,17 @@ func (cs *connSet) ForEach(fn func(c net.Conn)) {
 func (cs *connSet) Set(c net.Conn, ips []net.IP, outbound bool) {
 	cs.Lock()
 	defer cs.Unlock()
+	key := cs.key(c.RemoteAddr(), outbound)
+	cs.conns[key] = connSetItem{
+		conn: c,
+		ips:  ips,
+	}
+}
 
+func (cs *connSet) key(addr net.Addr, outbound bool) string {
 	suffix := "in"
 	if outbound {
 		suffix = "out"
 	}
-	cs.conns[c.RemoteAddr().String()+"_"+suffix] = connSetItem{
-		conn: c,
-		ips:  ips,
-	}
+	return addr.String() + "_" + suffix
 }
