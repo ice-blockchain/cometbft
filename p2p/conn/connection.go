@@ -357,8 +357,6 @@ func (c *MConnection) OnStart() error {
 	hasChainIDForMessages := (hasChainIDWithoutShared || hasChainIDWithShared) && !c.HasStartedRoutines()
 	if hasChainIDForMessages {
 		c.Logger.Debug("Found at least one ChainID - starting connection services",
-			"num_chains", len(c.channelsIdx),
-			"channels", c.channelsIdx,
 			"num_ch", c.NumOpenChannels(),
 		)
 		return c.startServices()
@@ -910,7 +908,9 @@ FOR_LOOP:
 			chainID := pkt.PacketMsg.ChainID
 			channelID := byte(pkt.PacketMsg.ChannelID)
 
+			c.channelsMtx.Lock()
 			if _, ok := c.channelsIdx[chainID]; !ok {
+				c.channelsMtx.Unlock()
 				c.Logger.Debug("Ignoring message for unknown ChainID",
 					"chainID", chainID,
 					"channelID", channelID,
@@ -922,6 +922,7 @@ FOR_LOOP:
 
 			channel, ok := c.channelsIdx[chainID][channelID]
 			if !ok || channel == nil {
+				c.channelsMtx.Unlock()
 				c.Logger.Debug("Ignoring message for unknown channel with ChainID",
 					"chainID", chainID,
 					"channelID", channelID,
@@ -930,6 +931,7 @@ FOR_LOOP:
 				// instability in network connections when handling new ChainID.
 				continue FOR_LOOP
 			}
+			c.channelsMtx.Unlock()
 
 			msgBytes, err := channel.recvPacketMsg(*pkt.PacketMsg)
 			if err != nil {
