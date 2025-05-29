@@ -225,9 +225,9 @@ func (r *Reactor) AddPeer(p *p2p.PeerImpl) {
 		// For outbound peers, the address is already in the books -
 		// either via DialPeersAsync or r.Receive.
 		// Ask it for more peers if we need.
-		if r.book.NeedMoreAddrs() {
-			r.RequestAddrs(p)
-		}
+		// if r.book.NeedMoreAddrs() {
+		// 	r.RequestAddrs(p)
+		// }
 	} else {
 		// inbound peer is its own source
 		addr, err := p.NodeInfo().NetAddress()
@@ -248,9 +248,13 @@ func (r *Reactor) AddPeer(p *p2p.PeerImpl) {
 
 // RemovePeer implements Reactor by resetting peer's requests info.
 func (r *Reactor) RemovePeer(p *p2p.PeerImpl, _ any) {
-	id := string(p.ID())
-	r.requestsSent.Delete(id)
-	r.lastReceivedRequests.Delete(id)
+	dir := "inbound"
+	if p.IsOutbound() {
+		dir = "outbound"
+	}
+	id := string(p.ID()) + "_" + dir
+	r.requestsSent.Delete(id + "_" + dir)
+	r.lastReceivedRequests.Delete(id + "_" + dir)
 }
 
 func (r *Reactor) logErrAddrBook(err error) {
@@ -365,12 +369,16 @@ func (r *Reactor) receiveRequest(src *p2p.PeerImpl) error {
 // RequestAddrs asks peer for more addresses if we do not already have a
 // request out for this peer.
 func (r *Reactor) RequestAddrs(p *p2p.PeerImpl) {
+	dir := "inbound"
+	if p.IsOutbound() {
+		dir = "outbound"
+	}
 	id := string(p.ID())
-	if r.requestsSent.Has(id) {
+	if r.requestsSent.Has(id + "_" + dir) {
 		return
 	}
 	r.Logger.Debug("Request addrs", "from", p)
-	r.requestsSent.Set(id, struct{}{})
+	r.requestsSent.Set(id+"_"+dir, struct{}{})
 	p.Send(r.ChainID, p2p.Envelope{
 		ChannelID: PexChannel,
 		Message:   &tmp2p.PexRequest{},

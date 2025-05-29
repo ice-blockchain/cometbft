@@ -387,13 +387,15 @@ func (memR *Reactor) processTxs(
 	// Uses the multiplex server.AckBroadcastChannel to send an acknowledgment
 	// message, or receipt, to describe that the transaction has been checked.
 	peerOutbound := memR.Switch.Peers(memR.ChainID).GetOutbound(publicPeerID)
-	if err := memR.sendAckTransactionBroadcast(peerOutbound, protoTxs); err != nil {
-		memR.Logger.Error("Failed to send AckTransactionBroadcast",
-			"err", err,
-			"chain", memR.ChainID,
-			"toPeer", peerOutbound,
-		)
-		return
+	if peerOutbound != nil {
+		if err := memR.sendAckTransactionBroadcast(peerOutbound, protoTxs); err != nil {
+			memR.Logger.Error("Failed to send AckTransactionBroadcast",
+				"err", err,
+				"chain", memR.ChainID,
+				"toPeer", peerOutbound,
+			)
+			return
+		}
 	}
 }
 
