@@ -264,6 +264,19 @@ func (c *MConnection) SocketAddr() net.Addr {
 	return c.conn.RemoteAddr()
 }
 
+func (c *MConnection) FindMatchingChannelDescriptor(chID byte) *ChannelDescriptor {
+	c.channelsMtx.Lock()
+	defer c.channelsMtx.Unlock()
+
+	for _, channels := range c.channelsIdx {
+		if channel, ok := channels[chID]; ok {
+			return channel.Desc()
+		}
+	}
+
+	return nil
+}
+
 // AddChannel registers a ChannelDescriptor in a running mconn for chainID,
 // reactors may then process messages on a new channel for this network.
 func (c *MConnection) AddChannel(chainID string, desc *ChannelDescriptor) (*Channel, bool) {
@@ -576,16 +589,19 @@ func (c *MConnection) getSharedChannel(chID byte) (*Channel, error) {
 	defer c.channelsMtx.Unlock()
 
 	// Do we have shared channels yet? Otherwise stop here.
-	if _, ok := c.channelsIdx[SharedChannelsNamespace]; !ok {
-		return nil, errors.New("Empty shared channels")
+	if _, ok := c.channelsIdx[SharedChannelsNamespace]; ok {
+		if _, ok := c.channelsIdx[SharedChannelsNamespace][chID]; ok {
+			return c.channelsIdx[SharedChannelsNamespace][chID], nil
+		}
 	}
 
-	// Search the channel in shared channels, without ChainID.
-	if _, ok := c.channelsIdx[SharedChannelsNamespace][chID]; !ok {
-		return nil, fmt.Errorf("Unknown channel %X", chID)
+	if _, ok := c.channelsIdx["discovery"]; ok {
+		if _, ok := c.channelsIdx["discovery"][chID]; ok {
+			return c.channelsIdx["discovery"][chID], nil
+		}
 	}
 
-	return c.channelsIdx[SharedChannelsNamespace][chID], nil
+	return nil, fmt.Errorf("Unknown channel %X", chID)
 }
 
 func (c *MConnection) GetChannelsIdx() map[string]map[byte]*Channel {
@@ -605,8 +621,12 @@ func (c *MConnection) Send(chainID string, chID byte, msgBytes []byte) bool {
 
 	channel, err := c.getChannel(chainID, chID)
 	if err != nil {
-		c.Logger.Error(fmt.Sprintf("Cannot send bytes: %s", err.Error()))
-		return false
+		if chDesc := c.FindMatchingChannelDescriptor(chID); chDesc != nil {
+			channel, _ = c.AddChannel(chainID, chDesc)
+		} else {
+			c.Logger.Error(fmt.Sprintf("Cannot send bytes: %s", err.Error()))
+			return false
+		}
 	}
 
 	// Send message to channel.
@@ -635,8 +655,12 @@ func (c *MConnection) TrySend(chainID string, chID byte, msgBytes []byte) bool {
 	// Searches the reactor instance per channel.
 	channel, err := c.getChannel(chainID, chID)
 	if err != nil {
-		c.Logger.Error(fmt.Sprintf("Cannot send bytes: %s", err.Error()))
-		return false
+		if chDesc := c.FindMatchingChannelDescriptor(chID); chDesc != nil {
+			channel, _ = c.AddChannel(chainID, chDesc)
+		} else {
+			c.Logger.Error(fmt.Sprintf("Cannot send bytes: %s", err.Error()))
+			return false
+		}
 	}
 
 	ok := channel.trySendBytes(msgBytes)
@@ -661,8 +685,12 @@ func (c *MConnection) CanSend(chainID string, chID byte) bool {
 	// Searches the reactor instance per channel.
 	channel, err := c.getChannel(chainID, chID)
 	if err != nil {
-		c.Logger.Error(fmt.Sprintf("Cannot send bytes: %s", err.Error()))
-		return false
+		if chDesc := c.FindMatchingChannelDescriptor(chID); chDesc != nil {
+			channel, _ = c.AddChannel(chainID, chDesc)
+		} else {
+			c.Logger.Error(fmt.Sprintf("Cannot send bytes: %s", err.Error()))
+			return false
+		}
 	}
 
 	return channel.canSend()
@@ -908,30 +936,20 @@ FOR_LOOP:
 			chainID := pkt.PacketMsg.ChainID
 			channelID := byte(pkt.PacketMsg.ChannelID)
 
-			c.channelsMtx.Lock()
-			if _, ok := c.channelsIdx[chainID]; !ok {
-				c.channelsMtx.Unlock()
-				c.Logger.Debug("Ignoring message for unknown ChainID",
-					"chainID", chainID,
-					"channelID", channelID,
-					"conn", c)
-				// Note that we do not call `stopForError` anymore to prevent
-				// instability in network connections when handling new ChainID.
-				continue FOR_LOOP
+			channel, err := c.getChannel(chainID, channelID)
+			if err != nil {
+				if chDesc := c.FindMatchingChannelDescriptor(channelID); chDesc != nil {
+					channel, _ = c.AddChannel(chainID, chDesc)
+				} else {
+					c.Logger.Debug("Ignoring message for unknown ChainID",
+						"chainID", chainID,
+						"channelID", channelID,
+						"conn", c)
+					// Note that we do not call `stopForError` anymore to prevent
+					// instability in network connections when handling new ChainID.
+					continue FOR_LOOP
+				}
 			}
-
-			channel, ok := c.channelsIdx[chainID][channelID]
-			if !ok || channel == nil {
-				c.channelsMtx.Unlock()
-				c.Logger.Debug("Ignoring message for unknown channel with ChainID",
-					"chainID", chainID,
-					"channelID", channelID,
-					"conn", c)
-				// Note that we do not call `stopForError` anymore to prevent
-				// instability in network connections when handling new ChainID.
-				continue FOR_LOOP
-			}
-			c.channelsMtx.Unlock()
 
 			msgBytes, err := channel.recvPacketMsg(*pkt.PacketMsg)
 			if err != nil {

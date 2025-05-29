@@ -2338,7 +2338,7 @@ func (reactor *Reactor) sendChainReplicationResponse(
 		return err
 	}
 
-	return errors.New("outbound peer connection is not ready")
+	return nil
 }
 
 // handleChainReplicationRequest processes a ChainReplicationRequest.
