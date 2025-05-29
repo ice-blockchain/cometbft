@@ -653,7 +653,7 @@ func (sw *Switch) HasPeer(peer *PeerImpl) bool {
 	return false
 }
 
-func (sw *Switch) HasPeerInOrOut(id ID) (has bool, scope string) {
+func (sw *Switch) HasPeerInOrOut(id ID) (bool, string) {
 	sw.peersMtx.RLock()
 	defer sw.peersMtx.RUnlock()
 
@@ -715,15 +715,39 @@ func (sw *Switch) InitPeerForScope(peer *PeerImpl, scope string) {
 
 	for rname, reactor := range reactors {
 		if !sw.IsPeerActiveInReactor(peer, scope, rname) {
-			peerForReactor := reactor.InitPeer(peer)
-			reactor.AddPeer(peerForReactor)
+			reactor.InitPeer(peer)
+		}
+	}
+
+	sw.Logger.Info("Init peer for reactors",
+		"scope", scope,
+		"peer", peer,
+	)
+}
+
+func (sw *Switch) AddPeerForScope(peer *PeerImpl, scope string) {
+	if !peer.IsRunning() {
+		return
+	}
+
+	var reactors map[string]Reactor
+	switch {
+	case scope == ScopeForDiscovery: // "discovery" => _shared_channels
+		reactors = sw.Reactors(conn.SharedChannelsNamespace)
+	default:
+		reactors = sw.Reactors(scope)
+	}
+
+	for rname, reactor := range reactors {
+		if !sw.IsPeerActiveInReactor(peer, scope, rname) {
+			reactor.AddPeer(peer)
 			sw.MarkPeerActiveInReactor(peer, scope, rname)
 		}
 	}
 
 	sw.Logger.Info("Added peer to reactors",
 		"scope", scope,
-		"id", string(peer.ID()),
+		"peer", peer,
 	)
 }
 
@@ -1426,6 +1450,11 @@ func (sw *Switch) addPeer(p *PeerImpl) (err error) {
 		}
 	}
 
+	// Init all the reactor protocols with this peer.
+	for _, relevantScope := range relevantScopes {
+		sw.InitPeerForScope(p, relevantScope)
+	}
+
 	// Start the peer's send/recv routines.
 	// Must start it before adding it to the peer set
 	// to prevent Start and Stop from being called concurrently.
@@ -1435,12 +1464,9 @@ func (sw *Switch) addPeer(p *PeerImpl) (err error) {
 		return err
 	}
 
-	// In case of INBOUND peer, we need to add the peer to the reactors.
-	if !p.IsOutbound() {
-		// Start all the reactor protocols on the peer.
-		for _, relevantScope := range relevantScopes {
-			sw.InitPeerForScope(p, relevantScope)
-		}
+	// Start all the reactor protocols on the peer.
+	for _, relevantScope := range relevantScopes {
+		sw.AddPeerForScope(p, relevantScope)
 	}
 
 	peerLogger.Debug("Added peer",
@@ -1448,6 +1474,14 @@ func (sw *Switch) addPeer(p *PeerImpl) (err error) {
 	)
 
 	return nil
+}
+
+func (sw *Switch) peerReactorLookupKey(p *PeerImpl, reactor string) string {
+	if p.IsOutbound() {
+		return reactor + "_out"
+	}
+
+	return reactor + "_in"
 }
 
 // IsPeerActiveInReactor returns true if the peer has been initialized
@@ -1461,9 +1495,11 @@ func (sw *Switch) IsPeerActiveInReactor(p *PeerImpl, scope string, reactor strin
 		return false
 	}
 
+	lookupKey := sw.peerReactorLookupKey(p, reactor)
+
 	sw.runtimesMtx.RLock()
 	peerInitTimeTz,
-		hasPeerTime := sw.reactorPeerTimes[scope][reactor]
+		hasPeerTime := sw.reactorPeerTimes[scope][lookupKey]
 	swStartTimeTz := sw.startTz
 	sw.runtimesMtx.RUnlock()
 
@@ -1486,8 +1522,10 @@ func (sw *Switch) MarkPeerActiveInReactor(p *PeerImpl, scope string, reactor str
 		sw.runtimesMtx.Unlock()
 	}
 
+	lookupKey := sw.peerReactorLookupKey(p, reactor)
+
 	sw.runtimesMtx.Lock()
-	sw.reactorPeerTimes[scope][reactor] = time.Now()
+	sw.reactorPeerTimes[scope][lookupKey] = time.Now()
 	sw.runtimesMtx.Unlock()
 }
 
@@ -1561,6 +1599,7 @@ func (sw *Switch) CloseChannelsForScopes(scopes []string) func(mconn *conn.MConn
 			// Close remaining channels from outbound peers.
 			if scope != ScopeForDiscovery {
 				channelsIdx := mconn.GetChannelsIdx()
+				sw.runtimesMtx.Lock()
 				for _, channels := range channelsIdx {
 					replChannel := channels[replicationChannel]
 					ackChannel := channels[ackBroadcastChannel]
@@ -1582,6 +1621,7 @@ func (sw *Switch) CloseChannelsForScopes(scopes []string) func(mconn *conn.MConn
 						}
 					}
 				}
+				sw.runtimesMtx.Unlock()
 			}
 		}
 

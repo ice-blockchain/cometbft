@@ -237,6 +237,7 @@ func NewServer(
 ) (*MultiplexBackend, error) {
 	// Force to create blocks only if there is transactions.
 	nodeConfig.Consensus.CreateEmptyBlocks = false
+	nodeConfig.P2P.AllowDuplicateIP = true
 
 	initTime := time.Now()
 	_, reactor, err := NewNodesMultiplex(
