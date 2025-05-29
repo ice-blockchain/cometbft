@@ -1073,13 +1073,51 @@ func (sw *Switch) dialPeersAsync(netAddrs []*NetAddress) {
 // ErrCurrentlyDialingOrExistingAddress is returned.
 func (sw *Switch) DialPeerWithAddress(addr *NetAddress) error {
 	if sw.IsDialingOrExistingAddress(addr) {
+
 		return ErrCurrentlyDialingOrExistingAddress{addr.String()}
 	}
 
 	sw.dialing.Set(string(addr.ID), addr)
 	defer sw.dialing.Delete(string(addr.ID))
 
-	return sw.addOutboundPeerWithConfig(addr, sw.config)
+	return sw.addOutboundPeerWithConfig(addr, sw.config, "")
+}
+func (sw *Switch) DialPeerWithAddressAndChain(addr *NetAddress, chainID string) error {
+	if sw.IsDialingOrExistingAddress(addr) {
+		var p *PeerImpl
+		if sw.HasPeerID(addr.ID, true) {
+			all := sw.AllPeers()
+			for _, ap := range all {
+				if ap.ID() == addr.ID && ap.outbound {
+					p = ap
+					break
+				}
+			}
+		} else {
+			netAddr, err := net.ResolveTCPAddr("", addr.DialString())
+			if err != nil {
+				return err
+			}
+			p = sw.FindMatchingPeer(netAddr)
+		}
+		peerSet := sw.Peers(chainID)
+		if p != nil && !peerSet.HasPeer(p) {
+			if err := peerSet.Add(p); err != nil {
+				if _, ok := err.(ErrPeerRemoval); ok {
+					sw.Logger.Error("Error starting peer ",
+						"err", "Peer has already errored and removal was attempted.",
+						"peer", p)
+				}
+				return err // err
+			}
+		}
+		return ErrCurrentlyDialingOrExistingAddress{addr.String()}
+	}
+
+	sw.dialing.Set(string(addr.ID), addr)
+	defer sw.dialing.Delete(string(addr.ID))
+
+	return sw.addOutboundPeerWithConfig(addr, sw.config, chainID)
 }
 
 // sleep for interval plus some random amount of ms on [0, dialRandomizerIntervalMilliseconds].
@@ -1279,7 +1317,7 @@ func IsDialError(err error) bool {
 func (sw *Switch) addOutboundPeerWithConfig(
 	addr *NetAddress,
 	cfg *config.P2PConfig,
-	options ...peerOption,
+	chainID string,
 ) error {
 	sw.Logger.Debug("Dialing peer", "address", addr)
 
@@ -1292,6 +1330,25 @@ func (sw *Switch) addOutboundPeerWithConfig(
 	safePeerConfig := sw.GetPeerConfig()
 	p, err := sw.transport.Dial(*addr, safePeerConfig)
 	if err != nil {
+		if !IsDialError(err) {
+			if chainID != "" {
+				peerSet := sw.Peers(chainID)
+				//TODO: peer lookup by addr, or proper linking between net conns / peer
+				if duplConn, ok := err.(ErrRejected); ok {
+					p = sw.FindMatchingPeer(duplConn.conn.RemoteAddr())
+				}
+				if p != nil && !peerSet.HasPeer(p) {
+					if err = peerSet.Add(p); err != nil {
+						if _, ok := err.(ErrPeerRemoval); ok {
+							sw.Logger.Error("Error starting peer ",
+								"err", "Peer has already errored and removal was attempted.",
+								"peer", p)
+						}
+						return err // err
+					}
+				}
+			}
+		}
 		if e, ok := err.(ErrRejected); ok {
 			if e.IsSelf() {
 				sw.networksMtx.Lock()
@@ -1314,10 +1371,10 @@ func (sw *Switch) addOutboundPeerWithConfig(
 		return err
 	}
 
-	// Applies custom options to Peer object
-	for _, option := range options {
-		option(p)
-	}
+	//// Applies custom options to Peer object
+	//for _, option := range options {
+	//	option(p)
+	//}
 
 	if err := sw.addPeer(p); err != nil {
 		sw.transport.Cleanup(p)
@@ -1328,6 +1385,18 @@ func (sw *Switch) addOutboundPeerWithConfig(
 	}
 
 	return nil
+}
+
+// TODO: peer lookup by addr, or proper linking between net conns / peer
+func (sw *Switch) FindMatchingPeer(addr net.Addr) (p *PeerImpl) {
+	allPeers := sw.AllPeers()
+	for _, ap := range allPeers {
+		if ap.conn.RemoteAddr() == addr {
+			p = ap
+			break
+		}
+	}
+	return p
 }
 
 func (sw *Switch) filterPeer(p *PeerImpl) error {
@@ -1482,10 +1551,10 @@ func (sw *Switch) addPeer(p *PeerImpl) (err error) {
 
 func (sw *Switch) peerReactorLookupKey(p *PeerImpl, reactor string) string {
 	if p.IsOutbound() {
-		return reactor + "_out"
+		return reactor + string(p.ID()) + "_out"
 	}
 
-	return reactor + "_in"
+	return reactor + string(p.ID()) + "_in"
 }
 
 // IsPeerActiveInReactor returns true if the peer has been initialized

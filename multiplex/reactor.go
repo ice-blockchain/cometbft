@@ -1500,7 +1500,7 @@ func (r *Reactor) DialRelayForScope(
 	}
 
 	// Dial the peer by address
-	if err = dialWithSw.DialPeerWithAddress(peerAddr); err != nil {
+	if err = dialWithSw.DialPeerWithAddressAndChain(peerAddr, partnerScope); err != nil {
 		if r.IsDialError(err) {
 			return fmt.Errorf(
 				"could not dial relay %s: %w", peerAddr.DialString(), err)
