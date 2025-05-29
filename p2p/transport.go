@@ -280,7 +280,7 @@ func (mt *MultiplexTransport) Dial(
 	}
 
 	// TODO(xla): Evaluate if we should apply filters if we explicitly dial.
-	if err := mt.filterConn(c); err != nil {
+	if err := mt.filterConn(c, true); err != nil {
 		return nil, err
 	}
 
@@ -413,7 +413,7 @@ func (mt *MultiplexTransport) acceptPeers() {
 				netAddr    *NetAddress
 			)
 
-			err := mt.filterConn(c)
+			err := mt.filterConn(c, false)
 			if err == nil {
 				secretConn, nodeInfo, err = mt.upgrade(c, nil)
 				if err == nil {
@@ -462,7 +462,7 @@ func (mt *MultiplexTransport) cleanup(c net.Conn) error {
 	return c.Close()
 }
 
-func (mt *MultiplexTransport) filterConn(c net.Conn) (err error) {
+func (mt *MultiplexTransport) filterConn(c net.Conn, outbound bool) (err error) {
 	defer func() {
 		if err != nil {
 			_ = c.Close()
@@ -470,7 +470,7 @@ func (mt *MultiplexTransport) filterConn(c net.Conn) (err error) {
 	}()
 
 	// Reject if connection is already present.
-	if mt.conns.Has(c) {
+	if mt.conns.Has(c, outbound) {
 		return ErrRejected{conn: c, isDuplicate: true}
 	}
 
@@ -499,7 +499,7 @@ func (mt *MultiplexTransport) filterConn(c net.Conn) (err error) {
 		}
 	}
 
-	mt.conns.Set(c, ips)
+	mt.conns.Set(c, ips, outbound)
 
 	return nil
 }

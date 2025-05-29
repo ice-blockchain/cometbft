@@ -8,9 +8,9 @@ import (
 
 // ConnSet is a lookup table for connections and all their ips.
 type ConnSet interface {
-	Has(conn net.Conn) bool
+	Has(conn net.Conn, outbound bool) bool
 	HasIP(ip net.IP) bool
-	Set(conn net.Conn, ip []net.IP)
+	Set(conn net.Conn, ip []net.IP, outbound bool)
 	Remove(conn net.Conn)
 	RemoveAddr(addr net.Addr)
 	ForEach(func(conn net.Conn))
@@ -34,11 +34,16 @@ func NewConnSet() ConnSet {
 	}
 }
 
-func (cs *connSet) Has(c net.Conn) bool {
+func (cs *connSet) Has(c net.Conn, outbound bool) bool {
 	cs.RLock()
 	defer cs.RUnlock()
 
-	_, ok := cs.conns[c.RemoteAddr().String()]
+	suffix := "in"
+	if outbound {
+		suffix = "out"
+	}
+
+	_, ok := cs.conns[c.RemoteAddr().String()+"_"+suffix]
 
 	return ok
 }
@@ -80,11 +85,15 @@ func (cs *connSet) ForEach(fn func(c net.Conn)) {
 	}
 }
 
-func (cs *connSet) Set(c net.Conn, ips []net.IP) {
+func (cs *connSet) Set(c net.Conn, ips []net.IP, outbound bool) {
 	cs.Lock()
 	defer cs.Unlock()
 
-	cs.conns[c.RemoteAddr().String()] = connSetItem{
+	suffix := "in"
+	if outbound {
+		suffix = "out"
+	}
+	cs.conns[c.RemoteAddr().String()+"_"+suffix] = connSetItem{
 		conn: c,
 		ips:  ips,
 	}

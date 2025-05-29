@@ -1499,7 +1499,7 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 	numRelays := 7
 	numHealthy := (numRelays / 2) + 1
 
-	servers, shutdownFn := ResetTestScenarioRelaysWithLogs(t, numChains, numHealthy)
+	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numHealthy)
 	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)
