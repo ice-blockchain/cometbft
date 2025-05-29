@@ -373,30 +373,30 @@ func (memR *Reactor) processTxs(
 
 	// dialerFn is an extension that permits to run [Reactor#GetRemoteDiscoveryAddress]
 	// which returns a public discovery address which can be used to find CometBFT addr.
-	publicPeerID, err := memR.dialerFn(memR.Switch, peer, memR.ChainID)
-	if err != nil {
-		memR.Logger.Error(
-			"failed to process transaction: error dialing outbound peer",
-			"chain_id", memR.ChainID,
-			"peer", peer,
-			"err", err,
-		)
-		return
-	}
+	// publicPeerID, err := memR.dialerFn(memR.Switch, peer, memR.ChainID)
+	// if err != nil {
+	// 	memR.Logger.Error(
+	// 		"failed to process transaction: error dialing outbound peer",
+	// 		"chain_id", memR.ChainID,
+	// 		"peer", peer,
+	// 		"err", err,
+	// 	)
+	// 	return
+	// }
 
 	// Uses the multiplex server.AckBroadcastChannel to send an acknowledgment
 	// message, or receipt, to describe that the transaction has been checked.
-	peerOutbound := memR.Switch.Peers(memR.ChainID).GetOutbound(publicPeerID)
-	if peerOutbound != nil {
-		if err := memR.sendAckTransactionBroadcast(peerOutbound, protoTxs); err != nil {
-			memR.Logger.Error("Failed to send AckTransactionBroadcast",
-				"err", err,
-				"chain", memR.ChainID,
-				"toPeer", peerOutbound,
-			)
-			return
-		}
+	// peerOutbound := memR.Switch.Peers(memR.ChainID).GetOutbound(publicPeerID)
+	// if peerOutbound != nil {
+	if err := memR.sendAckTransactionBroadcast(peer, protoTxs); err != nil {
+		memR.Logger.Error("Failed to send AckTransactionBroadcast",
+			"err", err,
+			"chain", memR.ChainID,
+			"toPeer", peer,
+		)
+		return
 	}
+	// }
 }
 
 // clientAcceptTx delegates the verification of transactions to an Acceptor

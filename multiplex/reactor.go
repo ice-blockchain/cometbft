@@ -1264,16 +1264,29 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 
 			// Now respond with a [ChainReplicationResponse].
 			// This serves as a receipt for a chain replication request.
-			discoverySwitch := r.GetEventSwitchForDiscovery()
-			sourceOutboundPeer := discoverySwitch.Peers(p2p.ScopeForDiscovery).GetOutbound(discoveryAddr.ID())
-			if err = r.sendChainReplicationResponse(sourceOutboundPeer, replRequest.ChainID); err != nil {
-				r.Logger.Error("failed to send ChainReplicationResponse",
+			//discoverySwitch := r.GetEventSwitchForDiscovery()
+
+			// r.networkMutex.Lock()
+			// sourceOutboundPeer := discoverySwitch.Peers(p2p.ScopeForDiscovery).GetOutbound(discoveryAddr.ID())
+			// r.networkMutex.Lock()
+			// if sourceOutboundPeer == nil {
+			// 	r.logger.Error("sourceOutboundPeer is nil",
+			// 		"chain_id", replRequest.ChainID,
+			// 		"from", r.GetNodeKey().ID(),
+			// 		"peers", discoverySwitch.PeersByScopes(),
+			// 	)
+			// 	sourceOutboundPeer = discoverySwitch.Peers(replRequest.ChainID).GetOutbound(discoveryAddr.ID())
+			// }
+			// if sourceOutboundPeer != nil {
+			if err = r.sendChainReplicationResponse(e.Src, replRequest.ChainID); err != nil {
+				r.logger.Error("failed to send ChainReplicationResponse",
 					"chain_id", replRequest.ChainID,
 					"from", r.GetNodeKey().ID(),
-					"to", sourceOutboundPeer.ID(),
+					"to", e.Src.ID(),
 					"err", err,
 				)
 			}
+			//}
 
 			// Done.
 			r.logger.Debug("This relay now replicates a new chain", "chain_id", replRequest.ChainID)
@@ -1826,7 +1839,10 @@ func (reactor *Reactor) OnStop() {
 
 	// Stop the P2P CometBFT Server that is injected
 	if cometbftSwitch != nil {
+
+		reactor.networkMutex.Lock()
 		cometbftSwitch.CleanupChannels()
+		reactor.networkMutex.Unlock()
 
 		allPeers := cometbftSwitch.PeersByScopes()
 		for _, peerSet := range allPeers {
@@ -2305,9 +2321,9 @@ func (reactor *Reactor) sendChainReplicationResponse(
 		return nil
 	}
 
-	if !sourcePeerOut.IsOutbound() {
-		return errors.New("failed to use source peer as outbound")
-	}
+	// if !sourcePeerOut.IsOutbound() {
+	// 	return errors.New("failed to use source peer as outbound")
+	// }
 
 	// TODO(midas): remove debug logs
 	reactor.logger.Debug("Sending ChainReplicationResponse to peer",

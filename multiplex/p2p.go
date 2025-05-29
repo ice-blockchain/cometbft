@@ -294,9 +294,11 @@ func (reactor *Reactor) AddConnectionChannels(
 	serviceProvider := reactor.GetServicesProvider()
 	for _, chainID := range scopes {
 		// Skip if this is not a ChainID (e.g., discovery scope)
-		if !reactor.HasNetwork(chainID) { // locks networkMutex
+		if chainID == p2p.ScopeForDiscovery {
 			continue
 		}
+
+		sw.AddActiveRuntime(chainID)
 
 		// Add reactors for the new ChainID if they don't exist
 		if sw.Reactor(chainID, "MEMPOOL") == nil {

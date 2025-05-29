@@ -1162,6 +1162,10 @@ func (sw *Switch) acceptRoutine() {
 		safePeerConfig := sw.GetPeerConfig()
 		p, err := sw.transport.Accept(safePeerConfig)
 		if err != nil {
+			if !IsDialError(err) {
+				break
+			}
+
 			// If Close() was called, exit silently
 			if sw.transport.IsClosing() {
 				break
