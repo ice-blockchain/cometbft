@@ -1559,15 +1559,11 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
 	close(notifyCh1)
 
-	// Test that AckTransactionBroadcast messages were received.
-	for _, bzTxHash := range resultStatusMsg.TxHashes {
-		testTxHash := fmt.Sprintf("%X", bzTxHash)
-
-		expectedResponseCnt := numHealthy - 1 // -1 for self
-		actualResponsesRcvd := servers[0].GetAckResponsePeers(testTxHash)
-		assert.NotEmpty(t, actualResponsesRcvd)
-		assert.Len(t, actualResponsesRcvd, expectedResponseCnt)
-	}
+	// Test that ChainReplicationResponse messages were received.
+	expectedResponseCnt := numHealthy - 1 // -1 for self
+	actualResponsesRcvd := servers[0].GetReplResponsePeers(testChainID1)
+	assert.NotEmpty(t, actualResponsesRcvd)
+	assert.Len(t, actualResponsesRcvd, expectedResponseCnt)
 
 	// TEST 2 - Success
 	//
