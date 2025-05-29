@@ -543,11 +543,12 @@ func (sw *Switch) TryBroadcast(chainID string, e Envelope) {
 	defer sw.peersMtx.RUnlock()
 
 	if peerSet, ok := sw.peersByScope[chainID]; ok {
-		peerSet.ForEach(func(p *PeerImpl) {
+		peers := peerSet.Copy()
+		for _, p := range peers {
 			go func(peer Peer) {
 				peer.TrySend(chainID, e)
 			}(p)
-		})
+		}
 	}
 }
 
