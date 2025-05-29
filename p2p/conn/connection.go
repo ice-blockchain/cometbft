@@ -911,18 +911,24 @@ FOR_LOOP:
 			channelID := byte(pkt.PacketMsg.ChannelID)
 
 			if _, ok := c.channelsIdx[chainID]; !ok {
-				err := fmt.Errorf("unknown channel - missing ChainID %s", chainID)
-				c.Logger.Debug("Connection failed @ recvRoutine", "conn", c, "err", err)
-				c.stopForError(err)
-				break FOR_LOOP
+				c.Logger.Debug("Ignoring message for unknown ChainID",
+					"chainID", chainID,
+					"channelID", channelID,
+					"conn", c)
+				// Note that we do not call `stopForError` anymore to prevent
+				// instability in network connections when handling new ChainID.
+				continue FOR_LOOP
 			}
 
 			channel, ok := c.channelsIdx[chainID][channelID]
 			if !ok || channel == nil {
-				err := fmt.Errorf("unknown channel %X for ChainID %s", pkt.PacketMsg.ChannelID, chainID)
-				c.Logger.Debug("Connection failed @ recvRoutine", "conn", c, "err", err)
-				c.stopForError(err)
-				break FOR_LOOP
+				c.Logger.Debug("Ignoring message for unknown channel with ChainID",
+					"chainID", chainID,
+					"channelID", channelID,
+					"conn", c)
+				// Note that we do not call `stopForError` anymore to prevent
+				// instability in network connections when handling new ChainID.
+				continue FOR_LOOP
 			}
 
 			msgBytes, err := channel.recvPacketMsg(*pkt.PacketMsg)
@@ -1241,4 +1247,13 @@ func RandomStringOfSize(n int) string {
 		b[i] = letterBytes[rand.Intn(len(letterBytes))]
 	}
 	return string(b)
+}
+
+// UpdateOnReceive updates the onReceive callback function with new reactors.
+// This is needed when new ChainIDs are added to the multiplex system.
+func (c *MConnection) UpdateOnReceive(newOnReceive receiveCbFunc) {
+	c.channelsMtx.Lock()
+	defer c.channelsMtx.Unlock()
+
+	c.onReceive = newOnReceive
 }

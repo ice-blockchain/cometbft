@@ -378,6 +378,19 @@ func (sw *Switch) GetPeerConfig() peerConfig {
 	sw.reactorsMtx.Lock()
 	defer sw.reactorsMtx.Unlock()
 
+	// Check if we have a multiplex reactor that can provide additional ChainIDs
+	multiplexReactor := sw.getMultiplexReactor()
+	if multiplexReactor != nil {
+		// Use type assertion to access GetNetworks method
+		if mxReactor, ok := multiplexReactor.(interface{ GetNetworks() []string }); ok {
+			// Get all known networks from multiplex reactor
+			allNetworks := mxReactor.GetNetworks()
+
+			// Ensure all networks have channels and reactors
+			sw.ensureChannelsForNetworks(allNetworks)
+		}
+	}
+
 	return peerConfig{
 		chDescs:       sw.chDescs,
 		onPeerError:   sw.StopPeerForError,
@@ -403,6 +416,38 @@ func (sw *Switch) Transport() *MultiplexTransport {
 // Metrics returns the p2p metrics.
 func (sw *Switch) Metrics() *Metrics {
 	return sw.metrics
+}
+
+// getMultiplexReactor returns the multiplex reactor if it exists
+func (sw *Switch) getMultiplexReactor() Reactor {
+	// Look for multiplex reactor in shared channels namespace
+	if reactors, ok := sw.reactors[conn.SharedChannelsNamespace]; ok {
+		if multiplexReactor, ok := reactors["MULTIPLEX"]; ok {
+			return multiplexReactor
+		}
+	}
+	return nil
+}
+
+// ensureChannelsForNetworks ensures that all networks have proper channels and reactors
+func (sw *Switch) ensureChannelsForNetworks(networks []string) {
+	for _, chainID := range networks {
+		// Skip if channels already exist for this chainID
+		if _, exists := sw.chDescs[chainID]; exists {
+			continue
+		}
+
+		// Initialize empty maps if they don't exist
+		if sw.chDescs[chainID] == nil {
+			sw.chDescs[chainID] = []*conn.ChannelDescriptor{}
+		}
+		if sw.reactorsByCh[chainID] == nil {
+			sw.reactorsByCh[chainID] = make(map[byte]Reactor)
+		}
+		if sw.msgTypeByChID[chainID] == nil {
+			sw.msgTypeByChID[chainID] = make(map[byte]proto.Message)
+		}
+	}
 }
 
 // ---------------------------------------------------------------------
@@ -608,6 +653,19 @@ func (sw *Switch) HasPeer(peer *PeerImpl) bool {
 	return false
 }
 
+func (sw *Switch) HasPeerInOrOut(id ID) (has bool, scope string) {
+	sw.peersMtx.RLock()
+	defer sw.peersMtx.RUnlock()
+
+	for scope, peerSet := range sw.peersByScope {
+		if peerSet.Has(id) {
+			return true, scope
+		}
+	}
+
+	return false, ""
+}
+
 // HasPeerID iterates peersByScope to find a peer by its ID.
 func (sw *Switch) HasPeerID(id ID, outbound bool) bool {
 	sw.peersMtx.RLock()
@@ -707,6 +765,12 @@ func (sw *Switch) StopPeerGracefully(peer *PeerImpl) {
 // stopPeer calls the Stop method on a peer, then cleans up
 // the transport instance and removes the peer from all reactors.
 func (sw *Switch) stopPeer(peer *PeerImpl, reason any) error {
+	// Check if peer is already stopped to prevent "already stopped" errors
+	if !peer.IsRunning() {
+		sw.Logger.Debug("Peer already stopped, skipping stop operation", "peer", peer.ID())
+		return nil
+	}
+
 	if err := peer.Stop(); err != nil {
 		return fmt.Errorf(
 			"error stopping peer for ID %s: %w", string(peer.ID()), err,
@@ -1422,7 +1486,9 @@ func (sw *Switch) MarkPeerActiveInReactor(p *PeerImpl, scope string, reactor str
 		sw.runtimesMtx.Unlock()
 	}
 
+	sw.runtimesMtx.Lock()
 	sw.reactorPeerTimes[scope][reactor] = time.Now()
+	sw.runtimesMtx.Unlock()
 }
 
 func (sw *Switch) CleanupChannels() {

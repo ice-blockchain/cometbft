@@ -254,15 +254,45 @@ func (reactor *Reactor) AddConnectionChannels(
 	sw *p2p.Switch,
 	scopes []string,
 ) error {
+	// NOTE(midas): If one of the scopes is a ChainID that is being initialized
+	// concurrently and that we have not yet added to the switch, we do so here
+	// so that we may proceed with handling messages from unknown ChainIDs.
+	serviceProvider := reactor.GetServicesProvider()
+	for _, chainID := range scopes {
+		// Skip if this is not a ChainID (e.g., discovery scope)
+		if !reactor.HasNetwork(chainID) { // locks networkMutex
+			continue
+		}
+
+		// Add reactors for the new ChainID if they don't exist
+		if sw.Reactor(chainID, "MEMPOOL") == nil {
+			sw.AddReactor(chainID, "MEMPOOL",
+				serviceProvider(ServiceKeyMempoolReactor, chainID).(*mempl.Reactor))
+		}
+		if sw.Reactor(chainID, "BLOCKSYNC") == nil {
+			sw.AddReactor(chainID, "BLOCKSYNC",
+				serviceProvider(ServiceKeyBlockSyncReactor, chainID).(*blocksync.Reactor))
+		}
+		if sw.Reactor(chainID, "CONSENSUS") == nil {
+			sw.AddReactor(chainID, "CONSENSUS",
+				serviceProvider(ServiceKeyConsensusReactor, chainID).(*cs.Reactor))
+		}
+		if sw.Reactor(chainID, "EVIDENCE") == nil {
+			sw.AddReactor(chainID, "EVIDENCE",
+				serviceProvider(ServiceKeyEvidenceReactor, chainID).(*evidence.Reactor))
+		}
+	}
+
 	reactor.networkMutex.RLock()
 	defer reactor.networkMutex.RUnlock()
 
 	// CAUTION: Updates the MConnection.channelsIdx to contain channels for scopes.
 	connUpdaterFn := sw.OpenChannelsForScopes(scopes)
 	for _, chainOrScope := range scopes {
-		sw.Peers(chainOrScope).ForEach(func(peer *p2p.PeerImpl) {
+		peers := sw.Peers(chainOrScope).Copy()
+		for _, peer := range peers {
 			connUpdaterFn(peer.MConn())
-		})
+		}
 	}
 
 	return nil

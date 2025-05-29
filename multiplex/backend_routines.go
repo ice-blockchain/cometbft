@@ -434,6 +434,12 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 					return
 				}
 
+				// This ensures that even if the send fails due to race conditions
+				// (e.g., peer doesn't know about ChainID yet), we still expect an ACK
+				// from this peer if it later learns about the ChainID and processes
+				// the transaction.
+				poolRequestPeers = append(poolRequestPeers, peerID)
+
 				// TODO(midas): remove debug logs
 				logger.Debug("Sending transaction to remote mempool",
 					"chain_id", chainID,
@@ -458,12 +464,9 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 					// Note: we do not push an error on the notifyCh channel
 					// because a failure in sending to one relay must not
 					// prevent the transaction broadcast operation.
-
-					return
+				} else {
+					relaysAccepted++
 				}
-
-				poolRequestPeers = append(poolRequestPeers, peerID)
-				relaysAccepted++
 			})
 
 			// Waits until we have sent to all required peers

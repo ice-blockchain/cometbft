@@ -1363,6 +1363,22 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 				r.poolRequestsSent[txHash] = slices.DeleteFunc(peers, func(s string) bool {
 					return s == relayId
 				})
+			} else {
+				// If txHash is not in poolRequestsSent, it might be a new ChainID
+				// that was created after the transaction was sent. In this case,
+				// we should still accept ACK from valid peers for this ChainID.
+				cometbftSwitch := r.GetEventSwitchForCometBFT()
+
+				// Check if this peer is connected to any of our networks
+				// It's ok to query by ID here because in/out doesn't matter.
+				if ok, chainID := cometbftSwitch.HasPeerInOrOut(e.Src.ID()); ok {
+					shouldProcessAckTx = true
+					r.logger.Debug("Accepting ACK from peer not in poolRequestsSent",
+						"relay_id", relayId,
+						"tx_hash", txHash,
+						"other_chain_id", chainID,
+						"reason", "peer_connected_chainid")
+				}
 			}
 			r.poolRequestsMtx.Unlock()
 
@@ -1434,18 +1450,18 @@ func (r *Reactor) DialRelayForScope(
 		}
 	}()
 
-	// Storage/transports of switches are protected by networkMutex.
-	r.networkMutex.RLock()
-	defer r.networkMutex.RUnlock()
+	// scopedPeerSet is *PeerSet
+	scopedPeerSet := dialWithSw.Peers(partnerScope)
 
+	// Storage/transports of switches are protected by networkMutex.
 	var peerOutbound *p2p.PeerImpl
-	peerOutbound = dialWithSw.Peers(partnerScope).GetOutbound(peerAddr.ID)
+	peerOutbound = scopedPeerSet.GetOutbound(peerAddr.ID)
 
 	dialWithSw.Logger.Debug("Dialing relay",
 		"relay", partnerAddr.String(),
 		"scope", partnerScope,
 		"addr", peerAddr.String(),
-		"size", dialWithSw.Peers(partnerScope).Size(),
+		"size", scopedPeerSet.Size(),
 	)
 
 	// If the peer exists but is not running, cleanup before dialing.
@@ -1455,6 +1471,7 @@ func (r *Reactor) DialRelayForScope(
 			"scope", partnerScope,
 			"peer", peerOutbound,
 		)
+
 		dialWithSw.StopPeerGracefully(peerOutbound)
 	} else if peerOutbound != nil {
 		dialWithSw.Logger.Debug("Peer is already running - adding to reactors",
@@ -1462,6 +1479,7 @@ func (r *Reactor) DialRelayForScope(
 			"scope", partnerScope,
 			"peer", peerOutbound,
 		)
+
 		// Outbound peer is ready, no dialing necessary here.
 		// Manually add peers to reactors, when switch was running.
 		dialWithSw.InitPeerForScope(peerOutbound, partnerScope)
@@ -1472,9 +1490,22 @@ func (r *Reactor) DialRelayForScope(
 	if err = dialWithSw.DialPeerWithAddress(peerAddr); err != nil {
 		if r.IsDialError(err) {
 			return fmt.Errorf(
-				"could not dial discovery relay %s: %w", peerAddr.DialString(), err)
+				"could not dial relay %s: %w", peerAddr.DialString(), err)
 		}
 		err = nil
+	}
+
+	// The PeerSet object at scopedPeerSet should have been modified.
+	peerOutbound = scopedPeerSet.GetOutbound(peerAddr.ID)
+	if err == nil && peerOutbound != nil {
+		dialWithSw.Logger.Debug("Peer is already dialed - adding to reactors",
+			"relay", partnerAddr.String(),
+			"scope", partnerScope,
+			"peer", peerOutbound,
+		)
+		// Outbound peer is ready, no dialing necessary here.
+		// Manually add peers to reactors, when switch was running.
+		dialWithSw.InitPeerForScope(peerOutbound, partnerScope)
 	}
 
 	return
@@ -1711,7 +1742,7 @@ func (reactor *Reactor) OnStart() error {
 			}
 
 			reactor.chainReadyMtx.RLock()
-			chainReadyCh := reactor.chainReadyChs[chainID]
+			chainReadyCh := reactor.chainReadyChs[network]
 			reactor.chainReadyMtx.RUnlock()
 
 			// Done starting node listeners

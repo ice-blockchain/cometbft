@@ -1495,11 +1495,11 @@ func TestScenarioClientBroadcastEmptyRelaysProduceBlockWithTx(t *testing.T) {
 func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	numChains := 1
+	numChains := 0
 	numRelays := 7
 	numHealthy := (numRelays / 2) + 1
 
-	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numHealthy)
+	servers, shutdownFn := ResetTestScenarioRelaysWithLogs(t, numChains, numHealthy)
 	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)
@@ -1536,15 +1536,14 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 
 	// Separate goroutine for client broadcast process
 	numTransactions := 2
-	chainIds := servers[0].GetNetworks()
-	testChainID := chainIds[0]
+	testChainID1 := makeChainID("test-chain-1")
 	notifyCh1 := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
 		broadcastCtx,
 		servers[0],
 		relays,
-		testChainID,
+		testChainID1,
 		numTransactions,
 		notifyCh1,
 	)
@@ -1552,7 +1551,7 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh1.
 	resultStatusMsg := waitForClientBroadcastStatus(t,
 		broadcastCtx,
-		testChainID,
+		testChainID1,
 		notifyCh1,
 	)
 	assert.NotNil(t, resultStatusMsg)
@@ -1588,7 +1587,7 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 		secondBroadcastCtx,
 		servers[0],
 		relays,
-		testChainID,
+		testChainID1,
 		numTransactions,
 		notifyCh2,
 	)
@@ -1596,7 +1595,7 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 	// Blocks the main thread until we consume from notifyCh2.
 	resultStatusMsg = waitForClientBroadcastStatus(t,
 		secondBroadcastCtx,
-		testChainID,
+		testChainID1,
 		notifyCh2,
 	)
 	assert.NotNil(t, resultStatusMsg)
