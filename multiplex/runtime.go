@@ -353,8 +353,8 @@ func (reactor *Reactor) InjectNewRuntime(
 	// Step 3: Initialize consensus instance
 
 	// We may need to run block-sync for existing networks.
-	blockSync := true
-	waitSyncd := true
+	blockSync := !onlyValidatorIsUs(stateMachine.Copy(), privValPubKey)
+	waitSyncd := blockSync
 	logNodeStartupInfo(stateMachine.Copy(), privValPubKey, clogger)
 
 	// Configure the actual consensus instance.

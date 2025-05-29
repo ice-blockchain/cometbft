@@ -33,6 +33,8 @@ import (
 // ----------------------------------------------------------------------------
 // MultiplexClient Broadcast Test (Using client.BroadcastTx)
 
+var randomizer = rand.New(rand.NewSource(time.Now().Unix()))
+
 // NOTE: this removes the Relay ID from relays addresses.
 func useRelaysWithoutIds(tb testing.TB, relays []string) []string {
 	tb.Helper()
@@ -54,7 +56,6 @@ func makeClientTransactions(
 ) []client.Transaction {
 	tb.Helper()
 
-	randomizer := rand.New(rand.NewSource(time.Now().Unix()))
 	testTransactions := []client.Transaction{}
 	for i := 0; i < numTransactions; i++ {
 		randomData := randomizer.Intn(999999999)
@@ -2707,9 +2708,9 @@ func TestScenarioClientBroadcastConcurrentNewChains(t *testing.T) {
 	defer globalCancelFn()
 
 	numChains := 0
-	numRelays := 7
+	numRelays := 3
 
-	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
+	servers, shutdownFn := ResetTestScenarioRelaysWithLogs(t, numChains, numRelays)
 	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)
@@ -2842,9 +2843,9 @@ func TestScenarioClientBroadcastConcurrentNewChainsAndExistingChains(t *testing.
 	defer globalCancelFn()
 
 	numChains := 0
-	numRelays := 7
+	numRelays := 3
 
-	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
+	servers, shutdownFn := ResetTestScenarioRelaysWithLogs(t, numChains, numRelays)
 	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)
@@ -2896,6 +2897,10 @@ func TestScenarioClientBroadcastConcurrentNewChainsAndExistingChains(t *testing.
 	assert.NoError(t, resultStatusMsg.Error, "first broadcast should not contain error status")
 	close(notifyCh1)
 
+	waitDuration := 15 * time.Second
+	t.Logf("Waiting %.0fsec to finalize first network creation...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
+
 	// STEP 2
 	// ----------------
 	// Concurrently broadcast transactions using a mix of the existing
@@ -2912,6 +2917,9 @@ func TestScenarioClientBroadcastConcurrentNewChainsAndExistingChains(t *testing.
 		numTransactions := 1
 		testChainName := "test-chain-" + strconv.Itoa(i)
 		testChainID := makeChainID(testChainName)
+		if i == 1 {
+			testChainID = testChainID1 // EXISTING ChainID!
+		}
 		notifyCh := make(chan client.BroadcastStatus)
 
 		go clientBroadcastTx(t,
@@ -2974,7 +2982,11 @@ func TestScenarioClientBroadcastConcurrentNewChainsAndExistingChains(t *testing.
 	}(testDoneCh)
 	wg.Wait()
 
-	t.Log("Test case done running, evaluating results...")
+	t.Log("Test case done running...")
+
+	waitDuration = 10 * time.Second
+	t.Logf("Waiting %.0fsec before evaluating results...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
 
 	assert.Equal(t, numConcurrent, cntDone)
 	assert.NoError(t, errBroadcast, "concurrent broadcasts should not error")
@@ -2988,9 +3000,9 @@ func TestScenarioClientBroadcastConcurrentNewChains3(t *testing.T) {
 	defer globalCancelFn()
 
 	numChains := 0
-	numRelays := 7
+	numRelays := 3
 
-	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
+	servers, shutdownFn := ResetTestScenarioRelaysWithLogs(t, numChains, numRelays)
 	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)

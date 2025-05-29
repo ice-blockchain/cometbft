@@ -2074,7 +2074,14 @@ func (b *MultiplexBackend) AddTransactions(
 			b.reactor.GetNodeKey().ID(),
 		)
 		if err != nil {
-			return err
+			switch {
+			case err == mempl.ErrTxInCache:
+			case err == mempl.ErrTxInMempool:
+			case err == mempl.ErrTxAlreadyReceivedFromSender:
+				break
+			default:
+				return err
+			}
 		}
 
 		// Inform about local mempool addition result
