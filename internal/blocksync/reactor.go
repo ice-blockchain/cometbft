@@ -28,7 +28,7 @@ const (
 	// ask for best height every 10s.
 	statusUpdateIntervalSeconds = 10
 	// check if we should switch to consensus reactor.
-	switchToConsensusIntervalSeconds = 1
+	switchToConsensusIntervalSeconds = 5
 )
 
 type consensusReactor interface {
@@ -217,6 +217,12 @@ func (*Reactor) GetChannels() []*p2p.ChannelDescriptor {
 
 // AddPeer implements Reactor by sending our state to peer.
 func (bcR *Reactor) AddPeer(peer *p2p.PeerImpl) {
+	bcR.Logger.Debug("Adding peer to blocksync reactor",
+		"peer", peer,
+		"bcr_base", bcR.store.Base(),
+		"bcr_height", bcR.store.Height(),
+	)
+
 	peer.Send(bcR.ChainID(), p2p.Envelope{
 		ChannelID: BlocksyncChannel,
 		Message: &bcproto.StatusResponse{

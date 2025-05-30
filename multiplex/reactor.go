@@ -1216,6 +1216,26 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 				return
 			}
 
+			// We need this peer in our scoped PeerSet in CometBFT as well.
+			addedInboundPeer, err := r.addInboundPeerForChainID(
+				sourcePeer,
+				replRequest.ChainID,
+			)
+			if err != nil {
+				r.logger.Error(
+					"failed to process ChainReplicationRequest: error adding inbound peer",
+					"chain_id", replRequest.ChainID,
+					"peer", sourcePeer,
+					"err", err,
+				)
+				return
+			} else if !addedInboundPeer {
+				// TODO(midas): remove debug logs
+				r.logger.Debug("Inbound peer already added to CometBFT peerset",
+					"chain_id", replRequest.ChainID,
+					"peer", sourcePeer)
+			}
+
 			// TODO(midas): dialing MAY be concurrent for both scopes
 
 			// Dials the CometBFT relay to permit faster consensus startup.
@@ -1496,6 +1516,7 @@ func (r *Reactor) DialRelayForScope(
 		// Outbound peer is ready, no dialing necessary here.
 		// Manually add peers to reactors, when switch was running.
 		dialWithSw.InitPeerForScope(peerOutbound, partnerScope)
+		dialWithSw.AddPeerForScope(peerOutbound, partnerScope)
 		return nil
 	}
 
@@ -1519,6 +1540,7 @@ func (r *Reactor) DialRelayForScope(
 		// Outbound peer is ready, no dialing necessary here.
 		// Manually add peers to reactors, when switch was running.
 		dialWithSw.InitPeerForScope(peerOutbound, partnerScope)
+		dialWithSw.AddPeerForScope(peerOutbound, partnerScope)
 	}
 
 	return
@@ -2339,6 +2361,32 @@ func (reactor *Reactor) sendChainReplicationResponse(
 	}
 
 	return nil
+}
+
+func (reactor *Reactor) addInboundPeerForChainID(
+	peer *p2p.PeerImpl,
+	chainID string,
+) (added bool, err error) {
+	cometbftSwitch := reactor.GetEventSwitchForCometBFT()
+
+	added = false
+	chainPeerSet := cometbftSwitch.Peers(chainID)
+
+	// Use HasPeer to make sure about distinction with in/out for same ID.
+	if !chainPeerSet.HasPeer(peer) {
+		if err = chainPeerSet.Add(peer); err != nil {
+			if _, ok := err.(p2p.ErrPeerRemoval); ok {
+				reactor.logger.Error("Error starting peer ",
+					"err", "Peer has already errored and removal was attempted.",
+					"peer", peer,
+					"chain_id", chainID)
+			}
+			return // false, err
+		}
+		added = true
+	}
+
+	return // true, nil
 }
 
 // handleChainReplicationRequest processes a ChainReplicationRequest.

@@ -328,9 +328,16 @@ func (conR *Reactor) InitPeer(peer *p2p.PeerImpl) *p2p.PeerImpl {
 // peer.
 func (conR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 	if !conR.IsRunning() {
+		conR.Logger.Debug("Adding PENDING peer to consensus reactor",
+			"peer", peer,
+		)
 		conR.pendingPeers.Store(peer.ID(), peer)
 		return
 	}
+
+	conR.Logger.Debug("Adding peer to consensus reactor",
+		"peer", peer,
+	)
 
 	peerState, ok := peer.Get(conR.PeerStateKey()).(*PeerState)
 	if !ok {

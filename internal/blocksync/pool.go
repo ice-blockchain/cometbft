@@ -407,7 +407,7 @@ func (pool *BlockPool) SetPeerRange(peerID p2p.ID, base int64, height int64) {
 			return
 		}
 		peer = newBPPeer(pool, peerID, base, height)
-		peer.setLogger(pool.Logger.With("peer", peerID))
+		peer.setLogger(pool.Logger.With("peer", peer))
 		pool.peers[peerID] = peer
 		// no need to sort because curRate is 0 at start.
 		// just add to the beginning so it's picked first by pickIncrAvailablePeer.
@@ -442,6 +442,7 @@ func (pool *BlockPool) removePeer(peerID p2p.ID) {
 			peer.timeout.Stop()
 		}
 
+		// deleting one key at a time
 		delete(pool.peers, peerID)
 		for i, p := range pool.sortedPeers {
 			if p.id == peerID {
