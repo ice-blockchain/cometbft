@@ -471,7 +471,8 @@ func (mt *MultiplexTransport) filterConn(c net.Conn, outbound bool) (err error) 
 
 	// Reject if connection is already present.
 	if mt.conns.Has(c, outbound) {
-		return ErrRejected{conn: c, isDuplicate: true}
+		item := mt.conns.Get(c, outbound)
+		return ErrRejected{conn: item.conn, isDuplicate: true}
 	}
 
 	// Resolve ips for incoming conn.

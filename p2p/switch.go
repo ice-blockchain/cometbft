@@ -1221,7 +1221,7 @@ func (sw *Switch) acceptRoutine() {
 					"err", err,
 					"numPeers", numPeers,
 				)
-				if err := sw.addPeerByRemoteAddress(duplConn.conn.RemoteAddr()); err != nil {
+				if err := sw.addPeerByRemoteAddress(duplConn.conn.RemoteAddr(), ""); err != nil {
 					sw.Logger.Info(
 						"Inbound Peer rejected",
 						"err", err,
@@ -1346,14 +1346,24 @@ func IsDialError(err error) bool {
 
 func (sw *Switch) addPeerByRemoteAddress(
 	remoteAddr net.Addr,
+	optionalPeerID ID,
 ) error {
 	// Find discovery peer's ID, in cometbft
-	peerInbound := sw.FindMatchingPeerByRemoteAddress(remoteAddr)
-	if peerInbound == nil {
-		sw.Logger.Error("failed to add inbound peer for CometBFT - peer is not ready",
+	peerSearched := sw.FindMatchingPeerByRemoteAddress(remoteAddr)
+	if peerSearched == nil && len(optionalPeerID) > 0 {
+		// TODO(midas): remove debug logs
+		sw.Logger.Debug("Looking for peer by ID - not found by addr",
+			"peer_id", optionalPeerID,
+			"addr", remoteAddr,
+		)
+		peerSearched = sw.FindOutboundPeerByID(optionalPeerID)
+	}
+
+	if peerSearched == nil {
+		sw.Logger.Error("failed to add peer for CometBFT - peer is not ready",
 			"conn", remoteAddr,
 		)
-		return errors.New("failed to add inbound peer - peer is not ready")
+		return errors.New("failed to add peer - peer is not ready")
 	}
 
 	// Check if we have a multiplex reactor that can provide additional ChainIDs
@@ -1361,11 +1371,11 @@ func (sw *Switch) addPeerByRemoteAddress(
 	multiplexReactor := sw.getMultiplexReactor()
 	sw.reactorsMtx.Unlock()
 	if multiplexReactor == nil {
-		sw.Logger.Error("failed to add inbound peer for CometBFT - multiplex is not ready",
+		sw.Logger.Error("failed to add peer for CometBFT - multiplex is not ready",
 			"conn", remoteAddr,
-			"peer", peerInbound,
+			"peer", peerSearched,
 		)
-		return errors.New("failed to add inbound peer - multiplex is not ready")
+		return errors.New("failed to add peer - multiplex is not ready")
 	}
 
 	// Use type assertion to access GetNetworks method
@@ -1374,14 +1384,14 @@ func (sw *Switch) addPeerByRemoteAddress(
 
 	for _, chainID := range allNetworks {
 		// TODO(midas): remove debug logs
-		sw.Logger.Debug("Inbound peer is ready - adding to reactors",
-			"peer", peerInbound,
+		sw.Logger.Debug("Peer is ready - adding to reactors",
+			"peer", peerSearched,
 			"chain_id", chainID,
 		)
 
 		// Inbound peer is ready, manually add peers to reactors.
-		sw.InitPeerForScope(peerInbound, chainID)
-		sw.AddPeerForScope(peerInbound, chainID)
+		sw.InitPeerForScope(peerSearched, chainID)
+		sw.AddPeerForScope(peerSearched, chainID)
 	}
 
 	return nil
@@ -1414,6 +1424,7 @@ func (sw *Switch) addOutboundPeerWithConfig(
 		"Outbound Peer now being processed",
 		"numPeers", numPeers,
 		"addr", addr.String(),
+		"peer_id", addr.ID,
 		"err", err,
 	)
 	if err != nil && !IsDialError(err) {
@@ -1425,25 +1436,29 @@ func (sw *Switch) addOutboundPeerWithConfig(
 				"Outbound Peer already known - adding to reactor",
 				"err", err,
 				"addr", duplConn.conn.RemoteAddr().String(),
+				"peer_id", addr.ID,
 				"numPeers", numPeers,
 			)
-			if err := sw.addPeerByRemoteAddress(duplConn.conn.RemoteAddr()); err != nil {
+			if err := sw.addPeerByRemoteAddress(duplConn.conn.RemoteAddr(), addr.ID); err != nil {
 				sw.Logger.Info(
-					"Outbound Peer rejected",
+					"Outbound Peer rejected - should be already present",
 					"err", err,
 					"addr", duplConn.conn.RemoteAddr().String(),
+					"peer_id", addr.ID,
 					"numPeers", numPeers,
 				)
-				return err
 			}
+			return nil
 		} else {
 			// TODO(midas): remove debug logs
 			sw.Logger.Debug(
 				"Outbound Peer still dialing - not adding to reactors",
 				"err", err,
 				"addr", addr.DialString(),
+				"peer_id", addr.ID,
 				"numPeers", numPeers,
 			)
+			return nil
 		}
 	} else if err != nil {
 		if e, ok := err.(ErrRejected); ok {
@@ -1486,26 +1501,33 @@ func (sw *Switch) addOutboundPeerWithConfig(
 
 // TODO: peer lookup by addr, or proper linking between net conns / peer
 func (sw *Switch) FindOutboundPeerByID(id ID) (p *PeerImpl) {
-	allPeers := sw.AllPeers()
-	for _, ap := range allPeers {
-		if ap.ID() == id && ap.outbound {
-			p = ap
+	sw.peersMtx.RLock()
+	defer sw.peersMtx.RUnlock()
+
+	for _, peerSet := range sw.peersByScope {
+		if peerSet.HasOutbound(id) {
+			p = peerSet.GetOutbound(id)
 			break
 		}
 	}
-	return p
+	return // p
 }
 
 // TODO: peer lookup by addr, or proper linking between net conns / peer
 func (sw *Switch) FindMatchingPeerByRemoteAddress(addr net.Addr) (p *PeerImpl) {
-	allPeers := sw.AllPeers()
-	for _, ap := range allPeers {
-		if ap.conn.RemoteAddr() == addr {
-			p = ap
-			break
+	sw.peersMtx.RLock()
+	defer sw.peersMtx.RUnlock()
+
+	for _, peerSet := range sw.peersByScope {
+		peers := peerSet.Copy()
+		for _, peer := range peers {
+			if peer.conn.RemoteAddr() == addr {
+				p = peer
+				break
+			}
 		}
 	}
-	return p
+	return // p
 }
 
 func (sw *Switch) filterPeer(p *PeerImpl) error {

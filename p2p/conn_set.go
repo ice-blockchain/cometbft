@@ -11,6 +11,7 @@ type ConnSet interface {
 	Has(conn net.Conn, outbound bool) bool
 	HasIP(ip net.IP) bool
 	Set(conn net.Conn, ip []net.IP, outbound bool)
+	Get(conn net.Conn, outbound bool) connSetItem
 	Remove(conn net.Conn)
 	RemoveAddr(addr net.Addr)
 	ForEach(func(conn net.Conn))
@@ -57,6 +58,14 @@ func (cs *connSet) HasIP(ip net.IP) bool {
 	}
 
 	return false
+}
+
+func (cs *connSet) Get(c net.Conn, outbound bool) connSetItem {
+	cs.Lock()
+	defer cs.Unlock()
+
+	key := cs.key(c.RemoteAddr(), outbound)
+	return cs.conns[key]
 }
 
 func (cs *connSet) Remove(c net.Conn) {
