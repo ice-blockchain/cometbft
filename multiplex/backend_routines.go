@@ -441,7 +441,10 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 				b.reactor.poolRequestsMtx.Lock()
 				b.reactor.poolRequestsSent[txHash] = peers
 				b.reactor.poolRequestsMtx.Unlock()
-				continue // Do not broadcast to relays
+
+				// We count as ACK'd *but* we must broadcast the tx to the relay,
+				// otherwise the relay won't activate "us" (inbound for "them")
+				// in consensus and blocksync reactors.
 			}
 
 			// Reset the sent requests cache for this txHash
@@ -538,6 +541,18 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 
 			// Waits until we have sent to all required peers
 			sentWg.Wait()
+
+			// DO NOT count replication partners as "required to ack".
+			// They only receive the transaction to activate "us" in their reactors.
+			poolRequestPeers = slices.DeleteFunc(poolRequestPeers, func(peerID string) bool {
+				for _, replReqRelayAddr := range replReqRelays[chainID] {
+					if string(replReqRelayAddr.ID()) == peerID {
+						return true
+					}
+				}
+
+				return false
+			})
 
 			b.reactor.poolRequestsMtx.Lock()
 			b.reactor.poolRequestsSent[txHash] = poolRequestPeers

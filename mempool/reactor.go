@@ -317,6 +317,10 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 			return
 		}
 
+		// Mark peer active in CONSENSUS and BLOCKSYNC
+		memR.Switch.InitPeerForScope(e.Src, memR.ChainID)
+		memR.Switch.AddPeerForScope(e.Src, memR.ChainID)
+
 		if memR.WaitSync() {
 			memR.Logger.Debug("Ignored message received while syncing", "msg", msg)
 
@@ -370,10 +374,6 @@ func (memR *Reactor) processTxs(
 			}
 		}
 	}
-
-	// Mark peer active in CONSENSUS and BLOCKSYNC
-	memR.Switch.InitPeerForScope(peer, memR.ChainID)
-	memR.Switch.AddPeerForScope(peer, memR.ChainID)
 
 	// dialerFn is an extension that permits to run [Reactor#GetRemoteDiscoveryAddress]
 	// which returns a public discovery address which can be used to find CometBFT addr.
