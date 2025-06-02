@@ -738,6 +738,19 @@ func (sw *Switch) AddPeerForScope(peer *PeerImpl, scope string) {
 		return
 	}
 
+	// Add the peer to our internal PeerSet storage.
+	peerSet := sw.Peers(scope)
+	if !peerSet.HasPeer(peer) {
+		peerSet.Add(peer)
+
+		// TODO(midas): remove debug logs
+		sw.Logger.Info("Added peer to peerset",
+			"scope", scope,
+			"peer", peer,
+			"size", peerSet.Size(),
+		)
+	}
+
 	var reactors map[string]Reactor
 	switch {
 	case scope == ScopeForDiscovery: // "discovery" => _shared_channels
@@ -770,19 +783,6 @@ func (sw *Switch) AddPeerForScope(peer *PeerImpl, scope string) {
 			"scope", scope,
 			"peer", peer,
 			"reactor", rname,
-		)
-	}
-
-	// Add the peer to our internal PeerSet storage.
-	peerSet := sw.Peers(scope)
-	if !peerSet.HasPeer(peer) {
-		peerSet.Add(peer)
-
-		// TODO(midas): remove debug logs
-		sw.Logger.Info("Added peer to peerset",
-			"scope", scope,
-			"peer", peer,
-			"size", peerSet.Size(),
 		)
 	}
 }
@@ -1109,7 +1109,6 @@ func (sw *Switch) dialPeersAsync(netAddrs []*NetAddress) {
 // ErrCurrentlyDialingOrExistingAddress is returned.
 func (sw *Switch) DialPeerWithAddress(addr *NetAddress) error {
 	if sw.IsDialingOrExistingAddress(addr) {
-
 		return ErrCurrentlyDialingOrExistingAddress{addr.String()}
 	}
 
@@ -1198,11 +1197,20 @@ func (sw *Switch) acceptRoutine() {
 	for {
 		safePeerConfig := sw.GetPeerConfig()
 		p, err := sw.transport.Accept(safePeerConfig)
-		sw.Logger.Debug(
-			"Inbound Peer now being processed",
-			"numPeers", numPeers,
-			"err", err,
-		)
+		if p != nil {
+			sw.Logger.Debug(
+				"Inbound Peer now being processed",
+				"numPeers", numPeers,
+				"peer", p,
+				"err", err,
+			)
+		} else {
+			sw.Logger.Debug(
+				"Inbound Peer now being processed - empty peer",
+				"numPeers", numPeers,
+				"err", err,
+			)
+		}
 		if err != nil && !IsDialError(err) {
 			// If it's a duplicate, we must initialize and add it to reactors,
 			// otherwise if it's dialing/already existing, do nothing.
@@ -1556,7 +1564,7 @@ func (sw *Switch) GetPeerActiveChainID(p *PeerImpl) ([]string, error) {
 	})
 
 	// Relevant ChainIDs are all networks we and p may know about.
-	numRelevant := len(commonChainIds) + len(runtimeChainIds)
+	numRelevant := len(commonChainIds) + len(activeChainIds)
 	relevantChainIds := make([]string, 0, numRelevant)
 	relevantChainIds = append(relevantChainIds, commonChainIds...)
 	relevantChainIds = append(relevantChainIds, activeChainIds...)
@@ -1613,6 +1621,19 @@ func (sw *Switch) addPeer(p *PeerImpl) (err error) {
 
 	// Init all the reactor protocols with this peer.
 	for _, relevantScope := range relevantScopes {
+		// Add the peer to our internal PeerSet storage.
+		peerSet := sw.Peers(relevantScope)
+		if !peerSet.HasPeer(p) {
+			peerSet.Add(p)
+
+			// TODO(midas): remove debug logs
+			sw.Logger.Info("Added peer to peerset",
+				"scope", relevantScope,
+				"peer", p,
+				"size", peerSet.Size(),
+			)
+		}
+
 		sw.InitPeerForScope(p, relevantScope)
 	}
 

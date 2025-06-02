@@ -330,6 +330,10 @@ func (reactor *Reactor) StartConsensusInstanceReactors(
 	// TODO(midas): remove debug logs
 	reactor.logger.Info("Added connection channels before activating ChainID", "chain_id", chainID)
 
+	// Also register this active runtime, so that in sw.addPeer()
+	// we include it in relevantScopes and call reactors.InitPeer().
+	cometbftSwitch.AddActiveRuntime(chainID)
+
 	servicesProvider := reactor.GetServicesProvider()
 
 	if mempoolReactor, ok := servicesProvider(
