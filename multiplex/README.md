@@ -316,6 +316,12 @@ using one of the following commands:
 
 	# running transactions throughput benchmarks
 	go test github.com/ice-blockchain/cometbft/multiplex -bench BenchmarkMultiplex.* -benchmem -benchtime=30s
+
+	# running integration and e2e test suites
+	go test github.com/ice-blockchain/cometbft/multiplex -run TestMultiplex -test.v
+	go test github.com/ice-blockchain/cometbft/multiplex -run TestScenarioClient -test.v
+	go test github.com/ice-blockchain/cometbft/multiplex -run TestScenarioCallbacks -test.v
+	go test github.com/ice-blockchain/cometbft/multiplex -run TestScenarioConcurrent -test.v
 ```
 
 ## Linter

@@ -267,7 +267,7 @@ func (app *SnapsApp) FinalizeBlock(
 	app.whMutex.RUnlock()
 
 	// Forward the transaction batch to an Acceptor if any is available.
-	if app.txAcceptor != nil {
+	if app.txAcceptor != nil && len(processedTxs) > 0 {
 		batch := []client.Transaction{}
 		for _, rawTx := range processedTxs {
 			batch = append(batch, client.RawTxToTransaction(rawTx))

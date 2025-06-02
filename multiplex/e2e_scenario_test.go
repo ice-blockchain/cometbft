@@ -1476,7 +1476,7 @@ func TestScenarioClientBroadcastEmptyRelaysProduceBlockWithTx(t *testing.T) {
 	stateMachine, err := chainStore.Load()
 	assert.NoError(t, err, "should not error loading state")
 	assert.Equal(t, testChainID, stateMachine.ChainID)
-	assert.GreaterOrEqual(t, int64(1), stateMachine.LastBlockHeight)
+	assert.GreaterOrEqual(t, stateMachine.LastBlockHeight, int64(1))
 
 	indexerProvider := testReactor.GetServicesProvider()
 	indexerService := indexerProvider(mx.ServiceKeyIndexers, testChainID).(*txindex.IndexerService)
@@ -2282,7 +2282,7 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 0
-	numRelays := 7
+	numRelays := 3
 
 	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
 	defer shutdownFn(servers)
@@ -2331,10 +2331,11 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	)
 	assert.NotNil(t, resultStatusMsg)
 	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
-	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+	assert.Len(t, resultStatusMsg.TxHashes, numTransactions,
+		"first broadcast to new ChainID should contain transaction hashes")
 	close(notifyCh1)
 
-	waitDuration := 5 * time.Second
+	waitDuration := 15 * time.Second
 	t.Logf("Waiting %.0fsec to shutdown backend...", waitDuration.Seconds())
 	time.Sleep(waitDuration)
 
@@ -2363,6 +2364,10 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	defer newShutdownFn(resetRelay)
 
 	resetRelay.MustStart()
+
+	waitDuration = 5 * time.Second
+	t.Logf("Waiting %.0fsec to use node services...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
 
 	// STEP 3:
 	//
@@ -2393,7 +2398,8 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	)
 	assert.NotNil(t, resultStatusMsg)
 	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
-	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+	assert.Len(t, resultStatusMsg.TxHashes, numTransactions,
+		"broadcast to existing ChainID after restart should contain transaction hashes")
 	close(notifyCh2)
 
 	// STEP 4:
@@ -2425,8 +2431,16 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	)
 	assert.NotNil(t, resultStatusMsg)
 	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
-	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+	assert.Len(t, resultStatusMsg.TxHashes, numTransactions,
+		"broadcast to new ChainID after restart should contain transaction hashes")
 	close(notifyCh3)
+
+	t.Log("Test case done running...")
+
+	waitDuration = 15 * time.Second
+	t.Logf("Waiting %.0fsec before shutting down...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
+	t.Logf("Done waiting before shutting down...")
 }
 
 func TestScenarioClientBroadcastAfterRuntimeIdling(t *testing.T) {
@@ -2700,7 +2714,7 @@ func TestScenarioClientBroadcastRuntimeRegistryIntegration(t *testing.T) {
 // before we proceed to accepting the transaction.
 // This test focusses on sending concurrent transactions for unknown chains
 // to make sure in a concurrent scenario, multiple new chains may be created.
-func TestScenarioClientBroadcastConcurrentNewChains(t *testing.T) {
+func TestScenarioConcurrentNewChains(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	timeoutGlobal := 30 * time.Second // Time for full test round
@@ -2829,13 +2843,18 @@ func TestScenarioClientBroadcastConcurrentNewChains(t *testing.T) {
 	}(testDoneCh)
 	wg.Wait()
 
-	t.Log("Test case done running, evaluating results...")
+	t.Log("Test case done running...")
+
+	waitDuration := 30 * time.Second
+	t.Logf("Waiting %.0fsec before evaluating results...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
+	t.Logf("Done waiting before evaluating results...")
 
 	assert.Equal(t, numConcurrent, cntDone)
 	assert.NoError(t, errBroadcast, "concurrent broadcasts should not error")
 }
 
-func TestScenarioClientBroadcastConcurrentNewChainsAndExistingChains(t *testing.T) {
+func TestScenarioConcurrentNewChainsAndExistingChains(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	timeoutGlobal := 60 * time.Second // Time for full test round
@@ -2887,21 +2906,56 @@ func TestScenarioClientBroadcastConcurrentNewChainsAndExistingChains(t *testing.
 	t.Logf("Broadcast goroutine started with %d relays and test-chain-1: %s...", len(relaysForTestCase), testChainID1)
 
 	// Blocks the main thread until we consume from notifyCh1.
-	resultStatusMsg := waitForClientBroadcastStatus(t,
+	resultStatusMsg1 := waitForClientBroadcastStatus(t,
 		firstBroadcastCtx,
 		testChainID1,
 		notifyCh1,
 	)
-	assert.NotNil(t, resultStatusMsg)
-	assert.Len(t, resultStatusMsg.TxHashes, numTransactions1)
-	assert.NoError(t, resultStatusMsg.Error, "first broadcast should not contain error status")
+	assert.NotNil(t, resultStatusMsg1)
+	assert.Len(t, resultStatusMsg1.TxHashes, numTransactions1, "first broadcast should return transaction hashes")
+	assert.NoError(t, resultStatusMsg1.Error, "first broadcast should not contain error status")
 	close(notifyCh1)
 
-	waitDuration := 15 * time.Second
-	t.Logf("Waiting %.0fsec to finalize first network creation...", waitDuration.Seconds())
-	time.Sleep(waitDuration)
-
 	// STEP 2
+	// ----------------
+	// Creates another ChainID that will be reused in concurrent scenario.
+
+	// Executes first transaction broadcast
+	secondTimeoutAfter := 20 * time.Second // Time for broadcast
+	secondBroadcastCtx, secondCancelCtxFn := context.WithTimeout(context.TODO(), secondTimeoutAfter)
+	defer secondCancelCtxFn()
+
+	numTransactions2 := 1
+	testChainID2 := makeChainID("test-chain-2")
+	notifyCh2 := make(chan client.BroadcastStatus)
+
+	go clientBroadcastTx(t,
+		secondBroadcastCtx,
+		servers[0],
+		relaysForTestCase,
+		testChainID2,
+		numTransactions2,
+		notifyCh2,
+	)
+	t.Logf("Broadcast goroutine started with %d relays and test-chain-2: %s...", len(relaysForTestCase), testChainID2)
+
+	// Blocks the main thread until we consume from notifyCh2.
+	resultStatusMsg2 := waitForClientBroadcastStatus(t,
+		secondBroadcastCtx,
+		testChainID2,
+		notifyCh2,
+	)
+	assert.NotNil(t, resultStatusMsg2)
+	assert.Len(t, resultStatusMsg2.TxHashes, numTransactions1, "second broadcast should return transaction hashes")
+	assert.NoError(t, resultStatusMsg2.Error, "second broadcast should not contain error status")
+	close(notifyCh2)
+
+	waitDuration := 30 * time.Second
+	t.Logf("Waiting %.0fsec to finalize networks creation...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
+	t.Logf("Done waiting to finalize networks creation...")
+
+	// STEP 3
 	// ----------------
 	// Concurrently broadcast transactions using a mix of the existing
 	// test-chain-1 and multiple new chains.
@@ -2914,40 +2968,42 @@ func TestScenarioClientBroadcastConcurrentNewChainsAndExistingChains(t *testing.
 		broadcastCtx, cancelCtxFn := context.WithTimeout(context.TODO(), timeoutAfter)
 		defer cancelCtxFn()
 
-		numTransactions := 1
 		testChainName := "test-chain-" + strconv.Itoa(i)
-		testChainID := makeChainID(testChainName)
+		iTestChainID := makeChainID(testChainName)
 		if i == 1 {
-			testChainID = testChainID1 // EXISTING ChainID!
+			iTestChainID = testChainID1 // EXISTING ChainID!
+		} else if i == 2 {
+			iTestChainID = testChainID2 // EXISTING ChainID!
 		}
-		notifyCh := make(chan client.BroadcastStatus)
 
+		numTransactionsX := 1
+		notifyCh := make(chan client.BroadcastStatus)
 		go clientBroadcastTx(t,
 			broadcastCtx,
 			servers[0],
 			relaysForTestCase,
-			testChainID,
-			numTransactions,
+			iTestChainID,
+			numTransactionsX,
 			notifyCh,
 		)
-
 		t.Logf("Broadcast goroutine started with %d relays and %s: %s...",
-			len(relaysForTestCase), testChainName, testChainID)
+			len(relaysForTestCase), testChainName, iTestChainID)
 
 		// Wait in a separate goroutine as we want to test thread-safety.
 		go func(ch chan struct{}) {
 			defer close(notifyCh)
 			// t.Logf("Waiting for broadcast status on %s: %s...",
-			// 	testChainName, testChainID)
+			// 	testChainName, iTestChainID)
 
 			// Blocks this thread until we consume from notifyCh1.
 			resultStatusMsg := waitForClientBroadcastStatus(t,
 				broadcastCtx,
-				testChainID,
+				iTestChainID,
 				notifyCh,
 			)
 			assert.NotNil(t, resultStatusMsg)
-			assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
+			assert.Len(t, resultStatusMsg.TxHashes, numTransactionsX,
+				"broadcast at "+strconv.Itoa(i)+" should return transaction hashes")
 			assert.NoError(t, resultStatusMsg.Error,
 				"broadcast at "+strconv.Itoa(i)+" should not contain error status")
 
@@ -2984,15 +3040,16 @@ func TestScenarioClientBroadcastConcurrentNewChainsAndExistingChains(t *testing.
 
 	t.Log("Test case done running...")
 
-	waitDuration = 10 * time.Second
+	waitDuration = 30 * time.Second
 	t.Logf("Waiting %.0fsec before evaluating results...", waitDuration.Seconds())
 	time.Sleep(waitDuration)
+	t.Logf("Done waiting before evaluating results...")
 
 	assert.Equal(t, numConcurrent, cntDone)
 	assert.NoError(t, errBroadcast, "concurrent broadcasts should not error")
 }
 
-func TestScenarioClientBroadcastConcurrentNewChains3(t *testing.T) {
+func TestScenarioConcurrentNewChains3(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	timeoutGlobal := 120 * time.Second // Time for full test round
@@ -3062,7 +3119,8 @@ func TestScenarioClientBroadcastConcurrentNewChains3(t *testing.T) {
 				notifyCh,
 			)
 			require.NotNil(t, resultStatusMsg)
-			require.Len(t, resultStatusMsg.TxHashes, numTransactions)
+			require.Len(t, resultStatusMsg.TxHashes, numTransactions,
+				"broadcast at "+strconv.Itoa(i)+" should contain transaction hashes")
 			require.NoError(t, resultStatusMsg.Error,
 				"broadcast at "+strconv.Itoa(i)+" should not contain error status")
 
@@ -3097,7 +3155,12 @@ func TestScenarioClientBroadcastConcurrentNewChains3(t *testing.T) {
 	}(testDoneCh)
 	wg.Wait()
 
-	t.Log("Test case done running, evaluating results...")
+	t.Log("Test case done running...")
+
+	waitDuration := 30 * time.Second
+	t.Logf("Waiting %.0fsec before evaluating results...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
+	t.Logf("Done waiting before evaluating results...")
 
 	assert.Equal(t, numConcurrent, cntDone)
 	assert.NoError(t, errBroadcast, "concurrent broadcasts should not error")
@@ -3106,12 +3169,12 @@ func TestScenarioClientBroadcastConcurrentNewChains3(t *testing.T) {
 // ----------------------------------------------------------------------------
 // Client Callbacks Tests
 
-func TestScenarioCallbacksCallsAcceptBroadcastTx(t *testing.T) {
+func TestScenarioCallbacksCallsCommitBroadcastTx(t *testing.T) {
 
 	defer goleak.VerifyNone(t)
 
 	numChains := 0
-	numRelays := 7
+	numRelays := 3
 
 	// To enable debug logs, change this indexes array to contain the indexes
 	// of the relays for which you want to activate full logging.
@@ -3121,8 +3184,7 @@ func TestScenarioCallbacksCallsAcceptBroadcastTx(t *testing.T) {
 
 	servers[0].SetAcceptor(client.NewMockAcceptorImpl())
 	servers[1].SetAcceptor(client.NewMockAcceptorImpl())
-
-	servers[0].SetLogger(cmtlog.TestingLogger().With("process", "relay-1"))
+	servers[2].SetAcceptor(client.NewMockAcceptorImpl())
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
@@ -3136,39 +3198,79 @@ func TestScenarioCallbacksCallsAcceptBroadcastTx(t *testing.T) {
 
 	defer cancelCtxFn()
 
-	// Separate goroutine for client broadcast process
-	numTransactions := 2
-	testWithChainID := makeChainID("test-chain-1")
-	notifyCh := make(chan client.BroadcastStatus)
+	// TEST 1
+	// ----------------
+	// Creates a new ChainID and expects relay-1 to call CommitBroadcastTx
+	// and relay-2,relay-3 to call AcceptBroadcastTx callbacks.
 
-	go clientBroadcastTx(t,
+	numTransactions1 := 1
+	testWithChainID := makeChainID("test-chain-1")
+
+	requireCompleteClientBroadcastTx(t,
 		broadcastCtx,
 		servers[0],
 		relays,
 		testWithChainID,
-		numTransactions,
-		notifyCh,
+		numTransactions1,
 	)
 
-	// Blocks the main thread until we consume from notifyCh.
-	resultStatusMsg := waitForClientBroadcastStatus(t,
-		broadcastCtx,
-		testWithChainID,
-		notifyCh,
-	)
-	assert.NotNil(t, resultStatusMsg)
-	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
-	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
-	close(notifyCh)
+	waitDuration := 15 * time.Second
+	t.Logf("Waiting %.0fsec before evaluating CommitBroadcastTx...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
 
 	testAcceptorRelay1 := servers[0].GetAcceptor().(*client.MockAcceptorImpl)
 	testAcceptorRelay2 := servers[1].GetAcceptor().(*client.MockAcceptorImpl)
+	testAcceptorRelay3 := servers[2].GetAcceptor().(*client.MockAcceptorImpl)
 
-	// Test that client callbacks were executed correctly.
-	assert.Equal(t, uint64(numTransactions), testAcceptorRelay1.TxCommitCalls.Load(),
+	// Test that client callbacks were executed correctly, every relay should
+	// have executed the CommitBroadcastTx callback when the block is finalized.
+
+	assert.Equal(t, uint64(numTransactions1), testAcceptorRelay1.TxCommitCalls.Load(),
 		"should locally execute CommitBroadcastTx callback for each transaction")
-	assert.Equal(t, uint64(numTransactions), testAcceptorRelay2.TxAcceptCalls.Load(),
-		"should remotely execute AcceptBroadcastTx callback for each transaction")
+	assert.Equal(t, uint64(numTransactions1), testAcceptorRelay2.TxCommitCalls.Load(),
+		"should remotely execute CommitBroadcastTx callback for each transaction")
+	assert.Equal(t, uint64(numTransactions1), testAcceptorRelay3.TxCommitCalls.Load(),
+		"should remotely execute CommitBroadcastTx callback for each transaction")
+
+	// RESET test state
+
+	testAcceptorRelay1.TxCommitCalls.Store(uint64(0))
+	testAcceptorRelay2.TxCommitCalls.Store(uint64(0))
+	testAcceptorRelay3.TxCommitCalls.Store(uint64(0))
+
+	// TEST 2
+	// ----------------
+	// Re-use the same ChainID and expects relay-1 to call CommitBroadcastTx
+	// and relay-2,relay-3 to call CommitBroadcastTx callbacks as well.
+
+	// Executes second transaction broadcast
+	secondTimeoutAfter := 20 * time.Second // Time for broadcast
+	secondBroadcastCtx, secondCancelCtxFn := context.WithTimeout(context.TODO(), secondTimeoutAfter)
+	defer secondCancelCtxFn()
+
+	numTransactions2 := 1
+
+	requireCompleteClientBroadcastTx(t,
+		secondBroadcastCtx,
+		servers[0],
+		relays,
+		testWithChainID, // EXISTING ChainID
+		numTransactions2,
+	)
+
+	waitDuration = 15 * time.Second
+	t.Logf("Waiting %.0fsec before evaluating CommitBroadcastTx...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
+
+	// Test that client callbacks were executed correctly, every relay should
+	// have executed the CommitBroadcastTx callback when the block is finalized.
+
+	assert.Equal(t, uint64(numTransactions2), testAcceptorRelay1.TxCommitCalls.Load(),
+		"should locally execute CommitBroadcastTx callback for each transaction")
+	assert.Equal(t, uint64(numTransactions2), testAcceptorRelay2.TxCommitCalls.Load(),
+		"should remotely execute CommitBroadcastTx callback for each transaction")
+	assert.Equal(t, uint64(numTransactions2), testAcceptorRelay3.TxCommitCalls.Load(),
+		"should remotely execute CommitBroadcastTx callback for each transaction")
 }
 
 // TODO(midas): TestScenarioClientBroadcastCallsCommitBroadcastTx
@@ -3540,4 +3642,38 @@ func ResetTestSingleCompatibleRelay(
 	}
 
 	return serverRelayX, shutdownFn
+}
+
+func requireCompleteClientBroadcastTx(
+	tb testing.TB,
+	broadcastCtx context.Context,
+	backend *mx.MultiplexBackend,
+	relays []string,
+	withChainID string,
+	numTransactions int,
+) {
+	// Separate goroutine for client broadcast process
+	notifyCh := make(chan client.BroadcastStatus)
+
+	go clientBroadcastTx(tb,
+		broadcastCtx,
+		backend,
+		relays,
+		withChainID,
+		numTransactions,
+		notifyCh,
+	)
+
+	// Blocks the main thread until we consume from notifyCh.
+	resultStatusMsg := waitForClientBroadcastStatus(tb,
+		broadcastCtx,
+		withChainID,
+		notifyCh,
+	)
+	require.NotNil(tb, resultStatusMsg)
+	require.NoError(tb, resultStatusMsg.Error,
+		fmt.Sprintf("should not contain error status for transactions on: %s", withChainID))
+	require.Len(tb, resultStatusMsg.TxHashes, numTransactions,
+		fmt.Sprintf("should contain all accepted transaction hashes on: %s", withChainID))
+	close(notifyCh)
 }

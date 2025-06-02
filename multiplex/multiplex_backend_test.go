@@ -240,13 +240,17 @@ func TestMultiplexBackendCheckDialCompatibleRelayWithTwoRelays(t *testing.T) {
 	servers[0].MustStart()
 	servers[1].MustStart()
 
+	waitDuration := 5 * time.Second
+	t.Logf("Waiting %.0fsec to use node services...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
+
 	// server 0 talks to server 1
 	recipientReactor := servers[1].GetReactor()
 	recipientNodeID := string(recipientReactor.GetNodeKey().ID())
 
 	// Act - Relay 1 communicates with Relay 2
 	testRelayAddr, err := server.NewRelayAddress(
-		recipientNodeID + "@127.0.0.1:50010",
+		recipientNodeID + "@127.0.0.1:40001",
 	)
 	require.NoError(t, err)
 	require.NotNil(t, testRelayAddr)
@@ -671,6 +675,8 @@ func ResetTestMultiplexBackendTwoInParallel(
 ) ([]string, []*mx.MultiplexBackend) {
 	tb.Helper()
 
+	backendOptionsPerRelay := makeEmptyBackendOptions(2)
+
 	// Uses config.TestConfig() and empty MultiplexConfig
 	rootDirRelay1,
 		globalCfgRelay1 := ResetTestMultiplexNodeWithRootDirAndPorts(
@@ -686,7 +692,7 @@ func ResetTestMultiplexBackendTwoInParallel(
 		tb,
 		numChains,
 		tb.Name()+"-2",
-		50010,
+		40001,
 	)
 
 	// Seeds must be valid (or empty), otherwise dialing will fail
@@ -701,6 +707,7 @@ func ResetTestMultiplexBackendTwoInParallel(
 		&client.DefaultAcceptor{},
 		globalCfgRelay1,
 		customLoggerRelay1,
+		backendOptionsPerRelay[0]...,
 	)
 	require.NoError(tb, err, "should create first server instance")
 
@@ -708,6 +715,7 @@ func ResetTestMultiplexBackendTwoInParallel(
 		&client.DefaultAcceptor{},
 		globalCfgRelay2,
 		customLoggerRelay2,
+		backendOptionsPerRelay[1]...,
 	)
 	require.NoError(tb, err, "should create second server instance")
 

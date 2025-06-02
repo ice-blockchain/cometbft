@@ -312,6 +312,12 @@ using one of the following commands:
 	go test github.com/ice-blockchain/cometbft/multiplex/server -run TestMultiplexServer.* -test.v
 	go test github.com/ice-blockchain/cometbft/multiplex/snapsapp -run TestABCI.* -test.v
 
+	# running integration and e2e test suites
+	go test github.com/ice-blockchain/cometbft/multiplex -run TestMultiplex -test.v
+	go test github.com/ice-blockchain/cometbft/multiplex -run TestScenarioClient -test.v
+	go test github.com/ice-blockchain/cometbft/multiplex -run TestScenarioCallbacks -test.v
+	go test github.com/ice-blockchain/cometbft/multiplex -run TestScenarioConcurrent -test.v
+
 # Linter
 
 	# running the pre-commit step(s)
