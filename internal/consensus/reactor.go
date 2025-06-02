@@ -319,8 +319,10 @@ func (conR *Reactor) PeerStateKey() string {
 
 // InitPeer implements Reactor by creating a state for the peer.
 func (conR *Reactor) InitPeer(peer *p2p.PeerImpl) *p2p.PeerImpl {
-	peerState := NewPeerState(peer).SetLogger(conR.Logger)
-	peer.Set(conR.PeerStateKey(), peerState)
+	if !peer.Has(conR.PeerStateKey()) {
+		peerState := NewPeerState(peer).SetLogger(conR.Logger)
+		peer.Set(conR.PeerStateKey(), peerState)
+	}
 	return peer
 }
 
@@ -328,6 +330,7 @@ func (conR *Reactor) InitPeer(peer *p2p.PeerImpl) *p2p.PeerImpl {
 // peer.
 func (conR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 	if !conR.IsRunning() {
+		// TODO(midas): remove debug logs
 		conR.Logger.Debug("Adding PENDING peer to consensus reactor",
 			"peer", peer,
 		)
@@ -335,6 +338,7 @@ func (conR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 		return
 	}
 
+	// TODO(midas): remove debug logs
 	conR.Logger.Debug("Adding peer to consensus reactor",
 		"peer", peer,
 	)
@@ -347,6 +351,14 @@ func (conR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 			panic(fmt.Sprintf("Peer %v has no state for %v", peer, conR.PeerStateKey()))
 		}
 	}
+
+	// TODO(midas): remove debug logs
+	conR.Logger.Debug("Starting consensus routines for peer",
+		"peer", peer,
+		"wait", conR.WaitSync(),
+		"state", peerState,
+	)
+
 	// Begin routines for this peer.
 	go conR.gossipDataRoutine(peer, peerState)
 	go conR.gossipVotesRoutine(peer, peerState)
@@ -355,6 +367,11 @@ func (conR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 	// Send our state to peer.
 	// If we're block_syncing, broadcast a RoundStepMessage later upon SwitchToConsensus().
 	if !conR.WaitSync() {
+		// TODO(midas): remove debug logs
+		conR.Logger.Debug("Sending RSM to peer (done blocksyncing)",
+			"peer", peer,
+			"state", peerState,
+		)
 		conR.sendNewRoundStepMessage(peer)
 	}
 }

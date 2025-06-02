@@ -62,11 +62,10 @@ type Backend interface {
 	// including mempool, blocksync, consensus and evidence reactors.
 	StartConsensusInstance(ctx context.Context, chainID string) error
 
-	// OpenChannels should update the NodeInfo pointer and
-	// add connection channels to permit communication of messages
-	// related to new (or unknown for this relay) networks.
-	OpenRequiredChannels(
-		switchType string,
+	// UpdateMultiNetworkNodeInfo should update the NodeInfo pointer and
+	// to permit communication of messages related to new, i.e. unknown
+	// for this relay, networks.
+	UpdateMultiNetworkNodeInfo(
 		requiredNetworks []string,
 	) error
 

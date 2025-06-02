@@ -29,6 +29,7 @@ func (b *MultiplexBackend) GetRoutines() *server.Jobs {
 	if b.routines == nil {
 		b.routines = &server.Jobs{
 			DiscoveryDialer: b.DefaultDiscoveryDialerRoutine(),
+			CometBFTDialer:  b.DefaultCometBFTDialerRoutine(),
 			NodeReplRequest: b.DefaultNodeReplRequestRoutine(),
 			NetworksCreator: b.DefaultNetworksCreatorRoutine(),
 			RelaysBroadcast: b.DefaultRelaysBroadcastRoutine(),
@@ -82,6 +83,58 @@ func (b *MultiplexBackend) DefaultDiscoveryDialerRoutine() server.DiscoveryDiale
 					"time", strconv.Itoa(int(durationMs))+"ms",
 				)
 			}(discoverySwitch, relayAddr)
+		}
+	}
+}
+
+// DefaultCometBFTDialerRoutine dials relays to enable CometBFT messages.
+//
+// This method checks for compatibility of relays by executing a connection
+// handshake as defined with [p2p.Switch#DialPeerWithAddress]. The CometBFT
+// switch is updated to accept blocksync, consensus and mempool messages.
+func (b *MultiplexBackend) DefaultCometBFTDialerRoutine() server.CometBFTDialerFn {
+	return func(
+		ctx context.Context,
+		relays []*server.RelayAddress,
+		relevantChainIds []string,
+		waitGroup *sync.WaitGroup,
+		errorsCh chan<- server.RelayDialError,
+		logger cmtlog.Logger,
+	) {
+		// We dial using CometBFT, init'd in [MultiplexBackend#MustStart].
+		cometbftSwitch := b.reactor.GetEventSwitchForCometBFT()
+
+		// Concurrently dial relays to enable CometBFT messages.
+		// Opens peer connections for `DiscoveryPort+1`.
+		for _, relayAddr := range relays {
+			cometbftAddr, _ := server.NewRelayAddress(relayAddr.AddressForCometBFT())
+			for _, relevantChainID := range relevantChainIds {
+				// TODO(midas): remove debug logs
+				logger.Debug("Now dialing relay for CometBFT",
+					"relay", cometbftAddr.String(),
+					"chain_id", relevantChainID,
+				)
+
+				go func(sw *p2p.Switch, addr *server.RelayAddress, chainID string) {
+					defer waitGroup.Done()
+					startTz := time.Now()
+
+					if err := b.reactor.DialRelayForScope(sw, addr, chainID); err != nil {
+						errorsCh <- server.RelayDialError{
+							Addr:  addr,
+							Error: err,
+						}
+						return
+					}
+					durationMs := time.Since(startTz).Milliseconds()
+
+					// TODO(midas): remove debug logs
+					logger.Debug("Successfully dialed relay for CometBFT",
+						"relay", addr.String(),
+						"time", strconv.Itoa(int(durationMs))+"ms",
+					)
+				}(cometbftSwitch, cometbftAddr, relevantChainID)
+			}
 		}
 	}
 }
@@ -295,61 +348,72 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 
 			numRemotesByChain[chainID] = len(relaysWithoutSelf)
 
-			replRequestPeerIds := make([]string, 0, len(relaysWithoutSelf))
-			if partnerRelays, ok := replReqRelays[chainID]; ok {
-				copy(replRequestPeerIds, func() []string {
-					partnerIds := []string{}
-					for _, relayAddr := range partnerRelays {
-						partnerIds = append(partnerIds, string(relayAddr.ID()))
-					}
-					return partnerIds
-				}())
-			}
+			// replRequestPeerIds := make([]string, 0, len(relaysWithoutSelf))
+			// if partnerRelays, ok := replReqRelays[chainID]; ok {
+			// 	copy(replRequestPeerIds, func() []string {
+			// 		partnerIds := []string{}
+			// 		for _, relayAddr := range partnerRelays {
+			// 			partnerIds = append(partnerIds, string(relayAddr.ID()))
+			// 		}
+			// 		return partnerIds
+			// 	}())
+			// }
 
-			// Excludes replication partners (already dialed).
-			relaysToDial := slices.DeleteFunc(relaysWithoutSelf, func(address *server.RelayAddress) bool {
-				return slices.Contains(replRequestPeerIds, string(address.ID()))
-			})
+			// // Excludes replication partners (already dialed).
+			// relaysToDial := slices.DeleteFunc(relaysWithoutSelf, func(address *server.RelayAddress) bool {
+			// 	return slices.Contains(replRequestPeerIds, string(address.ID()))
+			// })
 
-			// TODO(midas): remove debug logs
-			logger.Debug("Dialing relevant relays before broadcast",
-				"chain_id", chainID,
-				"num_relays", len(relays),
-				"num_repl", len(replRequestPeerIds),
-				"num_dial", len(relaysToDial),
-			)
+			// Dial all relays for CometBFT. Replication partners are dialed
+			// only for discovery up to here, needs re-dial for CometBFT.
+			// relaysToDial := relaysWithoutSelf[:]
 
-			dialingWg := sync.WaitGroup{}
-			dialingWg.Add(len(relaysToDial))
+			// // TODO(midas): remove debug logs
+			// logger.Debug("Dialing relevant relays before broadcast",
+			// 	"chain_id", chainID,
+			// 	"num_relays", len(relays),
+			// 	"num_dial", len(relaysToDial),
+			// )
 
-			for _, addrToDial := range relaysToDial {
-				go func(relayAddr *server.RelayAddress) {
-					defer dialingWg.Done()
+			// dialingWg := sync.WaitGroup{}
+			// dialingWg.Add(len(relaysToDial))
 
-					// We need DiscoveryPort+1 to interact with CometBFT.
-					cometbftSwitch := b.reactor.GetEventSwitchForCometBFT()
-					cometbftAddr, _ := server.NewRelayAddress(relayAddr.AddressForCometBFT())
+			// // Concurrently dial the CometBFT peers, pre-broadcast to mempool.
+			// for _, addrToDial := range relaysToDial {
+			// 	go func(relayAddr *server.RelayAddress) {
+			// 		defer dialingWg.Done()
 
-					// TODO(midas): remove debug logs
-					logger.Debug("Now dialing relay for CometBFT",
-						"chain_id", chainID,
-						"relay", relayAddr.String(),
-						"addr", relayAddr.AddressForCometBFT(),
-					)
-					if err := b.reactor.DialRelayForScope(
-						cometbftSwitch,
-						cometbftAddr,
-						chainID,
-					); err != nil {
-						client.Error(notifyCh, fmt.Errorf(
-							"invalid cometbft relay address %s: %w", relayAddr.AddressForCometBFT(), err))
-						return
-					}
-				}(addrToDial)
-			}
+			// 		// We need DiscoveryPort+1 to interact with CometBFT.
+			// 		cometbftSwitch := b.reactor.GetEventSwitchForCometBFT()
+			// 		cometbftAddr, _ := server.NewRelayAddress(relayAddr.AddressForCometBFT())
 
-			// Wait for all concurrent pre-dialing to be complete.
-			dialingWg.Wait()
+			// 		// TODO(midas): remove debug logs
+			// 		logger.Debug("Now dialing relay for CometBFT",
+			// 			"chain_id", chainID,
+			// 			"relay", relayAddr.String(),
+			// 			"addr", relayAddr.AddressForCometBFT(),
+			// 		)
+			// 		if err := b.reactor.DialRelayForScope(
+			// 			cometbftSwitch,
+			// 			cometbftAddr,
+			// 			chainID,
+			// 		); err != nil {
+			// 			client.Error(notifyCh, fmt.Errorf(
+			// 				"invalid cometbft relay address %s: %w", relayAddr.AddressForCometBFT(), err))
+			// 			return
+			// 		}
+			// 	}(addrToDial)
+			// }
+
+			// // Wait for all concurrent pre-dialing to be complete.
+			// dialingWg.Wait()
+
+			// // TODO(midas): remove debug logs
+			// logger.Debug("Done dialing relevant relays before broadcast",
+			// 	"chain_id", chainID,
+			// 	"num_relays", len(relays),
+			// 	"num_dial", len(relaysToDial),
+			// )
 		}
 
 		// (2)
@@ -401,6 +465,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 				chainHealthyPeers = append(chainHealthyPeers, string(relayAddr.ID()))
 			}
 
+			// TODO(midas): ensure that we have the pre-dialed peers in peerset
 			cometbftSwitch := b.reactor.GetEventSwitchForCometBFT()
 			chainPeerSet := cometbftSwitch.Peers(chainID)
 			sentWg := sync.WaitGroup{}
@@ -413,6 +478,8 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 				"num_relays", len(chainHealthyPeers),
 				"num_peers", chainPeerSet.Size(),
 			)
+
+			// TODO(midas): Send inside goroutine for max concurrency.
 
 			// Broadcast the transaction to all healthy relays.
 			chainPeerSet.ForEach(func(peer *p2p.PeerImpl) {
@@ -537,6 +604,14 @@ func (b *MultiplexBackend) DefaultCancelBroadcastRoutine() server.CancelBroadcas
 
 			// Encode and get transaction hash
 			rawTx := client.TransactionToRawTx(transaction)
+			txHash := strings.ToUpper(hex.EncodeToString(rawTx.Hash()))
+
+			// TODO(midas): remove debug logs
+			logger.Debug("Sending RollbackTxs message to remote mempools",
+				"chain_id", chainID,
+				"tx_hash", txHash,
+				"num_peers", eventsSwitch.Peers(chainID).Size(),
+			)
 
 			// Broadcast the rollback message for this transaction to all relays.
 			eventsSwitch.Broadcast(chainID, p2p.Envelope{

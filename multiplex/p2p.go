@@ -147,6 +147,7 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 		)
 
 		if !cfgOverwrite.P2P.AllowDuplicateIP {
+			p2pLogger.Info("Disallowing peers with duplicate IP", "ID", nodeKey.ID())
 			connFilters = append(connFilters, p2p.ConnDuplicateIPFilter())
 		}
 

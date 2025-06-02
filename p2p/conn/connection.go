@@ -588,7 +588,6 @@ func (c *MConnection) getSharedChannel(chID byte) (*Channel, error) {
 	c.channelsMtx.Lock()
 	defer c.channelsMtx.Unlock()
 
-	// Do we have shared channels yet? Otherwise stop here.
 	if _, ok := c.channelsIdx[SharedChannelsNamespace]; ok {
 		if _, ok := c.channelsIdx[SharedChannelsNamespace][chID]; ok {
 			return c.channelsIdx[SharedChannelsNamespace][chID], nil

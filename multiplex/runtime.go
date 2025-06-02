@@ -384,16 +384,6 @@ func (reactor *Reactor) InjectNewRuntime(
 			"error creating the pex address books: %w", err)
 	}
 
-	// Add channels for the new ChainID to all existing peers
-	// This prevents "unknown channel - missing ChainID" errors when peers
-	// try to send messages for the new ChainID
-	cometbftSwitch := reactor.GetEventSwitchForCometBFT()
-	if err := reactor.AddConnectionChannels(cometbftSwitch, []string{chainID}); err != nil {
-		return fmt.Errorf(
-			"error adding connection channels for new ChainID %s: %w", chainID, err)
-	}
-	clogger.Info("Added connection channels for new ChainID to existing peers", "chain_id", chainID)
-
 	// Inform about all replicated chains being configured
 	clogger.Info("The new network is now configured",
 		"nodeId", string(reactor.GetNodeKey().ID()))

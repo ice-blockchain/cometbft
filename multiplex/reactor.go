@@ -1216,25 +1216,14 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 				return
 			}
 
-			// We need this peer in our scoped PeerSet in CometBFT as well.
-			addedInboundPeer, err := r.addInboundPeerForChainID(
-				sourcePeer,
-				replRequest.ChainID,
-			)
-			if err != nil {
-				r.logger.Error(
-					"failed to process ChainReplicationRequest: error adding inbound peer",
-					"chain_id", replRequest.ChainID,
-					"peer", sourcePeer,
-					"err", err,
-				)
-				return
-			} else if !addedInboundPeer {
-				// TODO(midas): remove debug logs
-				r.logger.Debug("Inbound peer already added to CometBFT peerset",
-					"chain_id", replRequest.ChainID,
-					"peer", sourcePeer)
-			}
+			// if err := r.AddInboundPeerForCometBFT(sourcePeer.ID(), replRequest.ChainID); err != nil {
+			// 	r.logger.Error(
+			// 		"failed to process ChainReplicationRequest: error adding inbound peer for CometBFT",
+			// 		"chain_id", replRequest.ChainID,
+			// 		"err", err,
+			// 	)
+			// 	return
+			// }
 
 			// TODO(midas): dialing MAY be concurrent for both scopes
 
@@ -1284,20 +1273,6 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 
 			// Now respond with a [ChainReplicationResponse].
 			// This serves as a receipt for a chain replication request.
-			//discoverySwitch := r.GetEventSwitchForDiscovery()
-
-			// r.networkMutex.Lock()
-			// sourceOutboundPeer := discoverySwitch.Peers(p2p.ScopeForDiscovery).GetOutbound(discoveryAddr.ID())
-			// r.networkMutex.Lock()
-			// if sourceOutboundPeer == nil {
-			// 	r.logger.Error("sourceOutboundPeer is nil",
-			// 		"chain_id", replRequest.ChainID,
-			// 		"from", r.GetNodeKey().ID(),
-			// 		"peers", discoverySwitch.PeersByScopes(),
-			// 	)
-			// 	sourceOutboundPeer = discoverySwitch.Peers(replRequest.ChainID).GetOutbound(discoveryAddr.ID())
-			// }
-			// if sourceOutboundPeer != nil {
 			if err = r.sendChainReplicationResponse(e.Src, replRequest.ChainID); err != nil {
 				r.logger.Error("failed to send ChainReplicationResponse",
 					"chain_id", replRequest.ChainID,
@@ -1306,7 +1281,6 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 					"err", err,
 				)
 			}
-			//}
 
 			// Done.
 			r.logger.Debug("This relay now replicates a new chain", "chain_id", replRequest.ChainID)
@@ -1318,7 +1292,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			r.logger.Debug("Received ChainReplicationResponse", "msg", msg)
 			replResponse := extMsg.GetChainReplicationResponse()
 
-			// Dials the CometBFT relay to permit faster consensus startup.
+			// Dials the CometBFT relay (OUTBOUND) to permit faster consensus startup.
 			// Due to secret conn wrapping, we may need to call the RelayInfo RPC first.
 			if err := r.DialRelayForCometBFT(discoveryAddr, replResponse.ChainID); err != nil {
 				r.logger.Error(
@@ -1521,7 +1495,7 @@ func (r *Reactor) DialRelayForScope(
 	}
 
 	// Dial the peer by address
-	if err = dialWithSw.DialPeerWithAddressAndChain(peerAddr, partnerScope); err != nil {
+	if err = dialWithSw.DialPeerWithAddress(peerAddr); err != nil {
 		if r.IsDialError(err) {
 			return fmt.Errorf(
 				"could not dial relay %s: %w", peerAddr.DialString(), err)
@@ -1529,10 +1503,27 @@ func (r *Reactor) DialRelayForScope(
 		err = nil
 	}
 
-	// The PeerSet object at scopedPeerSet should have been modified.
+	// The PeerSet object at scopedPeerSet may have been modified.
 	peerOutbound = scopedPeerSet.GetOutbound(peerAddr.ID)
-	if err == nil && peerOutbound != nil {
-		dialWithSw.Logger.Debug("Peer is already dialed - adding to reactors",
+	if peerOutbound == nil && dialWithSw.IsDialingOrExistingAddress(peerAddr) {
+		// The Peer is still dialing. Try to find a matching outbound peer.
+
+		// Find outbound connection to peer ID.
+		if dialWithSw.HasPeerID(peerAddr.ID, true) {
+			peerOutbound = dialWithSw.FindOutboundPeerByID(peerAddr.ID)
+		} else {
+			// Find outbound connection to external address.
+			externalAddr, err := net.ResolveTCPAddr("", peerAddr.DialString())
+			if err != nil {
+				return fmt.Errorf(
+					"failed to resolve connection to relay %s: %w", peerAddr.DialString(), err)
+			}
+			peerOutbound = dialWithSw.FindMatchingPeerByRemoteAddress(externalAddr)
+		}
+	}
+
+	if peerOutbound != nil {
+		dialWithSw.Logger.Debug("Outbound peer is available - adding to reactors",
 			"relay", partnerAddr.String(),
 			"scope", partnerScope,
 			"peer", peerOutbound,
@@ -1576,6 +1567,37 @@ func (r *Reactor) DialRelayForCometBFT(
 	// Uses `DiscoveryPort+1`
 	cometbftSwitch := r.GetEventSwitchForCometBFT()
 	return r.DialRelayForScope(cometbftSwitch, cometbftAddr, chainID)
+}
+
+func (r *Reactor) AddInboundPeerForCometBFT(
+	sourcePeerID p2p.ID,
+	chainID string,
+) error {
+	// Uses `DiscoveryPort+1`
+	cometbftSwitch := r.GetEventSwitchForCometBFT()
+	chainPeerSet := cometbftSwitch.Peers(chainID)
+
+	// Find discovery peer's ID, in cometbft
+	peerInbound := chainPeerSet.GetInbound(sourcePeerID)
+	if peerInbound != nil {
+		// TODO(midas): remove debug logs
+		r.logger.Debug("Inbound peer is ready - adding to reactors",
+			"peer_id", sourcePeerID,
+			"chain_id", chainID,
+			"peer", peerInbound,
+		)
+
+		// Inbound peer is ready, manually add peers to reactors.
+		cometbftSwitch.InitPeerForScope(peerInbound, chainID)
+		cometbftSwitch.AddPeerForScope(peerInbound, chainID)
+	} else {
+		r.logger.Error("failed to add inbound peer for CometBFT - peer is not ready",
+			"peer_id", sourcePeerID,
+			"chain_id", chainID,
+		)
+	}
+
+	return nil
 }
 
 func (r *Reactor) IsDialError(err error) bool {
@@ -2361,32 +2383,6 @@ func (reactor *Reactor) sendChainReplicationResponse(
 	}
 
 	return nil
-}
-
-func (reactor *Reactor) addInboundPeerForChainID(
-	peer *p2p.PeerImpl,
-	chainID string,
-) (added bool, err error) {
-	cometbftSwitch := reactor.GetEventSwitchForCometBFT()
-
-	added = false
-	chainPeerSet := cometbftSwitch.Peers(chainID)
-
-	// Use HasPeer to make sure about distinction with in/out for same ID.
-	if !chainPeerSet.HasPeer(peer) {
-		if err = chainPeerSet.Add(peer); err != nil {
-			if _, ok := err.(p2p.ErrPeerRemoval); ok {
-				reactor.logger.Error("Error starting peer ",
-					"err", "Peer has already errored and removal was attempted.",
-					"peer", peer,
-					"chain_id", chainID)
-			}
-			return // false, err
-		}
-		added = true
-	}
-
-	return // true, nil
 }
 
 // handleChainReplicationRequest processes a ChainReplicationRequest.

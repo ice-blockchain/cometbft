@@ -486,28 +486,9 @@ func (b *MultiplexBackend) CreateOrLoadDiscoveryEventSwitch() *p2p.Switch {
 
 // OpenChannels updates the NodeInfo pointer and event switch
 // to permit communications related to a given list of ChainIDs.
-func (b *MultiplexBackend) OpenRequiredChannels(
-	switchType string,
+func (b *MultiplexBackend) UpdateMultiNetworkNodeInfo(
 	requiredNetworks []string,
 ) error {
-	var (
-		sw             *p2p.Switch
-		relevantScopes []string
-		connUpdaterFn  func(*conn.MConnection)
-	)
-	switch {
-	default:
-	case switchType == "discovery":
-		sw = b.reactor.GetEventSwitchForDiscovery()
-		// A Discovery peer never needs more than server.ReplicationChannel.
-		relevantScopes = []string{p2p.ScopeForDiscovery}
-
-	case switchType == "cometbft":
-		sw = b.reactor.GetEventSwitchForCometBFT()
-		// A CometBFT  peer on the other hand, needs all reactor's channels.
-		relevantScopes = requiredNetworks[:]
-	}
-
 	// Lock and read currently known ChainIDs.
 	b.relayMtx.Lock()
 	availableNetworks := b.multiNodeInfo.Networks
@@ -518,6 +499,13 @@ func (b *MultiplexBackend) OpenRequiredChannels(
 	missingChainIds := slices.DeleteFunc(requiredNetworks, func(chainID string) bool {
 		return slices.Contains(availableNetworks, chainID)
 	})
+	if len(missingChainIds) == 0 {
+		return nil
+	}
+
+	b.logger.Debug("Updating available networks",
+		"num_networks", len(availableNetworks),
+		"num_missing", len(missingChainIds))
 
 	for _, chainID := range missingChainIds {
 		availableNetworks = append(availableNetworks, chainID)
@@ -533,19 +521,17 @@ func (b *MultiplexBackend) OpenRequiredChannels(
 	b.relayMtx.Lock()
 	b.multiNodeInfo.SetNetworks(availableNetworks)
 	b.multiNodeInfo.SetProtocolVersions(availableVersions)
-	sw.SetNodeInfo(b.multiNodeInfo)
+	updatedNodeInfo := b.multiNodeInfo
 	b.relayMtx.Unlock()
 
-	// We must upgrade the mconn channels for the peers, that's necessary
-	// for injected networks that were not present at time of creation.
-	connUpdaterFn = sw.OpenChannelsForScopes(relevantScopes)
-	for _, chainOrScope := range relevantScopes {
-		sw.Peers(chainOrScope).ForEach(func(peer *p2p.PeerImpl) {
-			// If we are handling an OUTBOUND peer, make sure channels are open.
-			if peer.IsOutbound() {
-				connUpdaterFn(peer.MConn())
-			}
-		})
+	// Update DISCOVERY switch if available
+	if sw := b.reactor.GetEventSwitchForDiscovery(); sw != nil {
+		sw.SetNodeInfo(updatedNodeInfo)
+	}
+
+	// Update COMETBFT switch if available
+	if sw := b.reactor.GetEventSwitchForCometBFT(); sw != nil {
+		sw.SetNodeInfo(updatedNodeInfo)
 	}
 
 	return nil
@@ -697,6 +683,9 @@ func (b *MultiplexBackend) MustStart() {
 			"rpc", b.cometbftRPCAddr.DialString(),
 			"info", cometbftSwitch.NodeInfo(),
 		)
+
+		// TODO(midas): the other way around! It should only start nodes
+		// that are currently replaying on some other relays.
 
 		if b.reactor.Size() > 0 {
 			if err := b.reactor.StartAllNodeInstances(); err != nil {
@@ -2078,7 +2067,7 @@ func (b *MultiplexBackend) AddTransactions(
 			case err == mempl.ErrTxInCache:
 			case err == mempl.ErrTxInMempool:
 			case err == mempl.ErrTxAlreadyReceivedFromSender:
-				break
+				continue
 			default:
 				return err
 			}

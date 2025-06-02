@@ -6,6 +6,7 @@ import (
 	"math"
 	"net"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -126,6 +127,7 @@ type Switch struct {
 	runtimesChainIds  map[string]struct{}
 	reactorPeersAdded map[string]map[string]time.Time
 	reactorPeersInit  map[string]map[string]time.Time
+	peersForReactors  map[string]map[string]*PeerImpl
 	totalOpenChannels uint32 // atomic
 }
 
@@ -159,6 +161,7 @@ func NewSwitch(
 		runtimesChainIds:     make(map[string]struct{}),
 		reactorPeersAdded:    make(map[string]map[string]time.Time),
 		reactorPeersInit:     make(map[string]map[string]time.Time),
+		peersForReactors:     make(map[string]map[string]*PeerImpl),
 		dialing:              cmap.NewCMap(),
 		reconnecting:         cmap.NewCMap(),
 		metrics:              NopMetrics(),
@@ -707,10 +710,6 @@ func (sw *Switch) HasPeerIP(peerIP net.IP) bool {
 // without making a distinction about inbound/outbound. This is because this
 // distinction does not matter for CometBFT reactors.
 func (sw *Switch) InitPeerForScope(peer *PeerImpl, scope string) {
-	if !peer.IsRunning() {
-		return
-	}
-
 	var reactors map[string]Reactor
 	switch {
 	case scope == ScopeForDiscovery: // "discovery" => _shared_channels
@@ -721,15 +720,17 @@ func (sw *Switch) InitPeerForScope(peer *PeerImpl, scope string) {
 
 	for rname, reactor := range reactors {
 		if !sw.IsPeerInitialized(peer, scope, rname) {
-			reactor.InitPeer(peer)
-			sw.MarkPeerInitialized(peer, scope, rname)
+			peerForReactor := reactor.InitPeer(peer)
+			sw.MarkPeerInitialized(peerForReactor, scope, rname)
+
+			// TODO(midas): remove debug logs
+			sw.Logger.Info("Init peer for reactor",
+				"scope", scope,
+				"peer", peer,
+				"reactor", rname,
+			)
 		}
 	}
-
-	sw.Logger.Info("Init peer for reactors",
-		"scope", scope,
-		"peer", peer,
-	)
 }
 
 func (sw *Switch) AddPeerForScope(peer *PeerImpl, scope string) {
@@ -746,28 +747,44 @@ func (sw *Switch) AddPeerForScope(peer *PeerImpl, scope string) {
 	}
 
 	for rname, reactor := range reactors {
-		if !sw.IsPeerAddedToReactor(peer, scope, rname) {
-			reactor.AddPeer(peer)
-			sw.MarkPeerAddedToReactor(peer, scope, rname)
+		if !sw.IsPeerInitialized(peer, scope, rname) {
+			sw.Logger.Error("failed to add peer to reactors, not yet initialized",
+				"scope", scope,
+				"peer", peer,
+				"reactors", reactors,
+			)
+			continue
 		}
-	}
 
-	sw.Logger.Info("Added peer to reactors",
-		"scope", scope,
-		"peer", peer,
-	)
+		// reactor, peer.ID(), in or out
+		lookupKey := sw.peerScopeReactorKey(peer, scope, rname)
+		sw.runtimesMtx.RLock()
+		pfr := sw.peersForReactors[scope][lookupKey] // as returned by reactor.InitPeer()
+		sw.runtimesMtx.RUnlock()
+
+		reactor.AddPeer(pfr)
+		//sw.MarkPeerAddedToReactor(pfr, scope, rname)
+
+		// TODO(midas): remove debug logs
+		sw.Logger.Info("Added peer to reactor",
+			"scope", scope,
+			"peer", peer,
+			"reactor", rname,
+		)
+	}
 
 	// Add the peer to our internal PeerSet storage.
 	peerSet := sw.Peers(scope)
 	if !peerSet.HasPeer(peer) {
 		peerSet.Add(peer)
-	}
 
-	sw.Logger.Info("Added peer to peerset",
-		"scope", scope,
-		"peer", peer,
-		"size", peerSet.Size(),
-	)
+		// TODO(midas): remove debug logs
+		sw.Logger.Info("Added peer to peerset",
+			"scope", scope,
+			"peer", peer,
+			"size", peerSet.Size(),
+		)
+	}
 }
 
 // StopPeerForError disconnects from a peer due to external error.
@@ -1101,43 +1118,6 @@ func (sw *Switch) DialPeerWithAddress(addr *NetAddress) error {
 
 	return sw.addOutboundPeerWithConfig(addr, sw.config, "")
 }
-func (sw *Switch) DialPeerWithAddressAndChain(addr *NetAddress, chainID string) error {
-	if sw.IsDialingOrExistingAddress(addr) {
-		var p *PeerImpl
-		if sw.HasPeerID(addr.ID, true) {
-			all := sw.AllPeers()
-			for _, ap := range all {
-				if ap.ID() == addr.ID && ap.outbound {
-					p = ap
-					break
-				}
-			}
-		} else {
-			netAddr, err := net.ResolveTCPAddr("", addr.DialString())
-			if err != nil {
-				return err
-			}
-			p = sw.FindMatchingPeer(netAddr)
-		}
-		peerSet := sw.Peers(chainID)
-		if p != nil && !peerSet.HasPeer(p) {
-			if err := peerSet.Add(p); err != nil {
-				if _, ok := err.(ErrPeerRemoval); ok {
-					sw.Logger.Error("Error starting peer ",
-						"err", "Peer has already errored and removal was attempted.",
-						"peer", p)
-				}
-				return err // err
-			}
-		}
-		return ErrCurrentlyDialingOrExistingAddress{addr.String()}
-	}
-
-	sw.dialing.Set(string(addr.ID), addr)
-	defer sw.dialing.Delete(string(addr.ID))
-
-	return sw.addOutboundPeerWithConfig(addr, sw.config, chainID)
-}
 
 // sleep for interval plus some random amount of ms on [0, dialRandomizerIntervalMilliseconds].
 func (sw *Switch) randomSleep(interval time.Duration) {
@@ -1218,11 +1198,39 @@ func (sw *Switch) acceptRoutine() {
 	for {
 		safePeerConfig := sw.GetPeerConfig()
 		p, err := sw.transport.Accept(safePeerConfig)
-		if err != nil {
-			if !IsDialError(err) {
-				break
+		sw.Logger.Debug(
+			"Inbound Peer now being processed",
+			"numPeers", numPeers,
+			"err", err,
+		)
+		if err != nil && !IsDialError(err) {
+			// If it's a duplicate, we must initialize and add it to reactors,
+			// otherwise if it's dialing/already existing, do nothing.
+			if duplConn, ok := err.(ErrRejected); ok {
+				// TODO(midas): remove debug logs
+				sw.Logger.Debug(
+					"Inbound Peer already known - adding to reactors",
+					"err", err,
+					"numPeers", numPeers,
+				)
+				if err := sw.addPeerByRemoteAddress(duplConn.conn.RemoteAddr()); err != nil {
+					sw.Logger.Info(
+						"Inbound Peer rejected",
+						"err", err,
+						"addr", duplConn.conn.RemoteAddr().String(),
+						"numPeers", numPeers,
+					)
+					continue
+				}
+			} else {
+				// TODO(midas): remove debug logs
+				sw.Logger.Debug(
+					"Inbound Peer still dialing - not adding to reactors",
+					"err", err,
+					"numPeers", numPeers,
+				)
 			}
-
+		} else if err != nil {
 			// If Close() was called, exit silently
 			if sw.transport.IsClosing() {
 				break
@@ -1328,6 +1336,49 @@ func IsDialError(err error) bool {
 	return true
 }
 
+func (sw *Switch) addPeerByRemoteAddress(
+	remoteAddr net.Addr,
+) error {
+	// Find discovery peer's ID, in cometbft
+	peerInbound := sw.FindMatchingPeerByRemoteAddress(remoteAddr)
+	if peerInbound == nil {
+		sw.Logger.Error("failed to add inbound peer for CometBFT - peer is not ready",
+			"conn", remoteAddr,
+		)
+		return errors.New("failed to add inbound peer - peer is not ready")
+	}
+
+	// Check if we have a multiplex reactor that can provide additional ChainIDs
+	sw.reactorsMtx.Lock()
+	multiplexReactor := sw.getMultiplexReactor()
+	sw.reactorsMtx.Unlock()
+	if multiplexReactor == nil {
+		sw.Logger.Error("failed to add inbound peer for CometBFT - multiplex is not ready",
+			"conn", remoteAddr,
+			"peer", peerInbound,
+		)
+		return errors.New("failed to add inbound peer - multiplex is not ready")
+	}
+
+	// Use type assertion to access GetNetworks method
+	mxReactor := multiplexReactor.(interface{ GetNetworks() []string })
+	allNetworks := mxReactor.GetNetworks()
+
+	for _, chainID := range allNetworks {
+		// TODO(midas): remove debug logs
+		sw.Logger.Debug("Inbound peer is ready - adding to reactors",
+			"peer", peerInbound,
+			"chain_id", chainID,
+		)
+
+		// Inbound peer is ready, manually add peers to reactors.
+		sw.InitPeerForScope(peerInbound, chainID)
+		sw.AddPeerForScope(peerInbound, chainID)
+	}
+
+	return nil
+}
+
 // dial the peer; make secret connection; authenticate against the dialed ID;
 // add the peer.
 // if dialing fails, start the reconnect loop. If handshake fails, it's over.
@@ -1346,28 +1397,47 @@ func (sw *Switch) addOutboundPeerWithConfig(
 		return errors.New("dial err (peerConfig.DialFail == true)")
 	}
 
+	outbound, inbound, _ := sw.TotalNumPeers()
+	numPeers := outbound + inbound
+
 	safePeerConfig := sw.GetPeerConfig()
 	p, err := sw.transport.Dial(*addr, safePeerConfig)
-	if err != nil {
-		if !IsDialError(err) {
-			if chainID != "" {
-				peerSet := sw.Peers(chainID)
-				//TODO: peer lookup by addr, or proper linking between net conns / peer
-				if duplConn, ok := err.(ErrRejected); ok {
-					p = sw.FindMatchingPeer(duplConn.conn.RemoteAddr())
-				}
-				if p != nil && !peerSet.HasPeer(p) {
-					if err = peerSet.Add(p); err != nil {
-						if _, ok := err.(ErrPeerRemoval); ok {
-							sw.Logger.Error("Error starting peer ",
-								"err", "Peer has already errored and removal was attempted.",
-								"peer", p)
-						}
-						return err // err
-					}
-				}
+	sw.Logger.Debug(
+		"Outbound Peer now being processed",
+		"numPeers", numPeers,
+		"addr", addr.String(),
+		"err", err,
+	)
+	if err != nil && !IsDialError(err) {
+		// If it's a duplicate, we must initialize and add it to reactors,
+		// otherwise if it's dialing/already existing, do nothing.
+		if duplConn, ok := err.(ErrRejected); ok {
+			// TODO(midas): remove debug logs
+			sw.Logger.Debug(
+				"Outbound Peer already known - adding to reactor",
+				"err", err,
+				"addr", duplConn.conn.RemoteAddr().String(),
+				"numPeers", numPeers,
+			)
+			if err := sw.addPeerByRemoteAddress(duplConn.conn.RemoteAddr()); err != nil {
+				sw.Logger.Info(
+					"Outbound Peer rejected",
+					"err", err,
+					"addr", duplConn.conn.RemoteAddr().String(),
+					"numPeers", numPeers,
+				)
+				return err
 			}
+		} else {
+			// TODO(midas): remove debug logs
+			sw.Logger.Debug(
+				"Outbound Peer still dialing - not adding to reactors",
+				"err", err,
+				"addr", addr.DialString(),
+				"numPeers", numPeers,
+			)
 		}
+	} else if err != nil {
 		if e, ok := err.(ErrRejected); ok {
 			if e.IsSelf() {
 				sw.networksMtx.Lock()
@@ -1407,7 +1477,19 @@ func (sw *Switch) addOutboundPeerWithConfig(
 }
 
 // TODO: peer lookup by addr, or proper linking between net conns / peer
-func (sw *Switch) FindMatchingPeer(addr net.Addr) (p *PeerImpl) {
+func (sw *Switch) FindOutboundPeerByID(id ID) (p *PeerImpl) {
+	allPeers := sw.AllPeers()
+	for _, ap := range allPeers {
+		if ap.ID() == id && ap.outbound {
+			p = ap
+			break
+		}
+	}
+	return p
+}
+
+// TODO: peer lookup by addr, or proper linking between net conns / peer
+func (sw *Switch) FindMatchingPeerByRemoteAddress(addr net.Addr) (p *PeerImpl) {
 	allPeers := sw.AllPeers()
 	for _, ap := range allPeers {
 		if ap.conn.RemoteAddr() == addr {
@@ -1500,6 +1582,10 @@ func (sw *Switch) addPeer(p *PeerImpl) (err error) {
 		return // err
 	}
 
+	peerLogger.Debug("Adding peer",
+		"peer", p,
+	)
+
 	// Find ChainID values that we share with p.
 	relevantChainIds, err := sw.GetPeerActiveChainID(p)
 	if err != nil {
@@ -1553,63 +1639,26 @@ func (sw *Switch) addPeer(p *PeerImpl) (err error) {
 	return nil
 }
 
-func (sw *Switch) peerReactorLookupKey(p *PeerImpl, reactor string) string {
+// ----------------------------------------------------------------------------
+
+// peerScopeReactorKey returns a combination of a scope, a reactor name,
+// the peer ID and the connection type, i.e. outbound or inbound.
+func (sw *Switch) peerScopeReactorKey(p *PeerImpl, scope, reactor string) string {
+	scopedPeerKey := strings.Join([]string{
+		scope,
+		reactor,
+		string(p.ID()),
+	}, "_")
+
 	if p.IsOutbound() {
-		return reactor + string(p.ID()) + "_out"
+		return scopedPeerKey + "_out"
 	}
 
-	return reactor + string(p.ID()) + "_in"
+	return scopedPeerKey + "_in"
 }
 
-// IsPeerAddedToReactor returns true if the peer has been initialized
-// after the switch started running.
-func (sw *Switch) IsPeerAddedToReactor(p *PeerImpl, scope string, reactor string) bool {
-	sw.runtimesMtx.RLock()
-	_, hasReactorsForChain := sw.reactorPeersAdded[scope]
-	sw.runtimesMtx.RUnlock()
-
-	if !hasReactorsForChain {
-		return false
-	}
-
-	// reactor, peer.ID(), in or out
-	lookupKey := sw.peerReactorLookupKey(p, reactor)
-
-	sw.runtimesMtx.RLock()
-	peerInitTimeTz,
-		hasPeerTime := sw.reactorPeersAdded[scope][lookupKey]
-	swStartTimeTz := sw.startTz
-	sw.runtimesMtx.RUnlock()
-
-	if !sw.IsRunning() || !hasPeerTime {
-		return false
-	}
-
-	// The switch must have started before the peer, otherwise consider inactive.
-	return swStartTimeTz.Before(peerInitTimeTz)
-}
-
-func (sw *Switch) MarkPeerAddedToReactor(p *PeerImpl, scope string, reactor string) {
-	sw.runtimesMtx.RLock()
-	_, hasReactorsForChain := sw.reactorPeersAdded[scope]
-	sw.runtimesMtx.RUnlock()
-
-	if !hasReactorsForChain {
-		sw.runtimesMtx.Lock()
-		sw.reactorPeersAdded[scope] = make(map[string]time.Time)
-		sw.runtimesMtx.Unlock()
-	}
-
-	// reactor, peer.ID(), in or out
-	lookupKey := sw.peerReactorLookupKey(p, reactor)
-
-	sw.runtimesMtx.Lock()
-	sw.reactorPeersAdded[scope][lookupKey] = time.Now()
-	sw.runtimesMtx.Unlock()
-}
-
-// IsPeerInitInReactor returns true if the peer has been initialized.
-// IMPORTANT: InitPeer() must be called only *once* per peer ID, i.e. not peer key.
+// IsPeerInitInReactor returns true if p has been initialized for a pair
+// of scope and reactor name.
 func (sw *Switch) IsPeerInitialized(p *PeerImpl, scope string, reactor string) bool {
 	sw.runtimesMtx.RLock()
 	_, hasReactorsForChain := sw.reactorPeersInit[scope]
@@ -1619,8 +1668,8 @@ func (sw *Switch) IsPeerInitialized(p *PeerImpl, scope string, reactor string) b
 		return false
 	}
 
-	// reactor, peer.ID()
-	lookupKey := reactor + string(p.ID()) // no in/out for Init!
+	// scope, reactor, peer.ID(), in or out
+	lookupKey := sw.peerScopeReactorKey(p, scope, reactor)
 
 	sw.runtimesMtx.RLock()
 	peerInitTimeTz,
@@ -1636,7 +1685,9 @@ func (sw *Switch) IsPeerInitialized(p *PeerImpl, scope string, reactor string) b
 	return swStartTimeTz.Before(peerInitTimeTz)
 }
 
-// IMPORTANT: InitPeer() must be called only *once* per peer ID, i.e. not peer key.
+// MarkPeerInitialized marks p as initialized for a pair of scope and
+// reactor name. Note that p should contain the initialized peer as
+// returned by reactor.InitPeer().
 func (sw *Switch) MarkPeerInitialized(p *PeerImpl, scope string, reactor string) {
 	sw.runtimesMtx.RLock()
 	_, hasReactorsForChain := sw.reactorPeersInit[scope]
@@ -1645,16 +1696,72 @@ func (sw *Switch) MarkPeerInitialized(p *PeerImpl, scope string, reactor string)
 	if !hasReactorsForChain {
 		sw.runtimesMtx.Lock()
 		sw.reactorPeersInit[scope] = make(map[string]time.Time)
+		sw.peersForReactors[scope] = make(map[string]*PeerImpl)
 		sw.runtimesMtx.Unlock()
 	}
 
-	// reactor, peer.ID()
-	lookupKey := reactor + string(p.ID()) // no in/out for Init!
+	// scope, reactor, peer.ID(), in or out
+	lookupKey := sw.peerScopeReactorKey(p, scope, reactor)
 
 	sw.runtimesMtx.Lock()
 	sw.reactorPeersInit[scope][lookupKey] = time.Now()
+	sw.peersForReactors[scope][lookupKey] = p // as returned by reactor.InitPeer()
 	sw.runtimesMtx.Unlock()
 }
+
+// IsPeerAddedToReactor returns true if the peer has been initialized for
+// a pair of scope and reactor name, after the switch started running.
+func (sw *Switch) IsPeerAddedToReactor(p *PeerImpl, scope string, reactor string) bool {
+	sw.runtimesMtx.RLock()
+	_, hasReactorsForChain := sw.reactorPeersAdded[scope]
+	sw.runtimesMtx.RUnlock()
+
+	if !hasReactorsForChain {
+		return false
+	}
+
+	// scope, reactor, peer.ID(), in or out
+	lookupKey := sw.peerScopeReactorKey(p, scope, reactor)
+
+	sw.runtimesMtx.RLock()
+	peerInitTimeTz,
+		hasPeerTime := sw.reactorPeersAdded[scope][lookupKey]
+	swStartTimeTz := sw.startTz
+	sw.runtimesMtx.RUnlock()
+
+	if !hasPeerTime {
+		return false
+	}
+
+	// The switch must have started before the peer, otherwise consider inactive.
+	return swStartTimeTz.Before(peerInitTimeTz)
+}
+
+// MarkPeerAddedToReactor marks p added for a pair of scope and reactor name.
+// Note that p should contain the initialized peer as returned by reactor.InitPeer().
+func (sw *Switch) MarkPeerAddedToReactor(p *PeerImpl, scope string, reactor string) {
+	sw.runtimesMtx.RLock()
+	_, hasReactorsForChain := sw.reactorPeersAdded[scope]
+	sw.runtimesMtx.RUnlock()
+
+	if !hasReactorsForChain {
+		sw.runtimesMtx.Lock()
+		sw.reactorPeersAdded[scope] = make(map[string]time.Time)
+		sw.runtimesMtx.Unlock()
+	}
+
+	// scope, reactor, peer.ID(), in or out
+	lookupKey := sw.peerScopeReactorKey(p, scope, reactor)
+
+	// Mark addition time and remove extra allocation.
+	sw.runtimesMtx.Lock()
+	sw.reactorPeersAdded[scope][lookupKey] = time.Now()
+	sw.peersForReactors[scope][lookupKey] = nil
+	delete(sw.peersForReactors[scope], lookupKey)
+	sw.runtimesMtx.Unlock()
+}
+
+// ----------------------------------------------------------------------------
 
 func (sw *Switch) CleanupChannels() {
 	relevantScopes := map[string]bool{}

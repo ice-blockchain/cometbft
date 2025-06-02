@@ -319,6 +319,17 @@ func (reactor *Reactor) StartConsensusInstanceReactors(
 	chainID string,
 	sendStatusToPeers bool,
 ) error {
+	// Add channels for the new ChainID to all existing peers
+	// This prevents "unknown channel - missing ChainID" errors when peers
+	// try to send messages for the new ChainID
+	cometbftSwitch := reactor.GetEventSwitchForCometBFT()
+	if err := reactor.AddConnectionChannels(cometbftSwitch, []string{chainID}); err != nil {
+		return fmt.Errorf(
+			"error adding connection channels for new ChainID %s: %w", chainID, err)
+	}
+	// TODO(midas): remove debug logs
+	reactor.logger.Info("Added connection channels before activating ChainID", "chain_id", chainID)
+
 	servicesProvider := reactor.GetServicesProvider()
 
 	if mempoolReactor, ok := servicesProvider(

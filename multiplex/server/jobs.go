@@ -17,6 +17,7 @@ import (
 type Jobs struct {
 	// Routine extensions/overwrites may be provided here.
 	DiscoveryDialer DiscoveryDialerFn
+	CometBFTDialer  CometBFTDialerFn
 	NodeReplRequest NodeReplRequestFn
 	NetworksCreator NetworksCreatorFn
 	RelaysBroadcast RelaysBroadcastFn
@@ -62,6 +63,20 @@ type NetworksCreatorFn func(
 	*sync.WaitGroup,
 	cmtlog.Logger,
 ) error
+
+// CometBFTDialerFn describes a function that may be run on a separate
+// goroutine and which should dial relays to enable CometBFT channels
+// for one or many ChainID values.
+//
+// A write-only [RelayAddress] channel instance is accepted as errorsCh.
+type CometBFTDialerFn func(
+	context.Context,
+	[]*RelayAddress,
+	[]string, // relevantChainIds
+	*sync.WaitGroup,
+	chan<- RelayDialError, // errorsCh
+	cmtlog.Logger,
+)
 
 // RelaysBroadcastFn describes a function that may be run on a separate
 // goroutine and which should broadcast all transactions to relays.
