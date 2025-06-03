@@ -184,8 +184,10 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 		discoveryPeers := discoverySwitch.Peers(p2p.ScopeForDiscovery)
 
 		// Send only to relays we are interested in.
-		peersAvailable := slices.DeleteFunc(discoveryPeers.Copy(), func(p *p2p.PeerImpl) bool {
-			return !slices.Contains(replRequestPeerIds, string(p.ID()))
+		peersAvailable := discoveryPeers.Copy()
+		peersForRequests := slices.DeleteFunc(peersAvailable, func(p *p2p.PeerImpl) bool {
+			return !slices.Contains(replRequestPeerIds, string(p.ID())) ||
+				(!p.IsOutbound() && discoveryPeers.HasOutbound(p.ID()))
 		})
 
 		// TODO(midas): remove debug logs
@@ -193,15 +195,15 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 			"chain_id", chainID,
 			"relays", relays,
 			"num_validators", len(genesisDoc.Validators),
-			"num_requests", len(peersAvailable),
+			"num_requests", len(peersForRequests),
 			"num_peers", discoveryPeers.Size(),
 		)
 
 		requestsWg := sync.WaitGroup{}
-		requestsWg.Add(len(peersAvailable))
+		requestsWg.Add(len(peersForRequests))
 
 		// Broadcast the ChainReplicationRequest.
-		for _, p := range peersAvailable {
+		for _, p := range peersForRequests {
 			func(peer *p2p.PeerImpl) {
 				defer requestsWg.Done()
 
