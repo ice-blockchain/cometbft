@@ -837,7 +837,7 @@ func (sw *Switch) stopPeer(peer *PeerImpl, reason any) error {
 		)
 	}
 
-	//sw.transport.Cleanup(peer)
+	sw.transport.Cleanup(peer)
 
 	sw.reactorsMtx.Lock()
 	safeReactors := sw.reactors
