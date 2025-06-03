@@ -618,6 +618,13 @@ func (b *MultiplexBackend) DefaultCancelBroadcastRoutine() server.CancelBroadcas
 		logger cmtlog.Logger,
 	) {
 		eventsSwitch := b.reactor.GetEventSwitchForCometBFT()
+		if eventsSwitch == nil {
+			// TODO(midas): remove debug logs
+			logger.Error("Failed to send RollbackTxs messages - CometBFT switch is not ready",
+				"reactor_up", b.reactor.IsRunning(),
+			)
+			return
+		}
 
 		// Iterate through transactions and broadcast rollback operations
 		// for each of them to all other relays.
@@ -628,11 +635,21 @@ func (b *MultiplexBackend) DefaultCancelBroadcastRoutine() server.CancelBroadcas
 			rawTx := client.TransactionToRawTx(transaction)
 			txHash := strings.ToUpper(hex.EncodeToString(rawTx.Hash()))
 
+			chainPeerSet := eventsSwitch.Peers(chainID)
+			if chainPeerSet.Size() == 0 {
+				// TODO(midas): remove debug logs
+				logger.Error("Failed to send RollbackTxs message for transaction - empty peerset",
+					"chain_id", chainID,
+					"tx_hash", txHash,
+				)
+				continue
+			}
+
 			// TODO(midas): remove debug logs
 			logger.Debug("Sending RollbackTxs message to remote mempools",
 				"chain_id", chainID,
 				"tx_hash", txHash,
-				"num_peers", eventsSwitch.Peers(chainID).Size(),
+				"num_peers", chainPeerSet.Size(),
 			)
 
 			// Broadcast the rollback message for this transaction to all relays.

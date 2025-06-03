@@ -283,6 +283,10 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 			return
 		}
 
+		// Mark peer active in CONSENSUS and BLOCKSYNC
+		memR.Switch.InitPeerForScope(e.Src, memR.ChainID)
+		memR.Switch.AddPeerForScope(e.Src, memR.ChainID)
+
 		// Format transaction batch for Acceptor call.
 		batch := []client.Transaction{}
 		for _, rawTx := range protoTxs {
@@ -315,6 +319,22 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 		if len(protoTxs) == 0 {
 			memR.Logger.Error("Received empty Txs message from peer", "src", e.Src)
 			return
+		}
+
+		// We must pre-dial the source peer to permit
+		// sending AckTransactionBroadcast.
+		if memR.dialerFn != nil {
+			// dialerFn is an extension that permits to run [Reactor#GetRemoteDiscoveryAddress]
+			// which returns a public discovery address which can be used to find CometBFT addr.
+			_, err := memR.dialerFn(memR.Switch, e.Src, memR.ChainID)
+			if err != nil {
+				memR.Logger.Error(
+					"failed to dial outbound peer from transaction",
+					"chain_id", memR.ChainID,
+					"peer_in", e.Src,
+					"err", err,
+				)
+			}
 		}
 
 		// Mark peer active in CONSENSUS and BLOCKSYNC
@@ -375,19 +395,6 @@ func (memR *Reactor) processTxs(
 		}
 	}
 
-	// dialerFn is an extension that permits to run [Reactor#GetRemoteDiscoveryAddress]
-	// which returns a public discovery address which can be used to find CometBFT addr.
-	// publicPeerID, err := memR.dialerFn(memR.Switch, peer, memR.ChainID)
-	// if err != nil {
-	// 	memR.Logger.Error(
-	// 		"failed to process transaction: error dialing outbound peer",
-	// 		"chain_id", memR.ChainID,
-	// 		"peer", peer,
-	// 		"err", err,
-	// 	)
-	// 	return
-	// }
-
 	// Uses the multiplex server.AckBroadcastChannel to send an acknowledgment
 	// message, or receipt, to describe that the transaction has been checked.
 	// peerOutbound := memR.Switch.Peers(memR.ChainID).GetOutbound(publicPeerID)
@@ -430,6 +437,12 @@ func (memR *Reactor) clientAcceptTx(protoTxs []types.Tx) error {
 }
 
 func (memR *Reactor) EnableInOutTxs() {
+	// If switch is not available, don't move from wait-syncing.
+	if memR.Switch == nil || !memR.Switch.IsRunning() {
+		memR.Logger.Error("failed to enable in/out transactions - switch is not running")
+		return
+	}
+
 	memR.Logger.Info("Enabling inbound and outbound transactions")
 	if !memR.waitSync.CompareAndSwap(true, false) {
 		return
@@ -440,10 +453,17 @@ func (memR *Reactor) EnableInOutTxs() {
 		close(memR.waitSyncCh)
 	}
 
+	// Get an updated PeerSet for this ChainID
+	chainPeerSet := memR.Switch.Peers(memR.ChainID)
+
 	// Delayed processing of transactions that we received during WaitSync.
 	memR.pendingMsgsMtx.Lock()
 	for k, e := range memR.pendingMsgs {
-		memR.processTxs(e.Src, e.Message.(*protomem.Txs).GetTxs()) // also, ACK this transaction
+		peerForAckTx := e.Src
+		if chainPeerSet.HasOutbound(e.Src.ID()) {
+			peerForAckTx = chainPeerSet.GetOutbound(e.Src.ID())
+		}
+		memR.processTxs(peerForAckTx, e.Message.(*protomem.Txs).GetTxs()) // also, ACK this transaction
 		delete(memR.pendingMsgs, k)
 	}
 	memR.pendingMsgsMtx.Unlock()

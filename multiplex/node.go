@@ -204,6 +204,11 @@ func NewNodesMultiplex(
 	)
 	nodesWg.Add(len(chainReadyChs))
 
+	// We must make sure that the switch will be available for consensus reactors.
+	if cometbftAddr, err := GetAddressForCometBFT(globalCfg, nodeKey); err != nil {
+		reactor.CreateOrLoadCometBFTEventSwitch(cometbftAddr)
+	}
+
 	// Select a limited number of listeners message updates from
 	// the multiplex reactor channel. This loop forbids duplicate
 	// node initializations by consuming from individual channels.
@@ -444,6 +449,39 @@ func logNodeStartupInfo(
 		consensusLogger.Info("This node is not a validator",
 			"addr", validatorAddress, "pubKey", pubKey)
 	}
+}
+
+// ----------------------------------------------------------------------------
+
+// GetAddressForCometBFT returns a NetAddress for the CometBFT P2P messages.
+func GetAddressForCometBFT(
+	globalCfg *config.Config,
+	nodeKey *p2p.NodeKey,
+) (cometbftAddr *p2p.NetAddress, err error) {
+	promoteAddr := globalCfg.P2P.ExternalAddress
+	if promoteAddr == "" {
+		promoteAddr = globalCfg.P2P.ListenAddress
+	}
+
+	// P2P CometBFT Port is always: `discovery_port+1`
+	p2pListenAddr := overwriteListenPort(
+		promoteAddr,
+		int(globalCfg.DiscoveryPort+1), // always DiscoveryPort+1
+	)
+
+	relayAddr, addrErr := server.NewRelayAddress(p2pListenAddr)
+	if addrErr != nil {
+		return nil, fmt.Errorf(
+			"could not create relay address for P2P: %w", err)
+	}
+
+	relayAddr.SetID(nodeKey.ID())
+	if cometbftAddr, err = relayAddr.NetAddress(); err != nil {
+		return nil, fmt.Errorf(
+			"could not create p2p listen address: %w", err)
+	}
+
+	return // cometbftAddr
 }
 
 // makeNodeInfo creates the [MultiNetworkNodeInfo] instance given a P2P
