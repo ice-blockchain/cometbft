@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -270,6 +271,15 @@ func (g *Group) checkTotalSizeLimit() {
 	if limit == 0 {
 		return
 	}
+	defer func() {
+		if r := recover(); r != nil {
+			g.Logger.Error("Autofile group panicked", "err", r, "stack", string(debug.Stack()))
+			if err, ok := r.(error); ok && strings.Contains(err.Error(), "no such file or directory") {
+				return
+			}
+			panic(r)
+		}
+	}()
 
 	gInfo := g.readGroupInfo()
 	totalSize := gInfo.TotalSize

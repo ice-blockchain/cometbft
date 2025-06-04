@@ -8,6 +8,7 @@ import (
 
 	"github.com/cosmos/gogoproto/proto"
 	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/syndtr/goleveldb/leveldb"
 
 	dbm "github.com/cometbft/cometbft-db"
 	cmtstore "github.com/ice-blockchain/cometbft/api/cometbft/store/v1"
@@ -320,7 +321,9 @@ func (bs *BlockStore) LoadBlockMeta(height int64) *types.BlockMeta {
 	start := time.Now()
 	bz, err := bs.db.Get(bs.dbKeyLayout.CalcBlockMetaKey(height))
 	if err != nil {
-		panic(err)
+		if !errors.Is(err, leveldb.ErrClosed) {
+			panic(err)
+		}
 	}
 
 	addTimeSample(bs.metrics.BlockStoreAccessDurationSeconds.With("method", "load_block_meta"), start)()
