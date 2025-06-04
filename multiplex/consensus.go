@@ -339,10 +339,14 @@ func (reactor *Reactor) StartConsensusInstanceReactors(
 	if mempoolReactor, ok := servicesProvider(
 		ServiceKeyMempoolReactor,
 		chainID,
-	).(*mempl.Reactor); ok && !mempoolReactor.IsRunning() {
-		if err := mempoolReactor.Start(); err != nil {
-			return fmt.Errorf(
-				"error starting mempool reactor: %w", err)
+	).(*mempl.Reactor); ok {
+		mempoolReactor.SetSwitch(cometbftSwitch)
+
+		if !mempoolReactor.IsRunning() {
+			if err := mempoolReactor.Start(); err != nil {
+				return fmt.Errorf(
+					"error starting mempool reactor: %w", err)
+			}
 		}
 	}
 

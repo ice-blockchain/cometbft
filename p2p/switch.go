@@ -1212,6 +1212,11 @@ func (sw *Switch) acceptRoutine() {
 			)
 		}
 		if err != nil && !IsDialError(err) {
+			// If Close() was called, exit silently
+			if sw.transport.IsClosing() {
+				break
+			}
+
 			// If it's a duplicate, we must initialize and add it to reactors,
 			// otherwise if it's dialing/already existing, do nothing.
 			if duplConn, ok := err.(ErrRejected); ok {

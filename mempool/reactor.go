@@ -299,6 +299,7 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 			batch...,
 		)
 		if err != nil {
+			// TODO(midas): remove debug logs
 			memR.Logger.Debug("Acceptor rejected batch rollback",
 				"address", memR.userAddress,
 			)
