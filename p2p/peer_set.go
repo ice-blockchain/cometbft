@@ -189,6 +189,40 @@ func (ps *PeerSet) GetInOrOut(peerID ID, outboundFirst ...bool) *PeerImpl {
 	return peerExists
 }
 
+func (ps *PeerSet) GetByAddr(addr net.Addr, outbound bool) (p *PeerImpl) {
+	elligible := []*PeerImpl{}
+	peers := ps.Copy()
+	for _, peer := range peers {
+		if peer.mconn.SocketAddr() == addr {
+			elligible = append(elligible, peer)
+		}
+	}
+
+	if len(elligible) == 0 {
+		return // nil
+	}
+
+	if len(elligible) == 1 {
+		p = elligible[0]
+		return // p
+	}
+
+	for _, peer := range elligible {
+		if outbound && peer.IsOutbound() {
+			p = peer
+			return // p
+		} else if !outbound && !peer.IsOutbound() {
+			p = peer
+			return // p
+		}
+	}
+
+	// failsafe, couldn't find what is being requested,
+	// but we have elligible peers.
+	p = elligible[0]
+	return // p
+}
+
 // Remove removes the peer from the PeerSet.
 func (ps *PeerSet) Remove(peer Peer) bool {
 	ps.mtx.Lock()

@@ -444,27 +444,28 @@ func createMConnection(
 ) *cmtconn.MConnection {
 	onReceive := func(chainID string, chID byte, msgBytes []byte) {
 		var reactor Reactor
+
+		// If we don't have reactors for this chainID, try to find the channel
+		// in shared channels, otherwise ignore message to stop MConnection from
+		// panicking about an unknown channel for a reactor that is not yet ready.
 		if _, ok := reactorsByCh[chainID]; !ok {
-			if _, ok := reactorsByCh[cmtconn.SharedChannelsNamespace]; !ok {
-				panic(fmt.Sprintf(
-					"could not get channel %X, ChainID is unknown", chID))
+			_, hasSharedReactors := reactorsByCh[cmtconn.SharedChannelsNamespace]
+			if !hasSharedReactors {
+				return // ignore for now.
 			}
 
-			if _, ok := reactorsByCh[cmtconn.SharedChannelsNamespace][chID]; !ok {
-				panic(fmt.Sprintf(
-					"could not get channel %X, channel is not shared", chID))
+			if reactor, ok = reactorsByCh[cmtconn.SharedChannelsNamespace][chID]; !ok {
+				return // ignore for now.
 			}
-
-			reactor = reactorsByCh[cmtconn.SharedChannelsNamespace][chID]
 		} else {
 			reactor = reactorsByCh[chainID][chID]
 		}
 
 		if reactor == nil {
-			// Note that its ok to panic here as it's caught in the conn._recover,
-			// which does onPeerError.
-			panic(fmt.Sprintf("Unknown channel %X", chID))
+			// Don't panic, and ignore for now, i.e. peer needs to come back later.
+			return
 		}
+
 		mt := msgTypeByChID[chainID][chID]
 		msg := proto.Clone(mt)
 		err := proto.Unmarshal(msgBytes, msg)

@@ -283,7 +283,7 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 			return
 		}
 
-		// Mark peer active in CONSENSUS and BLOCKSYNC
+		// Mark INBOUND peer active in CONSENSUS and BLOCKSYNC
 		memR.Switch.InitPeerForScope(e.Src, memR.ChainID)
 		memR.Switch.AddPeerForScope(e.Src, memR.ChainID)
 
@@ -329,7 +329,7 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 			_, err := memR.dialerFn(memR.Switch, e.Src, memR.ChainID)
 			if err != nil {
 				memR.Logger.Error(
-					"failed to dial outbound peer from transaction",
+					"failed to dial peer from transaction message",
 					"chain_id", memR.ChainID,
 					"peer_in", e.Src,
 					"err", err,
@@ -337,7 +337,7 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 			}
 		}
 
-		// Mark peer active in CONSENSUS and BLOCKSYNC
+		// Mark INBOUND peer active in CONSENSUS and BLOCKSYNC
 		memR.Switch.InitPeerForScope(e.Src, memR.ChainID)
 		memR.Switch.AddPeerForScope(e.Src, memR.ChainID)
 
@@ -353,7 +353,13 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 			return
 		}
 
-		memR.processTxs(e.Src, protoTxs) // also, ACK this transaction
+		// Get an updated PeerSet for this ChainID
+		chainPeerSet := memR.Switch.Peers(memR.ChainID)
+		peerForAckTx := e.Src
+		if chainPeerSet.Has(e.Src.ID()) {
+			peerForAckTx = chainPeerSet.GetInOrOut(e.Src.ID(), true) // prefer outbound
+		}
+		memR.processTxs(peerForAckTx, protoTxs) // also, ACK this transaction
 
 	default:
 		memR.Logger.Error("Unknown message type", "src", e.Src, "chId", e.ChannelID, "msg", e.Message)
@@ -460,8 +466,8 @@ func (memR *Reactor) EnableInOutTxs() {
 	memR.pendingMsgsMtx.Lock()
 	for k, e := range memR.pendingMsgs {
 		peerForAckTx := e.Src
-		if chainPeerSet.HasOutbound(e.Src.ID()) {
-			peerForAckTx = chainPeerSet.GetOutbound(e.Src.ID())
+		if chainPeerSet.Has(e.Src.ID()) {
+			peerForAckTx = chainPeerSet.GetInOrOut(e.Src.ID(), true) // prefer outbound
 		}
 		memR.processTxs(peerForAckTx, e.Message.(*protomem.Txs).GetTxs()) // also, ACK this transaction
 		delete(memR.pendingMsgs, k)

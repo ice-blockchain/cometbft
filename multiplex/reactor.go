@@ -1510,7 +1510,7 @@ func (r *Reactor) DialRelayForScope(
 
 		// Find outbound connection to peer ID.
 		if dialWithSw.HasPeerID(peerAddr.ID, true) {
-			peerOutbound = dialWithSw.FindOutboundPeerByID(peerAddr.ID)
+			peerOutbound = dialWithSw.FindMatchingPeerByID(peerAddr.ID, true)
 		} else {
 			// Find outbound connection to external address.
 			externalAddr, err := net.ResolveTCPAddr("", peerAddr.DialString())
@@ -1518,7 +1518,7 @@ func (r *Reactor) DialRelayForScope(
 				return fmt.Errorf(
 					"failed to resolve connection to relay %s: %w", peerAddr.DialString(), err)
 			}
-			peerOutbound = dialWithSw.FindMatchingPeerByRemoteAddress(externalAddr)
+			peerOutbound = dialWithSw.FindMatchingPeerByRemoteAddress(externalAddr, true)
 		}
 	}
 

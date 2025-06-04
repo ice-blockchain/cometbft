@@ -88,7 +88,8 @@ type RelaysBroadcastFn func(
 	map[string][]*RelayAddress, // replReqRelays
 	string,
 	[]client.Transaction,
-	chan<- client.BroadcastStatus,
+	*sync.WaitGroup,
+	chan<- error,
 	cmtlog.Logger,
 )
 

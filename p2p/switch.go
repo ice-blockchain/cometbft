@@ -1199,14 +1199,14 @@ func (sw *Switch) acceptRoutine() {
 		p, err := sw.transport.Accept(safePeerConfig)
 		if p != nil {
 			sw.Logger.Debug(
-				"Inbound Peer now being processed",
+				"Received peer connection request",
 				"numPeers", numPeers,
 				"peer", p,
 				"err", err,
 			)
 		} else {
 			sw.Logger.Debug(
-				"Inbound Peer now being processed - empty peer",
+				"Failed accepting peer connection",
 				"numPeers", numPeers,
 				"err", err,
 			)
@@ -1221,23 +1221,43 @@ func (sw *Switch) acceptRoutine() {
 					"err", err,
 					"numPeers", numPeers,
 				)
-				if err := sw.addPeerByRemoteAddress(duplConn.conn.RemoteAddr(), ""); err != nil {
-					sw.Logger.Info(
-						"Inbound Peer rejected",
+
+				// Find peer by remote address and add for active ChainIDs.
+				// Calls sw.addPeer() if a INBOUND peer matches the remote address.
+				if err = sw.addPeerByRemoteAddress(duplConn.conn.RemoteAddr(), "", false); err != nil {
+					// If we have a desync of conn<->Peer, we must cleanup.
+					// if _, ok := err.(ErrConnCleanup); ok {
+					// 	sw.Logger.Info(
+					// 		"Cleaning up conn then retrying Accept",
+					// 		"addr", duplConn.conn.RemoteAddr().String(),
+					// 		"err", err,
+					// 	)
+
+					// 	// After cleanup, accept may be retried.
+					// 	sw.transport.CleanupConn(duplConn.conn)
+					// } else {
+					sw.Logger.Error("duplicate Inbound Peer rejected",
 						"err", err,
 						"addr", duplConn.conn.RemoteAddr().String(),
+						"conn", duplConn.conn,
 						"numPeers", numPeers,
 					)
-					continue
+					// }
 				}
-			} else {
-				// TODO(midas): remove debug logs
-				sw.Logger.Debug(
-					"Inbound Peer still dialing - not adding to reactors",
-					"err", err,
-					"numPeers", numPeers,
-				)
+
+				continue
 			}
+
+			// TODO(midas): add peer to reactors if EXISTING, get id from dialing or peerSets.
+			// TODO(midas): for peers currently dialing, we may need to later add to reactors.
+
+			// TODO(midas): remove debug logs
+			sw.Logger.Error(
+				"failed to process duplicate Inbound Peer",
+				"err", err,
+				"numPeers", numPeers,
+			)
+			continue
 		} else if err != nil {
 			// If Close() was called, exit silently
 			if sw.transport.IsClosing() {
@@ -1347,51 +1367,49 @@ func IsDialError(err error) bool {
 func (sw *Switch) addPeerByRemoteAddress(
 	remoteAddr net.Addr,
 	optionalPeerID ID,
+	outbound bool,
 ) error {
-	// Find discovery peer's ID, in cometbft
-	peerSearched := sw.FindMatchingPeerByRemoteAddress(remoteAddr)
+	// TODO(midas): remove debug logs
+	sw.Logger.Debug("Looking for peer by remote address",
+		"addr", remoteAddr,
+		"peer_id", optionalPeerID,
+		"outbound", outbound,
+	)
+
+	// Search for the peer.mconn.SocketAddr() with remoteAddr.
+	peerSearched := sw.FindMatchingPeerByRemoteAddress(remoteAddr, outbound)
 	if peerSearched == nil && len(optionalPeerID) > 0 {
 		// TODO(midas): remove debug logs
-		sw.Logger.Debug("Looking for peer by ID - not found by addr",
-			"peer_id", optionalPeerID,
+		sw.Logger.Debug("Looking for peer by ID - address not found",
 			"addr", remoteAddr,
+			"peer_id", optionalPeerID,
+			"outbound", outbound,
 		)
-		peerSearched = sw.FindOutboundPeerByID(optionalPeerID)
+
+		peerSearched = sw.FindMatchingPeerByID(optionalPeerID, outbound)
 	}
 
 	if peerSearched == nil {
-		sw.Logger.Error("failed to add peer for CometBFT - peer is not ready",
-			"conn", remoteAddr,
-		)
-		return errors.New("failed to add peer - peer is not ready")
+		// Reaching here may need a conn cleanup.
+		// return ErrConnCleanup{}
+		return fmt.Errorf(
+			"failed to find duplicate peer for addr %s", remoteAddr)
 	}
 
-	// Check if we have a multiplex reactor that can provide additional ChainIDs
-	sw.reactorsMtx.Lock()
-	multiplexReactor := sw.getMultiplexReactor()
-	sw.reactorsMtx.Unlock()
-	if multiplexReactor == nil {
-		sw.Logger.Error("failed to add peer for CometBFT - multiplex is not ready",
-			"conn", remoteAddr,
-			"peer", peerSearched,
-		)
-		return errors.New("failed to add peer - multiplex is not ready")
-	}
+	// TODO(midas): remove debug logs
+	sw.Logger.Debug("Found peer from remote address lookup",
+		"addr", remoteAddr,
+		"peer_id", optionalPeerID,
+		"outbound", outbound,
+		"peer", peerSearched,
+	)
 
-	// Use type assertion to access GetNetworks method
-	mxReactor := multiplexReactor.(interface{ GetNetworks() []string })
-	allNetworks := mxReactor.GetNetworks()
-
-	for _, chainID := range allNetworks {
-		// TODO(midas): remove debug logs
-		sw.Logger.Debug("Peer is ready - adding to reactors",
-			"peer", peerSearched,
-			"chain_id", chainID,
-		)
-
-		// Inbound peer is ready, manually add peers to reactors.
-		sw.InitPeerForScope(peerSearched, chainID)
-		sw.AddPeerForScope(peerSearched, chainID)
+	if err := sw.addPeer(peerSearched); err != nil {
+		sw.transport.Cleanup(peerSearched)
+		if peerSearched.IsRunning() {
+			_ = peerSearched.Stop()
+		}
+		return err
 	}
 
 	return nil
@@ -1420,8 +1438,9 @@ func (sw *Switch) addOutboundPeerWithConfig(
 
 	safePeerConfig := sw.GetPeerConfig()
 	p, err := sw.transport.Dial(*addr, safePeerConfig)
+	// TODO(midas): remove debug logs
 	sw.Logger.Debug(
-		"Outbound Peer now being processed",
+		"Sending Outbound Peer connection request",
 		"numPeers", numPeers,
 		"addr", addr.String(),
 		"peer_id", addr.ID,
@@ -1439,20 +1458,44 @@ func (sw *Switch) addOutboundPeerWithConfig(
 				"peer_id", addr.ID,
 				"numPeers", numPeers,
 			)
-			if err := sw.addPeerByRemoteAddress(duplConn.conn.RemoteAddr(), addr.ID); err != nil {
-				sw.Logger.Info(
-					"Outbound Peer rejected - should be already present",
+
+			// Find peer by remote address and add for active ChainIDs.
+			// Calls sw.addPeer() if a OUTBOUND peer matches the remote address or the ID.
+			if err = sw.addPeerByRemoteAddress(duplConn.conn.RemoteAddr(), addr.ID, true); err != nil {
+				// If we have a desync of conn<->Peer, we must cleanup.
+				// if _, ok := err.(ErrConnCleanup); ok {
+				// 	sw.Logger.Info(
+				// 		"Cleaning up conn then retrying dial process",
+				// 		"addr", duplConn.conn.RemoteAddr().String(),
+				// 		"peer_id", addr.ID,
+				// 		"err", err,
+				// 	)
+
+				// 	// CLEANUP - then RETRY DIAL
+				// 	sw.transport.CleanupConn(duplConn.conn)
+				// 	return sw.addOutboundPeerWithConfig(addr, cfg, chainID)
+				// } else {
+				sw.Logger.Error("duplicate Outbound Peer rejected",
 					"err", err,
-					"addr", duplConn.conn.RemoteAddr().String(),
 					"peer_id", addr.ID,
+					"addr", duplConn.conn.RemoteAddr().String(),
+					"conn", duplConn.conn,
 					"numPeers", numPeers,
 				)
+				// }
 			}
+
 			return nil
+		}
+
+		// Add outbound peer to correct reactors for "already exists" errors,
+		// and skip for peers currently dialing.
+		if sw.HasPeerID(addr.ID, true) {
+			p = sw.FindMatchingPeerByID(addr.ID, true)
 		} else {
 			// TODO(midas): remove debug logs
 			sw.Logger.Debug(
-				"Outbound Peer still dialing - not adding to reactors",
+				"Outbound Peer is already dialing (not an error)",
 				"err", err,
 				"addr", addr.DialString(),
 				"peer_id", addr.ID,
@@ -1499,32 +1542,27 @@ func (sw *Switch) addOutboundPeerWithConfig(
 	return nil
 }
 
-// TODO: peer lookup by addr, or proper linking between net conns / peer
-func (sw *Switch) FindOutboundPeerByID(id ID) (p *PeerImpl) {
+func (sw *Switch) FindMatchingPeerByID(id ID, outbound bool) (p *PeerImpl) {
 	sw.peersMtx.RLock()
 	defer sw.peersMtx.RUnlock()
 
 	for _, peerSet := range sw.peersByScope {
-		if peerSet.HasOutbound(id) {
-			p = peerSet.GetOutbound(id)
-			break
+		if peerById := peerSet.GetInOrOut(id, outbound); peerById != nil {
+			p = peerById
+			return // p
 		}
 	}
-	return // p
+	return // nil
 }
 
 // TODO: peer lookup by addr, or proper linking between net conns / peer
-func (sw *Switch) FindMatchingPeerByRemoteAddress(addr net.Addr) (p *PeerImpl) {
+func (sw *Switch) FindMatchingPeerByRemoteAddress(addr net.Addr, outbound bool) (p *PeerImpl) {
 	sw.peersMtx.RLock()
 	defer sw.peersMtx.RUnlock()
 
 	for _, peerSet := range sw.peersByScope {
-		peers := peerSet.Copy()
-		for _, peer := range peers {
-			if peer.conn.RemoteAddr() == addr {
-				p = peer
-				break
-			}
+		if p = peerSet.GetByAddr(addr, outbound); p != nil {
+			break
 		}
 	}
 	return // p
@@ -1532,16 +1570,14 @@ func (sw *Switch) FindMatchingPeerByRemoteAddress(addr net.Addr) (p *PeerImpl) {
 
 func (sw *Switch) filterPeer(p *PeerImpl) error {
 	// NOTE(midas):
-	// We don't need to throw a rejection error on duplicate peers at this
-	// stage because we skip known peers in [PeerSet#Add].
+	// We don't need to throw a rejection error on duplicate peers.
 	//
 	// if sw.peers.Has(p.ID()) {
 	// 	return ErrRejected{id: p.ID(), isDuplicate: true}
 	// }
 
-	errc := make(chan error, len(sw.peersByScope)*len(sw.peerFilters))
-
 	sw.peersMtx.RLock()
+	errc := make(chan error, len(sw.peersByScope)*len(sw.peerFilters))
 	for _, peerSet := range sw.peersByScope {
 		for _, f := range sw.peerFilters {
 			go func(f PeerFilterFunc, p Peer, errc chan<- error) {
@@ -1612,6 +1648,7 @@ func (sw *Switch) addPeer(p *PeerImpl) (err error) {
 		return // err
 	}
 
+	// TODO(midas): remove debug logs
 	peerLogger.Debug("Adding peer",
 		"peer", p,
 	)
@@ -1619,7 +1656,7 @@ func (sw *Switch) addPeer(p *PeerImpl) (err error) {
 	// Find ChainID values that we share with p.
 	relevantChainIds, err := sw.GetPeerActiveChainID(p)
 	if err != nil {
-		p.GetLogger().Error("Won't start a peer - failed to determine compatibility",
+		peerLogger.Error("Won't start a peer - failed to determine compatibility",
 			"err", err,
 		)
 		return // err
@@ -1662,10 +1699,17 @@ func (sw *Switch) addPeer(p *PeerImpl) (err error) {
 	// Start the peer's send/recv routines.
 	// Must start it before adding it to the peer set
 	// to prevent Start and Stop from being called concurrently.
-	if err := p.Start(); err != nil {
-		// Should never happen
-		sw.Logger.Error("Error starting peer", "err", err, "peer", p)
-		return err
+	if !p.IsRunning() {
+		if err := p.Start(); err != nil {
+			// Should never happen
+			sw.Logger.Error("Error starting peer", "err", err, "peer", p)
+			return err
+		}
+	} else {
+		// TODO(midas): remove debug logs
+		sw.Logger.Debug("Not starting peer - already running",
+			"peer", p,
+		)
 	}
 
 	// Start all the reactor protocols on the peer.

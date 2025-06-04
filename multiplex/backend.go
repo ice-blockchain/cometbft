@@ -1692,15 +1692,21 @@ func (b *MultiplexBackend) CancelBroadcastOperation(
 	ctx context.Context,
 	userAddress string,
 	transactions ...client.Transaction,
-) error {
-	routineCancelBroadcast := b.GetRoutines().CancelBroadcast
-	go routineCancelBroadcast(ctx,
-		userAddress,
-		transactions,
-		b.logger.With("tx_batch", txHashesToHex(transactions...)),
-	)
+) (err error) {
+	// Call RollbackTx callback locally and if accepted, cancel and remove.
+	if err = b.acceptor.RollbackTx(ctx, transactions...); err == nil {
+		routineCancelBroadcast := b.GetRoutines().CancelBroadcast
+		go routineCancelBroadcast(ctx,
+			userAddress,
+			transactions,
+			b.logger.With("tx_batch", txHashesToHex(transactions...)),
+		)
 
-	return b.RemoveTransactions(userAddress, transactions...)
+		b.RemoveTransactions(userAddress, transactions...)
+		return // nil
+	}
+
+	return // err
 }
 
 // getLocalNetworkHeights finds out about the last block height and determines
