@@ -321,67 +321,28 @@ func (reactor *Reactor) StartConsensusInstanceReactors(
 ) error {
 	// Add channels for the new ChainID to all existing peers
 	// This prevents "unknown channel - missing ChainID" errors when peers
-	// try to send messages for the new ChainID
+	// try to send messages for the new ChainID.
 	cometbftSwitch := reactor.GetEventSwitchForCometBFT()
 	if err := reactor.AddConnectionChannels(cometbftSwitch, []string{chainID}); err != nil {
 		return fmt.Errorf(
 			"error adding connection channels for new ChainID %s: %w", chainID, err)
 	}
-	// TODO(midas): remove debug logs
-	reactor.logger.Info("Added connection channels before activating ChainID", "chain_id", chainID)
 
 	// Also register this active runtime, so that in sw.addPeer()
 	// we include it in relevantScopes and call reactors.InitPeer().
 	cometbftSwitch.AddActiveRuntime(chainID)
 
-	servicesProvider := reactor.GetServicesProvider()
+	// Start all the reactors available for this ChainID.
+	reactorsForChain := cometbftSwitch.Reactors(chainID)
+	for name, reactor := range reactorsForChain {
+		// Update the attached switch
+		reactor.SetSwitch(cometbftSwitch)
 
-	if mempoolReactor, ok := servicesProvider(
-		ServiceKeyMempoolReactor,
-		chainID,
-	).(*mempl.Reactor); ok {
-		mempoolReactor.SetSwitch(cometbftSwitch)
-
-		if !mempoolReactor.IsRunning() {
-			if err := mempoolReactor.Start(); err != nil {
+		if !reactor.IsRunning() {
+			if err := reactor.Start(); err != nil {
 				return fmt.Errorf(
-					"error starting mempool reactor: %w", err)
+					"error starting %s reactor: %w", name, err)
 			}
-		}
-	}
-
-	if blocksyncReactor, ok := servicesProvider(
-		ServiceKeyBlockSyncReactor,
-		chainID,
-	).(*blocksync.Reactor); ok && !blocksyncReactor.IsRunning() {
-		if err := blocksyncReactor.Start(); err != nil {
-			return fmt.Errorf(
-				"error starting blocksync reactor: %w", err)
-		}
-	}
-
-	if consensusReactor, ok := servicesProvider(
-		ServiceKeyConsensusReactor,
-		chainID,
-	).(*cs.Reactor); ok && !consensusReactor.IsRunning() {
-		// Given sendStatusToPeers, we should send completion updates to
-		// all consensus peers, i.e. send a ChainReplicationComplete msg.
-		consensusReactor.SetSendStatusToPeer(sendStatusToPeers)
-		consensusReactor.SetRuntimeRegistry(reactor.GetRuntimeRegistry())
-
-		if err := consensusReactor.Start(); err != nil {
-			return fmt.Errorf(
-				"error starting consensus reactor: %w", err)
-		}
-	}
-
-	if evidenceReactor, ok := servicesProvider(
-		ServiceKeyEvidenceReactor,
-		chainID,
-	).(*evidence.Reactor); ok && !evidenceReactor.IsRunning() {
-		if err := evidenceReactor.Start(); err != nil {
-			return fmt.Errorf(
-				"error starting evidence reactor: %w", err)
 		}
 	}
 
