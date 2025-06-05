@@ -325,23 +325,60 @@ func (reactor *Reactor) StartConsensusInstanceReactors(
 	cometbftSwitch := reactor.GetEventSwitchForCometBFT()
 	if err := reactor.AddConnectionChannels(cometbftSwitch, []string{chainID}); err != nil {
 		return fmt.Errorf(
-			"error adding connection channels for new ChainID %s: %w", chainID, err)
+			"error adding connection channels for ChainID %s: %w", chainID, err)
 	}
 
 	// Also register this active runtime, so that in sw.addPeer()
 	// we include it in relevantScopes and call reactors.InitPeer().
 	cometbftSwitch.AddActiveRuntime(chainID)
 
+	// Given sendStatusToPeers, we should send completion updates to
+	// all consensus peers, i.e. send a ChainReplicationComplete msg.
+	consensusReactor := cometbftSwitch.Reactor(chainID, "CONSENSUS").(*cs.Reactor)
+	consensusReactor.SetSendStatusToPeers(sendStatusToPeers)
+	consensusReactor.SetRuntimeRegistry(reactor.GetRuntimeRegistry())
+
 	// Start all the reactors available for this ChainID.
 	reactorsForChain := cometbftSwitch.Reactors(chainID)
-	for name, reactor := range reactorsForChain {
+	for name, r := range reactorsForChain {
 		// Update the attached switch
-		reactor.SetSwitch(cometbftSwitch)
+		r.SetSwitch(cometbftSwitch)
 
-		if !reactor.IsRunning() {
-			if err := reactor.Start(); err != nil {
+		if !r.IsRunning() {
+			if err := r.Start(); err != nil {
 				return fmt.Errorf(
 					"error starting %s reactor: %w", name, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (reactor *Reactor) StopConsensusInstanceReactors(
+	ctx context.Context,
+	chainID string,
+) error {
+	// Add channels for the new ChainID to all existing peers
+	// This prevents "unknown channel - missing ChainID" errors when peers
+	// try to send messages for the new ChainID.
+	cometbftSwitch := reactor.GetEventSwitchForCometBFT()
+	if err := reactor.RemoveConnectionChannels(cometbftSwitch, []string{chainID}); err != nil {
+		return fmt.Errorf(
+			"error removing connection channels for ChainID %s: %w", chainID, err)
+	}
+
+	// Also remove this active runtime, so that in sw.addPeer()
+	// we don't include it in relevantScopes anymore.
+	cometbftSwitch.RemoveActiveRuntime(chainID)
+
+	// Stop all the reactors available for this ChainID.
+	reactorsForChain := cometbftSwitch.Reactors(chainID)
+	for name, r := range reactorsForChain {
+		if r.IsRunning() {
+			if err := r.Stop(); err != nil {
+				return fmt.Errorf(
+					"error stopping %s reactor: %w", name, err)
 			}
 		}
 	}

@@ -106,7 +106,7 @@ func WithRuntimeRegistry(
 }
 
 // SetSendStatusToPeer updates the atomic value of msgStatusToPeers bool.
-func (conR *Reactor) SetSendStatusToPeer(b bool) {
+func (conR *Reactor) SetSendStatusToPeers(b bool) {
 	conR.msgStatusToPeers.Swap(b)
 }
 
