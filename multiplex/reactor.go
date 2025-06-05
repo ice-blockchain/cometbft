@@ -378,6 +378,13 @@ func DefaultOnIdleCallback(reactor *Reactor) func(chainID string) error {
 	return func(chainID string) error {
 		reactor.logger.Debug("Now idling inactive node runtime", "chain_id", chainID)
 
+		// Stops mempool, consensus, blocksync, evidence.
+		reactor.StopConsensusInstanceReactors(
+			context.Background(),
+			chainID,
+		)
+
+		// Stops eventbus, index, privvalidator.
 		if err := reactor.StopNodeInstance(chainID); err != nil {
 			reactor.logger.Error("failed to stop node instance (idle-manager)",
 				"err", err)
