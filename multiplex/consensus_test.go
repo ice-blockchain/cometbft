@@ -19,7 +19,7 @@ import (
 	"github.com/ice-blockchain/cometbft/proxy"
 )
 
-func TestMultiplexReactorPrepareConsensusInstanceWithReactor(t *testing.T) {
+func TestMultiplexReactorConsensusPrepareConsensusInstanceWithReactor(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 5
@@ -61,7 +61,7 @@ func TestMultiplexReactorPrepareConsensusInstanceWithReactor(t *testing.T) {
 	}
 }
 
-func TestMultiplexReactorCreateConsensusInstanceReactors(t *testing.T) {
+func TestMultiplexReactorConsensusCreateConsensusInstanceReactors(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 5
@@ -128,6 +128,12 @@ func TestMultiplexReactorCreateConsensusInstanceReactors(t *testing.T) {
 		assert.NotNil(t, testEvidenceReactor, "evidence reactor must not be nil")
 	}
 }
+
+// TODO(midas): TestMultiplexReactorConsensusStartConsensusInstanceReactors
+// TODO(midas): TestMultiplexReactorConsensusStopConsensusInstanceReactors
+
+// ----------------------------------------------------------------------------
+// Helpers
 
 // CAUTION: the GenesisDocProvider is maleated to contain correct ChainIDs
 // CAUTION: the MultiplexConfig is entirely random and *not synchronized* with genesis docs.

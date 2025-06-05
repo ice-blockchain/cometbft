@@ -403,15 +403,10 @@ func TestMultiplexRuntimeInjectNewNetwork(t *testing.T) {
 
 	// Initialize and START the nodes multiplex
 	// For debug, change the logger to cmtlog.TestingLogger()
-	globalCfg, _,
-		testReactor := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), false) // startServers=false
+	_, _, testReactor,
+		shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
 
-	// Shutdown routine
-	defer func() {
-		defer os.RemoveAll(globalCfg.RootDir)
-		err := testReactor.Stop()
-		require.NoError(t, err)
-	}()
+	defer shutdownFn()
 
 	// Act
 	injectErr := testReactor.InjectNewNetwork(testChainID)
@@ -439,15 +434,10 @@ func TestMultiplexRuntimeInjectNewNetworkCallsAllocateNetwork(t *testing.T) {
 
 	// Initialize and START the nodes multiplex
 	// For debug, change the logger to cmtlog.TestingLogger()
-	globalCfg, _,
-		testReactor := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), false) // startServers=false
+	_, _, testReactor,
+		shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
 
-	// Shutdown routine
-	defer func() {
-		defer os.RemoveAll(globalCfg.RootDir)
-		err := testReactor.Stop()
-		require.NoError(t, err)
-	}()
+	defer shutdownFn()
 
 	// Act
 	injectErr := testReactor.InjectNewNetwork(testChainID)
@@ -505,15 +495,10 @@ func TestMultiplexRuntimeInjectNewNetworkCallsInjectStateMachine(t *testing.T) {
 
 	// Initialize and START the nodes multiplex
 	// For debug, change the logger to cmtlog.TestingLogger()
-	globalCfg, _,
-		testReactor := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), false) // startServers=false
+	_, _, testReactor,
+		shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
 
-	// Shutdown routine
-	defer func() {
-		defer os.RemoveAll(globalCfg.RootDir)
-		err := testReactor.Stop()
-		require.NoError(t, err)
-	}()
+	defer shutdownFn()
 
 	// Act
 	injectErr := testReactor.InjectNewNetwork(testChainID)
@@ -552,15 +537,10 @@ func TestMultiplexRuntimeInjectNewNetworkCallsRegisterNetwork(t *testing.T) {
 
 	// Initialize and START the nodes multiplex
 	// For debug, change the logger to cmtlog.TestingLogger()
-	globalCfg, _,
-		testReactor := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), false) // startServers=false
+	_, _, testReactor,
+		shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
 
-	// Shutdown routine
-	defer func() {
-		defer os.RemoveAll(globalCfg.RootDir)
-		err := testReactor.Stop()
-		require.NoError(t, err)
-	}()
+	defer shutdownFn()
 
 	// Act
 	injectErr := testReactor.InjectNewNetwork(testChainID)
@@ -582,21 +562,18 @@ func TestMultiplexRuntimeInjectNewNetworkCallsRegisterNetwork(t *testing.T) {
 }
 
 func TestMultiplexRuntimeInjectNewRuntime(t *testing.T) {
+	// IMPORTANT: We use numChains=0 in this test so it is important
+	// to test whether P2P and RPC servers will be shutdown.
 	defer goleak.VerifyNone(t)
 
 	numChains := 0
 
 	// Initialize and START the nodes multiplex
 	// For debug, change the logger to cmtlog.TestingLogger()
-	globalCfg, _,
-		testReactor := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), false) // startServers=false
+	_, _, testReactor,
+		shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
 
-	// Shutdown routine
-	defer func() {
-		defer os.RemoveAll(globalCfg.RootDir)
-		err := testReactor.Stop()
-		require.NoError(t, err)
-	}()
+	defer shutdownFn()
 
 	// Inject testChainID
 	injectErr := testReactor.InjectNewNetwork(testChainID)
@@ -617,18 +594,10 @@ func TestMultiplexRuntimeInjectNewRuntimeWithOthers(t *testing.T) {
 
 	// Initialize and START the nodes multiplex
 	// For debug, change the logger to cmtlog.TestingLogger()
-	globalCfg, _,
-		testReactor := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), false) // startServers=false
+	_, _, testReactor,
+		shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
 
-	// Shutdown routine
-	defer func() {
-		defer os.RemoveAll(globalCfg.RootDir)
-
-		if testReactor.IsRunning() {
-			err := testReactor.Stop()
-			require.NoError(t, err)
-		}
-	}()
+	defer shutdownFn()
 
 	// Inject testChainID
 	injectErr := testReactor.InjectNewNetwork(testChainID)
@@ -640,9 +609,6 @@ func TestMultiplexRuntimeInjectNewRuntimeWithOthers(t *testing.T) {
 	// Act
 	runtimeErr := testReactor.InjectNewRuntime(context.Background(), testChainID)
 	assert.NoError(t, runtimeErr, "should spawn parallel process for node runtime")
-
-	err := testReactor.Stop()
-	assert.NoError(t, err, "should stop the reactor including new network")
 }
 
 // ----------------------------------------------------------------------------

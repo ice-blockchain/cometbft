@@ -409,42 +409,32 @@ func ResetTestMultiplexReactorRuntimeWithInjection(
 
 	// Initialize and START the nodes multiplex
 	// For debug, change the logger to cmtlog.TestingLogger()
-	globalCfg, _,
-		testReactor := assertStartNodesMultiplex(tb, numChains, customLogger, false) // startServers=false
-
-	// Shutdown routine
-	shutdownRoutine := func() {
-		defer os.RemoveAll(globalCfg.RootDir)
-
-		setReactorNodesStopsServers(testReactor)
-
-		err := testReactor.Stop()
-		require.NoError(tb, err)
-	}
+	_, _, testReactor,
+		shutdownFn := assertStartNodesMultiplex(tb, numChains, customLogger, true) // startServers=true
 
 	// Generate new random network ChainID
 	newUserPubKey := ed25519.GenPrivKey().PubKey()
 	newUserAddress := newUserPubKey.Address().String()
 	fingerprint := makeFingerprint("Posts") // This is the "scope"
 
-	testExtChainID, err := mx.NewExtendedChainID(newUserAddress, fingerprint)
+	testInjectChainID, err := mx.NewExtendedChainID(newUserAddress, fingerprint)
 	require.NoError(tb, err)
 
-	testChainID := testExtChainID.String()
+	injectChainID := testInjectChainID.String()
 
-	// Inject testChainID resources
-	allocErr := testReactor.AllocateNetwork(testChainID)
+	// Inject injectChainID resources
+	allocErr := testReactor.AllocateNetwork(injectChainID)
 	require.NoError(tb, allocErr, "should allocate network resources")
 
 	// Inject GenesisDoc to prepare state machine
 	configsPaths := testReactor.GetConfigsPaths()
-	require.Contains(tb, configsPaths, testChainID)
+	require.Contains(tb, configsPaths, injectChainID)
 
-	testConfDir := configsPaths[testChainID]
+	testConfDir := configsPaths[injectChainID]
 	testValidator := ed25519.GenPrivKey()
 	testGenesisDoc := types.GenesisDoc{
 		GenesisTime:     cmttime.Now(),
-		ChainID:         testChainID,
+		ChainID:         injectChainID,
 		ConsensusParams: types.DefaultConsensusParams(),
 		Validators: []types.GenesisValidator{
 			types.GenesisValidator{
@@ -457,24 +447,24 @@ func ResetTestMultiplexReactorRuntimeWithInjection(
 	}
 
 	testIcsGenDocSet, injectErr := testReactor.InjectGenesisDoc(
-		testChainID,
+		injectChainID,
 		testConfDir,
 		testGenesisDoc,
 	)
 	require.NoError(tb, injectErr, "should inject network genesis doc")
 
 	// Prepare state machine for injected network
-	stateErr := testReactor.InjectStateMachine(testChainID, testIcsGenDocSet)
+	stateErr := testReactor.InjectStateMachine(injectChainID, testIcsGenDocSet)
 	require.NoError(tb, stateErr, "should inject network state machine")
 
 	// Prepare config overwrite (ports, seeds, etc.)
-	actualConfOverwrite, configErr := testReactor.MakeNetworkConfigOverwrite(testExtChainID)
+	actualConfOverwrite, configErr := testReactor.MakeNetworkConfigOverwrite(testInjectChainID)
 	require.NoError(tb, configErr, "should inject network config overwrite")
 
 	// .. must also register in Reactor
-	testReactor.RegisterInstance(mx.InstanceKeyConfig, testChainID, actualConfOverwrite)
+	testReactor.RegisterInstance(mx.InstanceKeyConfig, injectChainID, actualConfOverwrite)
 
-	return testExtChainID, testReactor, shutdownRoutine
+	return testInjectChainID, testReactor, shutdownFn
 }
 
 // Do not use this in TestMultiplexReactorNewReactor.

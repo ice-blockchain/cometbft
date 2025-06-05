@@ -49,7 +49,7 @@ func mockMultiplexGenesisDocProviderFunc(
 	}
 }
 
-func TestMultiplexReactorInitMultiplexStatesEmptyState(t *testing.T) {
+func TestMultiplexReactorStateInitMultiplexStatesEmptyState(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 5
@@ -115,7 +115,7 @@ func TestMultiplexReactorInitMultiplexStatesEmptyState(t *testing.T) {
 	}
 }
 
-func TestMultiplexReactorInitMultiplexStatesFilledState(t *testing.T) {
+func TestMultiplexReactorStateInitMultiplexStatesFilledState(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 5
@@ -182,7 +182,7 @@ func TestMultiplexReactorInitMultiplexStatesFilledState(t *testing.T) {
 	}
 }
 
-func TestMultiplexReactorInitMultiplexBlockStores(t *testing.T) {
+func TestMultiplexReactorStateInitMultiplexBlockStores(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 5
@@ -208,6 +208,9 @@ func TestMultiplexReactorInitMultiplexBlockStores(t *testing.T) {
 		assert.IsType(t, &bs.BlockStore{}, chainBlockStore)
 	}
 }
+
+// ----------------------------------------------------------------------------
+// Helpers
 
 // CAUTION: the GenesisDocProvider is maleated to contain correct ChainIDs
 // CAUTION: the MultiplexConfig is entirely random and *not synchronized* with genesis docs.

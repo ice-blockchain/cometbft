@@ -2,9 +2,7 @@ package multiplex_test
 
 import (
 	"context"
-	"fmt"
 	"os"
-	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,53 +12,14 @@ import (
 	"github.com/ice-blockchain/cometbft/config"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	mx "github.com/ice-blockchain/cometbft/multiplex"
-	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/proxy"
 )
-
-// mockNodeInfoWithNetworks creates a [mx.MultiNetworkNodeInfo] instance that
-// is adapted to the list of networks, moniker name and p2p.NodeKey ID.
-func mockNodeInfoWithNetworks(
-	id p2p.ID,
-	name string,
-	networks []string,
-) *mx.MultiNetworkNodeInfo {
-	numNetworks := len(networks)
-	protocolVersions := make([]mx.ChainProtocolVersion, numNetworks)
-
-	// Make sure ChainIDs are sorted
-	slices.Sort(networks)
-
-	p2pListenAddr := fmt.Sprintf("127.0.0.1:%d", getFreePort())
-	rpcListenAddr := fmt.Sprintf("127.0.0.1:%d", getFreePort())
-
-	// create versions and listen addresses per network
-	for i, chainID := range networks {
-		protocolVersion := mx.NewChainProtocolVersion(chainID, mx.DefaultProtocolVersion)
-		protocolVersions[i] = protocolVersion
-	}
-
-	return &mx.MultiNetworkNodeInfo{
-		Networks:         networks,
-		ProtocolVersions: protocolVersions,
-
-		DefaultNodeID: id,
-		ListenAddr:    p2pListenAddr,
-		Version:       "1.2.3-rc0-deadbeef",
-		Channels:      []byte{testCh}, // defined in handshaker_test
-		Moniker:       name,
-		Other: p2p.DefaultNodeInfoOther{
-			TxIndex:    "on",
-			RPCAddress: rpcListenAddr,
-		},
-	}
-}
 
 func TestMultiplexReactorP2PCreateTransportSwitchesWithReactors(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 5
-	rootDir, globalCfg, reactor := ResetTestMultiplexP2P(t, numChains)
+	rootDir, _, reactor := ResetTestMultiplexP2P(t, numChains)
 	defer func() {
 		defer os.RemoveAll(rootDir)
 
@@ -74,12 +33,8 @@ func TestMultiplexReactorP2PCreateTransportSwitchesWithReactors(t *testing.T) {
 	testChainIds := reactor.GetNetworks()
 
 	// Requires correct MultiNetworkNodeInfo
-	testNodeInfo := mockNodeInfoWithNetworks(
-		reactor.GetNodeKey().ID(),
-		globalCfg.Moniker,
-		testChainIds,
-	)
-	reactor.SetNodeInfo(testNodeInfo)
+	_, infoErr := reactor.MakeMultiNetworkNodeInfo()
+	require.NoError(t, infoErr)
 
 	// Should create [p2p.MultiplexTransport] instances
 	err := reactor.CreateTransportSwitchesWithReactors(context.TODO(), testChainIds)
@@ -111,7 +66,7 @@ func TestMultiplexReactorP2PCreateAddressBooks(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 5
-	rootDir, globalCfg, reactor := ResetTestMultiplexP2P(t, numChains)
+	rootDir, _, reactor := ResetTestMultiplexP2P(t, numChains)
 	defer func() {
 		defer os.RemoveAll(rootDir)
 
@@ -125,12 +80,8 @@ func TestMultiplexReactorP2PCreateAddressBooks(t *testing.T) {
 	testChainIds := reactor.GetNetworks()
 
 	// Requires correct MultiNetworkNodeInfo
-	testNodeInfo := mockNodeInfoWithNetworks(
-		reactor.GetNodeKey().ID(),
-		globalCfg.Moniker,
-		testChainIds,
-	)
-	reactor.SetNodeInfo(testNodeInfo)
+	_, infoErr := reactor.MakeMultiNetworkNodeInfo()
+	require.NoError(t, infoErr)
 
 	err := reactor.CreateTransportSwitchesWithReactors(context.TODO(), testChainIds)
 	require.NoError(t, err, "should not error creating transports and switches")
@@ -156,6 +107,14 @@ func TestMultiplexReactorP2PCreateAddressBooks(t *testing.T) {
 		assert.NotNil(t, testSwitch.GetAddrBook())
 	}
 }
+
+// TODO(midas): TestMultiplexReactorP2PCreateOrLoadCometBFTEventSwitch
+// TODO(midas): TestMultiplexReactorP2PMakeMultiNetworkNodeInfo
+// TODO(midas): TestMultiplexReactorP2PAddConnectionChannels
+// TODO(midas): TestMultiplexReactorP2PRemoveConnectionChannels
+
+// ----------------------------------------------------------------------------
+// Helpers
 
 // CAUTION: this test method sets up a full consensus multiplex with reactors.
 // CAUTION: this method *waits* for all networks to be configured with [Reactor#WaitForNetworks].
