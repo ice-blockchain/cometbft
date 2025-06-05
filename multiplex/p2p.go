@@ -2,6 +2,7 @@ package multiplex
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/internal/blocksync"
+	bc "github.com/ice-blockchain/cometbft/internal/blocksync"
 	cs "github.com/ice-blockchain/cometbft/internal/consensus"
 	"github.com/ice-blockchain/cometbft/internal/evidence"
 	mempl "github.com/ice-blockchain/cometbft/mempool"
@@ -17,6 +19,9 @@ import (
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/p2p/conn"
 	"github.com/ice-blockchain/cometbft/p2p/pex"
+	sm "github.com/ice-blockchain/cometbft/state"
+	"github.com/ice-blockchain/cometbft/statesync"
+	"github.com/ice-blockchain/cometbft/version"
 )
 
 func (reactor *Reactor) CreateOrLoadCometBFTEventSwitch(addr *p2p.NetAddress) *p2p.Switch {
@@ -26,16 +31,28 @@ func (reactor *Reactor) CreateOrLoadCometBFTEventSwitch(addr *p2p.NetAddress) *p
 	}
 
 	var (
-		nodeKey  *p2p.NodeKey          = reactor.GetNodeKey()
-		nodeInfo *MultiNetworkNodeInfo = reactor.GetMultiNetworkNodeInfo()
+		nodeInfo *MultiNetworkNodeInfo
+		err      error
+		nodeKey  *p2p.NodeKey = reactor.GetNodeKey()
 	)
 
 	// TODO(midas): remove debug logs
 	reactor.logger.Debug("Creating switch for P2P cometbft",
 		"addr", addr.String(),
+		"id", nodeKey.ID(),
 	)
 
 	p2pLogger := reactor.logger.With("module", "p2p")
+
+	if nodeInfo, err = reactor.MakeMultiNetworkNodeInfo(); err != nil {
+		// TODO(midas): remove debug logs
+		reactor.logger.Error("Failed to create multiplex node information",
+			"addr", addr.String(),
+			"id", nodeKey.ID(),
+			"err", err,
+		)
+	}
+
 	nodeConfig := reactor.GetNodeConfig()
 
 	p2pMetricsId := strings.Join([]string{
@@ -46,6 +63,10 @@ func (reactor *Reactor) CreateOrLoadCometBFTEventSwitch(addr *p2p.NetAddress) *p
 		"node_id", string(nodeKey.ID()),
 	)
 
+	// 1) Create the p2p transport
+	//
+	// We use a legacy structure [p2p.MultiplexTransport], but inject
+	// a custom TLS handshake implementation with [MultiplexTransportHandshake].
 	mConnConfig := p2p.MConnConfig(nodeConfig.P2P)
 	localTransport := p2p.NewMultiplexTransportWithCustomHandshake(
 		nodeInfo,
@@ -73,6 +94,92 @@ func (reactor *Reactor) CreateOrLoadCometBFTEventSwitch(addr *p2p.NetAddress) *p
 	reactor.SetTransportForCometBFT(localTransport)
 
 	return cometbftSwitch
+}
+
+// MakeMultiNetworkNodeInfo creates the [MultiNetworkNodeInfo] instance as
+// will be attached to the CometBFT [p2p.Switch].
+//
+// TODO(midas): txIndexer may be disabled but multiplex reports "on".
+// txIndexer may be disabled but multiplex always *reports* it as enabled.
+// The reason is that the `Other` part of the MultiNetworkNodeInfo is not
+// available on a per-network basis. A fix would be to include this in a
+// custom [ChainProtocolVersion] as the type is related to node capacities.
+func (reactor *Reactor) MakeMultiNetworkNodeInfo() (
+	nodeInfo *MultiNetworkNodeInfo,
+	err error,
+) {
+	// Get an ordered list of replicated chains
+	knownNetworks := reactor.GetNetworks()
+	countNetworks := len(knownNetworks)
+
+	statesProvider := reactor.GetInstanceProvider(InstanceKeyState)
+
+	// Fill ProtocolVersions and Networks fields
+	protocolVersions := make([]ChainProtocolVersion, countNetworks)
+	for i, chainID := range knownNetworks {
+		// Fill only for *fully* supported networks (available now).
+		if nil == statesProvider(chainID) {
+			continue
+		}
+
+		stateMachine := statesProvider(chainID).(sm.State)
+
+		protocolVersions[i] = NewChainProtocolVersion(chainID, p2p.NewProtocolVersion(
+			version.P2PProtocol,
+			stateMachine.Version.Consensus.Block,
+			stateMachine.Version.Consensus.App,
+		))
+	}
+
+	nodeConfig := reactor.GetNodeConfig()
+	promoteAddr := nodeConfig.P2P.ExternalAddress
+	if promoteAddr == "" {
+		promoteAddr = nodeConfig.P2P.ListenAddress
+	}
+	p2pListenAddr := overwriteListenPort(
+		promoteAddr,
+		int(nodeConfig.DiscoveryPort)+1, // defaults to 30002
+	)
+
+	rpcListenAddr := overwriteListenPort(
+		nodeConfig.RPC.ListenAddress,
+		int(nodeConfig.DiscoveryPort)+2, // defaults to 30003
+	)
+
+	nodeKey := reactor.GetNodeKey()
+
+	txIndexerStatus := "on"
+	nodeInfo = &MultiNetworkNodeInfo{
+		DefaultNodeID:    nodeKey.ID(),
+		Networks:         knownNetworks,
+		ProtocolVersions: protocolVersions,
+		ListenAddr:       p2pListenAddr,
+		Version:          version.CMTSemVer,
+		Channels: []byte{
+			bc.BlocksyncChannel,
+			cs.StateChannel, cs.DataChannel, cs.VoteChannel, cs.VoteSetBitsChannel,
+			mempl.MempoolChannel,
+			evidence.EvidenceChannel,
+			statesync.SnapshotChannel, statesync.ChunkChannel,
+			pex.PexChannel,
+
+			// AckBroadcastChannel may be used to send AckTransactionBroadcast messages.
+			server.AckBroadcastChannel,
+			// RuntimeChannel may be used to send ChainReplicationComplete messages.
+			server.RuntimeChannel,
+		},
+		Moniker: nodeConfig.BaseConfig.Moniker,
+		Other: p2p.DefaultNodeInfoOther{
+			TxIndex:    txIndexerStatus,
+			RPCAddress: rpcListenAddr,
+		},
+	}
+
+	if err = nodeInfo.Validate(); err == nil {
+		reactor.SetNodeInfo(nodeInfo)
+	}
+
+	return // nodeInfo, err
 }
 
 // CreateTransportSwitches initializes P2P transports using the legacy
@@ -127,19 +234,12 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 	serviceProvider := reactor.GetServicesProvider()
 	configProvider := reactor.GetInstanceProvider(InstanceKeyConfig)
 
-	// We iterate through an ordered list of known networks to create
-	// one instance of [p2p.MultiplexTransport] and one instance of [p2p.Switch]
-	// for each replicated chain.
-	//
-	// Additionally, we feed the previously created consensus reactors.
+	// We iterate through an ordered list of known networks to add reactors
+	// for each of the available ChainID.
 	for _, chainID := range networks {
 		// The config overwrite notably contains P2P.Seeds overwrite
 		cfgOverwrite := configProvider(chainID).(*config.Config)
 
-		// 1) Create the p2p transport
-		//
-		// We use a legacy structure [p2p.MultiplexTransport], but inject
-		// a custom TLS handshake implementation with [MultiplexTransportHandshake].
 		var (
 			connFilters        = []p2p.ConnFilterFunc{}
 			persistentPeers    = splitAndTrimEmpty(cfgOverwrite.P2P.PersistentPeers, ",", " ")
@@ -151,33 +251,46 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 			connFilters = append(connFilters, p2p.ConnDuplicateIPFilter())
 		}
 
-		// 2) Feed reactors from [CreateConsensusInstanceReactors]
+		// We should error if consensus reactors for this ChainID are not ready.
+		memR := serviceProvider(ServiceKeyMempoolReactor, chainID)
+		bsR := serviceProvider(ServiceKeyBlockSyncReactor, chainID)
+		conR := serviceProvider(ServiceKeyConsensusReactor, chainID)
+		evR := serviceProvider(ServiceKeyEvidenceReactor, chainID)
+		if memR == nil || bsR == nil || conR == nil || evR == nil {
+			p2pLogger.Error("Failed to load consensus reactors - not available",
+				"node_id", nodeKey.ID(),
+				"chain_id", chainID,
+				"mempool", memR,
+				"blocksync", bsR,
+				"consensus", conR,
+				"evidence", evR,
+			)
+			return errors.New("failed to load consensus reactors")
+		}
+
+		// Feed reactors, created in [CreateConsensusInstanceReactors].
 		//
 		// The event switch contains a pointer to internal module reactors.
-		eventSwitch.AddReactor(chainID, "MEMPOOL",
-			serviceProvider(ServiceKeyMempoolReactor, chainID).(*mempl.Reactor))
-		eventSwitch.AddReactor(chainID, "BLOCKSYNC",
-			serviceProvider(ServiceKeyBlockSyncReactor, chainID).(*blocksync.Reactor))
-		eventSwitch.AddReactor(chainID, "CONSENSUS",
-			serviceProvider(ServiceKeyConsensusReactor, chainID).(*cs.Reactor))
-		eventSwitch.AddReactor(chainID, "EVIDENCE",
-			serviceProvider(ServiceKeyEvidenceReactor, chainID).(*evidence.Reactor))
+		eventSwitch.AddReactor(chainID, "MEMPOOL", memR.(*mempl.Reactor))
+		eventSwitch.AddReactor(chainID, "BLOCKSYNC", bsR.(*blocksync.Reactor))
+		eventSwitch.AddReactor(chainID, "CONSENSUS", conR.(*cs.Reactor))
+		eventSwitch.AddReactor(chainID, "EVIDENCE", evR.(*evidence.Reactor))
 
 		if len(persistentPeers) > 0 {
 			if err := eventSwitch.AddPersistentPeers(persistentPeers); err != nil {
-				return fmt.Errorf("could not add peers from persistent_peers field: %w", err)
+				return fmt.Errorf("failed to add peers from persistent_peers field: %w", err)
 			}
 		}
 
 		if len(unconditionalPeers) > 0 {
 			if err := eventSwitch.AddUnconditionalPeerIDs(unconditionalPeers); err != nil {
-				return fmt.Errorf("could not add peer ids from unconditional_peer_ids field: %w", err)
+				return fmt.Errorf("failed to add peer ids from unconditional_peer_ids field: %w", err)
 			}
 		}
 	}
 
 	p2pLogger.Info("P2P Node ID",
-		"ID", nodeKey.ID(),
+		"node_id", nodeKey.ID(),
 		"file", globalConfig.NodeKeyFile(),
 		"info", nodeInfo,
 	)

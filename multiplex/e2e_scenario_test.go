@@ -3105,7 +3105,7 @@ func TestScenarioConcurrentNewChains3(t *testing.T) {
 	numChains := 0
 	numRelays := 3
 
-	servers, shutdownFn := ResetTestScenarioRelaysWithLogs(t, numChains, numRelays)
+	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
 	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)

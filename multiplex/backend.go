@@ -478,8 +478,8 @@ func (b *MultiplexBackend) CreateOrLoadDiscoveryEventSwitch() *p2p.Switch {
 	sw.SetNodeKey(b.reactor.GetNodeKey())
 
 	// Make sure we listen to ChainReplicationRequest messages
+	// Note that this reactor is STARTED in NewNodesMultiplex.
 	sw.AddReactor(conn.SharedChannelsNamespace, "MULTIPLEX", b.reactor)
-
 	b.reactor.SetEventSwitchForDiscovery(sw)
 	return sw
 }
@@ -537,14 +537,11 @@ func (b *MultiplexBackend) UpdateMultiNetworkNodeInfo(
 	return nil
 }
 
-// recoverFromPanics tries to close the backend after a panic.
-func (b *MultiplexBackend) recoverFromPanics() {
+// shutdownOnPanic tries to close the backend after a panic.
+func (b *MultiplexBackend) shutdownOnPanic() {
 	if r := recover(); r != nil {
 		b.logger.Error("Multiplex panicked", "err", r, "stack", string(debug.Stack()))
-
-		if err := b.Close(); err != nil {
-			b.logger.Error("Graceful shutdown failed", "err", err, "stack", string(debug.Stack()))
-		}
+		close(b.shutdownCh)
 	}
 }
 
@@ -576,16 +573,6 @@ func (b *MultiplexBackend) MustStart() {
 	}
 	b.reactor.runtimesMutex.Unlock()
 
-	// We use a wait group to block the process until the transport
-	// and p2p switches are created and until we start listening.
-	var wg sync.WaitGroup
-	wg.Add(1)
-
-	// Since we'll modify the reactor and eventSwitch internals,
-	// we lock the mutex to ensure that initialization completes.
-	b.relayMtx.Lock()
-	defer b.relayMtx.Unlock() // happens after wg.Wait()
-
 	// Filled with relay IDs upon sending ChainReplicationRequest.
 	b.replRequestsMtx.Lock()
 	b.replRequestsSent = map[string][]string{}
@@ -613,133 +600,183 @@ func (b *MultiplexBackend) MustStart() {
 
 	go b.metricsReporter()
 
-	// Here we should wait forever, until the internal Reactor instance
-	// is told to replicate a new chain using the server.ReplicationChannel.
-	go func() {
-		defer b.recoverFromPanics()
+	// Panics recovery closes shutdownCh to stop goroutines
+	// and attempt a graceful shutdown of the backend.
+	defer b.shutdownOnPanic()
 
-		// CAUTION:
+	// Start P2P and RPC servers for Discovery.
+	//
+	// P2P: DiscoveryPort, accepts messages on [server.ReplicationChannel].
+	// RPC: DiscoveryPort-1, accepts calls to [server.RelayInfo].
+	discoveryWg := new(sync.WaitGroup)
+	discoveryWg.Add(1)
+	go func(wg *sync.WaitGroup) {
+		// Since we'll modify the reactor and eventSwitch internals,
+		// we lock the mutex to ensure that initialization completes.
+		b.relayMtx.Lock()
+		nodeCfg := b.reactor.GetNodeConfig()
+		nodeKey := b.reactor.GetNodeKey()
+
 		// We open a discovery port which is required such that the relay may
 		// be communicated to, even without hosting any replicated chain.
-		//
+		if _, err := b.StartP2PServerDiscovery(nodeCfg, nodeKey); err != nil {
+			b.errorsCh <- fmt.Errorf("error with discovery P2P server: %w", err)
+		}
+
 		// Additionally, a RPC server is started which permits to read
-		// node information such as the node ID.
-
-		if _, err := b.StartP2PServerDiscovery(
-			b.reactor.GetNodeConfig(),
-			b.reactor.GetNodeKey(),
-		); err != nil {
-			wg.Done()
-			b.logger.Error("error with P2P server", "err", err)
-			return
+		// node information such as the node ID, with [server.RelayInfo].
+		if _, err := b.StartRPCServerDiscovery(nodeCfg, nodeKey); err != nil {
+			b.errorsCh <- fmt.Errorf("error with discovery RPC server: %w", err)
 		}
 
-		if _, err := b.StartRPCServerDiscovery(
-			b.reactor.GetNodeConfig(),
-			b.reactor.GetNodeKey(),
-		); err != nil {
-			wg.Done()
-			b.logger.Error("error with RPC server", "err", err)
-			return
-		}
+		// Done setting up Discovery
+		b.relayMtx.Unlock()
+		wg.Done()
 
-		// Start the Prometheus server, if enabled.
-		if err := b.StartPrometheusServer(); err != nil {
-			wg.Done()
-			b.logger.Error("error with Prometheus server", "err", err)
-			return
-		}
-
-		discoverySwitch := b.reactor.GetEventSwitchForDiscovery()
-		b.logger.Info("Process idle, waiting to replicate chains...",
+		b.logger.Info("Discovery servers started - waiting to replicate chains",
 			"time", cmttime.Now(),
 			"id", b.reactor.GetNodeKey().ID(),
 			"p2p", b.broadcastAddr.DialString(),
 			"rpc", b.discoveryAddr.DialString(),
-			"mon", b.prometheusAddr.DialString(),
-			"info", discoverySwitch.NodeInfo(),
 		)
+
+		// Keep alive until shutdown
+		select {
+		case <-b.shutdownCh:
+			return
+		}
+	}(discoveryWg)
+
+	// Complete setup of discovery, then proceed.
+	discoveryWg.Wait()
+
+	// Start the Prometheus server.
+	//
+	// HTTP: DiscoveryPort+3.
+	monitoringWg := new(sync.WaitGroup)
+	monitoringWg.Add(1)
+	go func(wg *sync.WaitGroup) {
+		// Since we'll modify the reactor and eventSwitch internals,
+		// we lock the mutex to ensure that initialization completes.
+		b.relayMtx.Lock()
+
+		// Start the Prometheus server, if enabled.
+		if err := b.StartPrometheusServer(); err != nil {
+			b.errorsCh <- fmt.Errorf("error with Prometheus server: %w", err)
+		}
+
+		// Done setting up Prometheus
+		b.relayMtx.Unlock()
+		wg.Done()
+
+		b.logger.Info("Prometheus server started",
+			"time", cmttime.Now(),
+			"id", b.reactor.GetNodeKey().ID(),
+			"mon", b.prometheusAddr.DialString(),
+		)
+
+		// Keep alive until shutdown
+		select {
+		case <-b.shutdownCh:
+			return
+		}
+	}(monitoringWg)
+
+	// Complete setup of Prometheus, then proceed.
+	monitoringWg.Wait()
+
+	// Start P2P and RPC servers for CometBFT.
+	//
+	// P2P: DiscoveryPort+1, accepts messages on CometBFT reactors channels.
+	// RPC: DiscoveryPort+2, accepts requests to CometBFT RPC, by ChainID.
+	cometbftWg := new(sync.WaitGroup)
+	cometbftWg.Add(1)
+	go func(wg *sync.WaitGroup) {
+		// Since we'll modify the reactor and eventSwitch internals,
+		// we lock the mutex to ensure that initialization completes.
+		b.relayMtx.Lock()
 
 		// Start the RPC server before the P2P server
 		// so we can eg. receive txs for the first block
 		if err := b.StartRPCServerCometBFT(); err != nil {
-			wg.Done()
-			b.logger.Error("error with CometBFT RPC server", "err", err)
-			return
+			b.errorsCh <- fmt.Errorf("error with CometBFT RPC server: %w", err)
 		}
 
 		// Then start the P2P server
 		if err := b.StartP2PServerCometBFT(); err != nil {
-			wg.Done()
-			b.logger.Error("error with CometBFT P2P server", "err", err)
-			return
+			b.errorsCh <- fmt.Errorf("error with CometBFT P2P server: %w", err)
 		}
 
+		b.relayMtx.Unlock()
+		wg.Done()
+
 		cometbftSwitch := b.reactor.GetEventSwitchForCometBFT()
-		b.logger.Info("CometBFT RPC and P2P listening",
+		b.logger.Info("CometBFT servers started - waiting to activate runtimes",
 			"time", cmttime.Now(),
 			"id", b.reactor.GetNodeKey().ID(),
 			"p2p", b.cometbftP2PAddr.DialString(),
 			"rpc", b.cometbftRPCAddr.DialString(),
 			"info", cometbftSwitch.NodeInfo(),
+			"len", b.reactor.Size(),
 		)
-
-		// TODO(midas): the other way around! It should only start nodes
-		// that are currently replaying on some other relays.
-
-		if b.reactor.Size() > 0 {
-			if err := b.reactor.StartAllNodeInstances(); err != nil {
-				b.errorsCh <- err
-			}
-		}
-		close(b.errorsCh)
-
-		// For the above activated runtimes, we may idle some of them due to
-		// not being currently used by any replication/sync process.
-		availableChainIds := b.reactor.GetNetworks()
-		replayingBuckets := b.reactor.GetReplayPool().GetBuckets()
-		for _, runningChainID := range availableChainIds {
-			chainAddr, err := NewExtendedChainIDFromLegacy(runningChainID)
-			if err != nil {
-				b.logger.Error("Failed to parse ChainID of existing/loaded chain", "chainID", runningChainID)
-				continue
-			}
-
-			// If this ChainID is currently replaying blocks, it shouldn't go idle.
-			if slices.Contains(replayingBuckets, chainAddr.GetUserAddress()) {
-				continue
-			}
-
-			// We don't need all nodes to be active and this ChainID may go idle.
-			b.reactor.GetRuntimeRegistry().OnComplete(runningChainID)
-			b.reactor.GetRuntimeRegistry().OnIdle(runningChainID)
-		}
-
-		// This relay can now be used to communicate P2P messages.
-		wg.Done()
-
-		if b.metrics != nil {
-			addTimeSample(b.metrics.StartDurationSeconds, startTime)()
-		}
 
 		select {
 		case <-b.shutdownCh:
-			if err := b.Close(); err != nil {
-				b.logger.Error("unable to stop the multiplex backend", "error", err)
-			}
-			return
-
-		case err := <-b.errorsCh:
-			if err != nil {
-				b.logger.Error("error with multiplex backend", "err", err)
-			}
 			return
 		}
-	}()
+	}(cometbftWg)
 
-	// IMPORTANT:
-	// Block until we successfully setup the p2p server.
-	wg.Wait()
+	// Complete setup of CometBFT, then proceed.
+	cometbftWg.Wait()
+
+	// Start networks that are currently replaying on other relays.
+	// We don't need for this goroutine to complete before we proceed.
+	go func(runtimeRegistry *server.RuntimeRegistry) {
+		replayingBuckets := b.reactor.GetReplayPool().GetBuckets()
+		if b.reactor.Size() == 0 || len(replayingBuckets) == 0 {
+			return
+		}
+
+		// Start only nodes that are currently replaying on some other relays.
+		availableChainIds := b.reactor.GetNetworks()
+		replayingChainIds := slices.DeleteFunc(availableChainIds, func(replayingChainID string) bool {
+			chainAddr, _ := NewExtendedChainIDFromLegacy(replayingChainID)
+			return !slices.Contains(replayingBuckets, chainAddr.GetUserAddress())
+		})
+		if len(replayingChainIds) == 0 {
+			return
+		}
+
+		b.logger.Info("CometBFT replay pool - activating node runtimes",
+			"len", len(replayingChainIds),
+		)
+
+		for _, replayingChainID := range replayingChainIds {
+			if err := b.StartConsensusInstance(context.Background(), replayingChainID); err != nil {
+				b.errorsCh <- fmt.Errorf(
+					"error activating node runtime for %s: %w", replayingChainID, err,
+				)
+			}
+			runtimeRegistry.OnActivate(replayingChainID)
+		}
+	}(b.GetRuntimeRegistry())
+
+	if b.metrics != nil {
+		addTimeSample(b.metrics.StartDurationSeconds, startTime)()
+	}
+
+	close(b.errorsCh)
+
+	// We do not STOP when errors happen, instead only report.
+	for err := range b.errorsCh {
+		b.logger.Error("Error during multiplex backend initialization", "err", err)
+	}
+
+	// TODO(midas): remove debug logs
+	b.logger.Debug("Done starting a node backend",
+		"id", b.reactor.GetNodeKey().ID(),
+		"len", b.reactor.Size(),
+	)
 }
 
 // Close stops the multiplex reactor and listeners, as well
@@ -757,15 +794,10 @@ func (b *MultiplexBackend) Close() error {
 		"id", b.reactor.GetNodeKey().ID(),
 	)
 
-	// Stop any running node runtime
-	if b.reactor.Size() > 0 {
-		if err := b.reactor.StopAllNodeInstances(); err != nil {
-			b.logger.Error(
-				"Error stopping node instances during shutdown", "err", err)
-		}
-	}
+	// Shutdown goroutines started by MustStart().
+	close(b.shutdownCh)
 
-	// Stop the runtimes registry
+	// Stop the runtimes registry, it shouldn't interfere with shutdown.
 	b.reactor.runtimesMutex.Lock()
 	if b.reactor.runtimeRegistry != nil && b.reactor.runtimeRegistry.IsRunning() {
 		if err := b.reactor.runtimeRegistry.Stop(); err != nil {
@@ -775,8 +807,19 @@ func (b *MultiplexBackend) Close() error {
 	}
 	b.reactor.runtimesMutex.Unlock()
 
+	// Stop any active node runtime
+	b.reactor.runtimesMutex.Lock()
+	numActiveRuntimes := b.reactor.runtimeRegistry.NumRuntimes()
+	b.reactor.runtimesMutex.Unlock()
+	if numActiveRuntimes > 0 {
+		if err := b.reactor.StopAllNodeInstances(); err != nil {
+			b.logger.Error(
+				"Error stopping node instances during shutdown", "err", err)
+		}
+	}
+
+	// Now we may stop the multiplex reactor
 	if b.reactor != nil {
-		// Must stop the node backend
 		b.reactor.Stop()
 		b.reactor.Reset()
 	}

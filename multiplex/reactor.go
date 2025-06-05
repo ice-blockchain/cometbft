@@ -1036,8 +1036,6 @@ func (reactor *Reactor) RegisterNetwork(
 	// .. because it must reflect on our list of networks.
 	reactor.SetNetworks(reactor.chainRegistry.GetChains())
 
-	nodeConfig := reactor.GetNodeConfig()
-	nodeKey := reactor.GetNodeKey()
 	abciClient := reactor.GetABCIClient()
 
 	// Injects new AppConns in MultiplexAppConn for ABCI.
@@ -1047,18 +1045,11 @@ func (reactor *Reactor) RegisterNetwork(
 		reactor.envMutex.Unlock()
 	}
 
-	// Update the MultiNetworkNodeInfo instance (just a re-make).
-	updatedNodeInfo, err := makeNodeInfo(
-		nodeConfig.Moniker,
-		nodeKey,
-		reactor,
-	)
+	// Update the MultiNetworkNodeInfo instance (just a re-make and set).
+	_, err := reactor.MakeMultiNetworkNodeInfo()
 	if err != nil {
 		return fmt.Errorf("could not update multi network node info: %w", err)
 	}
-
-	// Injects the updated node info instance in the reactor.
-	reactor.SetNodeInfo(updatedNodeInfo)
 
 	return nil
 }
@@ -1763,6 +1754,10 @@ func (reactor *Reactor) OnStart() error {
 		return err
 	}
 
+	reactor.logger.Debug("Starting multiplex reactor",
+		"num_networks", reactor.Size(),
+	)
+
 	// For each ChainID, we run a node with a distinct listen address
 	chainIds := reactor.GetNetworks()
 	for _, chainID := range chainIds {
@@ -1803,6 +1798,7 @@ func (reactor *Reactor) OnStart() error {
 			reactor.chainReadyMtx.RUnlock()
 
 			// Done starting node listeners
+			// Consumed in [NewNodesMultiplex].
 			chainReadyCh <- true
 		}(chainID)
 	}

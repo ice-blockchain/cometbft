@@ -8,21 +8,15 @@ import (
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/crypto"
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
-	bc "github.com/ice-blockchain/cometbft/internal/blocksync"
-	cs "github.com/ice-blockchain/cometbft/internal/consensus"
-	"github.com/ice-blockchain/cometbft/internal/evidence"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
-	mempl "github.com/ice-blockchain/cometbft/mempool"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/server"
 	"github.com/ice-blockchain/cometbft/multiplex/snapsapp"
 	"github.com/ice-blockchain/cometbft/node"
 	"github.com/ice-blockchain/cometbft/p2p"
-	"github.com/ice-blockchain/cometbft/p2p/pex"
 	"github.com/ice-blockchain/cometbft/privval"
 	"github.com/ice-blockchain/cometbft/proxy"
 	sm "github.com/ice-blockchain/cometbft/state"
-	"github.com/ice-blockchain/cometbft/statesync"
 	"github.com/ice-blockchain/cometbft/types"
 	"github.com/ice-blockchain/cometbft/version"
 )
@@ -205,13 +199,11 @@ func NewNodesMultiplex(
 	nodesWg.Add(len(chainReadyChs))
 
 	// We must make sure that the switch will be available for consensus reactors.
-	if cometbftAddr, err := GetAddressForCometBFT(globalCfg, nodeKey); err != nil {
+	if cometbftAddr, err := GetAddressForCometBFT(globalCfg, nodeKey); err == nil {
 		reactor.CreateOrLoadCometBFTEventSwitch(cometbftAddr)
 	}
 
-	// Select a limited number of listeners message updates from
-	// the multiplex reactor channel. This loop forbids duplicate
-	// node initializations by consuming from individual channels.
+	// Select once for each network we know about, and
 	for cid, cch := range chainReadyChs {
 		// Consumes the channel in a separate goroutine to avoid blocking
 		// the main thread about a slower ChainID.
@@ -219,12 +211,13 @@ func NewNodesMultiplex(
 			defer wg.Done()
 
 			// Block this goroutine until this network is ready.
+			// Written on by Reactor.OnStart.
 			<-chainReadyCh
 
 			clogger := logger.With("chain_id", chainID)
 
 			// Inform about the readiness of this chain
-			clogger.Info("Network configuration done", "chain_id", chainID)
+			clogger.Info("Network configuration done")
 
 			// Used to retrieve configuration and state per chain.
 			statesProvider := reactor.GetInstanceProvider(InstanceKeyState)
@@ -253,9 +246,7 @@ func NewNodesMultiplex(
 			}
 
 			// Inform about the state machine block height
-			clogger.Info(
-				"State machine loaded",
-				"chain_id", stateMachine.ChainID,
+			clogger.Info("State machine loaded",
 				"height", stateMachine.LastBlockHeight,
 			)
 
@@ -278,7 +269,7 @@ func NewNodesMultiplex(
 			}
 
 			// Inform about the consensus readiness
-			clogger.Info("Network is consensus ready", "chain_id", chainID)
+			clogger.Info("Network is consensus ready")
 		}(cid, cch, &nodesWg, &nodeErr)
 	}
 	// End of for loop, code following this is run *globally*
@@ -294,15 +285,17 @@ func NewNodesMultiplex(
 	}
 
 	// Inform about all replicated chains being consensus ready
-	logger.Info("All known networks are consensus ready", "nodeId", string(nodeKey.ID()))
+	knownNetworks = reactor.GetNetworks()
+	logger.Info("All known networks are consensus ready",
+		"nodeId", string(nodeKey.ID()),
+		"len", len(knownNetworks),
+	)
 
-	nodeInfo, err := makeNodeInfo(globalCfg.Moniker, nodeKey, reactor)
-	if err != nil {
-		return nil, nil, err
+	// Reactor: Networks; Networks: Reactor.
+	if _, err := reactor.MakeMultiNetworkNodeInfo(); err != nil {
+		return nil, nil, fmt.Errorf(
+			"error creating multiplex node info: %w", err)
 	}
-
-	// Reactor: Network; Network: Reactor.
-	reactor.SetNodeInfo(nodeInfo)
 
 	// Create the [p2p.MultiplexTransports] instances
 	if err := reactor.CreateTransportSwitchesWithReactors(ctx, knownNetworks); err != nil {
@@ -317,7 +310,10 @@ func NewNodesMultiplex(
 	}
 
 	// Inform about all replicated chains being configured
-	logger.Info("All nodes are now configured", "nodeId", string(nodeKey.ID()))
+	knownNetworks = reactor.GetNetworks()
+	logger.Info("All nodes are now configured",
+		"nodeId", string(nodeKey.ID()),
+		"len", len(knownNetworks))
 
 	// Create node.Node instances (runtime) and inject "runtime/node" service.
 	nodesMultiplex, err := reactor.createMultiplexNodesWithServices(
@@ -482,87 +478,4 @@ func GetAddressForCometBFT(
 	}
 
 	return // cometbftAddr
-}
-
-// makeNodeInfo creates the [MultiNetworkNodeInfo] instance given a P2P
-// node key and a multiplex reactor.
-//
-// TODO(midas): txIndexer may be disabled but multiplex reports "on".
-// txIndexer may be disabled but multiplex always *reports* it as enabled.
-// The reason is that the `Other` part of the MultiNetworkNodeInfo is not
-// available on a per-network basis. A fix would be to include this in a
-// custom [ChainProtocolVersion] as the type is related to node capacities.
-func makeNodeInfo(
-	moniker string,
-	nodeKey *p2p.NodeKey,
-	reactor *Reactor,
-) (*MultiNetworkNodeInfo, error) {
-	// Get an ordered list of replicated chains
-	knownNetworks := reactor.GetNetworks()
-	countNetworks := len(knownNetworks)
-
-	configProvider := reactor.GetInstanceProvider(InstanceKeyConfig)
-	statesProvider := reactor.GetInstanceProvider(InstanceKeyState)
-
-	// Fill ProtocolVersions and Networks fields
-	protocolVersions := make([]ChainProtocolVersion, countNetworks)
-	for i, chainID := range knownNetworks {
-		// Fill only for *fully* supported networks (available now).
-		if nil == configProvider(chainID) || nil == statesProvider(chainID) {
-			continue
-		}
-
-		stateMachine := statesProvider(chainID).(sm.State)
-
-		protocolVersions[i] = NewChainProtocolVersion(chainID, p2p.NewProtocolVersion(
-			version.P2PProtocol,
-			stateMachine.Version.Consensus.Block,
-			stateMachine.Version.Consensus.App,
-		))
-	}
-
-	nodeConfig := reactor.GetNodeConfig()
-	promoteAddr := nodeConfig.P2P.ExternalAddress
-	if promoteAddr == "" {
-		promoteAddr = nodeConfig.P2P.ListenAddress
-	}
-	p2pListenAddr := overwriteListenPort(
-		promoteAddr,
-		int(nodeConfig.DiscoveryPort)+1, // defaults to 30002
-	)
-
-	rpcListenAddr := overwriteListenPort(
-		nodeConfig.RPC.ListenAddress,
-		int(nodeConfig.DiscoveryPort)+2, // defaults to 30003
-	)
-
-	txIndexerStatus := "on"
-	nodeInfo := &MultiNetworkNodeInfo{
-		DefaultNodeID:    nodeKey.ID(),
-		Networks:         knownNetworks,
-		ProtocolVersions: protocolVersions,
-		ListenAddr:       p2pListenAddr,
-		Version:          version.CMTSemVer,
-		Channels: []byte{
-			bc.BlocksyncChannel,
-			cs.StateChannel, cs.DataChannel, cs.VoteChannel, cs.VoteSetBitsChannel,
-			mempl.MempoolChannel,
-			evidence.EvidenceChannel,
-			statesync.SnapshotChannel, statesync.ChunkChannel,
-			pex.PexChannel,
-
-			// AckBroadcastChannel may be used to send AckTransactionBroadcast messages.
-			server.AckBroadcastChannel,
-			// RuntimeChannel may be used to send ChainReplicationComplete messages.
-			server.RuntimeChannel,
-		},
-		Moniker: moniker,
-		Other: p2p.DefaultNodeInfoOther{
-			TxIndex:    txIndexerStatus,
-			RPCAddress: rpcListenAddr,
-		},
-	}
-
-	err := nodeInfo.Validate()
-	return nodeInfo, err
 }

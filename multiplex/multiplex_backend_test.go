@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -41,31 +40,57 @@ func closeAndRemoveAll(tb testing.TB, rootDir string, server *mx.MultiplexBacken
 func TestMultiplexBackendNewServer(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	// Uses config.TestConfig() and random MultiplexConfig
+	// TEST 1: Create a server with pre-configured networks.
+	numChains := 5
 	rootDir,
-		globalCfg := ResetTestMultiplexNode(t, 5) // 5 distinct networks
+		globalCfg := ResetTestMultiplexNode(t, numChains)
 	require.NotNil(t, globalCfg)
 
-	// Act
 	backend, err := mx.NewServer(
 		&client.DefaultAcceptor{},
 		globalCfg,
 		cmtlog.NewNopLogger(),
 	)
+
 	assert.NoError(t, err, "should create server instance")
 	assert.NotNil(t, backend)
 	assert.NotNil(t, backend.GetAcceptor())
+	assert.NotNil(t, backend.GetReactor())
 
-	defer closeAndRemoveAll(t, rootDir, backend)
+	actualNetworks := backend.GetReactor().GetNetworks()
+	assert.Len(t, actualNetworks, numChains)
+	closeAndRemoveAll(t, rootDir, backend)
+
+	// TEST 2: Create a server without pre-configured networks.
+	zeroChains := 0
+	rootDir2,
+		globalCfg2 := ResetTestMultiplexNode(t, zeroChains)
+	require.NotNil(t, globalCfg2)
+
+	// Act
+	backend2, err2 := mx.NewServer(
+		&client.DefaultAcceptor{},
+		globalCfg2,
+		cmtlog.NewNopLogger(),
+	)
+
+	assert.NoError(t, err2, "should create server instance")
+	assert.NotNil(t, backend2)
+	assert.NotNil(t, backend2.GetAcceptor())
+	require.NotNil(t, backend2.GetReactor())
+
+	actualNetworks2 := backend2.GetReactor().GetNetworks()
+	assert.Len(t, actualNetworks2, zeroChains)
+	closeAndRemoveAll(t, rootDir2, backend2)
 }
 
 func TestMultiplexBackendMustStart(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	// Uses config.TestConfig() and random MultiplexConfig
 	// For debug, change the logger to cmtlog.TestingLogger()
+	numChains := 2
 	rootDir,
-		backend := ResetTestMultiplexBackend(t, 2, cmtlog.NewNopLogger()) // 2 distinct networks
+		backend := ResetTestMultiplexBackend(t, numChains, cmtlog.NewNopLogger())
 	require.NotNil(t, backend)
 
 	defer closeAndRemoveAll(t, rootDir, backend)
@@ -73,13 +98,39 @@ func TestMultiplexBackendMustStart(t *testing.T) {
 	// Act
 	backend.MustStart()
 
-	// Give it some time to start before checking open conns.
-	time.Sleep(2 * time.Second)
+	testReactor := backend.GetReactor()
+	require.NotNil(t, testReactor)
 
-	testSwitch := backend.CreateOrLoadDiscoveryEventSwitch()
-	assert.NotNil(t, testSwitch)
+	testSwitch := testReactor.GetEventSwitchForDiscovery()
+	require.NotNil(t, testSwitch)
 
-	// Test that the broadcast port is opened
+	// Test that the discovery is listening
+	testTransport := testSwitch.Transport()
+	assert.NotNil(t, testTransport)
+	assert.Equal(t, true, testTransport.IsListening()) // LISTEN
+}
+
+func TestMultiplexBackendMustStartEmpty(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	// For debug, change the logger to cmtlog.TestingLogger()
+	numChains := 0
+	rootDir,
+		backend := ResetTestMultiplexBackend(t, numChains, cmtlog.NewNopLogger())
+	require.NotNil(t, backend)
+
+	defer closeAndRemoveAll(t, rootDir, backend)
+
+	// Act
+	backend.MustStart()
+
+	testReactor := backend.GetReactor()
+	require.NotNil(t, testReactor)
+
+	testSwitch := testReactor.GetEventSwitchForDiscovery()
+	require.NotNil(t, testSwitch)
+
+	// Test that the discovery is listening
 	testTransport := testSwitch.Transport()
 	assert.NotNil(t, testTransport)
 	assert.Equal(t, true, testTransport.IsListening()) // LISTEN
@@ -90,16 +141,21 @@ func TestMultiplexBackendGetLocalNetworkHeights(t *testing.T) {
 
 	// Uses config.TestConfig() and random MultiplexConfig
 	// For debug, change the logger to cmtlog.TestingLogger()
+	numChains := 1
 	rootDir,
-		backend := ResetTestMultiplexBackend(t, 1, cmtlog.NewNopLogger())
+		backend := ResetTestMultiplexBackend(t, numChains, cmtlog.NewNopLogger())
 	require.NotNil(t, backend)
 
 	defer closeAndRemoveAll(t, rootDir, backend)
 
 	// Start the node backend
 	backend.MustStart()
+
 	testReactor := backend.GetReactor()
+	require.NotNil(t, testReactor)
+
 	testChainIds := testReactor.GetNetworks()
+	require.Len(t, testChainIds, numChains)
 
 	// Read some testables
 	testChainID := testChainIds[0]
@@ -177,6 +233,60 @@ func TestMultiplexBackendGetLocalNetworkHeights(t *testing.T) {
 	assert.Equal(t, otherChainID, mustCreateNetworks3[0])
 }
 
+func TestMultiplexBackendGetLocalNetworkHeightsEmpty(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	// Uses config.TestConfig() and random MultiplexConfig
+	// For debug, change the logger to cmtlog.TestingLogger()
+	numChains := 1
+	rootDir,
+		backend := ResetTestMultiplexBackend(t, numChains, cmtlog.NewNopLogger())
+	require.NotNil(t, backend)
+
+	defer closeAndRemoveAll(t, rootDir, backend)
+
+	// Start the node backend
+	backend.MustStart()
+
+	testReactor := backend.GetReactor()
+	require.NotNil(t, testReactor)
+
+	testChainIds := testReactor.GetNetworks()
+	require.Len(t, testChainIds, numChains)
+
+	// Read some testables
+	testChainID := makeChainID("random")
+	extdChainID, err := mx.NewExtendedChainIDFromLegacy(testChainID)
+	require.NoError(t, err)
+
+	testAddress := extdChainID.GetUserAddress()
+	testScope := extdChainID.GetFingerprint()
+
+	// Create some test transactions
+	transactions := []client.Transaction{
+		client.Transaction{Fingerprint: testScope, Data: []byte{1, 2, 3}},
+		client.Transaction{Fingerprint: testScope, Data: []byte{4, 5, 6}},
+	}
+
+	// Act (1) - Test with *existing network*
+	expectedNumNetworks := 1
+	actualRequiredNetworks,
+		actualMustCreateNetworks := backend.GetLocalNetworkHeights(
+		testAddress,
+		transactions...,
+	)
+
+	// Must report the new network (in a map[string]uint64)
+	assert.NotEmpty(t, actualRequiredNetworks)
+	assert.Len(t, actualRequiredNetworks, expectedNumNetworks)
+	assert.Contains(t, actualRequiredNetworks, testChainID)
+
+	// Must report the new network (in a []string)
+	assert.NotEmpty(t, actualMustCreateNetworks)
+	assert.Len(t, actualMustCreateNetworks, expectedNumNetworks) // new network
+	assert.Equal(t, testChainID, actualMustCreateNetworks[0])
+}
+
 func TestMultiplexBackendCheckDialCompatibleRelayWithOnlySelfRelay(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
@@ -192,6 +302,7 @@ func TestMultiplexBackendCheckDialCompatibleRelayWithOnlySelfRelay(t *testing.T)
 	backend.MustStart()
 
 	testReactor := backend.GetReactor()
+	require.NotNil(t, testReactor)
 
 	// Act (2) - Test that functional relays return network info
 	testRelayAddr, err := server.NewRelayAddress(
@@ -199,7 +310,7 @@ func TestMultiplexBackendCheckDialCompatibleRelayWithOnlySelfRelay(t *testing.T)
 	)
 	require.NoError(t, err)
 
-	sourceSwitch := backend.CreateOrLoadDiscoveryEventSwitch()
+	sourceSwitch := testReactor.GetEventSwitchForDiscovery()
 	discoverErr := backend.CheckDialCompatibleRelay(
 		context.TODO(),
 		sourceSwitch,
@@ -240,12 +351,9 @@ func TestMultiplexBackendCheckDialCompatibleRelayWithTwoRelays(t *testing.T) {
 	servers[0].MustStart()
 	servers[1].MustStart()
 
-	waitDuration := 5 * time.Second
-	t.Logf("Waiting %.0fsec to use node services...", waitDuration.Seconds())
-	time.Sleep(waitDuration)
-
 	// server 0 talks to server 1
 	recipientReactor := servers[1].GetReactor()
+	require.NotNil(t, recipientReactor)
 	recipientNodeID := string(recipientReactor.GetNodeKey().ID())
 
 	// Act - Relay 1 communicates with Relay 2
@@ -255,7 +363,10 @@ func TestMultiplexBackendCheckDialCompatibleRelayWithTwoRelays(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, testRelayAddr)
 
-	sourceSwitch := servers[0].CreateOrLoadDiscoveryEventSwitch()
+	sourceReactor := servers[0].GetReactor()
+	require.NotNil(t, sourceReactor)
+
+	sourceSwitch := sourceReactor.GetEventSwitchForDiscovery()
 	require.NotNil(t, sourceSwitch)
 
 	waitDial := sync.WaitGroup{}
@@ -321,10 +432,17 @@ func TestMultiplexBackendCheckDialCompatibleRelaySevenCompatibleRelays(t *testin
 	}
 
 	// Test where RELAY_1 talks to RELAY_X
-	sourceSwitch := servers[0].CreateOrLoadDiscoveryEventSwitch()
+	sourceReactor := servers[0].GetReactor()
+	require.NotNil(t, sourceReactor)
+
+	sourceSwitch := sourceReactor.GetEventSwitchForDiscovery()
+	require.NotNil(t, sourceSwitch)
+
 	for i := 1; i < len(servers); i++ {
 		// recipientSwitch := servers[i].CreateOrLoadDiscoveryEventSwitch()
 		recipientReactor := servers[i].GetReactor()
+		require.NotNil(t, recipientReactor)
+
 		recipientRelayID := string(recipientReactor.GetNodeKey().ID())
 
 		// Act - Relay 1 communicates with Relay X
@@ -348,6 +466,52 @@ func TestMultiplexBackendGetRemoteRelayInfo(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 3
+	numRelays := 2
+
+	// For debug, change the loggers to cmtlog.TestingLogger()
+	loggerRelay1 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
+	loggerRelay2 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-2")
+
+	// Uses config.TestConfig() and random MultiplexConfig
+	rootDirs,
+		servers := ResetTestMultiplexBackendCompatibleRelays(
+		t,
+		numChains,
+		numRelays,
+		loggerRelay1,
+		loggerRelay2,
+	)
+	require.NotEmpty(t, servers)
+	require.Len(t, rootDirs, numRelays)
+	require.Len(t, servers, numRelays)
+
+	defer func() {
+		for i := 0; i < len(servers); i++ {
+			go closeAndRemoveAll(t, rootDirs[i], servers[i])
+		}
+	}()
+
+	// Start the node backends
+	for i := 0; i < len(servers); i++ {
+		servers[i].MustStart()
+	}
+
+	// Act - Relay 1 discovers ID of Relay 2
+	testBroadcastPort := strconv.Itoa(50001 + (1 * 100))                                 // 50101 (second relay P2P)
+	testRelayAddr, err := server.NewRelayAddress("tcp://127.0.0.1:" + testBroadcastPort) // NO ID!
+	require.NoError(t, err)
+
+	actualRelayID,
+		actualError := servers[0].GetRemoteRelayInfo(context.TODO(), testRelayAddr)
+
+	require.NoError(t, actualError)
+	assert.Equal(t, servers[1].GetRelayID(), actualRelayID.DefaultNodeID)
+}
+
+func TestMultiplexBackendGetRemoteRelayInfoEmpty(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	numChains := 0
 	numRelays := 2
 
 	// For debug, change the loggers to cmtlog.TestingLogger()
@@ -442,6 +606,58 @@ func TestMultiplexBackendGetRemoteRelayInfoWithFourRelays(t *testing.T) {
 	}
 }
 
+func TestMultiplexBackendGetRemoteRelayInfoWithFourRelaysEmpty(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	numChains := 0
+	numRelays := 4
+
+	// For debug, change the loggers to cmtlog.TestingLogger()
+	loggerRelay1 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
+	loggerRelay2 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-2")
+	loggerRelay3 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-3")
+	loggerRelay4 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-4")
+
+	// Uses config.TestConfig() and random MultiplexConfig
+	rootDirs,
+		servers := ResetTestMultiplexBackendCompatibleRelays(
+		t,
+		numChains,
+		numRelays,
+		loggerRelay1,
+		loggerRelay2,
+		loggerRelay3,
+		loggerRelay4,
+	)
+	require.NotEmpty(t, servers)
+	require.Len(t, rootDirs, numRelays)
+	require.Len(t, servers, numRelays)
+
+	defer func() {
+		for i := 0; i < len(servers); i++ {
+			go closeAndRemoveAll(t, rootDirs[i], servers[i])
+		}
+	}()
+
+	// Start the node backends
+	for i := 0; i < len(servers); i++ {
+		servers[i].MustStart()
+	}
+
+	// Act - Relay 1 discovers ID of Relay X
+	for i := 1; i < len(servers); i++ {
+		testBroadcastPort := strconv.Itoa(50001 + (i * 100))                           // 50101, 50201, etc. (P2P discovery port)
+		testRelayAddr, err := server.NewRelayAddress("127.0.0.1:" + testBroadcastPort) // NO ID!
+		require.NoError(t, err)
+
+		actualRelayID,
+			actualError := servers[0].GetRemoteRelayInfo(context.TODO(), testRelayAddr)
+
+		require.NoError(t, actualError)
+		assert.Equal(t, servers[i].GetRelayID(), actualRelayID.DefaultNodeID)
+	}
+}
+
 func TestMultiplexBackendGetRelaysByNetwork(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
@@ -478,6 +694,7 @@ func TestMultiplexBackendGetRelaysByNetwork(t *testing.T) {
 
 	// server 0 talks to server 1
 	recipientReactor := servers[1].GetReactor()
+	require.NotNil(t, recipientReactor)
 	recipientNodeID := string(recipientReactor.GetNodeKey().ID())
 
 	// Act - Relay 1 fetches addresses of Relay 2
@@ -534,6 +751,7 @@ func TestMultiplexBackendGetRelaysByNetworkEmptyRelays(t *testing.T) {
 
 	// server 0 talks to server 1
 	recipientReactor := servers[1].GetReactor()
+	require.NotNil(t, recipientReactor)
 	recipientNodeID := string(recipientReactor.GetNodeKey().ID())
 
 	// Act - Relay 1 fetches addresses of Relay 2
@@ -558,7 +776,10 @@ func TestMultiplexBackendGetRelaysByNetworkEmptyRelays(t *testing.T) {
 	expectedListenAddr := testRelayAddr.StringWithoutScheme() // no tcp:// !
 	expectedDiscoveryPort := uint16(testDiscoveryPort)
 
-	actualRelayInfo := servers[0].GetReactor().GetRelayInfo(testRelayAddr.ID())
+	sourceReactor := servers[0].GetReactor()
+	require.NotNil(t, sourceReactor)
+
+	actualRelayInfo := sourceReactor.GetRelayInfo(testRelayAddr.ID())
 	require.NotNil(t, actualRelayInfo)
 	assert.Equal(t, expectedRelayID, actualRelayInfo.DefaultNodeID,
 		"should return correct DefaultNodeID in RelayInfo RPC")
@@ -573,8 +794,9 @@ func TestMultiplexBackendAddTransactions(t *testing.T) {
 
 	// Uses config.TestConfig() and random MultiplexConfig
 	// For debug, change the logger to cmtlog.TestingLogger()
+	numChains := 1 // mempool requires a ChainID
 	rootDir,
-		server := ResetTestMultiplexBackend(t, 1, cmtlog.NewNopLogger()) // 1 network
+		server := ResetTestMultiplexBackend(t, numChains, cmtlog.NewNopLogger()) // 1 network
 	require.NotNil(t, server)
 
 	defer closeAndRemoveAll(t, rootDir, server)
@@ -582,7 +804,12 @@ func TestMultiplexBackendAddTransactions(t *testing.T) {
 	// Start the node backend
 	server.MustStart()
 
-	testChainIds := server.GetReactor().GetNetworks()
+	testReactor := server.GetReactor()
+	require.NotNil(t, testReactor)
+
+	testChainIds := testReactor.GetNetworks()
+	require.Len(t, testChainIds, numChains)
+
 	testChainID := testChainIds[0]
 	testExtChainID, err := mx.NewExtendedChainIDFromLegacy(testChainID)
 	require.NoError(t, err)
@@ -596,7 +823,6 @@ func TestMultiplexBackendAddTransactions(t *testing.T) {
 		},
 	)
 	assert.NoError(t, actualErr, "should add transaction to mempool")
-	time.Sleep(5 * time.Second)
 }
 
 func TestMultiplexBackendRemoveTransactions(t *testing.T) {
@@ -604,8 +830,9 @@ func TestMultiplexBackendRemoveTransactions(t *testing.T) {
 
 	// Uses config.TestConfig() and random MultiplexConfig
 	// For debug, change the logger to cmtlog.TestingLogger()
+	numChains := 1
 	rootDir,
-		server := ResetTestMultiplexBackend(t, 1, cmtlog.NewNopLogger()) // 1 network
+		server := ResetTestMultiplexBackend(t, numChains, cmtlog.NewNopLogger()) // 1 network
 	require.NotNil(t, server)
 
 	defer closeAndRemoveAll(t, rootDir, server)
@@ -613,7 +840,12 @@ func TestMultiplexBackendRemoveTransactions(t *testing.T) {
 	// Start the node backend
 	server.MustStart()
 
-	testChainIds := server.GetReactor().GetNetworks()
+	testReactor := server.GetReactor()
+	require.NotNil(t, testReactor)
+
+	testChainIds := testReactor.GetNetworks()
+	require.Len(t, testChainIds, numChains)
+
 	testChainID := testChainIds[0]
 	testExtChainID, err := mx.NewExtendedChainIDFromLegacy(testChainID)
 	require.NoError(t, err)
@@ -636,7 +868,6 @@ func TestMultiplexBackendRemoveTransactions(t *testing.T) {
 		},
 	)
 	assert.NoError(t, actualErr, "should remove transaction from mempool")
-	time.Sleep(5 * time.Second)
 }
 
 // TODO(midas): add test for 0-network compatible relays
