@@ -43,6 +43,8 @@ type Service interface {
 
 	// Return true if the service is running
 	IsRunning() bool
+	IsStarted() bool
+	IsStopped() bool
 
 	// Quit returns a channel, which is closed once service is stopped.
 	Quit() <-chan struct{}
@@ -225,6 +227,14 @@ func (*BaseService) OnReset() error {
 // service's state.
 func (bs *BaseService) IsRunning() bool {
 	return atomic.LoadUint32(&bs.started) == 1 && atomic.LoadUint32(&bs.stopped) == 0
+}
+
+func (bs *BaseService) IsStarted() bool {
+	return atomic.LoadUint32(&bs.started) == 1
+}
+
+func (bs *BaseService) IsStopped() bool {
+	return atomic.LoadUint32(&bs.stopped) == 1
 }
 
 // Name returns the name of this service instance.

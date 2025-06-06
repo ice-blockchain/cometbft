@@ -105,6 +105,16 @@ func (*Reactor) OnStart() error {
 	return nil
 }
 
+// OnReset should not execute any business logic, but instead must be
+// defined as it is called from [Service#Reset], which permits to later
+// start back the service with stopped/started correctly reset.
+func (r *Reactor) OnReset() error {
+	r.Logger.Info("Statesync reactor service reset",
+		"chain_id", r.ChainID,
+	)
+	return nil
+}
+
 // AddPeer implements p2p.Reactor.
 func (r *Reactor) AddPeer(peer *p2p.PeerImpl) {
 	r.mtx.RLock()

@@ -11,6 +11,7 @@ import (
 	"github.com/ice-blockchain/cometbft/internal/blocksync"
 	cs "github.com/ice-blockchain/cometbft/internal/consensus"
 	"github.com/ice-blockchain/cometbft/internal/evidence"
+	"github.com/ice-blockchain/cometbft/libs/service"
 	mempl "github.com/ice-blockchain/cometbft/mempool"
 	sm "github.com/ice-blockchain/cometbft/state"
 	bs "github.com/ice-blockchain/cometbft/store"
@@ -344,10 +345,20 @@ func (reactor *Reactor) StartConsensusInstanceReactors(
 		// Update the attached switch
 		r.SetSwitch(cometbftSwitch)
 
+		if r.IsStopped() {
+			r.Reset() // allows re-start
+		}
+
 		if !r.IsRunning() {
 			if err := r.Start(); err != nil {
-				return fmt.Errorf(
-					"error starting %s reactor: %w", name, err)
+				// Prevents erroring for concurrent calls to Start() method.
+				if err != service.ErrAlreadyStarted {
+					reactor.logger.Error("Error starting reactor",
+						"reactor", name,
+						"err", err)
+					return fmt.Errorf(
+						"error starting %s reactor: %w", name, err)
+				}
 			}
 		}
 	}

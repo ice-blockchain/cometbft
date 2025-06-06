@@ -160,6 +160,16 @@ func (conR *Reactor) OnStop() {
 	}
 }
 
+// OnReset should not execute any business logic, but instead must be
+// defined as it is called from [Service#Reset], which permits to later
+// start back the service with stopped/started correctly reset.
+func (conR *Reactor) OnReset() error {
+	conR.Logger.Info("Consensus reactor service reset",
+		"chain_id", conR.conS.state.ChainID,
+	)
+	return nil
+}
+
 // SwitchToConsensus switches from block sync or state sync mode to consensus
 // mode.
 func (conR *Reactor) SwitchToConsensus(state sm.State, skipWAL bool) {

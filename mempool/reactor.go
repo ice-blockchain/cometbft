@@ -175,6 +175,16 @@ func (memR *Reactor) OnStart() error {
 	return nil
 }
 
+// OnReset should not execute any business logic, but instead must be
+// defined as it is called from [Service#Reset], which permits to later
+// start back the service with stopped/started correctly reset.
+func (memR *Reactor) OnReset() error {
+	memR.Logger.Info("Mempool reactor service reset",
+		"chain_id", memR.ChainID,
+	)
+	return nil
+}
+
 // GetChannels implements Reactor by returning the list of channels for this
 // reactor.
 func (memR *Reactor) GetChannels() []*p2p.ChannelDescriptor {

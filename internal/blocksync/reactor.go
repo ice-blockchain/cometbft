@@ -201,6 +201,16 @@ func (bcR *Reactor) OnStop() {
 	}
 }
 
+// OnReset should not execute any business logic, but instead must be
+// defined as it is called from [Service#Reset], which permits to later
+// start back the service with stopped/started correctly reset.
+func (bcR *Reactor) OnReset() error {
+	bcR.Logger.Info("Blocksync reactor service reset",
+		"chain_id", bcR.chainID,
+	)
+	return nil
+}
+
 // GetChannels implements Reactor.
 func (*Reactor) GetChannels() []*p2p.ChannelDescriptor {
 	return []*p2p.ChannelDescriptor{

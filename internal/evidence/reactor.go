@@ -71,6 +71,16 @@ func (evR *Reactor) SetLogger(l log.Logger) {
 	evR.evpool.SetLogger(l)
 }
 
+// OnReset should not execute any business logic, but instead must be
+// defined as it is called from [Service#Reset], which permits to later
+// start back the service with stopped/started correctly reset.
+func (evR *Reactor) OnReset() error {
+	evR.Logger.Info("Evidence reactor service reset",
+		"chain_id", evR.ChainID,
+	)
+	return nil
+}
+
 // GetChannels implements Reactor.
 // It returns the list of channels for this reactor.
 func (*Reactor) GetChannels() []*p2p.ChannelDescriptor {
