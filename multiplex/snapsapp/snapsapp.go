@@ -56,6 +56,10 @@ type SnapsApp struct {
 	// The finalized block heights consist of working block heights.
 	fbMutex              *sync.RWMutex
 	finalizeBlockHeights map[string]int64
+
+	// The transaction batches that have been confirmed by tx hash.
+	txMutex           *sync.RWMutex
+	committedTxHashes map[string]bool
 }
 
 var _ abcitypes.Application = (*SnapsApp)(nil)
@@ -74,6 +78,7 @@ func NewSnapsApplication(
 		whMutex: new(sync.RWMutex),
 		ihMutex: new(sync.RWMutex),
 		fbMutex: new(sync.RWMutex),
+		txMutex: new(sync.RWMutex),
 	}
 
 	// Apply all options before anything else
@@ -103,6 +108,11 @@ func NewSnapsApplication(
 	app.fbMutex.Lock()
 	app.finalizeBlockHeights = make(map[string]int64, len(replicatedChains))
 	app.fbMutex.Unlock()
+
+	// committedTxHashes are thread-safe
+	app.txMutex.Lock()
+	app.committedTxHashes = map[string]bool{}
+	app.txMutex.Unlock()
 
 	return app
 }

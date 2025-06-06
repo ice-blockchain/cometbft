@@ -268,9 +268,20 @@ func (app *SnapsApp) FinalizeBlock(
 
 	// Forward the transaction batch to an Acceptor if any is available.
 	if app.txAcceptor != nil && len(processedTxs) > 0 {
+		hasUncommittedTx := false
+
 		batch := []client.Transaction{}
 		for _, rawTx := range processedTxs {
-			batch = append(batch, client.RawTxToTransaction(rawTx))
+			tx := client.RawTxToTransaction(rawTx)
+			txHash := fmt.Sprintf("%X", tx.Hash())
+			batch = append(batch, tx)
+
+			app.txMutex.RLock()
+			_, committed := app.committedTxHashes[txHash]
+			app.txMutex.RUnlock()
+			if !committed {
+				hasUncommittedTx = true
+			}
 		}
 
 		// In replay-mode, we must make sure the ReplayBroadcastTxBatch
@@ -282,12 +293,24 @@ func (app *SnapsApp) FinalizeBlock(
 				return nil, fmt.Errorf(
 					"error adding to replay pool for %s: %w", chainID, err)
 			}
-		} else if err := app.txAcceptor.CommitBroadcastTx(
-			ctx,
-			batch...,
-		); err != nil {
-			app.logger.Error(fmt.Errorf(
-				"acceptor rejected transaction batch for %s in FinalizeBlock: %w", chainID, err).Error())
+		} else if hasUncommittedTx {
+			// In consensus-mode, we should call the CommitBroadcastTx
+			// callback once per transaction batch, if the finalized block
+			// contains a transaction hash that has not yet been committed.
+			if err := app.txAcceptor.CommitBroadcastTx(
+				ctx,
+				batch...,
+			); err != nil {
+				app.logger.Error(fmt.Errorf(
+					"acceptor rejected transaction batch for %s in FinalizeBlock: %w", chainID, err).Error())
+			} else {
+				app.txMutex.Lock()
+				for _, tx := range batch {
+					txHash := fmt.Sprintf("%X", tx.Hash())
+					app.committedTxHashes[txHash] = true
+				}
+				app.txMutex.Unlock()
+			}
 		}
 	}
 
