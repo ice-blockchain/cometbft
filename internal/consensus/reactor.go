@@ -204,6 +204,11 @@ conR:
 	if conR.msgStatusToPeers.Load() {
 		go conR.announceReplicationToPeers(state.ChainID)
 	}
+
+	// TODO(midas): Complete the runtime activated in [mempool.Reactor#Receive]
+	// after some time have passed in consensus-mode, e.g. waiting for a tx.
+	// As a temporary solution, right now the mempool reactor completes runtimes
+	// after it has processed transactions and sent back AckTransactionBroadcast.
 }
 
 // announceReplicationToPeers sends a ChainReplicationComplete message
@@ -262,7 +267,8 @@ func (conR *Reactor) announceReplicationToPeers(
 	})
 	wg.Wait()
 
-	// Completes the runtime activated in [multiplex.Reactor#Receive].
+	// Completes the runtime activated in [multiplex.Reactor#Receive] upon
+	// reception of a ChainReplicationRequest.
 	conR.runtimeRegistry.OnComplete(chainID)
 
 	return

@@ -1128,6 +1128,22 @@ func (reactor *Reactor) GetReplayPool() *server.ReplayPool {
 	return reactor.replayPool
 }
 
+// OnActivateRuntime executes the OnActivate callback to register chainID
+// in our runtime registry.
+func (reactor *Reactor) OnActivateRuntime(chainID string) {
+	// Activate this runtime in our runtime registry.
+	idleManager := reactor.GetRuntimeRegistry()
+	idleManager.OnActivate(chainID)
+}
+
+// OnCompleteRuntime executes the OnActivate callback to register chainID
+// in our runtime registry.
+func (reactor *Reactor) OnCompleteRuntime(chainID string) {
+	// Activate this runtime in our runtime registry.
+	idleManager := reactor.GetRuntimeRegistry()
+	idleManager.OnComplete(chainID)
+}
+
 // ----------------------------------------------------------------------------
 // Reactor implements p2p.Reactor
 
@@ -1165,8 +1181,6 @@ func (r *Reactor) RemovePeer(peer *p2p.PeerImpl, _ any) {}
 // Receive implements p2p.Reactor.
 func (r *Reactor) Receive(e p2p.Envelope) {
 	r.Logger.Debug("Receive", "src", e.Src, "chId", e.ChannelID)
-
-	idleManager := r.GetRuntimeRegistry()
 
 	// Determine public source address from secret connection.
 	sourcePeer := e.Src
@@ -1252,9 +1266,8 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 
 			// Activate this runtime in our runtime registry.
 			//
-			// NOTE(midas): The OnComplete callback must be executed only when
-			// we have completed the full chain replication.
-			idleManager.OnActivate(replRequest.ChainID)
+			// OnComplete is called by consensus.Reactor#SwitchToConsensus.
+			r.OnActivateRuntime(replRequest.ChainID)
 
 			// A ChainReplicationResponse will be sent to the source peer.
 			//

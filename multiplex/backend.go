@@ -2988,7 +2988,7 @@ func (b *MultiplexBackend) remoteRuntimeUpdatesConsumer(
 
 		case <-ctx.Done():
 			err := fmt.Errorf(
-				"process timed out waiting for runtime status update for ChainID: %s", chainID)
+				"process timed out waiting for remote runtime status for: %s", chainID)
 
 			resultsCh <- RuntimeUpdateResult{Error: err}
 			return

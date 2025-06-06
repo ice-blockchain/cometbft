@@ -338,6 +338,47 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 			}
 		}
 
+		// If we receive a transaction, but are not yet running consensus reactors
+		// for the attached ChainID, we must start the consensus reactors.
+		if multiplexReactor := memR.Switch.GetMultiplexReactor(); multiplexReactor != nil {
+			type inlineConsensusStarter interface {
+				StartConsensusInstanceReactors(
+					ctx context.Context,
+					chainID string,
+					sendStatusToPeers bool,
+				) error
+
+				OnActivateRuntime(chainID string)
+				OnCompleteRuntime(chainID string)
+			}
+
+			// Use type assertion to access multiplex reactor methods.
+			if mxR, ok := multiplexReactor.(inlineConsensusStarter); ok {
+				if err := mxR.StartConsensusInstanceReactors(
+					context.Background(),
+					memR.ChainID,
+					false, // sendStatusToPeers
+				); err != nil {
+					memR.Logger.Error(
+						"failed to start consensus reactors upon receiving mempool.Tx",
+						"chain_id", memR.ChainID,
+						"peer_in", e.Src,
+						"err", err,
+					)
+				}
+
+				mxR.OnActivateRuntime(memR.ChainID)
+
+				// TODO(midas): call OnComplete upon transaction inclusion,
+				// due to the completion done in deferral, we ensure that
+				// this runtime activation won't last too long.
+				// Known issue: In case of very short RuntimeRegistry.IdleDuration,
+				// the completion of this runtime may happen before block inclusion,
+				// i.e. this relay might not have time to call CommitBroadcastTx.
+				defer mxR.OnCompleteRuntime(memR.ChainID)
+			}
+		}
+
 		// Mark INBOUND peer active in CONSENSUS and BLOCKSYNC
 		memR.Switch.InitPeerForScope(e.Src, memR.ChainID)
 		memR.Switch.AddPeerForScope(e.Src, memR.ChainID)

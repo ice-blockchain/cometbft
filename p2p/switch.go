@@ -343,6 +343,11 @@ func (sw *Switch) Reactors(chainID string) map[string]Reactor {
 	sw.reactorsMtx.Lock()
 	defer sw.reactorsMtx.Unlock()
 
+	// Return empty if missing.
+	if _, ok := sw.reactors[chainID]; !ok {
+		return map[string]Reactor{}
+	}
+
 	return sw.reactors[chainID]
 }
 
@@ -350,6 +355,14 @@ func (sw *Switch) Reactors(chainID string) map[string]Reactor {
 func (sw *Switch) Reactor(chainID string, name string) Reactor {
 	sw.reactorsMtx.Lock()
 	defer sw.reactorsMtx.Unlock()
+
+	// Return nil if missing.
+	if _, ok := sw.reactors[chainID]; !ok {
+		return nil
+	}
+	if _, ok := sw.reactors[chainID][name]; !ok {
+		return nil
+	}
 
 	return sw.reactors[chainID][name]
 }
@@ -423,7 +436,16 @@ func (sw *Switch) Metrics() *Metrics {
 	return sw.metrics
 }
 
-// getMultiplexReactor returns the multiplex reactor if it exists
+// GetMultiplexReactor returns the multiplex reactor if it exists.
+// Locks the reactors mutex, for usage from outside.
+func (sw *Switch) GetMultiplexReactor() Reactor {
+	sw.reactorsMtx.Lock()
+	defer sw.reactorsMtx.Unlock()
+
+	return sw.getMultiplexReactor()
+}
+
+// getMultiplexReactor returns the multiplex reactor if it exists.
 func (sw *Switch) getMultiplexReactor() Reactor {
 	// Look for multiplex reactor in shared channels namespace
 	if reactors, ok := sw.reactors[conn.SharedChannelsNamespace]; ok {
