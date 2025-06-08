@@ -387,7 +387,12 @@ func (reactor *Reactor) StopConsensusInstanceReactors(
 	reactorsForChain := cometbftSwitch.Reactors(chainID)
 	for name, r := range reactorsForChain {
 		if r.IsRunning() {
-			if err := r.Stop(); err != nil {
+			err := r.Stop()
+			if r.IsStopped() {
+				r.Reset() // allows re-start
+			}
+
+			if err != nil && err != service.ErrAlreadyStopped {
 				return fmt.Errorf(
 					"error stopping %s reactor: %w", name, err)
 			}

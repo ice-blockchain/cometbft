@@ -476,16 +476,28 @@ func (memR *Reactor) clientAcceptTx(protoTxs []types.Tx) error {
 	}
 
 	batch := []client.Transaction{}
+	txHashes := []string{}
 	for _, rawTx := range protoTxs {
-		batch = append(batch, client.RawTxToTransaction(rawTx))
+		tx := client.RawTxToTransaction(rawTx)
+		txHash := fmt.Sprintf("%X", tx.Hash())
+		batch = append(batch, tx)
+		txHashes = append(txHashes, txHash)
 	}
+
+	// TODO(midas): remove debug logs
+	memR.Logger.Debug("Forward transaction batch to acceptor: AcceptBroadcastTx",
+		"chain_id", memR.ChainID,
+		"tx_batch", txHashes,
+	)
 
 	if err := memR.txAcceptor.AcceptBroadcastTx(
 		context.TODO(),
 		batch...,
 	); err != nil {
-		memR.Logger.Debug("Acceptor rejected batch broadcast",
-			"address", memR.userAddress,
+		memR.Logger.Error(
+			"Acceptor callback AcceptBroadcastTx rejected transaction batch",
+			"chain_id", memR.ChainID,
+			"tx_batch", txHashes,
 			"err", err,
 		)
 		return err // do not accept transactions

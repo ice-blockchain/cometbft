@@ -259,6 +259,10 @@ func (app *SnapsApp) FinalizeBlock(
 		}}
 	}
 
+	// When we did not process a block proposal for the request's height,
+	// we are finalizing a block received through blocksync. In this case,
+	// instead of executing the CommitBroadcastTx callback, we forward the
+	// transaction batch to the replay pool to execute ReplayBroadcastTxBatch.
 	app.whMutex.RLock()
 	isReplayMode := false
 	if workingHeight, ok := app.workingHeights[chainID]; ok {
@@ -271,10 +275,12 @@ func (app *SnapsApp) FinalizeBlock(
 		hasUncommittedTx := false
 
 		batch := []client.Transaction{}
+		txHashes := []string{}
 		for _, rawTx := range processedTxs {
 			tx := client.RawTxToTransaction(rawTx)
 			txHash := fmt.Sprintf("%X", tx.Hash())
 			batch = append(batch, tx)
+			txHashes = append(txHashes, txHash)
 
 			app.txMutex.RLock()
 			_, committed := app.committedTxHashes[txHash]
@@ -288,12 +294,24 @@ func (app *SnapsApp) FinalizeBlock(
 		// callback will succeed. The replay pool calls it continuously
 		// until it succeeds (no-error).
 		if isReplayMode {
+			// TODO(midas): remove debug logs
+			app.logger.Debug("Process transaction batch with replay pool",
+				"chain_id", chainID,
+				"tx_batch", txHashes,
+			)
+
 			// Add the transactions to a transaction replay bucket by ChainID.
 			if err := app.addToReplayPool(chainID, batch...); err != nil {
 				return nil, fmt.Errorf(
-					"error adding to replay pool for %s: %w", chainID, err)
+					"error adding transaction batch to replay pool for %s: %w", chainID, err)
 			}
 		} else if hasUncommittedTx {
+			// TODO(midas): remove debug logs
+			app.logger.Debug("Process transaction batch with acceptor: CommitBroadcastTx",
+				"chain_id", chainID,
+				"tx_batch", txHashes,
+			)
+
 			// In consensus-mode, we should call the CommitBroadcastTx
 			// callback once per transaction batch, if the finalized block
 			// contains a transaction hash that has not yet been committed.
@@ -301,8 +319,12 @@ func (app *SnapsApp) FinalizeBlock(
 				ctx,
 				batch...,
 			); err != nil {
-				app.logger.Error(fmt.Errorf(
-					"acceptor rejected transaction batch for %s in FinalizeBlock: %w", chainID, err).Error())
+				app.logger.Error(
+					"Acceptor callback CommitBroadcastTx rejected transaction batch",
+					"chain_id", chainID,
+					"tx_batch", txHashes,
+					"err", err,
+				)
 			} else {
 				app.txMutex.Lock()
 				for _, tx := range batch {
