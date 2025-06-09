@@ -442,20 +442,22 @@ func (blockExec *BlockExecutor) Commit(
 		"block_app_hash", fmt.Sprintf("%X", block.AppHash),
 	)
 
+	unlockMempool()
+
 	// Update mempool.
-	go blockExec.asyncUpdateMempool(unlockMempool, block, state.Copy(), abciResponse)
+	go blockExec.asyncUpdateMempool(block, state.Copy(), abciResponse)
 
 	return res.RetainHeight, nil
 }
 
 // updates the mempool with the latest state asynchronously.
 func (blockExec *BlockExecutor) asyncUpdateMempool(
-	unlockMempool func(),
 	block *types.Block,
 	state State,
 	abciResponse *abci.FinalizeBlockResponse,
 ) {
-	defer unlockMempool()
+	blockExec.mempool.Lock()
+	defer blockExec.mempool.Unlock()
 
 	err := blockExec.mempool.Update(
 		block.Height,

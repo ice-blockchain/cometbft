@@ -2148,11 +2148,13 @@ func (b *MultiplexBackend) RemoveTransactions(
 		chainMempool := memplReactor.GetMempoolPtr()
 
 		memTx := client.TransactionToRawTx(transaction)
+		chainMempool.Lock()
 		if err := chainMempool.RemoveTxByKey(memTx.Key()); err != nil {
 			clogger.Debug("Rollback transaction not in local mempool (not an error)",
 				"tx", cmtlog.NewLazySprintf("%X", memTx.Hash()),
 				"error", err.Error())
 		}
+		chainMempool.Unlock()
 	}
 
 	return nil

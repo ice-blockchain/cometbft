@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -20,14 +19,15 @@ import (
 	"github.com/ice-blockchain/cometbft/types"
 )
 
+const noSender = p2p.ID("")
+
 // CListMempool is an ordered in-memory pool for transactions before they are
 // proposed in a consensus round. Transaction validity is checked using the
 // CheckTx abci message before the transaction is added to the pool. The
 // mempool uses a concurrent list structure for storing transactions that can
 // be efficiently accessed by multiple concurrent readers.
 type CListMempool struct {
-	height   atomic.Int64 // the last block Update()'d to
-	txsBytes atomic.Int64 // total size of mempool, in bytes
+	height atomic.Int64 // the last block Update()'d to
 
 	// notify listeners (ie. consensus) when txs are available
 	notifiedTxsAvailable atomic.Bool
@@ -49,8 +49,11 @@ type CListMempool struct {
 	// Concurrent linked-list of valid txs.
 	// `txsMap`: txKey -> CElement is for quick access to txs.
 	// Transactions in both `txs` and `txsMap` must to be kept in sync.
-	txs    *clist.CList
-	txsMap sync.Map
+	txsMtx   cmtsync.RWMutex
+	txs      *clist.CList
+	txsMap   map[types.TxKey]*clist.CElement // for quick access to the mempool entry of a given tx
+	txsBytes int64                           // total size of mempool, in bytes
+	numTxs   int64                           // total number of txs in the mempool
 
 	// Keep a cache of already-seen txs.
 	// This reduces the pressure on the proxyApp.
@@ -77,6 +80,7 @@ func NewCListMempool(
 	mp := &CListMempool{
 		config:       cfg,
 		proxyAppConn: proxyAppConn,
+		txsMap:       make(map[types.TxKey]*clist.CElement),
 		txs:          clist.New(),
 		recheck:      newRecheck(),
 		logger:       log.NewNopLogger(),
@@ -97,18 +101,6 @@ func NewCListMempool(
 	return mp
 }
 
-func (mem *CListMempool) getCElement(txKey types.TxKey) (*clist.CElement, bool) {
-	if e, ok := mem.txsMap.Load(txKey); ok {
-		return e.(*clist.CElement), true
-	}
-	return nil, false
-}
-
-func (mem *CListMempool) InMempool(txKey types.TxKey) bool {
-	_, ok := mem.getCElement(txKey)
-	return ok
-}
-
 func (mem *CListMempool) addToCache(tx types.Tx) bool {
 	return mem.cache.Push(tx)
 }
@@ -127,15 +119,38 @@ func (mem *CListMempool) tryRemoveFromCache(tx types.Tx) {
 }
 
 func (mem *CListMempool) removeAllTxs() {
+	mem.txsMtx.Lock()
+	defer mem.txsMtx.Unlock()
+
 	for e := mem.txs.Front(); e != nil; e = e.Next() {
 		mem.txs.Remove(e)
 		e.DetachPrev()
 	}
+	mem.txsMap = make(map[types.TxKey]*clist.CElement)
+	mem.txsBytes = 0
+}
 
-	mem.txsMap.Range(func(key, _ any) bool {
-		mem.txsMap.Delete(key)
-		return true
-	})
+// addSender adds a peer ID to the list of senders on the entry corresponding to
+// tx, identified by its key.
+func (mem *CListMempool) addSender(txKey types.TxKey, sender p2p.ID) error {
+	if sender == noSender {
+		return nil
+	}
+
+	mem.txsMtx.Lock()
+	defer mem.txsMtx.Unlock()
+
+	elem, ok := mem.txsMap[txKey]
+	if !ok {
+		return ErrTxNotFound
+	}
+
+	memTx := elem.Value.(*mempoolTx)
+	if found := memTx.addSender(sender); found {
+		// It should not be possible to receive twice a tx from the same sender.
+		return ErrTxAlreadyReceivedFromSender
+	}
+	return nil
 }
 
 // NOTE: not thread safe - should only be called once, on startup.
@@ -186,12 +201,18 @@ func (mem *CListMempool) PreUpdate() {
 
 // Safe for concurrent use by multiple goroutines.
 func (mem *CListMempool) Size() int {
-	return mem.txs.Len()
+	mem.txsMtx.RLock()
+	defer mem.txsMtx.RUnlock()
+
+	return int(mem.numTxs)
 }
 
 // Safe for concurrent use by multiple goroutines.
 func (mem *CListMempool) SizeBytes() int64 {
-	return mem.txsBytes.Load()
+	mem.txsMtx.RLock()
+	defer mem.txsMtx.RUnlock()
+
+	return mem.txsBytes
 }
 
 // Lock() must be help by the caller during execution.
@@ -209,10 +230,19 @@ func (mem *CListMempool) Flush() {
 	mem.updateMtx.Lock()
 	defer mem.updateMtx.Unlock()
 
-	mem.txsBytes.Store(0)
+	mem.txsBytes = 0
+	mem.numTxs = 0
 	mem.cache.Reset()
 
 	mem.removeAllTxs()
+}
+
+func (mem *CListMempool) Contains(txKey types.TxKey) bool {
+	mem.txsMtx.RLock()
+	defer mem.txsMtx.RUnlock()
+
+	_, ok := mem.txsMap[txKey]
+	return ok
 }
 
 // TxsFront returns the first transaction in the ordered list for peer
@@ -271,18 +301,12 @@ func (mem *CListMempool) CheckTx(tx types.Tx, sender p2p.ID) (*abcicli.ReqRes, e
 
 	if added := mem.addToCache(tx); !added {
 		mem.metrics.AlreadyReceivedTxs.Add(1)
-		if sender != "" {
-			// Record a new sender for a tx we've already seen.
-			// Note it's possible a tx is still in the cache but no longer in the mempool
-			// (eg. after committing a block, txs are removed from mempool but not cache),
-			// so we only record the sender for txs still in the mempool.
-			if elem, ok := mem.getCElement(tx.Key()); ok {
-				memTx := elem.Value.(*mempoolTx)
-				if found := memTx.addSender(sender); found {
-					// It should not be possible to receive twice a tx from the same sender.
-					mem.logger.Error("Tx already received from peer", "tx", log.NewLazySprintf("%X", tx.Hash()), "sender", sender)
-				}
-			}
+		// Record a new sender for a tx we've already seen.
+		// Note it's possible a tx is still in the cache but no longer in the mempool
+		// (eg. after committing a block, txs are removed from mempool but not cache),
+		// so we only record the sender for txs still in the mempool.
+		if err := mem.addSender(tx.Key(), sender); err != nil {
+			mem.logger.Error("Could not add sender to tx", "tx", log.NewLazySprintf("%X", tx.Hash()), "sender", sender, "err", err)
 		}
 		// TODO: consider punishing peer for dups,
 		// its non-trivial since invalid txs can become valid,
@@ -350,13 +374,11 @@ func (mem *CListMempool) handleCheckTxResponse(tx types.Tx, sender p2p.ID) func(
 
 		// Check that tx is not already in the mempool. This can happen when the
 		// cache overflows. See https://github.com/ice-blockchain/cometbft/pull/890.
-		if elem, ok := mem.getCElement(tx.Key()); ok {
+		txKey := tx.Key()
+		if mem.Contains(txKey) {
 			mem.metrics.RejectedTxs.Add(1)
-			// Update senders on existing entry.
-			memTx := elem.Value.(*mempoolTx)
-			if found := memTx.addSender(sender); found {
-				// It should not be possible to receive twice a tx from the same sender.
-				mem.logger.Error("Tx already received from peer", "tx", tx.Hash(), "sender", sender)
+			if err := mem.addSender(txKey, sender); err != nil {
+				mem.logger.Error("Could not add sender to tx", "tx", tx.Hash(), "sender", sender, "err", err)
 			}
 			mem.logger.Debug("Reject tx", "tx", log.NewLazySprintf("%X", tx.Hash()), "height", mem.height.Load(), "err", ErrTxInMempool)
 			return ErrTxInMempool
@@ -374,8 +396,7 @@ func (mem *CListMempool) handleCheckTxResponse(tx types.Tx, sender p2p.ID) func(
 		mem.notifyTxsAvailable()
 
 		// update metrics
-		mem.metrics.Size.Set(float64(mem.Size()))
-		mem.metrics.SizeBytes.Set(float64(mem.SizeBytes()))
+		mem.updateSizeMetrics()
 
 		return nil
 	}
@@ -384,21 +405,27 @@ func (mem *CListMempool) handleCheckTxResponse(tx types.Tx, sender p2p.ID) func(
 // Called from:
 //   - handleCheckTxResponse (lock not held) if tx is valid
 func (mem *CListMempool) addTx(memTx *mempoolTx, sender p2p.ID) {
+	mem.txsMtx.Lock()
+	defer mem.txsMtx.Unlock()
+
 	tx := memTx.tx
 	txKey := tx.Key()
 
 	// Add new transaction.
 	_ = memTx.addSender(sender)
 	e := mem.txs.PushBack(memTx)
-	mem.txsMap.Store(txKey, e)
-	mem.txsBytes.Add(int64(len(tx)))
+
+	// Update auxiliary variables
+	mem.txsMap[txKey] = e
+	mem.txsBytes += int64(len(tx))
+	mem.numTxs++
 	mem.metrics.TxSizeBytes.Observe(float64(len(tx)))
 
 	mem.logger.Debug(
 		"Added transaction",
 		"tx", log.NewLazySprintf("%X", tx.Hash()),
 		"height", mem.height.Load(),
-		"total", mem.Size(),
+		"total", mem.numTxs,
 	)
 }
 
@@ -407,18 +434,25 @@ func (mem *CListMempool) addTx(memTx *mempoolTx, sender p2p.ID) {
 //   - Update (lock held) if tx was committed
 //   - handleRecheckTxResponse (lock not held) if tx was invalidated
 func (mem *CListMempool) RemoveTxByKey(txKey types.TxKey) error {
-	elem, ok := mem.getCElement(txKey)
+	mem.txsMtx.Lock()
+	defer mem.txsMtx.Unlock()
+
+	elem, ok := mem.txsMap[txKey]
 	if !ok {
 		return ErrTxNotFound
 	}
 
+	memTx := elem.Value.(*mempoolTx)
+
 	mem.txs.Remove(elem)
 	elem.DetachPrev()
-	mem.txsMap.Delete(txKey)
-	tx := elem.Value.(*mempoolTx).tx
-	mem.txsBytes.Add(int64(-len(tx)))
-	mem.forceRemoveFromCache(tx)
-	mem.logger.Debug("Removed transaction", "tx", log.NewLazySprintf("%X", tx.Hash()), "height", mem.height.Load(), "total", mem.Size())
+
+	// Update auxiliary variables.
+	delete(mem.txsMap, txKey)
+	mem.txsBytes -= int64(len(memTx.tx))
+	mem.numTxs--
+
+	mem.logger.Debug("Removed transaction", "tx", log.NewLazySprintf("%X", memTx.tx.Hash()), "height", mem.height.Load(), "total", mem.numTxs)
 	return nil
 }
 
@@ -478,9 +512,12 @@ func (mem *CListMempool) handleRecheckTxResponse(tx types.Tx) func(res *abci.Res
 			}
 
 			// update metrics
-			mem.metrics.Size.Set(float64(mem.Size()))
-			mem.metrics.SizeBytes.Set(float64(mem.SizeBytes()))
 			mem.metrics.EvictedTxs.Add(1)
+			if _, ok := mem.txsMap[tx.Key()]; ok {
+				mem.updateSizeMetrics()
+			} else {
+				mem.logger.Error("Cannot update metrics", "err", ErrTxNotFound)
+			}
 
 			mem.tryRemoveFromCache(tx)
 			if postCheckErr != nil {
@@ -558,18 +595,37 @@ func (mem *CListMempool) ReapMaxTxs(max int) types.Txs {
 	defer mem.updateMtx.RUnlock()
 
 	if max < 0 {
-		max = mem.txs.Len()
+		max = mem.Size()
 	}
 
-	txs := make([]types.Tx, 0, cmtmath.MinInt(mem.txs.Len(), max))
-	for e := mem.txs.Front(); e != nil && len(txs) <= max; e = e.Next() {
+	mem.txsMtx.RLock()
+	nonBlockingTxsIterator := mem.txs
+	mem.txsMtx.RUnlock()
+
+	txs := make([]types.Tx, 0, cmtmath.MinInt(mem.Size(), max))
+	for e := nonBlockingTxsIterator.Front(); e != nil && len(txs) <= max; e = e.Next() {
+		if e == nil {
+			break
+		}
+
 		memTx := e.Value.(*mempoolTx)
 		txs = append(txs, memTx.tx)
 	}
 	return txs
 }
 
-// Lock() must be help by the caller during execution.
+// GetTxByHash returns the types.Tx with the given hash if found in the mempool, otherwise returns nil.
+func (mem *CListMempool) GetTxByHash(hash []byte) types.Tx {
+	mem.txsMtx.RLock()
+	defer mem.txsMtx.RUnlock()
+
+	if elem, ok := mem.txsMap[types.TxKey(hash)]; ok {
+		return elem.Value.(*mempoolTx).tx
+	}
+	return nil
+}
+
+// Lock() must be held by the caller during execution.
 // TODO: this function always returns nil; remove the return value.
 func (mem *CListMempool) Update(
 	height int64,
@@ -622,16 +678,21 @@ func (mem *CListMempool) Update(
 	}
 
 	// Notify if there are still txs left in the mempool.
-	if mem.Size() > 0 {
+	if mem.numTxs > 0 {
 		mem.notifyTxsAvailable()
 	}
 
 	// Update metrics
-	mem.metrics.Size.Set(float64(mem.Size()))
-	mem.metrics.SizeBytes.Set(float64(mem.SizeBytes()))
+	mem.updateSizeMetrics()
 
 	mem.OnUpdate(txs)
 	return nil
+}
+
+// updateSizeMetrics updates the size-related metrics of a given lane.
+func (mem *CListMempool) updateSizeMetrics() {
+	mem.metrics.Size.Set(float64(mem.numTxs))
+	mem.metrics.SizeBytes.Set(float64(mem.txsBytes))
 }
 
 // recheckTxs sends all transactions in the mempool to the app for re-validation. When the function
@@ -647,7 +708,14 @@ func (mem *CListMempool) recheckTxs() {
 
 	// NOTE: CheckTx for new transactions cannot be executed concurrently
 	// because this function has the lock (via Update and Lock).
-	for e := mem.txs.Front(); e != nil; e = e.Next() {
+	mem.txsMtx.Lock()
+	nonBlockingTxsIterator := mem.txs
+	mem.txsMtx.Unlock()
+	for e := nonBlockingTxsIterator.Front(); e != nil; e = e.Next() {
+		if e == nil {
+			break
+		}
+
 		tx := e.Value.(*mempoolTx).tx
 		mem.recheck.numPendingTxs.Add(1)
 

@@ -831,7 +831,7 @@ func (cs *State) receiveRoutine(maxSteps int) {
 			}
 		}
 
-		rs := cs.RoundState
+		rs := cs.getRoundState()
 		var mi msgInfo
 
 		select {
@@ -884,8 +884,6 @@ func (cs *State) receiveRoutine(maxSteps int) {
 
 // state transitions on complete-proposal, 2/3-any, 2/3-one.
 func (cs *State) handleMsg(mi msgInfo) {
-	cs.mtx.Lock()
-	defer cs.mtx.Unlock()
 	var (
 		added bool
 		err   error
@@ -895,11 +893,14 @@ func (cs *State) handleMsg(mi msgInfo) {
 
 	switch msg := msg.(type) {
 	case *ProposalMessage:
+		cs.mtx.Lock()
 		// will not cause transition.
 		// once proposal is set, we can receive block parts
 		err = cs.setProposal(msg.Proposal, mi.ReceiveTime)
+		cs.mtx.Unlock()
 
 	case *BlockPartMessage:
+		cs.mtx.Lock()
 		// if the proposal is complete, we'll enterPrevote or tryFinalizeCommit
 		added, err = cs.addProposalBlockPart(msg, peerID)
 
@@ -920,6 +921,7 @@ func (cs *State) handleMsg(mi msgInfo) {
 		if added && cs.ProposalBlockParts.IsComplete() {
 			cs.handleCompleteProposal(msg.Height)
 		}
+		cs.mtx.Unlock()
 		if added {
 			cs.statsMsgQueue <- mi
 		}
@@ -935,9 +937,11 @@ func (cs *State) handleMsg(mi msgInfo) {
 		}
 
 	case *VoteMessage:
+		cs.mtx.Lock()
 		// attempt to add the vote and dupeout the validator if its a duplicate signature
 		// if the vote gives us a 2/3-any or 2/3-one, we transition
 		added, err = cs.tryAddVote(msg.Vote, peerID)
+		cs.mtx.Unlock()
 		if added {
 			cs.statsMsgQueue <- mi
 		}

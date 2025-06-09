@@ -262,8 +262,8 @@ func (conR *Reactor) announceReplicationToPeers(
 
 	peerSet.ForEach(func(peer *p2p.PeerImpl) {
 		defer wg.Done()
-		if !peer.IsOutbound() {
-			return
+		if !peer.IsOutbound() && peerSet.HasOutbound(peer.ID()) {
+			return // perfer sending to outbound
 		}
 
 		if err := sendReplCompleteToPeer(myPeerID, peer); err != nil {
@@ -535,7 +535,8 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 		}
 		switch msg := msg.(type) {
 		case *VoteMessage:
-			rs := conR.getRoundState()
+			// Get the updated round state as our view may be stale
+			rs := conR.conS.getRoundState()
 
 			height, valSize, lastCommitSize := rs.Height, rs.Validators.Size(), rs.LastCommit.Size()
 			ps.SetHasVoteFromPeer(msg.Vote, height, valSize, lastCommitSize)
@@ -555,7 +556,7 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 		switch msg := msg.(type) {
 		case *VoteSetBitsMessage:
 			// Get the updated round state as our view may be stale
-			rs := conR.conS.getRoundState()
+			rs := conR.conS.GetRoundState()
 
 			height, votes := rs.Height, rs.Votes
 
