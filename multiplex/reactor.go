@@ -1841,53 +1841,21 @@ func (reactor *Reactor) OnStop() {
 	reactor.networkMutex.RLock()
 	discoverySwitch := reactor.discoverySwitch
 	reactor.networkMutex.RUnlock()
-	//cleanupWg := new(sync.WaitGroup)
 
 	// Stop the P2P Discovery Server that is injected
 	if discoverySwitch != nil {
-		discoverySwitch.CleanupChannels()
-
-		allPeers := discoverySwitch.PeersByScopes()
-		for _, peerSet := range allPeers {
-			peers := peerSet.Copy()
-			for _, p := range peers {
-				func(peer *p2p.PeerImpl) {
-					//cleanupWg.Add(1)
-
-					go func() {
-						defer func() {
-							if r := recover(); r != nil {
-								// ignore peer error during shutdown
-								//defer cleanupWg.Done()
-								return
-							}
-						}()
-
-						//defer cleanupWg.Done()
-						discoverySwitch.StopPeerGracefully(peer)
-					}()
-				}(p)
-			}
+		reactor.networkMutex.Lock()
+		// First, kill any remaining peer connections, including
+		// channels and ping timers, and the MultiplexTransport.
+		if err := discoverySwitch.StopAllPeersAndCleanup(); err != nil {
+			reactor.logger.Error(
+				"Error cleaning up discovery peers", "err", err)
 		}
-		//cleanupWg.Wait()
-
-		// Ping timer must be killed for outbound peers
-		// NOTE(midas): ForEach() and Close() both lock the conn.
-		conns := []net.Conn{}
-		discoverySwitch.Transport().Conns().ForEach(func(c net.Conn) {
-			conns = append(conns, c)
-		})
-		for _, c := range conns {
-			c.Close()
-		}
-
-		// Must stop listening for P2P messages on broadcast port
-		if ts := discoverySwitch.Transport(); ts != nil {
-			ts.Close()
-		}
+		reactor.networkMutex.Unlock()
 
 		// Must stop reactors and listener channels
 		discoverySwitch.Stop()
+
 		reactor.networkMutex.Lock()
 		reactor.discoverySwitch = nil
 		reactor.networkMutex.Unlock()
@@ -1899,52 +1867,25 @@ func (reactor *Reactor) OnStop() {
 
 	// Stop the P2P CometBFT Server that is injected
 	if cometbftSwitch != nil {
-
 		reactor.networkMutex.Lock()
-		cometbftSwitch.CleanupChannels()
+		// First, kill any remaining peer connections, including
+		// channels and ping timers, and the MultiplexTransport.
+		if err := cometbftSwitch.StopAllPeersAndCleanup(); err != nil {
+			reactor.logger.Error(
+				"Error cleaning up cometbft peers", "err", err)
+		}
 		reactor.networkMutex.Unlock()
 
-		allPeers := cometbftSwitch.PeersByScopes()
-		for _, peerSet := range allPeers {
-			peers := peerSet.Copy()
-			for _, p := range peers {
-				func(peer *p2p.PeerImpl) {
-					//cleanupWg.Add(1)
-
-					go func() {
-						defer func() {
-							if r := recover(); r != nil {
-								// ignore peer error during shutdown
-								//defer cleanupWg.Done()
-								return
-							}
-						}()
-
-						//defer cleanupWg.Done()
-						cometbftSwitch.StopPeerGracefully(peer)
-					}()
-				}(p)
-			}
-			//cleanupWg.Wait()
-		}
-
-		// Ping timer must be killed for outbound peers
-		cometbftSwitch.Transport().Conns().ForEach(func(c net.Conn) {
-			c.Close()
-		})
-
-		if ts := cometbftSwitch.Transport(); ts != nil {
-			ts.Close()
-		}
-
+		// Must stop reactors and listener channels
 		cometbftSwitch.Stop()
+
 		reactor.networkMutex.Lock()
 		reactor.cometbftSwitch = nil
 		reactor.networkMutex.Unlock()
 	}
 
 	// Shutdown all registered services atomically
-	reactor.servicesMutex.RLock()
+	reactor.servicesMutex.Lock()
 
 	// Uses LIFO strategy to shutdown registered services
 	servicesLIFO := reactor.servicesSequence[:]
@@ -1964,7 +1905,7 @@ func (reactor *Reactor) OnStop() {
 			}
 		}
 	}
-	reactor.servicesMutex.RUnlock()
+	reactor.servicesMutex.Unlock()
 
 	// Now nothing may perturb shutting down ABCI anymore.
 	// Shutdown the ABCI client if running
@@ -2092,33 +2033,45 @@ func (reactor *Reactor) initMultiplexProviders(
 	icsGenesisDocSet node.IChecksummedGenesisDoc,
 ) {
 	// Use the services registry to load node services
-	reactor.servicesProvider = func(serviceName string, chainId string) cmtlibs.Service {
+	reactor.servicesProvider = func(serviceName string, chainID string) cmtlibs.Service {
 		reactor.servicesMutex.RLock()
-		defer reactor.servicesMutex.RUnlock()
+		_, hasAnyOfService := reactor.servicesRegistry[serviceName]
+		reactor.servicesMutex.RUnlock()
 
-		if _, ok := reactor.servicesRegistry[serviceName]; !ok {
+		if !hasAnyOfService {
 			// allocate in-place
+			reactor.servicesMutex.Lock()
 			reactor.servicesRegistry[serviceName] = MultiplexMap[cmtlibs.Service]{}
+			reactor.servicesMutex.Unlock()
 		}
 
-		if _, ok := reactor.servicesRegistry[serviceName][chainId]; !ok {
+		reactor.servicesMutex.RLock()
+		serviceForChainID, hasServiceByChainID := reactor.servicesRegistry[serviceName][chainID]
+		reactor.servicesMutex.RUnlock()
+
+		if !hasServiceByChainID {
 			return nil
 		}
 
-		return reactor.servicesRegistry[serviceName][chainId].GetInstance().(cmtlibs.Service)
+		return serviceForChainID.GetInstance().(cmtlibs.Service)
 	}
 
 	// Use the multiplex registry to load node services
 	reactor.multiplexProvider = func(multiplexName string) MultiplexMap[any] {
 		reactor.multiplexMutex.RLock()
-		defer reactor.multiplexMutex.RUnlock()
+		multiplexByName, hasMultiplex := reactor.multiplexRegistry[multiplexName]
+		reactor.multiplexMutex.RUnlock()
 
-		if _, ok := reactor.multiplexRegistry[multiplexName]; !ok {
+		if !hasMultiplex {
+			multiplexByName = MultiplexMap[any]{}
+
+			reactor.multiplexMutex.Lock()
 			// allocate in-place
-			reactor.multiplexRegistry[multiplexName] = MultiplexMap[any]{}
+			reactor.multiplexRegistry[multiplexName] = multiplexByName
+			reactor.multiplexMutex.Unlock()
 		}
 
-		return reactor.multiplexRegistry[multiplexName]
+		return multiplexByName
 	}
 }
 

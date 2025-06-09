@@ -547,6 +547,12 @@ func (sw *Switch) Broadcast(chainID string, e Envelope) {
 				_ = success
 			}(p)
 		}
+	} else {
+		// TODO(midas): remove debug logs
+		sw.Logger.Debug("Skipping broadcast - peerset is empty",
+			"chain_id", chainID,
+			"msg", e.Message,
+		)
 	}
 }
 
@@ -832,6 +838,53 @@ func (sw *Switch) StopPeerForError(peer *PeerImpl, reason any) {
 func (sw *Switch) StopPeerGracefully(peer *PeerImpl) {
 	sw.Logger.Info("Stopping peer gracefully", "peer", peer)
 	sw.stopAndRemovePeer(peer, nil)
+}
+
+func (sw *Switch) StopAllPeersAndCleanup() error {
+	allPeers := sw.PeersByScopes()
+	sw.Logger.Info("Stopping all peers gracefully",
+		"num_scopes", len(allPeers))
+
+	// First cleanup any remaining MConnection.channelsIdx
+	sw.CleanupChannels()
+
+	// Then stop all peer objects / connections.
+	cleanupWg := new(sync.WaitGroup)
+	for _, peerSet := range allPeers {
+		peers := peerSet.Copy()
+		for _, p := range peers {
+			cleanupWg.Add(1)
+			go func(peer *PeerImpl) {
+				defer func() {
+					if err := recover(); err != nil {
+						// ignore peer error during shutdown
+						return
+					}
+				}()
+
+				defer cleanupWg.Done()
+				sw.StopPeerGracefully(peer)
+			}(p)
+		}
+	}
+	cleanupWg.Wait()
+
+	// Ping timer must be killed for outbound peers.
+	// NOTE(midas): ForEach() and Close() both lock the conn.
+	conns := []net.Conn{}
+	sw.Transport().Conns().ForEach(func(c net.Conn) {
+		conns = append(conns, c)
+	})
+	for _, c := range conns {
+		c.Close()
+	}
+
+	// Must stop listening for P2P messages on broadcast port
+	if ts := sw.Transport(); ts != nil {
+		ts.Close()
+	}
+
+	return nil
 }
 
 // stopPeer calls the Stop method on a peer, then cleans up
