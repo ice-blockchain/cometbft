@@ -206,20 +206,12 @@ func (reactor *Reactor) InjectNewNetwork(
 	}
 	userAddress := extChainID.GetUserAddress()
 
-	// If we already have a PrivValidator, we don't need to AllocateNetwork.
-	// This PrivValidator was created with MultiplexBackend.InitValidators.
-
-	// In case no PrivValidator was created before, call AllocateNetwork.
-	privValProvider := reactor.GetInstanceProvider(InstanceKeyPrivValidator)
-	if pvInstance := privValProvider(chainID); pvInstance == nil {
-		// Pre-allocates filesystem, database and priv validator.
-		if err := reactor.AllocateNetwork(chainID); err != nil {
-			return err
-		}
-	}
+	// CAUTION:
+	// We already have a PrivValidator here because of calling AllocateNetwork
+	// before this method. And remotely, we execute GetRemoteValidatorsInfo.
 
 	// Retrieve pre-allocated resources for priv validator and fs
-	privValProvider = reactor.GetInstanceProvider(InstanceKeyPrivValidator)
+	privValProvider := reactor.GetInstanceProvider(InstanceKeyPrivValidator)
 	privValidator := privValProvider(chainID).(types.PrivValidator)
 
 	reactor.envMutex.RLock()

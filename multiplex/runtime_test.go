@@ -422,6 +422,11 @@ func TestMultiplexRuntimeInjectNewNetwork(t *testing.T) {
 
 	defer shutdownFn()
 
+	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
+	// executed earlier, i.e. see MultiplexBackend.InitValidators.
+	allocErr := testReactor.AllocateNetwork(testChainID)
+	require.NoError(t, allocErr, "should allocate new network resources")
+
 	// Act
 	injectErr := testReactor.InjectNewNetwork(testChainID, []string{})
 	assert.NoError(t, injectErr, "should inject new network")
@@ -441,6 +446,7 @@ func TestMultiplexRuntimeInjectNewNetwork(t *testing.T) {
 	assert.Equal(t, actualGenesisDoc.ChainID, testChainID)
 }
 
+// TODO(midas): move this test as AllocateNetwork was extracted.
 func TestMultiplexRuntimeInjectNewNetworkCallsAllocateNetwork(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
@@ -452,6 +458,11 @@ func TestMultiplexRuntimeInjectNewNetworkCallsAllocateNetwork(t *testing.T) {
 		shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
 
 	defer shutdownFn()
+
+	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
+	// executed earlier, i.e. see MultiplexBackend.InitValidators.
+	allocErr := testReactor.AllocateNetwork(testChainID)
+	require.NoError(t, allocErr, "should allocate new network resources")
 
 	// Act
 	injectErr := testReactor.InjectNewNetwork(testChainID, []string{})
@@ -514,6 +525,11 @@ func TestMultiplexRuntimeInjectNewNetworkCallsInjectStateMachine(t *testing.T) {
 
 	defer shutdownFn()
 
+	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
+	// executed earlier, i.e. see MultiplexBackend.InitValidators.
+	allocErr := testReactor.AllocateNetwork(testChainID)
+	require.NoError(t, allocErr, "should allocate new network resources")
+
 	// Act
 	injectErr := testReactor.InjectNewNetwork(testChainID, []string{})
 	assert.NoError(t, injectErr, "should inject new network")
@@ -555,6 +571,11 @@ func TestMultiplexRuntimeInjectNewNetworkCallsRegisterNetwork(t *testing.T) {
 		shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
 
 	defer shutdownFn()
+
+	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
+	// executed earlier, i.e. see MultiplexBackend.InitValidators.
+	allocErr := testReactor.AllocateNetwork(testChainID)
+	require.NoError(t, allocErr, "should allocate new network resources")
 
 	// Act
 	injectErr := testReactor.InjectNewNetwork(testChainID, []string{})
@@ -600,6 +621,11 @@ func TestMultiplexRuntimeInjectNewNetworkIncludesOtherValidators(t *testing.T) {
 
 	testWithChainID := makeChainID("test-chain-1")
 
+	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
+	// executed earlier, i.e. see MultiplexBackend.InitValidators.
+	allocErr := testReactor.AllocateNetwork(testWithChainID)
+	require.NoError(t, allocErr, "should allocate new network resources")
+
 	// Inject testWithChainID
 	injectErr := testReactor.InjectNewNetwork(testWithChainID, testOtherValidators)
 	require.NoError(t, injectErr,
@@ -638,6 +664,11 @@ func TestMultiplexRuntimeInjectNewRuntime(t *testing.T) {
 
 	defer shutdownFn()
 
+	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
+	// executed earlier, i.e. see MultiplexBackend.InitValidators.
+	allocErr := testReactor.AllocateNetwork(testChainID)
+	require.NoError(t, allocErr, "should allocate new network resources")
+
 	// Inject testChainID
 	injectErr := testReactor.InjectNewNetwork(testChainID, []string{})
 	require.NoError(t, injectErr)
@@ -661,6 +692,11 @@ func TestMultiplexRuntimeInjectNewRuntimeWithOthers(t *testing.T) {
 		shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
 
 	defer shutdownFn()
+
+	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
+	// executed earlier, i.e. see MultiplexBackend.InitValidators.
+	allocErr := testReactor.AllocateNetwork(testChainID)
+	require.NoError(t, allocErr, "should allocate new network resources")
 
 	// Inject testChainID
 	injectErr := testReactor.InjectNewNetwork(testChainID, []string{})

@@ -370,9 +370,14 @@ func TestMultiplexReactorUpdatedGenesisDocProvider(t *testing.T) {
 
 	newTestChainID := testExtChainID.String()
 
+	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
+	// executed earlier, i.e. see MultiplexBackend.InitValidators.
+	allocErr := testReactor.AllocateNetwork(newTestChainID)
+	require.NoError(t, allocErr, "should allocate new network resources")
+
 	// Inject testChainID
 	injectErr := testReactor.InjectNewNetwork(newTestChainID, []string{})
-	require.NoError(t, injectErr, "should create/allocate new network resources")
+	require.NoError(t, injectErr, "should create new network resources")
 
 	// And start its runtime
 	runtimeErr := testReactor.InjectNewRuntime(context.Background(), newTestChainID)

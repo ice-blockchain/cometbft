@@ -81,6 +81,11 @@ func TestMultiplexRoutinesNodeReplRequestEmptyRelays(t *testing.T) {
 	useChainID := makeChainID("test-chain-1")
 	testReactorRelayOne := servers[0].GetReactor()
 
+	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
+	// executed earlier, i.e. see MultiplexBackend.InitValidators.
+	allocErr := testReactorRelayOne.AllocateNetwork(useChainID)
+	require.NoError(t, allocErr, "should allocate new network resources")
+
 	// (2) inject new networks GenesisDoc
 	injectErr := testReactorRelayOne.InjectNewNetwork(useChainID, []string{})
 	require.NoError(t, injectErr)

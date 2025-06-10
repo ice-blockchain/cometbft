@@ -317,6 +317,11 @@ func (b *MultiplexBackend) DefaultNetworksCreatorRoutine() server.NetworksCreato
 					"num_vals", len(otherValPubKeys)+1,
 				)
 
+				// AllocateNetwork is NOT part of InjectNewNetwork anymore.
+				if err = b.reactor.AllocateNetwork(newChainID); err != nil {
+					return err
+				}
+
 				// Create the network genesis, state machine, etc.
 				err = b.reactor.InjectNewNetwork(newChainID, otherValPubKeys)
 				if err != nil {
