@@ -2429,11 +2429,10 @@ func (reactor *Reactor) handleChainReplicationRequest(
 	}
 	userAddress := extChainID.GetUserAddress()
 
-	// Pre-allocates filesystem, database and priv validator.
-	if err := reactor.AllocateNetwork(req.ChainID); err != nil {
-		return fmt.Errorf(
-			"could not allocate network resources: %w", err)
-	}
+	// CAUTION:
+	// We do not need the AllocateNetwork call anymore as it is now
+	// always being with GetRemoteValidatorsInfo, initiated by the
+	// replication partner, before sending a ChainReplicationRequest.
 
 	// Initialize the network genesis parameters
 	genesisDoc, err := GenesisDocFromChainParams(req.GetChainParams())
