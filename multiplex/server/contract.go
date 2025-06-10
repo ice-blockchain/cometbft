@@ -58,6 +58,13 @@ type Backend interface {
 	// GetDiscoveryPort should return the `DiscoveryPort` config value.
 	GetDiscoveryPort() uint16
 
+	// GetValidatorPubs should return the validator public keys per ChainID.
+	GetValidatorPubs() map[string]string
+
+	// InitValidators should initialize validators for networks and
+	// should return a map of public keys per ChainID.
+	InitValidators(networks []string) (map[string]string, error)
+
 	// StartConsensusInstance should start the consensus reactors,
 	// including mempool, blocksync, consensus and evidence reactors.
 	StartConsensusInstance(ctx context.Context, chainID string) error
@@ -134,6 +141,22 @@ type Backend interface {
 		userAddress string,
 		transactions ...client.Transaction,
 	) (map[string]int64, []string)
+
+	// GetRemoteValidatorsInfo should request a RPCResultInitValidator object
+	// which contains a map of validators public keys by ChainID.
+	GetRemoteValidatorsInfo(
+		ctx context.Context,
+		relayAddress *RelayAddress,
+		networks []string,
+	) (*RPCResultInitValidators, error)
+
+	// GetValidatorsByNetwork should find the supported networks, then map each
+	// of the ChainID to a slice of validator public keys.
+	GetValidatorsByNetwork(
+		ctx context.Context,
+		relays []*RelayAddress,
+		networks []string,
+	) (map[string][]string, error)
 
 	// GetRemoteRelayInfo should request a relay information object which contains
 	// a CometBFT Node ID, the supported networks and the node's listen address.

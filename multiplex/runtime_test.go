@@ -2,6 +2,7 @@ package multiplex_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -163,6 +164,10 @@ func TestMultiplexRuntimeMakeNetworkGenesis(t *testing.T) {
 	testPrivValPubKey, err := testPrivValidator.GetPubKey()
 	require.NoError(t, err)
 
+	testOtherValPubKey := ed25519.GenPrivKey().PubKey()
+	testOtherValPubKeyHex := fmt.Sprintf("%X", testOtherValPubKey.Bytes())
+	testOtherValidators := []string{testOtherValPubKeyHex}
+
 	numNetworksBefore := testReactor.Size()
 
 	// Act
@@ -170,6 +175,7 @@ func TestMultiplexRuntimeMakeNetworkGenesis(t *testing.T) {
 		testExtChainID,
 		testConfDir,
 		testPrivValidator,
+		testOtherValidators,
 	)
 	assert.NoError(t, err, "should create a genesis doc")
 
@@ -185,10 +191,18 @@ func TestMultiplexRuntimeMakeNetworkGenesis(t *testing.T) {
 	assert.Equal(t, true, actualFoundFlag)
 	assert.NotEmpty(t, actualGenesisDoc.Validators)
 
+	expectedNumValidators := len(testOtherValidators) + 1 // +testPrivValidator
+	assert.Len(t, actualGenesisDoc.Validators, expectedNumValidators)
+
 	// Make sure we included the newly created priv validator
 	actualValidator := actualGenesisDoc.Validators[0]
 	assert.Equal(t, actualValidator.PubKey, testPrivValPubKey)
 	assert.Equal(t, actualValidator.PubKey.Bytes(), testPrivValPubKey.Bytes())
+
+	// .. and make sure we include otherValidators
+	actualValidator2 := actualGenesisDoc.Validators[1]
+	assert.Equal(t, actualValidator2.PubKey, testOtherValPubKey)
+	assert.Equal(t, actualValidator2.PubKey.Bytes(), testOtherValPubKey.Bytes())
 }
 
 func TestMultiplexRuntimeMakeNetworkStateMachine(t *testing.T) {
@@ -409,7 +423,7 @@ func TestMultiplexRuntimeInjectNewNetwork(t *testing.T) {
 	defer shutdownFn()
 
 	// Act
-	injectErr := testReactor.InjectNewNetwork(testChainID)
+	injectErr := testReactor.InjectNewNetwork(testChainID, []string{})
 	assert.NoError(t, injectErr, "should inject new network")
 
 	// Test that we injected the ChainID
@@ -440,7 +454,7 @@ func TestMultiplexRuntimeInjectNewNetworkCallsAllocateNetwork(t *testing.T) {
 	defer shutdownFn()
 
 	// Act
-	injectErr := testReactor.InjectNewNetwork(testChainID)
+	injectErr := testReactor.InjectNewNetwork(testChainID, []string{})
 	assert.NoError(t, injectErr, "should inject new network")
 
 	// - Should have called AllocateNetwork which encapsulates calls to:
@@ -501,7 +515,7 @@ func TestMultiplexRuntimeInjectNewNetworkCallsInjectStateMachine(t *testing.T) {
 	defer shutdownFn()
 
 	// Act
-	injectErr := testReactor.InjectNewNetwork(testChainID)
+	injectErr := testReactor.InjectNewNetwork(testChainID, []string{})
 	assert.NoError(t, injectErr, "should inject new network")
 
 	// - Should have called InjectStateMachine which encapsulates the creation
@@ -543,7 +557,7 @@ func TestMultiplexRuntimeInjectNewNetworkCallsRegisterNetwork(t *testing.T) {
 	defer shutdownFn()
 
 	// Act
-	injectErr := testReactor.InjectNewNetwork(testChainID)
+	injectErr := testReactor.InjectNewNetwork(testChainID, []string{})
 	assert.NoError(t, injectErr, "should inject new network")
 
 	// - Should have called RegisterNetwork
@@ -561,6 +575,55 @@ func TestMultiplexRuntimeInjectNewNetworkCallsRegisterNetwork(t *testing.T) {
 	assert.Equal(t, testChainID, actualChainNodeInfo.Network)
 }
 
+func TestMultiplexRuntimeInjectNewNetworkIncludesOtherValidators(t *testing.T) {
+	// IMPORTANT: We use numChains=0 in this test so it is important
+	// to test whether P2P and RPC servers will be shutdown.
+	defer goleak.VerifyNone(t)
+
+	numChains := 0
+
+	// Initialize and START the nodes multiplex
+	// For debug, change the logger to cmtlog.TestingLogger()
+	_, _, testReactor,
+		shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
+
+	defer shutdownFn()
+
+	numValidators := 10
+	testOtherValidators := make([]string, 0, numValidators)
+	for i := 0; i < numValidators; i++ {
+		testOtherValPubKey := ed25519.GenPrivKey().PubKey()
+		testOtherValPubKeyHex := fmt.Sprintf("%X", testOtherValPubKey.Bytes())
+
+		testOtherValidators = append(testOtherValidators, testOtherValPubKeyHex)
+	}
+
+	testWithChainID := makeChainID("test-chain-1")
+
+	// Inject testWithChainID
+	injectErr := testReactor.InjectNewNetwork(testWithChainID, testOtherValidators)
+	require.NoError(t, injectErr,
+		"should accept other validator public keys")
+
+	// Test that we injected the ChainID
+	testChainIds := testReactor.GetNetworks()
+	assert.Len(t, testChainIds, numChains+1) // Injected 1
+	assert.Equal(t, true, testReactor.HasNetwork(testWithChainID))
+
+	// Also test that we created a correct GenesisDoc
+	testIcsGenDocSet := testReactor.GetChecksummedGenesisDocSet()
+	actualGenesisDoc,
+		actualFound,
+		err := testIcsGenDocSet.GenesisDocs.SearchGenesisDocByChainID(testWithChainID)
+	assert.NoError(t, err)
+	assert.Equal(t, true, actualFound)
+	assert.Equal(t, actualGenesisDoc.ChainID, testWithChainID)
+
+	// And test that validators are correctly added
+	expectedNumValidators := numValidators + 1 // +self
+	assert.Len(t, actualGenesisDoc.Validators, expectedNumValidators)
+}
+
 func TestMultiplexRuntimeInjectNewRuntime(t *testing.T) {
 	// IMPORTANT: We use numChains=0 in this test so it is important
 	// to test whether P2P and RPC servers will be shutdown.
@@ -576,7 +639,7 @@ func TestMultiplexRuntimeInjectNewRuntime(t *testing.T) {
 	defer shutdownFn()
 
 	// Inject testChainID
-	injectErr := testReactor.InjectNewNetwork(testChainID)
+	injectErr := testReactor.InjectNewNetwork(testChainID, []string{})
 	require.NoError(t, injectErr)
 
 	// For debug, change the logger cmtlog.TestingLogger()
@@ -600,7 +663,7 @@ func TestMultiplexRuntimeInjectNewRuntimeWithOthers(t *testing.T) {
 	defer shutdownFn()
 
 	// Inject testChainID
-	injectErr := testReactor.InjectNewNetwork(testChainID)
+	injectErr := testReactor.InjectNewNetwork(testChainID, []string{})
 	require.NoError(t, injectErr)
 
 	// For debug, change the logger cmtlog.TestingLogger()
@@ -666,6 +729,7 @@ func ResetTestMultiplexRuntimeMock(tb testing.TB, numChains int) (
 		testExtChainID,
 		testConfDir,
 		testPrivValidator,
+		[]string{},
 	)
 	assert.NoError(tb, err)
 

@@ -371,7 +371,7 @@ func TestMultiplexReactorUpdatedGenesisDocProvider(t *testing.T) {
 	newTestChainID := testExtChainID.String()
 
 	// Inject testChainID
-	injectErr := testReactor.InjectNewNetwork(newTestChainID)
+	injectErr := testReactor.InjectNewNetwork(newTestChainID, []string{})
 	require.NoError(t, injectErr, "should create/allocate new network resources")
 
 	// And start its runtime

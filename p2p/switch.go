@@ -852,17 +852,18 @@ func (sw *Switch) StopAllPeersAndCleanup() error {
 	cleanupWg := new(sync.WaitGroup)
 	for _, peerSet := range allPeers {
 		peers := peerSet.Copy()
+		cleanupWg.Add(len(peers))
+
 		for _, p := range peers {
-			cleanupWg.Add(1)
 			go func(peer *PeerImpl) {
 				defer func() {
+					defer cleanupWg.Done()
 					if err := recover(); err != nil {
 						// ignore peer error during shutdown
 						return
 					}
 				}()
 
-				defer cleanupWg.Done()
 				sw.StopPeerGracefully(peer)
 			}(p)
 		}

@@ -21,10 +21,17 @@ const (
 
 // RPCResultRelayInfo describes relays information.
 type RPCResultRelayInfo struct {
-	DefaultNodeID p2p.ID   `json:"id"` // authenticated identifier
-	Networks      []string `json:"networks"`
-	ListenAddress string   `json:"listen_address"`
-	DiscoveryPort uint16   `json:"discovery_port"`
+	DefaultNodeID p2p.ID            `json:"id"` // authenticated identifier
+	Networks      []string          `json:"networks"`
+	ListenAddress string            `json:"listen_address"`
+	DiscoveryPort uint16            `json:"discovery_port"`
+	ValidatorPubs map[string]string `json:"validator_pubkeys"`
+}
+
+// RPCResultInitValidators describes the result of validators orchestration.
+type RPCResultInitValidators struct {
+	Networks      []string          `json:"networks"`
+	ValidatorPubs map[string]string `json:"validator_pubkeys"`
 }
 
 // RelayInfoServer defines a server that is responsible of enabling
@@ -51,6 +58,28 @@ func (s *RelayInfoServer) GetRelayInfo(*rpctypes.Context) (*RPCResultRelayInfo, 
 		Networks:      s.backend.GetNetworks(),
 		ListenAddress: s.backend.GetListenAddress(),
 		DiscoveryPort: s.backend.GetDiscoveryPort(),
+		ValidatorPubs: s.backend.GetValidatorPubs(),
+	}
+
+	return result, nil
+}
+
+// InitValidators should initialize validators for networks and
+// should return a map of public keys per ChainID, or an error.
+func (s *RelayInfoServer) InitValidators(
+	_ *rpctypes.Context,
+	networks []string,
+) (*RPCResultInitValidators, error) {
+	// Start the backend initialization for networks,
+	// i.e. should call reactor.AllocateNetwork().
+	pubKeys, err := s.backend.InitValidators(networks)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &RPCResultInitValidators{
+		Networks:      networks,
+		ValidatorPubs: pubKeys,
 	}
 
 	return result, nil

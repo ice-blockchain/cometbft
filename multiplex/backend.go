@@ -18,6 +18,7 @@ import (
 
 	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
 	"github.com/ice-blockchain/cometbft/config"
+	"github.com/ice-blockchain/cometbft/crypto"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	mempl "github.com/ice-blockchain/cometbft/mempool"
 	"github.com/ice-blockchain/cometbft/node"
@@ -358,6 +359,31 @@ func (b *MultiplexBackend) GetNetworks() []string {
 // i.e. it should map to the relay's discovery port.
 func (b *MultiplexBackend) GetDiscoveryPort() uint16 {
 	return b.broadcastAddr.Port
+}
+
+// GetValidatorPubs returns all validator pubkeys available per ChainID.
+func (b *MultiplexBackend) GetValidatorPubs() map[string]string {
+	// Locks reactor.multiplexMutex
+	multiplex := b.reactor.multiplexProvider(InstanceKeyPrivValidator)
+
+	// Read-lock this time, as we won't transition.
+	b.reactor.multiplexMutex.RLock()
+	defer b.reactor.multiplexMutex.RUnlock()
+
+	validators := make(map[string]string, len(multiplex))
+	for chainID, pvInstance := range multiplex {
+		privValidator := pvInstance.GetInstance().(types.PrivValidator)
+
+		// Make sure we can access the priv validator
+		privValPubKey, err := privValidator.GetPubKey()
+		if err != nil {
+			b.logger.Error("failed to read public key from validator", "err", err)
+			continue
+		}
+
+		validators[chainID] = fmt.Sprintf("%X", privValPubKey.Bytes())
+	}
+	return validators
 }
 
 // GetReplRequestPeers returns a list of node IDs to whom we have previously
@@ -1782,6 +1808,164 @@ func (b *MultiplexBackend) GetLocalNetworkHeights(
 	return requiredNetworks, mustCreateNetworks
 }
 
+// InitValidators initialize validators for networks and returns a map
+// of public keys per ChainID. It uses [Reactor.AllocateNetwork] to init
+// the missing [types.PrivValidator] instances.
+//
+// InitValidators implements [server.Backend].
+func (b *MultiplexBackend) InitValidators(
+	networks []string,
+) (pubKeysPerChainID map[string]string, err error) {
+	myValidatorPubKeys := b.GetValidatorPubs()
+	pubKeysPerChainID = make(map[string]string, len(networks))
+	for _, chainID := range networks {
+		// If GetValidatorPubs() already has this ChainID
+		if pubKey, ok := myValidatorPubKeys[chainID]; ok {
+			pubKeysPerChainID[chainID] = pubKey
+			continue
+		}
+
+		// Otherwise, pre-allocates priv validator instance.
+		if err = b.reactor.AllocateNetwork(chainID); err != nil {
+			b.logger.Error("Failed to allocate new priv validator",
+				"chain_id", chainID,
+				"err", err,
+			)
+			return
+		}
+
+		// Retrieve pre-allocated resources for priv validator and fs
+		privValProvider := b.reactor.GetInstanceProvider(InstanceKeyPrivValidator)
+		privValidator := privValProvider(chainID).(types.PrivValidator)
+
+		// Make sure we can access the priv validator
+		var privValPubKey crypto.PubKey
+		if privValPubKey, err = privValidator.GetPubKey(); err != nil {
+			b.logger.Error("Failed to read public key from validator", "err", err)
+			return
+		}
+
+		pubKeysPerChainID[chainID] = fmt.Sprintf("%X", privValPubKey.Bytes())
+	}
+
+	return // pubKeysPerChainID, nil
+}
+
+// GetRemoteValidatorsInfo connects to relayAddress using a JSONRPC client,
+// and calls the InitValidators remote procedure to retrieve public keys.
+//
+// The relayAddress parameter should use `DiscoveryPort` as this method
+// will map it to its corresponding RelayInfo port (`DiscoveryPort - 1`).
+//
+// GetRemoteValidatorsInfo implements [server.Backend].
+func (b *MultiplexBackend) GetRemoteValidatorsInfo(
+	clientCtx context.Context,
+	relayAddress *server.RelayAddress,
+	requiredNetworks []string,
+) (*server.RPCResultInitValidators, error) {
+	valsInfo,
+		httpClient,
+		infoErr := b.reactor.GetRemoteValidatorsInfo(
+		clientCtx,
+		relayAddress,
+		requiredNetworks,
+		b.reactor.relayInfoTimeout,
+	)
+	if infoErr != nil {
+		return nil, infoErr
+	}
+
+	b.relayMtx.Lock()
+	b.httpClients = append(b.httpClients, httpClient)
+	b.relayMtx.Unlock()
+
+	return valsInfo, nil
+}
+
+// GetValidatorsByNetwork maps each supported network to a slice of validator
+// public keys in string (hex) format.
+//
+// This method uses [GetRemoteValidatorsInfo] to orchestrate the InitValidators
+// call if necessary. Given a correct response, we fill a map where keys contain
+// ChainID and values are slices of validator public keys.
+//
+// GetValidatorsByNetwork implements [server.Backend].
+func (b *MultiplexBackend) GetValidatorsByNetwork(
+	clientCtx context.Context,
+	relayAddresses []*server.RelayAddress,
+	requiredNetworks []string,
+) (validatorsByChain map[string][]string, err error) {
+	validatorsByChain = make(map[string][]string, len(requiredNetworks))
+
+	// This method should block until it processed all relays' validators.
+	var valsWg sync.WaitGroup
+	valsWg.Add(len(relayAddresses))
+
+	validatorsCh := make(chan struct {
+		start  time.Time
+		result *server.RPCResultInitValidators
+		addr   *server.RelayAddress
+	}, len(relayAddresses))
+
+	// Connect to all other relays using RPC (discovery server) to find
+	// out their validator public key for requiredNetworks.
+	for _, relAddr := range relayAddresses {
+		// Open ephemeral goroutines to request RelayInfo RPC from all relays.
+		go func(relayAddr *server.RelayAddress) {
+			defer valsWg.Done()
+			startTz := time.Now()
+			addrRPC := relayAddr.AddressForRelayInfo()
+
+			// Discover this relay's validator public key.
+			// This executes a RPC request for InitValidators.
+			result, valsErr := b.GetRemoteValidatorsInfo(clientCtx,
+				relayAddr, // expects DiscoveryPort
+				requiredNetworks,
+			)
+			if valsErr != nil {
+				b.logger.Error("Error discovering relay validator public keys",
+					"relay", addrRPC,
+					"err", valsErr,
+				)
+				return
+			}
+
+			validatorsCh <- struct {
+				start  time.Time
+				result *server.RPCResultInitValidators
+				addr   *server.RelayAddress
+			}{result: result, addr: relayAddr, start: startTz}
+		}(relAddr)
+	}
+
+	// Block this process until all relays have responded or timed out.
+	valsWg.Wait()
+	close(validatorsCh) // No more responses/timeouts expected.
+
+	for result := range validatorsCh {
+		durationMs := time.Since(result.start).Milliseconds()
+		relayAddr := result.addr
+
+		// Every relay may return one validator public key per requiredNetworks.
+		for chainID, validatorPubKey := range result.result.ValidatorPubs {
+			if _, ok := validatorsByChain[chainID]; !ok {
+				validatorsByChain[chainID] = make([]string, 0, len(relayAddresses))
+			}
+
+			validatorsByChain[chainID] = append(validatorsByChain[chainID], validatorPubKey)
+		}
+
+		// TODO(midas): remove debug logs
+		b.logger.Debug("Retrieved validators information from relay",
+			"relay", relayAddr,
+			"validators", result.result.ValidatorPubs,
+			"time", strconv.Itoa(int(durationMs))+"ms",
+		)
+	}
+
+	return // validatorsByChain, nil
+}
+
 // GetRemoteRelayInfo connects to relayAddress using a JSONRPC client,
 // and calls the GetRelayInfo remote procedure to retrieve the Relay ID,
 // the supported networks and the listen address for the remote relay.
@@ -2310,7 +2494,8 @@ func (b *MultiplexBackend) StartRPCServerDiscovery(
 
 	infoImpl := server.NewRelayInfoServer(b)
 	rpcserver.RegisterRPCFuncs(mux, map[string]*rpcserver.RPCFunc{
-		"info": rpcserver.NewRPCFunc(infoImpl.GetRelayInfo, ""),
+		"info":       rpcserver.NewRPCFunc(infoImpl.GetRelayInfo, ""),
+		"validators": rpcserver.NewRPCFunc(infoImpl.InitValidators, "networks"),
 	}, rpcLogger)
 
 	rpcListener, err := rpcserver.Listen(
@@ -3144,6 +3329,7 @@ func (b *MultiplexBackend) localTransactionEventsConsumer(
 		resultsCh <- TransactionEventResult{Error: err}
 		return
 	}
+	defer chainEventBus.UnsubscribeAll(context.Background(), subscriberName)
 
 	defer cancelTimer.Stop()
 

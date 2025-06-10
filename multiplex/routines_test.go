@@ -82,7 +82,7 @@ func TestMultiplexRoutinesNodeReplRequestEmptyRelays(t *testing.T) {
 	testReactorRelayOne := servers[0].GetReactor()
 
 	// (2) inject new networks GenesisDoc
-	injectErr := testReactorRelayOne.InjectNewNetwork(useChainID)
+	injectErr := testReactorRelayOne.InjectNewNetwork(useChainID, []string{})
 	require.NoError(t, injectErr)
 	runtimeErr := testReactorRelayOne.InjectNewRuntime(context.Background(), useChainID)
 	require.NoError(t, runtimeErr)

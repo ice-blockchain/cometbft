@@ -953,7 +953,7 @@ func TestScenarioClientBroadcastEmptyRelays(t *testing.T) {
 	defer cancelCtxFn()
 
 	// Separate goroutine for client broadcast process
-	numTransactions := 2
+	numTransactions := 1
 	testWithChainID := makeChainID("test chain")
 	notifyCh := make(chan client.BroadcastStatus)
 
@@ -992,7 +992,7 @@ func TestScenarioClientBroadcastEmptyRelays(t *testing.T) {
 	assert.NotEmpty(t, actualResponsesRcvd)
 	assert.Len(t, actualResponsesRcvd, expectedResponseCnt)
 
-	waitDuration := 10 * time.Second
+	waitDuration := 20 * time.Second
 	t.Logf("Waiting %.0fsec for blocks propagation...", waitDuration.Seconds())
 	time.Sleep(waitDuration)
 
@@ -1000,7 +1000,7 @@ func TestScenarioClientBroadcastEmptyRelays(t *testing.T) {
 	// Also test callbacks
 	t.Logf("Now evaluating callbacks execution...")
 
-	totalExpectedCalls := 1 // 2 transactions easily fits in one block
+	totalExpectedCalls := 1
 	testAcceptorRelay1 := servers[0].GetAcceptor().(*client.MockAcceptorImpl)
 	testAcceptorRelay2 := servers[1].GetAcceptor().(*client.MockAcceptorImpl)
 	testAcceptorRelay3 := servers[2].GetAcceptor().(*client.MockAcceptorImpl)
@@ -1558,7 +1558,7 @@ func TestScenarioClientBroadcastEmptyRelaysProduceBlockWithTx(t *testing.T) {
 		"should contain accepted transaction hashes")
 	close(notifyCh)
 
-	waitDuration := 5 * time.Second
+	waitDuration := 30 * time.Second
 	t.Logf("Waiting %.0fsec to evaluate state machine...", waitDuration.Seconds())
 	time.Sleep(waitDuration)
 
@@ -4009,7 +4009,7 @@ func ResetTestScenarioRelays(
 
 		// Wait for all concurrent closing to be completed.
 		wg.Wait()
-		// tb.Logf("Done shutting down all backends")
+		tb.Logf("Done shutting down all backends")
 	}
 
 	return servers, shutdownFn

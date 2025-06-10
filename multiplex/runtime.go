@@ -2,6 +2,7 @@ package multiplex
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/crypto"
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
+	cmtcodec "github.com/ice-blockchain/cometbft/crypto/encoding"
 	"github.com/ice-blockchain/cometbft/crypto/tmhash"
 	cmtjson "github.com/ice-blockchain/cometbft/libs/json"
 	service "github.com/ice-blockchain/cometbft/libs/service"
@@ -194,6 +196,7 @@ func (reactor *Reactor) InjectStateMachine(
 // See also: [InjectNewRuntime].
 func (reactor *Reactor) InjectNewNetwork(
 	chainID string,
+	otherValidators []string,
 ) error {
 	// Build the ExtendedChainID to retrieve user address from ChainID.
 	extChainID, err := NewExtendedChainIDFromLegacy(chainID)
@@ -221,6 +224,7 @@ func (reactor *Reactor) InjectNewNetwork(
 		extChainID,
 		newConfFolder,
 		privValidator,
+		otherValidators,
 	); err != nil {
 		return fmt.Errorf(
 			"could not create genesis doc for ChainID %s: %w", chainID, err)
@@ -753,12 +757,41 @@ func (reactor *Reactor) MakeNetworkGenesis(
 	chainID ExtendedChainID,
 	confDir string,
 	privValidator types.PrivValidator,
+	otherValidators []string,
 ) (*ChecksummedGenesisDocSet, error) {
 	// Priv validator pubkey is added to GenesisDoc
-	validatorPubKey, err := privValidator.GetPubKey()
+	localValidatorPubKey, err := privValidator.GetPubKey()
 	if err != nil {
 		return nil, fmt.Errorf(
 			"could not read validator pubkey for ChainID %s: %w", chainID, err)
+	}
+
+	powerPerValidator := 10
+	genesisValidators := make([]types.GenesisValidator, 0, len(otherValidators)+1)
+	genesisValidators = append(genesisValidators, types.GenesisValidator{
+		Address: localValidatorPubKey.Address(),
+		PubKey:  localValidatorPubKey,
+		Power:   int64(powerPerValidator),
+	})
+
+	for _, validatorPublicKeyHex := range otherValidators {
+		validatorPubBz, err := hex.DecodeString(validatorPublicKeyHex)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"could not decode validator pubkey for ChainID %s: %w", chainID, err)
+		}
+
+		validatorPubKey, err := cmtcodec.PubKeyFromTypeAndBytes(ed25519.KeyType, validatorPubBz)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"could not parse validator pubkey for ChainID %s: %w", chainID, err)
+		}
+
+		genesisValidators = append(genesisValidators, types.GenesisValidator{
+			Address: validatorPubKey.Address(),
+			PubKey:  validatorPubKey,
+			Power:   int64(powerPerValidator),
+		})
 	}
 
 	// Create new GenesisDoc with genesis time "now" and one validator.
@@ -766,11 +799,7 @@ func (reactor *Reactor) MakeNetworkGenesis(
 		ChainID:         chainID.String(),
 		GenesisTime:     cmttime.Now(),
 		ConsensusParams: types.DefaultConsensusParams(),
-		Validators: []types.GenesisValidator{{
-			Address: validatorPubKey.Address(),
-			PubKey:  validatorPubKey,
-			Power:   10,
-		}},
+		Validators:      genesisValidators,
 	}
 
 	return reactor.InjectGenesisDoc(chainID.String(), confDir, genesisDoc)

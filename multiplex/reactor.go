@@ -1615,6 +1615,61 @@ func (r *Reactor) IsDialError(err error) bool {
 	return p2p.IsDialError(err)
 }
 
+// GetRemoteValidatorsInfo connects to relayAddress using a JSONRPC client,
+// and calls the InitValidators remote procedure to retrieve public keys
+// of remote validators instances for requiredNetworks.
+//
+// The relayAddress parameter should use `DiscoveryPort` as this method
+// will map it to its corresponding RelayInfo port (`DiscoveryPort-1`).
+func (r *Reactor) GetRemoteValidatorsInfo(
+	clientCtx context.Context,
+	relayAddress *server.RelayAddress,
+	requiredNetworks []string,
+	requestTimeout time.Duration,
+) (*server.RPCResultInitValidators, *http.Client, error) {
+	// TODO(midas): should re-use this http client in GetRemoteRelayInfo.
+	c, connectErr := rpcclient.New(relayAddress.AddressForRelayInfo())
+	if connectErr != nil {
+		return nil, nil, connectErr
+	}
+
+	deadline := time.Now().Add(requestTimeout)
+	// Each call should timeout after max requestTimeout.
+	if ctxDeadline, withDeadline := clientCtx.Deadline(); withDeadline {
+		deadline = ctxDeadline
+	}
+	timeoutCtx, cancelFn := context.WithDeadline(context.Background(), deadline)
+	defer cancelFn()
+
+	result := &server.RPCResultInitValidators{}
+	params := map[string]any{
+		"networks": requiredNetworks,
+	}
+	_, callErr := c.Call(timeoutCtx, "validators", params, result)
+
+	select {
+	// cancelled by caller
+	case <-clientCtx.Done():
+		cancelledErr := fmt.Errorf(
+			"InitValidators cancelled with %s", relayAddress.AddressForRelayInfo())
+		r.logger.Error(cancelledErr.Error())
+		return nil, nil, cancelledErr
+	// context timeout (request took too long)
+	case <-timeoutCtx.Done():
+		timeoutErr := fmt.Errorf(
+			"InitValidators timed out with %s", relayAddress.AddressForRelayInfo())
+		r.logger.Error(timeoutErr.Error())
+		return nil, nil, timeoutErr
+	default:
+	}
+
+	if callErr != nil {
+		return nil, nil, callErr
+	}
+
+	return result, c.GetHTTPClient(), nil
+}
+
 // GetRemoteRelayInfo connects to relayAddress using a JSONRPC client,
 // and calls the GetRelayInfo remote procedure to retrieve the Relay ID,
 // the supported networks and the listen address for the remote relay.
@@ -1626,6 +1681,7 @@ func (r *Reactor) GetRemoteRelayInfo(
 	relayAddress *server.RelayAddress,
 	requestTimeout time.Duration,
 ) (*server.RPCResultRelayInfo, *http.Client, error) {
+	// TODO(midas): re-use client from GetRemoteValidatorsInfo.
 	c, connectErr := rpcclient.New(relayAddress.AddressForRelayInfo())
 	if connectErr != nil {
 		return nil, nil, connectErr

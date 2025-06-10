@@ -59,7 +59,8 @@ type DiscoveryDialerFn func(
 type NetworksCreatorFn func(
 	context.Context,
 	map[string][]*RelayAddress,
-	[]string,
+	[]string, // requiredNetworks
+	map[string][]string, // validatorsByChain
 	*sync.WaitGroup,
 	cmtlog.Logger,
 ) error

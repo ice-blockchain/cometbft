@@ -259,6 +259,7 @@ func (b *MultiplexBackend) DefaultNetworksCreatorRoutine() server.NetworksCreato
 		ctx context.Context,
 		relaysByChain map[string][]*server.RelayAddress,
 		missingChains []string,
+		validatorsByChain map[string][]string,
 		genesisWg *sync.WaitGroup,
 		logger cmtlog.Logger,
 	) error {
@@ -297,14 +298,27 @@ func (b *MultiplexBackend) DefaultNetworksCreatorRoutine() server.NetworksCreato
 
 						// The reactor will have pushed on createErr already.
 						logger.Error(fmt.Errorf(
-							"CLIENT PANIC encountered with MustCreateNetwork: %w",
+							"CLIENT PANIC encountered with InjectNewNetwork: %w",
 							errRecovered.(error),
 						).Error())
 					}
 				}()
 
+				var otherValPubKeys []string
+				if valPubKeys, ok := validatorsByChain[newChainID]; ok {
+					otherValPubKeys = valPubKeys[:]
+				} else {
+					otherValPubKeys = []string{}
+				}
+
+				// TODO(midas): remove debug logs
+				logger.Debug("Injecting new ChainID with validators",
+					"chain_id", newChainID,
+					"num_vals", len(otherValPubKeys)+1,
+				)
+
 				// Create the network genesis, state machine, etc.
-				err = b.reactor.InjectNewNetwork(newChainID)
+				err = b.reactor.InjectNewNetwork(newChainID, otherValPubKeys)
 				if err != nil {
 					return err
 				}

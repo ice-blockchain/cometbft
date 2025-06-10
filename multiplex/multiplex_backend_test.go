@@ -2,6 +2,7 @@ package multiplex_test
 
 import (
 	"context"
+	"encoding/hex"
 	"os"
 	"strconv"
 	"sync"
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 
+	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	mx "github.com/ice-blockchain/cometbft/multiplex"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
@@ -787,6 +789,145 @@ func TestMultiplexBackendGetRelaysByNetworkEmptyRelays(t *testing.T) {
 		"should return correct ListenAddress in RelayInfo RPC")
 	assert.Equal(t, expectedDiscoveryPort, actualRelayInfo.DiscoveryPort,
 		"should return correct DiscoveryPort in RelayInfo RPC")
+}
+
+func TestMultiplexBackendGetRemoteValidatorsInfo(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	numChains := 0
+	numRelays := 2
+
+	// For debug, change the loggers to cmtlog.TestingLogger()
+	loggerRelay1 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
+	loggerRelay2 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-2")
+
+	// Uses config.TestConfig() and random MultiplexConfig
+	rootDirs,
+		servers := ResetTestMultiplexBackendCompatibleRelays(
+		t,
+		numChains,
+		numRelays,
+		loggerRelay1,
+		loggerRelay2,
+	)
+	require.NotEmpty(t, servers)
+	require.Len(t, rootDirs, numRelays)
+	require.Len(t, servers, numRelays)
+
+	defer func() {
+		for i := 0; i < len(servers); i++ {
+			go closeAndRemoveAll(t, rootDirs[i], servers[i])
+		}
+	}()
+
+	// Start the node backends
+	for i := 0; i < len(servers); i++ {
+		servers[i].MustStart()
+	}
+
+	// Act - Relay 1 orchestrates validators of Relay 2
+	testBroadcastPort := strconv.Itoa(50001 + (1 * 100))                                 // 50101 (second relay P2P)
+	testRelayAddr, err := server.NewRelayAddress("tcp://127.0.0.1:" + testBroadcastPort) // NO ID!
+	require.NoError(t, err)
+
+	testWithChainID := makeChainID("test-chain-1")
+
+	actualValidatorsResult,
+		actualError := servers[0].GetRemoteValidatorsInfo(context.TODO(), testRelayAddr, []string{testWithChainID})
+
+	require.NoError(t, actualError)
+	assert.NotEmpty(t, actualValidatorsResult.ValidatorPubs)
+	assert.Contains(t, actualValidatorsResult.ValidatorPubs, testWithChainID)
+	assert.NotEmpty(t, actualValidatorsResult.ValidatorPubs[testWithChainID])
+
+	// Test that we receive the same validator pubkeys "locally" for relay-2.
+	actualValidatorPubs := servers[1].GetValidatorPubs()
+	assert.NotEmpty(t, actualValidatorPubs)
+	assert.Contains(t, actualValidatorPubs, testWithChainID)
+	assert.NotEmpty(t, actualValidatorPubs[testWithChainID])
+	assert.Equal(t, actualValidatorsResult.ValidatorPubs[testWithChainID], actualValidatorPubs[testWithChainID])
+}
+
+func TestMultiplexBackendGetValidatorsByNetwork(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	numChains := 0
+	numRelays := 4
+
+	// For debug, change the loggers to cmtlog.TestingLogger()
+	loggerRelay1 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-1")
+	loggerRelay2 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-2")
+	loggerRelay3 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-3")
+	loggerRelay4 := cmtlog.NewNopLogger() // cmtlog.TestingLogger().With("process", "relay-4")
+
+	// Uses config.TestConfig() and random MultiplexConfig
+	rootDirs,
+		servers := ResetTestMultiplexBackendCompatibleRelays(
+		t,
+		numChains,
+		numRelays,
+		loggerRelay1,
+		loggerRelay2,
+		loggerRelay3,
+		loggerRelay4,
+	)
+	require.NotEmpty(t, servers)
+	require.Len(t, rootDirs, numRelays)
+	require.Len(t, servers, numRelays)
+
+	defer func() {
+		for i := 0; i < len(servers); i++ {
+			go closeAndRemoveAll(t, rootDirs[i], servers[i])
+		}
+	}()
+
+	// Start the node backends
+	for i := 0; i < len(servers); i++ {
+		servers[i].MustStart()
+	}
+
+	testRelayAddresses := []*server.RelayAddress{}
+	for i := 1; i < numRelays; i++ {
+		// server 0 talks to server X
+		recipientReactor := servers[i].GetReactor()
+		require.NotNil(t, recipientReactor)
+		recipientNodeID := string(recipientReactor.GetNodeKey().ID())
+
+		// Relay 1 fetches validators of Relay X
+		testDiscoveryPort := 50001 + (i * 100)
+		testBroadcastPort := strconv.Itoa(testDiscoveryPort) // 50101, 50201, 50301
+		testRelayAddr, err := server.NewRelayAddress(recipientNodeID + "@127.0.0.1:" + testBroadcastPort)
+		require.NoError(t, err)
+
+		testRelayAddresses = append(testRelayAddresses, testRelayAddr)
+	}
+
+	testWithChainID := makeChainID("test-chain-1")
+
+	actualValidatorsByChain,
+		actualValidatorsErr := servers[0].GetValidatorsByNetwork(
+		context.TODO(),
+		testRelayAddresses,
+		[]string{testWithChainID},
+	)
+
+	assert.NoError(t, actualValidatorsErr)
+	assert.NotEmpty(t, actualValidatorsByChain)
+	assert.Contains(t, actualValidatorsByChain, testWithChainID)
+
+	expectedNumValidators := numRelays - 1 // -self
+	assert.Len(t, actualValidatorsByChain[testWithChainID], expectedNumValidators)
+
+	for _, testValsPubKeys := range actualValidatorsByChain {
+		assert.NotEmpty(t, testValsPubKeys)
+		assert.Len(t, testValsPubKeys, expectedNumValidators)
+
+		for _, testValPubKey := range testValsPubKeys {
+			actualPubKeyBz, bzErr := hex.DecodeString(testValPubKey)
+			assert.NoError(t, bzErr)
+			assert.Len(t, actualPubKeyBz, ed25519.PubKeySize)
+		}
+	}
 }
 
 func TestMultiplexBackendAddTransactions(t *testing.T) {

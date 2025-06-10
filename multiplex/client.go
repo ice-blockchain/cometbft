@@ -75,6 +75,7 @@ func (c MultiplexClient) GetRuntimeRegistry() *server.RuntimeRegistry {
 // The following steps define a complete broadcast process, in this order:
 //
 // - Basic verifications and opening relay discovery connections.
+// - Orchestration of PrivValidator instances remotely.
 // - New networks must be initialized explicitly.
 // - Wait for networks to be fully ready, i.e. genesis created.
 // - Send replication requests for required chains to relays.
@@ -258,7 +259,36 @@ func (c MultiplexClient) BroadcastTx(
 	}
 
 	// ------------------------------------------------------------------------
-	// Step 2: Dialing healthy relays for chain discovery (ReplicationChannel).
+	// Step 2: Orchestration of PrivValidator instances remotely.
+	//
+	// validatorsByChain maps a ChainID to a public keys slice (validators).
+	//
+	// Note that the local PrivValidator instance will be added to validators.
+	// ------------------------------------------------------------------------
+
+	// TODO(midas): remove debug logs
+	c.backend.GetLogger().Debug("Orchestrating remote validators instances",
+		"num_relays", len(relaysWithoutSelf),
+		"required_networks", requiredNetworks,
+		"tx_batch", transactionHashes)
+
+	startValidatorsInfo := time.Now()
+	validatorsByChain, _ := c.GetBackend().GetValidatorsByNetwork(ctx,
+		relaysWithoutSelf,
+		requiredNetworks,
+	)
+	durationValidatorsByNetwork := time.Since(startValidatorsInfo).Milliseconds()
+
+	// TODO(midas): remove debug logs
+	c.backend.GetLogger().Debug("Validators information retrieved from relays",
+		"num_remote", len(relaysWithoutSelf),
+		"num_networks", len(requiredNetworks),
+		"time", strconv.Itoa(int(durationValidatorsByNetwork))+"ms",
+		"tx_batch", transactionHashes,
+	)
+
+	// ------------------------------------------------------------------------
+	// Step 3: Dialing healthy relays for chain discovery (ReplicationChannel).
 	//
 	// relaysWithoutSelf contains addresses that have been dialed successfully.
 	//
@@ -319,7 +349,7 @@ func (c MultiplexClient) BroadcastTx(
 	}
 
 	// ------------------------------------------------------------------------
-	// Step 3: New networks must be initialized explicitly (create GenesisDoc).
+	// Step 4: New networks must be initialized explicitly (create GenesisDoc).
 	//
 	// mustCreateNetworks contains ChainID of networks that must be created.
 	//
@@ -347,6 +377,7 @@ func (c MultiplexClient) BroadcastTx(
 			if err := routineNetworksCreator(ctx,
 				chainRelays,
 				mustCreateNetworks,
+				validatorsByChain,
 				genesisWg,
 				c.backend.GetLogger().With("tx_batch", transactionHashes),
 			); err != nil {
@@ -376,7 +407,7 @@ func (c MultiplexClient) BroadcastTx(
 	}
 
 	// ------------------------------------------------------------------------
-	// Step 4: Ask relays to replicate chains.
+	// Step 5: Ask relays to replicate chains.
 	//
 	// catchupRelays contains relay addresses that will receive a message
 	// with a `ChainReplicationRequest` on [server.ReplicationChannel].
@@ -495,7 +526,7 @@ func (c MultiplexClient) BroadcastTx(
 	}
 
 	// ------------------------------------------------------------------------
-	// Step 5: Dialing healthy relays for CometBFT reactors.
+	// Step 7: Dialing healthy relays for CometBFT reactors.
 	//
 	// relaysWithoutSelf contains addresses that have been dialed successfully.
 	//
@@ -557,7 +588,7 @@ func (c MultiplexClient) BroadcastTx(
 	}
 
 	// ------------------------------------------------------------------------
-	// Step 7: Add transactions to local mempool.
+	// Step 8: Add transactions to local mempool.
 	//
 	// We shall store the transaction as accepted in the local mempool.
 	// ------------------------------------------------------------------------
@@ -578,7 +609,7 @@ func (c MultiplexClient) BroadcastTx(
 	}
 
 	// ------------------------------------------------------------------------
-	// Step 8: Broadcast transactions to relays.
+	// Step 9: Broadcast transactions to relays.
 	//
 	// If any of the healthy relays fails to accept the transactions, a rollback
 	// will happen because we added the transactions to our local mempool.
@@ -638,7 +669,7 @@ func (c MultiplexClient) BroadcastTx(
 	}
 
 	// ------------------------------------------------------------------------
-	// Step 9: Wait for remote transaction acceptance (ACK).
+	// Step 10: Wait for remote transaction acceptance (ACK).
 	//
 	// Healthy relays are expected to send us back a message which contains
 	// a `AckTransactionBroadcast` on [server.AckBroadcastChannel].
@@ -763,7 +794,7 @@ func (c MultiplexClient) BroadcastTx(
 	}
 
 	// ------------------------------------------------------------------------
-	// Step 10: Transactions are now broadcast and accepted by all relays,
+	// Step 11: Transactions are now broadcast and accepted by all relays,
 	// i.e. consensus succeeded.
 
 	// TODO(midas): remove debug logs
