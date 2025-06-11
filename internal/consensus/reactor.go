@@ -556,7 +556,7 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 		switch msg := msg.(type) {
 		case *VoteSetBitsMessage:
 			// Get the updated round state as our view may be stale
-			rs := conR.conS.GetRoundState()
+			rs := conR.conS.getRoundState()
 
 			height, votes := rs.Height, rs.Votes
 

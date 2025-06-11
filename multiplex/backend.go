@@ -135,6 +135,7 @@ type MultiplexBackend struct {
 	// Defines the duration for timeout of transaction completion.
 	// Used in [MultiplexBackend#WaitForTransactionEvents]
 	transactionTimeout time.Duration
+	txSubscribers      map[string]string
 
 	// An acceptor implementation to which transactions will be forwarded.
 	acceptor client.Acceptor
@@ -256,11 +257,12 @@ func NewServer(
 	}
 
 	server := &MultiplexBackend{
-		reactor:      reactor,
-		acceptor:     impl,
-		rpcListeners: []net.Listener{},
-		httpServers:  make(map[string]*http.Server),
-		httpClients:  []*http.Client{},
+		reactor:       reactor,
+		acceptor:      impl,
+		rpcListeners:  []net.Listener{},
+		httpServers:   make(map[string]*http.Server),
+		httpClients:   []*http.Client{},
+		txSubscribers: map[string]string{},
 
 		logger:     nodeLogger,
 		errorsCh:   make(chan error, 1),
@@ -833,14 +835,13 @@ func (b *MultiplexBackend) Close() error {
 	}
 	b.reactor.runtimesMutex.Unlock()
 
-	// Stop any active node runtime
-	b.reactor.runtimesMutex.Lock()
-	numActiveRuntimes := b.reactor.runtimeRegistry.NumRuntimes()
-	b.reactor.runtimesMutex.Unlock()
-	if numActiveRuntimes > 0 {
-		if err := b.reactor.StopAllNodeInstances(); err != nil {
-			b.logger.Error(
-				"Error stopping node instances during shutdown", "err", err)
+	// Close transaction listeners (event bus) before reactor.
+	serviceProvider := b.reactor.GetServicesProvider()
+	for chainID, txSubscriber := range b.txSubscribers {
+		ebService := serviceProvider(ServiceKeyEventBus, chainID)
+		if ebService != nil {
+			chainEventBus := ebService.(*types.EventBus)
+			chainEventBus.UnsubscribeAll(context.Background(), txSubscriber)
 		}
 	}
 
@@ -3333,6 +3334,7 @@ func (b *MultiplexBackend) localTransactionEventsConsumer(
 
 	defer cancelTimer.Stop()
 
+	b.txSubscribers[chainID] = subscriberName
 	for {
 		select {
 		case tx := <-txsSub.Out():
