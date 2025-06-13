@@ -388,9 +388,6 @@ func (reactor *Reactor) StopConsensusInstanceReactors(
 	for name, r := range reactorsForChain {
 		if r.IsRunning() {
 			err := r.Stop()
-			if r.IsStopped() {
-				r.Reset() // allows re-start
-			}
 
 			if err != nil && err != service.ErrAlreadyStopped {
 				return fmt.Errorf(

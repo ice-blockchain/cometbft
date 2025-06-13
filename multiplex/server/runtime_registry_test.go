@@ -224,6 +224,11 @@ func TestMultiplexServerRuntimeRegistryReset(t *testing.T) {
 	resetErr := reg.Reset()
 	assert.NoError(t, resetErr)
 
+	defer func() {
+		// Close quit channel
+		_ = reg.Stop()
+	}()
+
 	actualRuntimes = reg.ActiveRuntimes()
 	actualNumRuntimes = reg.NumRuntimes()
 	assert.Empty(t, actualRuntimes)

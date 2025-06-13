@@ -330,6 +330,13 @@ func (store dbStore) loadState(key []byte) (state State, err error) {
 // Save persists the State, the ValidatorsInfo, and the ConsensusParamsInfo to the database.
 // This flushes the writes (e.g. calls SetSync).
 func (store dbStore) Save(state State) error {
+	// TODO(midas): remove debug logs
+	if store.Logger != nil {
+		store.Logger.Debug("store.Save called",
+			"height", state.LastBlockHeight,
+			"chain_id", state.ChainID)
+	}
+
 	return store.save(state, stateKey)
 }
 

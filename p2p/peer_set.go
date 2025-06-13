@@ -223,11 +223,21 @@ func (ps *PeerSet) GetByAddr(addr net.Addr, outbound bool) (p *PeerImpl) {
 	return // p
 }
 
-// Remove removes the peer from the PeerSet.
-func (ps *PeerSet) Remove(peer Peer) bool {
+func (ps *PeerSet) RemovePeer(peer *PeerImpl) bool {
 	ps.mtx.Lock()
 	if len(ps.list) == 0 {
-		peer.SetRemovalFailed()
+		ps.mtx.Unlock()
+		return false
+	}
+	ps.mtx.Unlock()
+
+	return ps.remove(peer.ID(), peer.IsOutbound())
+}
+
+// Remove removes the peer from the PeerSet.
+func (ps *PeerSet) Remove(peer *PeerImpl) bool {
+	ps.mtx.Lock()
+	if len(ps.list) == 0 {
 		ps.mtx.Unlock()
 		return false
 	}

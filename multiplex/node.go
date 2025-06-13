@@ -253,7 +253,7 @@ func NewNodesMultiplex(
 			// Determine whether we should do block sync. This must happen after
 			// the handshake, since the app may modify the validator set,
 			// e.g. specifying ourself as the only validator.
-			blockSync := !onlyValidatorIsUs(stateMachine.Copy(), privValPubKey)
+			blockSync := !onlyValidatorIsUs(stateMachine.Copy(), privValPubKey) && !validatorsIncludesUs(stateMachine.Copy(), privValPubKey)
 			waitSyncd := blockSync
 
 			logNodeStartupInfo(stateMachine.Copy(), privValPubKey, clogger)
@@ -269,7 +269,11 @@ func NewNodesMultiplex(
 			}
 
 			// Inform about the consensus readiness
-			clogger.Info("Network is consensus ready")
+			clogger.Info("Network is consensus ready",
+				"waitSync", waitSyncd,
+				"onlyValidatorIsUs", onlyValidatorIsUs(stateMachine.Copy(), privValPubKey),
+				"privValIsValidator", validatorsIncludesUs(stateMachine.Copy(), privValPubKey),
+			)
 		}(cid, cch, &nodesWg, &nodeErr)
 	}
 	// End of for loop, code following this is run *globally*

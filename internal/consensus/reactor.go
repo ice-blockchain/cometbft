@@ -167,13 +167,16 @@ func (conR *Reactor) OnReset() error {
 	conR.Logger.Info("Consensus reactor service reset",
 		"chain_id", conR.conS.state.ChainID,
 	)
+	if err := conR.conS.Reset(); err != nil {
+		conR.Logger.Error("Error resetting consensus state", "err", err)
+	}
 	return nil
 }
 
 // SwitchToConsensus switches from block sync or state sync mode to consensus
 // mode.
 func (conR *Reactor) SwitchToConsensus(state sm.State, skipWAL bool) {
-	conR.Logger.Info("SwitchToConsensus")
+	conR.Logger.Info("SwitchToConsensus", "announce", conR.msgStatusToPeers.Load())
 
 	// reset the state
 	func() {
@@ -258,24 +261,37 @@ func (conR *Reactor) announceReplicationToPeers(
 	)
 
 	var wg sync.WaitGroup
-	wg.Add(peerSet.Size())
+	wg.Add(len(peersToSend))
 
-	peerSet.ForEach(func(peer *p2p.PeerImpl) {
-		defer wg.Done()
-		if !peer.IsOutbound() && peerSet.HasOutbound(peer.ID()) {
-			return // perfer sending to outbound
-		}
+	for _, p := range peersToSend {
+		// Broadcast this message concurrently to our peers. Note that
+		// we will be waiting for the operations to complete to proceed.
+		go func(peer *p2p.PeerImpl) {
+			defer wg.Done()
 
-		if err := sendReplCompleteToPeer(myPeerID, peer); err != nil {
-			conR.Logger.Error("Failed to send ChainReplicationComplete",
-				"chain_id", chainID,
-				"from", conR.nodeKey.ID(),
-				"to", peer.ID(),
-				"err", err,
-			)
-		}
-	})
+			if !peer.IsOutbound() && peerSet.HasOutbound(peer.ID()) {
+				return // prefer sending to outbound
+			}
+
+			if err := sendReplCompleteToPeer(myPeerID, peer); err != nil {
+				conR.Logger.Error("Failed to send ChainReplicationComplete",
+					"chain_id", chainID,
+					"from", conR.nodeKey.ID(),
+					"to", peer.ID(),
+					"err", err,
+				)
+			}
+		}(p)
+	}
 	wg.Wait()
+
+	// TODO(midas): remove debug logs
+	conR.Logger.Debug("Done sending ChainReplicationComplete to peers",
+		"from_id", myPeerID,
+		"num_peers", len(peersToSend),
+		"peers", peersToSend,
+		"chain_id", chainID,
+	)
 
 	// Completes the runtime activated in [multiplex.Reactor#Receive] upon
 	// reception of a ChainReplicationRequest.
@@ -333,10 +349,87 @@ func (conR *Reactor) PeerStateKey() string {
 	return types.PeerStateKey + "_" + conR.conS.state.ChainID
 }
 
+// ChainID returns the ChainID as defined by the state machine.
+func (conR *Reactor) ChainID() string {
+	return conR.conS.state.ChainID
+}
+
+// GetPeerState reads the peer state or initializes it.
+func (conR *Reactor) GetPeerState(peer *p2p.PeerImpl) *PeerState {
+	var peerState *PeerState
+	if peer.Has(conR.PeerStateKey()) {
+		peerState = peer.Get(conR.PeerStateKey()).(*PeerState)
+	} else {
+		// Try to init the peer and attempt to find peer state again.
+		peer = conR.InitPeer(peer)
+		peerData := peer.Get(conR.PeerStateKey())
+		if peerData == nil {
+			return nil
+		}
+		peerState = peerData.(*PeerState)
+	}
+	return peerState
+}
+
+// GetPeerRoundState returns the latest PRS known for peerID.
+func (conR *Reactor) GetPeerRoundState(peerID p2p.ID) cstypes.PeerRoundState {
+	peerSet := conR.Switch.Peers(conR.ChainID())
+	reactorPeers := peerSet.Copy()
+	peerRoundStates := []cstypes.PeerRoundState{}
+	for _, p := range reactorPeers {
+		// Read peerState from other peer by same ID
+		if p.ID() == peerID && p.Has(conR.PeerStateKey()) {
+			peerState := p.Get(conR.PeerStateKey()).(*PeerState)
+			if peerState.PRS.Step.IsValid() { // not RoundStepUnknown
+				peerRoundStates = append(peerRoundStates, peerState.PRS)
+			}
+		}
+	}
+
+	// RoundStepUnknown, i.e. NewPeerState
+	prs := cstypes.PeerRoundState{
+		Round:              -1,
+		ProposalPOLRound:   -1,
+		LastCommitRound:    -1,
+		CatchupCommitRound: -1,
+	}
+
+	// Pick "latest" by peer ID
+	for _, rs := range peerRoundStates {
+		if rs.Height > prs.Height {
+			prs = rs
+			continue
+		} else if rs.Height == prs.Height {
+			if rs.Round > prs.Round {
+				prs = rs
+				continue
+			} else if rs.Round == prs.Round {
+				if uint8(rs.Step) > uint8(prs.Step) {
+					prs = rs
+					continue
+				}
+			}
+		} // else: rs.H < prs.H
+	}
+
+	return prs
+}
+
 // InitPeer implements Reactor by creating a state for the peer.
 func (conR *Reactor) InitPeer(peer *p2p.PeerImpl) *p2p.PeerImpl {
+	prs := conR.GetPeerRoundState(peer.ID())
 	if !peer.Has(conR.PeerStateKey()) {
 		peerState := NewPeerState(peer).SetLogger(conR.Logger)
+		if prs.Step.IsValid() {
+			peerState.PRS = prs
+		}
+
+		// TODO(midas): remove debug logs
+		conR.Logger.Debug("Initializing consensus peer state",
+			"peer", peer,
+			"state", peerState,
+		)
+
 		peer.Set(conR.PeerStateKey(), peerState)
 	}
 	return peer
@@ -355,17 +448,11 @@ func (conR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 	}
 
 	// TODO(midas): remove debug logs
-	conR.Logger.Debug("Adding peer to consensus reactor",
-		"peer", peer,
-	)
+	conR.Logger.Debug("Adding peer to consensus reactor", "peer", peer)
 
-	peerState, ok := peer.Get(conR.PeerStateKey()).(*PeerState)
-	if !ok {
-		// Try to init the peer and attempt to find peer state again.
-		peer = conR.InitPeer(peer)
-		if peerState, ok = peer.Get(conR.PeerStateKey()).(*PeerState); !ok {
-			panic(fmt.Sprintf("Peer %v has no state for %v", peer, conR.PeerStateKey()))
-		}
+	peerState := conR.GetPeerState(peer)
+	if peerState == nil {
+		panic(fmt.Sprintf("Peer %v has no state for %v", peer, conR.PeerStateKey()))
 	}
 
 	// TODO(midas): remove debug logs
@@ -384,7 +471,7 @@ func (conR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 	// If we're block_syncing, broadcast a RoundStepMessage later upon SwitchToConsensus().
 	if !conR.WaitSync() {
 		// TODO(midas): remove debug logs
-		conR.Logger.Debug("Sending RSM to peer (done blocksyncing)",
+		conR.Logger.Debug("Sending NewRoundStepMessage",
 			"peer", peer,
 			"state", peerState,
 		)
@@ -443,12 +530,9 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 	// Get peer states
 	// NOTE(midas): In case the peer has no state, we try to send it some
 	// data through initialization and then read the state once more.
-	ps, ok := e.Src.Get(conR.PeerStateKey()).(*PeerState)
-	if !ok {
-		e.Src = conR.InitPeer(e.Src)
-		if ps, ok = e.Src.Get(conR.PeerStateKey()).(*PeerState); !ok {
-			panic(fmt.Sprintf("Peer %v has no state for %v", e.Src, conR.PeerStateKey()))
-		}
+	ps := conR.GetPeerState(e.Src)
+	if ps == nil {
+		panic(fmt.Sprintf("Source peer %v has no state for %v", e.Src, conR.PeerStateKey()))
 	}
 
 	switch e.ChannelID {
@@ -556,7 +640,7 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 		switch msg := msg.(type) {
 		case *VoteSetBitsMessage:
 			// Get the updated round state as our view may be stale
-			rs := conR.conS.getRoundState()
+			rs := conR.conS.GetRoundState()
 
 			height, votes := rs.Height, rs.Votes
 
@@ -769,7 +853,7 @@ func makeRoundStepMessage(rs *cstypes.RoundState) (nrsMsg *cmtcons.NewRoundStep)
 }
 
 func (conR *Reactor) sendNewRoundStepMessage(peer *p2p.PeerImpl) {
-	rs := conR.getRoundState()
+	rs := conR.conS.GetRoundState()
 	nrsMsg := makeRoundStepMessage(&rs)
 	peer.Send(conR.conS.state.ChainID, p2p.Envelope{
 		ChannelID: StateChannel,
@@ -1235,14 +1319,14 @@ func pickVoteCurrentHeight(
 func (conR *Reactor) peerStatsRoutine() {
 	for {
 		if !conR.IsRunning() {
-			conR.Logger.Info("Stopping peerStatsRoutine")
+			conR.Logger.Info("Stopping peerStatsRoutine - reactor is stopped")
 			return
 		}
 
 		select {
 		case msg := <-conR.conS.statsMsgQueue:
 			if len(msg.PeerID) == 0 {
-				conR.Logger.Debug("Failed attempt to update peer stats - got empty PeerID")
+				// Received empty PeerID ("self" stats)
 				continue
 			}
 
@@ -1254,14 +1338,16 @@ func (conR *Reactor) peerStatsRoutine() {
 				)
 				continue
 			}
+
 			// Get peer state
-			ps, ok := peer.Get(conR.PeerStateKey()).(*PeerState)
-			if !ok {
-				// Try to init the peer and attempt to find peer state again.
-				peer = conR.InitPeer(peer)
-				if ps, ok = peer.Get(conR.PeerStateKey()).(*PeerState); !ok {
-					panic(fmt.Sprintf("Peer %v has no state for %v", peer, conR.PeerStateKey()))
-				}
+			ps := conR.GetPeerState(peer)
+
+			// Skip statistics if we don't have a PeerState
+			if ps == nil {
+				conR.Logger.Debug("Failed attempt to update peer stats - PeerState not found",
+					"peer", msg.PeerID,
+				)
+				continue
 			}
 			switch msg.Msg.(type) {
 			case *VoteMessage:
@@ -1297,10 +1383,7 @@ func (conR *Reactor) StringIndented(indent string) string {
 	conR.Switch.Peers(conR.conS.state.ChainID).ForEach(func(peer *p2p.PeerImpl) {
 		ps, ok := peer.Get(conR.PeerStateKey()).(*PeerState)
 		if !ok {
-			peer = conR.InitPeer(peer)
-			if ps, ok = peer.Get(conR.PeerStateKey()).(*PeerState); !ok {
-				panic(fmt.Sprintf("Peer %v has no state for %v", peer, conR.PeerStateKey()))
-			}
+			return
 		}
 		s += indent + "  " + ps.StringIndented(indent+"  ") + "\n"
 	})

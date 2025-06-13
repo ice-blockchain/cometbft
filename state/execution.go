@@ -304,7 +304,12 @@ func (blockExec *BlockExecutor) applyBlock(state State, blockID types.BlockID, b
 	if err != nil {
 		return state, fmt.Errorf("commit failed for application: %w", err)
 	}
-	blockExec.logger.Debug("state.LastResultsHash updated in updateState", "newVal", state.LastBlockHeight, "chain", block.ChainID)
+
+	// TODO(midas): remove debug logs
+	blockExec.logger.Debug("state.LastResultsHash updated in updateState",
+		"newVal", state.LastBlockHeight,
+		"chain", block.ChainID)
+
 	// Lock mempool, commit app state, update mempoool.
 	retainHeight, err := blockExec.Commit(state, block, abciResponse)
 	if err != nil {
@@ -321,6 +326,11 @@ func (blockExec *BlockExecutor) applyBlock(state State, blockID types.BlockID, b
 	if err := blockExec.store.Save(state); err != nil {
 		return state, err
 	}
+
+	// TODO(midas): remove debug logs
+	blockExec.logger.Debug("blockExec.store saved",
+		"height", state.LastBlockHeight,
+		"chain", block.ChainID)
 
 	fail.Fail() // XXX
 

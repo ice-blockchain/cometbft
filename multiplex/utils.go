@@ -21,6 +21,14 @@ func onlyValidatorIsUs(state sm.State, pubKey crypto.PubKey) bool {
 	return bytes.Equal(pubKey.Address(), addr)
 }
 
+func validatorsIncludesUs(state sm.State, pubKey crypto.PubKey) bool {
+	if _, addr := state.Validators.GetByAddress(pubKey.Address()); addr != nil {
+		return true
+	}
+
+	return false
+}
+
 // splitAndTrimEmpty slices s into all subslices separated by sep and returns a
 // slice of the string s with all leading and trailing Unicode code points
 // contained in cutset removed. If sep is empty, SplitAndTrim splits after each

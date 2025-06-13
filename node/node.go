@@ -655,12 +655,6 @@ func NewNodeWithServices(
 	}
 }
 
-// OnReset implements Service.
-func (n *Node) OnReset() error {
-	n.Logger.Debug("Node runtime reset")
-	return nil
-}
-
 // OnStart starts the Node. It implements service.Service.
 func (n *Node) OnStart() error {
 	now := cmttime.Now()
@@ -730,17 +724,22 @@ func (n *Node) OnStop() {
 			n.Logger.Error("Error stopping the pruning service", "err", err)
 		}
 	}
+
+	n.Logger.Info("Stopping eventBus")
 	if n.eventBus.IsRunning() {
 		if err := n.eventBus.Stop(); err != nil {
 			n.Logger.Error("Error closing eventBus", "err", err)
 		}
 	}
+
+	n.Logger.Info("Stopping indexers")
 	if n.indexerService != nil && n.indexerService.IsRunning() {
 		if err := n.indexerService.Stop(); err != nil {
 			n.Logger.Error("Error closing indexerService", "err", err)
 		}
 	}
 
+	n.Logger.Info("Stopping p2p", "should", n.shouldStartP2P)
 	// now stop the reactors
 	if n.shouldStartP2P && n.sw.IsRunning() {
 		if err := n.sw.Stop(); err != nil {
@@ -754,6 +753,7 @@ func (n *Node) OnStop() {
 		n.isListening = false
 	}
 
+	n.Logger.Info("Stopping abci")
 	// stop the client gracefully
 	if n.proxyApp != nil && n.proxyApp.IsRunning() {
 		if err := n.proxyApp.Stop(); err != nil {
@@ -761,6 +761,7 @@ func (n *Node) OnStop() {
 		}
 	}
 
+	n.Logger.Info("Stopping rpc", "should", n.shouldStartRPC)
 	// finally stop the listeners / external services
 	if n.shouldStartRPC {
 		for _, l := range n.rpcListeners {
@@ -771,41 +772,66 @@ func (n *Node) OnStop() {
 		}
 	}
 
+	n.Logger.Info("Stopping privValidator")
 	if pvsc, ok := n.privValidator.(service.Service); ok {
 		if err := pvsc.Stop(); err != nil {
 			n.Logger.Error("Error closing private validator", "err", err)
 		}
 	}
 
+	n.Logger.Info("Stopping prometheus", "should", n.shouldStartMon)
 	if n.shouldStartMon && n.prometheusSrv != nil {
 		if err := n.prometheusSrv.Shutdown(context.Background()); err != nil {
 			// Error from closing listeners, or context timeout:
 			n.Logger.Error("Prometheus HTTP server Shutdown", "err", err)
 		}
 	}
+
+	n.Logger.Info("Stopping pprof")
 	if n.pprofSrv != nil {
 		if err := n.pprofSrv.Shutdown(context.Background()); err != nil {
 			n.Logger.Error("Pprof HTTP server Shutdown", "err", err)
 		}
 	}
+
+	n.Logger.Info("Stopping blockstore")
 	if n.blockStore != nil {
 		n.Logger.Info("Closing blockstore")
 		if err := n.blockStore.Close(); err != nil {
 			n.Logger.Error("problem closing blockstore", "err", err)
 		}
 	}
+
+	n.Logger.Info("Stopping statestore")
 	if n.stateStore != nil {
 		n.Logger.Info("Closing statestore")
 		if err := n.stateStore.Close(); err != nil {
 			n.Logger.Error("problem closing statestore", "err", err)
 		}
 	}
+
+	n.Logger.Info("Stopping evidencestore")
 	if n.evidencePool != nil {
 		n.Logger.Info("Closing evidencestore")
 		if err := n.EvidencePool().Close(); err != nil {
 			n.Logger.Error("problem closing evidencestore", "err", err)
 		}
 	}
+}
+
+// OnReset implements service.Service.
+func (n *Node) OnReset() error {
+	n.Logger.Debug("Node runtime reset")
+	if err := n.pruner.Reset(); err != nil {
+		n.Logger.Error("Error resetting the pruning service", "err", err)
+	}
+	if err := n.eventBus.Reset(); err != nil {
+		n.Logger.Error("Error resetting eventBus", "err", err)
+	}
+	if err := n.indexerService.Reset(); err != nil {
+		n.Logger.Error("Error resetting indexerService", "err", err)
+	}
+	return nil
 }
 
 // ConfigureRPC makes sure RPC has all the objects it needs to operate.

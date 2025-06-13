@@ -17,7 +17,6 @@ import (
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/server"
 	"github.com/ice-blockchain/cometbft/p2p"
-	"github.com/ice-blockchain/cometbft/p2p/conn"
 	"github.com/ice-blockchain/cometbft/types"
 )
 
@@ -273,11 +272,15 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 	memR.Logger.Debug("Receive", "src", e.Src, "chId", e.ChannelID, "msg", e.Message)
 
 	if e.ChannelID == server.AckBroadcastChannel {
-		mxReactor := memR.Switch.Reactor(conn.SharedChannelsNamespace, "MULTIPLEX")
+		mxReactor := memR.Switch.GetMultiplexReactor()
+		memR.Logger.Debug("Forwarding bytes",
+			"mx", mxReactor,
+			"running", mxReactor.IsRunning(),
+			"msg", e.Message)
 		if mxReactor != nil && mxReactor.IsRunning() {
 			mxReactor.Receive(e)
 		}
-		return
+		return // Forwarded
 	}
 
 	switch msg := e.Message.(type) {
@@ -367,7 +370,7 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 				if err := mxR.StartConsensusInstanceReactors(
 					context.Background(),
 					memR.ChainID,
-					false, // sendStatusToPeers
+					true, // enable status updates to peers about replication (ChainReplicationComplete)
 				); err != nil {
 					memR.Logger.Error(
 						"failed to start consensus reactors upon receiving mempool.Tx",

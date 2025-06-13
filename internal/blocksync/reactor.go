@@ -193,11 +193,13 @@ func (bcR *Reactor) SwitchToBlockSync(state sm.State) error {
 
 // OnStop implements service.Service.
 func (bcR *Reactor) OnStop() {
-	if bcR.blockSync && bcR.pool.IsRunning() {
+	if bcR.pool.IsRunning() {
 		if err := bcR.pool.Stop(); err != nil {
 			bcR.Logger.Error("Error stopping pool", "err", err)
 		}
-		bcR.poolRoutineWg.Wait()
+		if bcR.blockSync {
+			bcR.poolRoutineWg.Wait()
+		}
 	}
 }
 
@@ -208,6 +210,9 @@ func (bcR *Reactor) OnReset() error {
 	bcR.Logger.Info("Blocksync reactor service reset",
 		"chain_id", bcR.chainID,
 	)
+	if err := bcR.pool.Reset(); err != nil {
+		bcR.Logger.Error("Error resetting pool", "err", err)
+	}
 	return nil
 }
 

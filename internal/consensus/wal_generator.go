@@ -206,4 +206,5 @@ func (*byteBufferWAL) SearchForEndHeight(
 
 func (*byteBufferWAL) Start() error { return nil }
 func (*byteBufferWAL) Stop() error  { return nil }
+func (*byteBufferWAL) Reset() error { return nil }
 func (*byteBufferWAL) Wait()        {}

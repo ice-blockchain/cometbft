@@ -301,6 +301,8 @@ func (pv *FilePV) SignBytes(bytes []byte) ([]byte, error) {
 
 // Save persists the FilePV to disk.
 func (pv *FilePV) Save() {
+	fmt.Printf("Saving PrivValidator FilePV instance: %s\n", pv.String())
+
 	pv.Key.Save()
 	pv.LastSignState.Save()
 }
@@ -308,6 +310,8 @@ func (pv *FilePV) Save() {
 // Reset resets all fields in the FilePV.
 // NOTE: Unsafe!
 func (pv *FilePV) Reset() {
+	fmt.Printf("Resetting PrivValidator FilePV instance: %s\n", pv.String())
+
 	pv.LastSignState.reset()
 	pv.Save()
 }
@@ -333,6 +337,9 @@ func (pv *FilePV) signVote(chainID string, vote *cmtproto.Vote, signExtension bo
 	height, round, step := vote.Height, vote.Round, voteToStep(vote)
 
 	lss := pv.LastSignState
+
+	voteStr := fmt.Sprintf("[%s] H%v/R%v S%v (%s)", pv.String(), height, round, step, chainID)
+	fmt.Printf("signVote: %s\n", voteStr)
 
 	sameHRS, err := lss.CheckHRS(height, round, step)
 	if err != nil {
@@ -386,6 +393,9 @@ func (pv *FilePV) signVote(chainID string, vote *cmtproto.Vote, signExtension bo
 	if err != nil {
 		return err
 	}
+
+	fmt.Printf("signVote: calling saveSigned for %s\n", voteStr)
+
 	pv.saveSigned(height, round, step, signBytes, sig)
 	vote.Signature = sig
 
@@ -399,6 +409,9 @@ func (pv *FilePV) signProposal(chainID string, proposal *cmtproto.Proposal) erro
 	height, round, step := proposal.Height, proposal.Round, stepPropose
 
 	lss := pv.LastSignState
+
+	proposalStr := fmt.Sprintf("[%s] H%v/R%v S%v (%s)", pv.String(), height, round, step, chainID)
+	fmt.Printf("signProposal: %s\n", proposalStr)
 
 	sameHRS, err := lss.CheckHRS(height, round, step)
 	if err != nil {
@@ -429,6 +442,9 @@ func (pv *FilePV) signProposal(chainID string, proposal *cmtproto.Proposal) erro
 	if err != nil {
 		return err
 	}
+
+	fmt.Printf("signProposal: calling saveSigned for %s\n", proposalStr)
+
 	pv.saveSigned(height, round, step, signBytes, sig)
 	proposal.Signature = sig
 	return nil

@@ -43,6 +43,7 @@ type Counter struct {
 // and returns a usable Counter object.
 func NewCounterFrom(opts prometheus.CounterOpts, labelNames []string) *Counter {
 	cv := prometheus.NewCounterVec(opts, labelNames)
+	prometheus.Unregister(cv)
 	prometheus.MustRegister(cv)
 	return NewCounter(cv)
 }
@@ -77,6 +78,7 @@ type Gauge struct {
 // and returns a usable Gauge object.
 func NewGaugeFrom(opts prometheus.GaugeOpts, labelNames []string) *Gauge {
 	gv := prometheus.NewGaugeVec(opts, labelNames)
+	prometheus.Unregister(gv)
 	prometheus.MustRegister(gv)
 	return NewGauge(gv)
 }
@@ -118,6 +120,7 @@ type Summary struct {
 // and returns a usable Summary object.
 func NewSummaryFrom(opts prometheus.SummaryOpts, labelNames []string) *Summary {
 	sv := prometheus.NewSummaryVec(opts, labelNames)
+	prometheus.Unregister(sv)
 	prometheus.MustRegister(sv)
 	return NewSummary(sv)
 }
@@ -154,6 +157,7 @@ type Histogram struct {
 // and returns a usable Histogram object.
 func NewHistogramFrom(opts prometheus.HistogramOpts, labelNames []string) *Histogram {
 	hv := prometheus.NewHistogramVec(opts, labelNames)
+	prometheus.Unregister(hv)
 	prometheus.MustRegister(hv)
 	return NewHistogram(hv)
 }

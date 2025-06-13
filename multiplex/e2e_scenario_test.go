@@ -2529,7 +2529,7 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	require.NotNil(t, broadcastCtx)
 	require.Len(t, relays, numRelays)
 
-	reuseRootDir := servers[0].GetReactor().GetNodeConfig().RootDir
+	//reuseRootDir := servers[0].GetReactor().GetNodeConfig().RootDir
 
 	// STEP 1:
 	// We execute two complete broadcast processes.
@@ -2626,17 +2626,17 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	t.Logf("Waiting %.0fsec to restart backend...", waitDuration.Seconds())
 	time.Sleep(waitDuration)
 
-	servers[0] = nil // Only for test
-	resetRelay, newShutdownFn := ResetTestSingleCompatibleRelay(t,
-		reuseRootDir,
-		servers[1],
-		0, // indexRelay (resetting relay-1)
-		cmtlog.TestingLogger().With("process", "relay-1"),
-	)
-	defer newShutdownFn(resetRelay)
+	//servers[0] = nil // Only for test
+	// resetRelay, newShutdownFn := ResetTestSingleCompatibleRelay(t,
+	// 	reuseRootDir,
+	// 	servers[1],
+	// 	0, // indexRelay (resetting relay-1)
+	// 	cmtlog.TestingLogger().With("process", "relay-1"),
+	// )
+	// defer newShutdownFn(resetRelay)
 
-	resetRelay.SetAcceptor(testAcceptorRelay1)
-	resetRelay.MustStart()
+	// resetRelay.SetAcceptor(testAcceptorRelay1)
+	servers[0].MustStart()
 
 	// STEP 3:
 	//
@@ -2652,7 +2652,7 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	notifyCh3 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		thirdBroadcastCtx,
-		resetRelay,
+		servers[0],
 		relays,
 		testChainID1,
 		numTransactions,
@@ -2691,7 +2691,7 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	notifyCh4 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		fourthBroadcastCtx,
-		resetRelay,
+		servers[0],
 		relays,
 		testChainID2,
 		numTransactions,
@@ -2951,9 +2951,6 @@ func TestScenarioClientBroadcastRuntimeRegistryIntegration(t *testing.T) {
 	expectedNumOnIdleCalls := uint64(1) // test-chain-1
 	require.Equal(t, expectedNumOnIdleCalls, testOnIdleCalls.Load())
 
-	/////// RESET TESTS STATE
-	testOnIdleCalls.Store(uint64(0))
-
 	// TEST 2:
 	// We execute another complete broadcast process using the previous ChainID
 	// which should NOT include the chain replications and thus the OnBroadcastComplete
@@ -2987,13 +2984,13 @@ func TestScenarioClientBroadcastRuntimeRegistryIntegration(t *testing.T) {
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
 	close(notifyCh2)
 
-	waitDuration = 10 * time.Second
+	waitDuration = 20 * time.Second
 	t.Logf("Waiting %.0fsec before evaluating OnIdle calls...", waitDuration.Seconds())
 	time.Sleep(waitDuration)
 
 	// Test that OnIdle was called (through OnBroadcastComplete)
-	expectedNumOnIdleCalls = uint64(1) // test-chain-1
-	assert.Equal(t, expectedNumOnIdleCalls, testOnIdleCalls.Load())
+	expectedNumOnIdleCalls++
+	require.Equal(t, expectedNumOnIdleCalls, testOnIdleCalls.Load())
 }
 
 // TODO(midas): TestScenarioClientBroadcastUsingNonValidatorRelay

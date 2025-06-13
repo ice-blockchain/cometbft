@@ -66,6 +66,7 @@ type WAL interface {
 	// service methods
 	Start() error
 	Stop() error
+	Reset() error
 	Wait()
 }
 
@@ -445,4 +446,5 @@ func (nilWAL) SearchForEndHeight(int64, *WALSearchOptions) (rd io.ReadCloser, fo
 }
 func (nilWAL) Start() error { return nil }
 func (nilWAL) Stop() error  { return nil }
+func (nilWAL) Reset() error { return nil }
 func (nilWAL) Wait()        {}

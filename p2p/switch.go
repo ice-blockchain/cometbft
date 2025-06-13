@@ -721,8 +721,8 @@ func (sw *Switch) HasPeerIP(peerIP net.IP) bool {
 	return false
 }
 
-// InitPeerForScope adds peers to the reactors. This is necessary when the
-// switch is already running and peers must work with new ChainID values.
+// InitPeerForScope calls InitPeer of reactors for peers. This is necessary
+// when the switch is already running and peers must work with new ChainID values.
 //
 // IMPORTANT: The InitPeer() method of reactors is called only once per peer ID,
 // without making a distinction about inbound/outbound. This is because this
@@ -751,6 +751,11 @@ func (sw *Switch) InitPeerForScope(peer *PeerImpl, scope string) {
 	}
 }
 
+// AddPeerForScope adds peers to the reactors. This is necessary when the
+// switch is already running and peers must work with new ChainID values.
+//
+// The reactor's AddPeer method may be called more than once per peer ID,
+// as CometBFT reactors do not distinguish between inbound/outbound.
 func (sw *Switch) AddPeerForScope(peer *PeerImpl, scope string) {
 	if !peer.IsRunning() {
 		return
@@ -778,23 +783,26 @@ func (sw *Switch) AddPeerForScope(peer *PeerImpl, scope string) {
 	}
 
 	for rname, reactor := range reactors {
+		var peerForReactor *PeerImpl
 		if !sw.IsPeerInitialized(peer, scope, rname) {
-			sw.Logger.Error("failed to add peer to reactors, not yet initialized",
+			peerForReactor = reactor.InitPeer(peer)
+			sw.MarkPeerInitialized(peerForReactor, scope, rname)
+
+			// TODO(midas): remove debug logs
+			sw.Logger.Info("Init peer for reactor - just in time",
 				"scope", scope,
 				"peer", peer,
-				"reactors", reactors,
+				"reactor", rname,
 			)
-			continue
+		} else {
+			// reactor, peer.ID(), in or out
+			lookupKey := sw.peerScopeReactorKey(peer, scope, rname)
+			sw.runtimesMtx.RLock()
+			peerForReactor = sw.peersForReactors[scope][lookupKey] // as returned by reactor.InitPeer()
+			sw.runtimesMtx.RUnlock()
 		}
 
-		// reactor, peer.ID(), in or out
-		lookupKey := sw.peerScopeReactorKey(peer, scope, rname)
-		sw.runtimesMtx.RLock()
-		pfr := sw.peersForReactors[scope][lookupKey] // as returned by reactor.InitPeer()
-		sw.runtimesMtx.RUnlock()
-
-		reactor.AddPeer(pfr)
-		//sw.MarkPeerAddedToReactor(pfr, scope, rname)
+		reactor.AddPeer(peerForReactor)
 
 		// TODO(midas): remove debug logs
 		sw.Logger.Info("Added peer to reactor",
@@ -933,11 +941,7 @@ func (sw *Switch) removePeer(peer *PeerImpl, reason any) error {
 		}
 
 		relevantScopes[scope] = true
-		if ok := peerSet.Remove(peer); !ok {
-			return fmt.Errorf(
-				"failed to remove peer#%s for scope %s: %v", string(peer.ID()), scope, reason,
-			)
-		}
+		_ = peerSet.RemovePeer(peer)
 	}
 
 	remainingChannelsForPeer := peer.MConn().GetChannelsIdx()

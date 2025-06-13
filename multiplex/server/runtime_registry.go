@@ -73,9 +73,6 @@ func NewRuntimeRegistry(logger cmtlog.Logger, options ...RuntimeRegistryOption) 
 		Runtimes:  map[string]uint64{},
 		Sleeping:  []string{},
 		Scheduler: map[string]time.Time{},
-
-		// Channels
-		goShutdownCh: make(chan bool), // unbuffered
 	}
 
 	atomic.StoreUint64(&reg.numr, uint64(0))
@@ -134,6 +131,7 @@ func (reg *RuntimeRegistry) OnStart() error {
 		"timer", reg.CleanerInterval(),
 	)
 
+	reg.goShutdownCh = make(chan bool) // unbuffered
 	go reg.cleanerRoutine()
 
 	return nil

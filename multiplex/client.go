@@ -359,7 +359,8 @@ func (c MultiplexClient) BroadcastTx(
 
 	// TODO(midas): remove debug logs
 	c.backend.GetLogger().Debug("Starting networks creation routine",
-		"num_networks", len(mustCreateNetworks),
+		"num_networks", len(requiredNetworks),
+		"num_create", len(mustCreateNetworks),
 		"networks", mustCreateNetworks,
 		"tx_batch", transactionHashes)
 

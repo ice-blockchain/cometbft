@@ -1159,7 +1159,7 @@ func (mxR *Reactor) GetChannels() []*p2p.ChannelDescriptor {
 		},
 		{
 			ID:          server.AckBroadcastChannel,
-			Priority:    3,
+			Priority:    2,
 			MessageType: &mxp2p.Receipt{},
 			//RecvMessageCapacity: mxR.broadcastRecvMessageCapacity,
 		},
@@ -2046,6 +2046,50 @@ func (reactor *Reactor) OnStop() {
 // OnReset implements Service.
 func (reactor *Reactor) OnReset() error {
 	reactor.logger.Debug("Reset multiplex reactor")
+
+	// Reset all registered services atomically.
+	reactor.servicesMutex.Lock()
+
+	// Uses FIFO strategy to reset registered services
+	servicesFIFO := reactor.servicesSequence[:]
+	sort.Sort(sort.StringSlice(
+		servicesFIFO,
+	))
+
+	for _, serviceName := range servicesFIFO {
+		// Services multiplex contains one instance per ChainID
+		servicesMultiplex := reactor.servicesRegistry[serviceName]
+
+		// Every service instance must be reset if it was stopped
+		for _, chainService := range servicesMultiplex {
+			service := chainService.GetInstance().(cmtlibs.Service)
+			if service.IsStopped() {
+				service.Reset()
+			}
+		}
+	}
+	reactor.servicesMutex.Unlock()
+
+	// Reset the ABCI client if stopped.
+	reactor.envMutex.Lock()
+	if reactor.abciClient != nil && reactor.abciClient.IsStopped() {
+		if err := reactor.abciClient.Reset(); err != nil {
+			reactor.logger.Error(
+				"Error resetting the ABCI client", "err", err)
+		}
+	}
+	reactor.envMutex.Unlock()
+
+	// Reset the replay pool service.
+	reactor.replayPoolMtx.Lock()
+	if reactor.replayPool != nil && reactor.replayPool.IsStopped() {
+		if err := reactor.replayPool.Reset(); err != nil {
+			reactor.logger.Error(
+				"Error resetting the replay pool", "err", err)
+		}
+	}
+	reactor.replayPoolMtx.Unlock()
+
 	return nil
 }
 
@@ -2486,8 +2530,6 @@ func (reactor *Reactor) handleChainReplicationRequest(
 
 // EnableNewRuntimeRPC adds RPC routes for networks in a running
 // http request multiplexer.
-//
-// TODO(midas): TBI whether the server must be restarted.
 func (reactor *Reactor) EnableNewRuntimeRPC(networks []string) error {
 	reactor.networkMutex.RLock()
 	rpcMultiplexer := reactor.rpcMultiplexer

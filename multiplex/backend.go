@@ -264,9 +264,7 @@ func NewServer(
 		httpClients:   []*http.Client{},
 		txSubscribers: map[string]string{},
 
-		logger:     nodeLogger,
-		errorsCh:   make(chan error, 1),
-		shutdownCh: make(chan struct{}, 1),
+		logger: nodeLogger,
 	}
 
 	// Enable overwrite of optional properties
@@ -593,11 +591,26 @@ func (b *MultiplexBackend) MustStart() {
 		"id", b.reactor.GetNodeKey().ID(),
 	)
 
+	// Reset services that have been stopped.
+	if b.reactor.IsStopped() {
+		b.reactor.Reset()
+
+		// Multiplex reactor is started in NewNodesMultiplex, so if the backend
+		// was shutdown (and had to be reset), we restart the reactor here.
+		if err := b.reactor.Start(); err != nil {
+			b.logger.Error(
+				"Error starting multiplex reactor", "err", err)
+		}
+	}
+	if b.reactor.runtimeRegistry.IsStopped() {
+		b.reactor.runtimeRegistry.Reset()
+	}
+
 	// Before anything else, start the runtimes registry
 	b.reactor.runtimesMutex.Lock()
 	if err := b.reactor.runtimeRegistry.Start(); err != nil {
 		b.logger.Error(
-			"Error starting the runtimes registry (idle-manager)", "err", err)
+			"Error starting runtimes registry", "err", err)
 	}
 	b.reactor.runtimesMutex.Unlock()
 
@@ -631,6 +644,11 @@ func (b *MultiplexBackend) MustStart() {
 	// Panics recovery closes shutdownCh to stop goroutines
 	// and attempt a graceful shutdown of the backend.
 	defer b.shutdownOnPanic()
+
+	// Channel used to intercept errors during startup.
+	b.errorsCh = make(chan error, 1)
+	// Channel used to shutdown local goroutines on quit.
+	b.shutdownCh = make(chan struct{}, 1)
 
 	// Start P2P and RPC servers for Discovery.
 	//
@@ -822,12 +840,25 @@ func (b *MultiplexBackend) Close() error {
 		"id", b.reactor.GetNodeKey().ID(),
 	)
 
-	// Shutdown goroutines started by MustStart().
-	close(b.shutdownCh)
+	if b.shutdownCh != nil {
+		// Shutdown goroutines started by MustStart().
+		close(b.shutdownCh)
+	}
 
 	// Stop the runtimes registry, it shouldn't interfere with shutdown.
 	b.reactor.runtimesMutex.Lock()
 	if b.reactor.runtimeRegistry != nil && b.reactor.runtimeRegistry.IsRunning() {
+		restNodeRuntimes := b.reactor.runtimeRegistry.ActiveRuntimes()
+		if len(restNodeRuntimes) > 0 {
+			for chainID, _ := range restNodeRuntimes {
+				// TODO(midas): remove debug logs
+				b.logger.Debug("Shutting down remaining node runtime",
+					"chain_id", chainID,
+				)
+				b.reactor.runtimeRegistry.OnIdle(chainID)
+			}
+		}
+
 		if err := b.reactor.runtimeRegistry.Stop(); err != nil {
 			b.logger.Error(
 				"Error stopping the runtimes registry (idle-manager)", "err", err)
@@ -848,7 +879,6 @@ func (b *MultiplexBackend) Close() error {
 	// Now we may stop the multiplex reactor
 	if b.reactor != nil {
 		b.reactor.Stop()
-		b.reactor.Reset()
 	}
 
 	// Stop RelayInfo RPC and CometBFT RPC
@@ -2354,6 +2384,14 @@ func (b *MultiplexBackend) StartConsensusInstance(
 	ctx context.Context,
 	chainID string,
 ) error {
+	// icsGenesisDocSet := b.reactor.initialGenesisDocs
+
+	// // Initialize the state machine and block store
+	// if err := b.reactor.InjectStateMachine(chainID, icsGenesisDocSet); err != nil {
+	// 	return fmt.Errorf(
+	// 		"could not inject state machine: %w", err)
+	// }
+
 	if err := b.reactor.StartConsensusInstanceReactors(ctx,
 		chainID,
 		false, // disables status updates to peers about replication (ChainReplicationComplete)

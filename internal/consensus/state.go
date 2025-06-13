@@ -166,7 +166,7 @@ func NewState(
 		timeoutTicker:    NewTimeoutTicker(),
 		statsMsgQueue:    make(chan msgInfo, msgQueueSize),
 		done:             make(chan struct{}),
-		doWALCatchup:     true,
+		doWALCatchup:     false,
 		wal:              nilWAL{},
 		evpool:           evpool,
 		evsw:             cmtevents.NewEventSwitch(),
@@ -322,10 +322,22 @@ func (cs *State) OnStart() error {
 	// We may set the WAL in testing before calling Start, so only OpenWAL if its
 	// still the nilWAL.
 	if _, ok := cs.wal.(nilWAL); ok {
+		// TODO(midas): remove debug logs
+		cs.Logger.Debug("Loading WAL file",
+			"height", cs.Height,
+		)
+
 		if err := cs.loadWalFile(); err != nil {
 			return err
 		}
 	}
+
+	cs.done = make(chan struct{})
+
+	// TODO(midas): remove debug logs
+	cs.Logger.Debug("Starting consensus State",
+		"height", cs.Height,
+	)
 
 	// we need the timeoutRoutine for replay so
 	// we don't block on the tick chan.
@@ -439,21 +451,30 @@ func (cs *State) OnStop() {
 	}
 
 	if err := cs.timeoutTicker.Stop(); err != nil {
-		cs.Logger.Error("Failed trying to stop timeoutTicket", "error", err)
+		cs.Logger.Error("Failed trying to stop timeoutTicker", "error", err)
 	}
 	// WAL is stopped in receiveRoutine.
+}
+
+func (cs *State) OnReset() error {
+	if err := cs.evsw.Reset(); err != nil {
+		cs.Logger.Error("Error resetting eventSwitch", "error", err)
+	}
+	if err := cs.timeoutTicker.Reset(); err != nil {
+		cs.Logger.Error("Error resetting timeoutTicker", "error", err)
+	}
+	if err := cs.wal.Reset(); err != nil {
+		cs.Logger.Error("Error resetting WAL", "error", err)
+	}
+	return nil
 }
 
 // Wait waits for the the main routine to return.
 // NOTE: be sure to Stop() the event switch and drain
 // any event channels or this may deadlock.
 func (cs *State) Wait() {
-	// NOTE(midas): added selecting from shutdown channel to permit
-	// faster shutdowns and generally stop waiting during shutdowns.
 	select {
 	case <-cs.done:
-		return
-	case <-cs.Quit():
 		return
 	}
 }

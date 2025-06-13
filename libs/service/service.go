@@ -203,12 +203,14 @@ func (*BaseService) OnStop() {}
 // will be returned if the service is running.
 func (bs *BaseService) Reset() error {
 	if !atomic.CompareAndSwapUint32(&bs.stopped, 1, 0) {
-		bs.Logger.Debug("service reset",
-			"msg",
-			log.NewLazySprintf("Can't reset %v service. Not stopped", bs.name),
-			"impl",
-			bs.impl)
-		return fmt.Errorf("can't reset running %s", bs.name)
+		if bs.IsStarted() {
+			bs.Logger.Debug("service reset",
+				"msg",
+				log.NewLazySprintf("Can't reset %v service. Still running", bs.name),
+				"impl",
+				bs.impl)
+			return fmt.Errorf("can't reset running %s", bs.name)
+		}
 	}
 
 	// whether or not we've started, we can reset
@@ -220,7 +222,7 @@ func (bs *BaseService) Reset() error {
 
 // OnReset implements Service by panicking.
 func (*BaseService) OnReset() error {
-	panic("The service cannot be reset")
+	return nil
 }
 
 // IsRunning implements Service by returning true or false depending on the

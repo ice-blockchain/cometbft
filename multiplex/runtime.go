@@ -85,6 +85,9 @@ func (reactor *Reactor) AllocateNetwork(
 			"could not create priv validator for ChainID %s: %w", chainID, err)
 	}
 
+	// TODO(midas): remove debug logs
+	reactor.logger.Debug("Using file validator", "pv", privValidator.(*privval.FilePV).String())
+
 	// Register/inject in running reactor
 	reactor.RegisterInstance(InstanceKeyPrivValidator, chainID, privValidator)
 
@@ -356,7 +359,7 @@ func (reactor *Reactor) InjectNewRuntime(
 	// Step 3: Initialize consensus instance
 
 	// We may need to run block-sync for existing networks.
-	blockSync := !onlyValidatorIsUs(stateMachine.Copy(), privValPubKey)
+	blockSync := !onlyValidatorIsUs(stateMachine.Copy(), privValPubKey) && !validatorsIncludesUs(stateMachine.Copy(), privValPubKey)
 	waitSyncd := blockSync
 	logNodeStartupInfo(stateMachine.Copy(), privValPubKey, clogger)
 
@@ -370,7 +373,11 @@ func (reactor *Reactor) InjectNewRuntime(
 	}
 
 	// Inform about the consensus readiness
-	clogger.Info("Network is consensus ready", "chain_id", chainID)
+	clogger.Info("Network is consensus ready",
+		"waitSync", waitSyncd,
+		"onlyValidatorIsUs", onlyValidatorIsUs(stateMachine.Copy(), privValPubKey),
+		"privValIsValidator", validatorsIncludesUs(stateMachine.Copy(), privValPubKey),
+	)
 
 	// ------------------------------------------------------------------------
 	// Step 4: Update transport protocol
@@ -396,6 +403,8 @@ func (reactor *Reactor) InjectNewRuntime(
 
 // InitAndStartNode creates a [node.Node] instance and calls the Start method
 // and later registers new routes for this ChainID in the RPC server.
+//
+// TODO(midas): refactor to StartNodeInstance.
 func (reactor *Reactor) InitAndStartNode(ctx context.Context, chainID string) error {
 	clogger := reactor.logger.With("chain_id", chainID)
 
@@ -442,6 +451,10 @@ func (reactor *Reactor) InitAndStartNode(ctx context.Context, chainID string) er
 
 	// Calls the Start method on the node.Node instance.
 	go func(network string, n *node.Node) {
+		if n.IsStopped() {
+			n.Reset() // allows restart
+		}
+
 		clogger.Info("Starting new node", "chain_id", network)
 		clogger.Info("Using custom listen addresses",
 			"p2p", n.Config().P2P.ListenAddress,
@@ -480,6 +493,8 @@ func (reactor *Reactor) InitAndStartNode(ctx context.Context, chainID string) er
 
 // StartAllNodeInstances calls the Start method of [node.Node] instances that
 // are registered in the services multiplex map of the reactor.
+//
+// TODO(midas): remove and refactor usage with StartNodeInstance.
 func (reactor *Reactor) StartAllNodeInstances() error {
 	chainIds := reactor.GetNetworks()
 	if len(chainIds) == 0 {
@@ -498,6 +513,10 @@ func (reactor *Reactor) StartAllNodeInstances() error {
 		// This goroutine produces a panic in case of errors.
 		go func(network string, n *node.Node) {
 			defer reactor.GetRuntimeRegistry().OnActivate(network)
+
+			if n.IsStopped() {
+				n.Reset() // allows restart
+			}
 
 			reactor.logger.Info("Starting new node", "chain_id", network)
 			reactor.logger.Info("Using custom listen addresses",
@@ -551,7 +570,6 @@ func (reactor *Reactor) StopNodeInstance(chainID string) error {
 					)
 				}
 			}
-			n.Reset()
 		}
 
 		cometbftSwitch := r.GetEventSwitchForCometBFT()
@@ -750,8 +768,6 @@ func (reactor *Reactor) MakeNetworkValidator(
 
 // MakeNetworkGenesis creates the [types.GenesisDoc] for a new network
 // chainID which contains a privValidator public key.
-//
-// TODO(midas): validators voting power = 10, maybe needs change?
 func (reactor *Reactor) MakeNetworkGenesis(
 	chainID ExtendedChainID,
 	confDir string,
