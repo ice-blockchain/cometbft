@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cosmos/gogoproto/proto"
 	"golang.org/x/net/netutil"
 
 	tmp2p "github.com/ice-blockchain/cometbft/api/cometbft/p2p/v1"
@@ -35,36 +34,6 @@ type accept struct {
 	conn     net.Conn
 	nodeInfo NodeInfo
 	err      error
-}
-
-// peerConfig is used to bundle data we need to fully setup a Peer with an
-// MConn, provided by the caller of Accept and Dial (currently the Switch). This
-// a temporary measure until reactor setup is less dynamic and we introduce the
-// concept of PeerBehaviour to communicate about significant Peer lifecycle
-// events.
-// TODO(xla): Refactor out with more static Reactor setup and PeerBehaviour.
-type peerConfig struct {
-	chDescs     map[string][]*conn.ChannelDescriptor
-	onPeerError func(*PeerImpl, any)
-	outbound    bool
-	// isPersistent allows you to set a function, which, given socket address
-	// (for outbound peers) OR self-reported address (for inbound peers), tells
-	// if the peer is persistent or not.
-	isPersistent  func(*NetAddress) bool
-	reactorsByCh  map[string]map[byte]Reactor
-	msgTypeByChID map[string]map[byte]proto.Message
-	metrics       *Metrics
-}
-
-// PublicPeerConfig describes a wrapper around peer configuration structs.
-// TODO(midas): does peerConfig need to be private? Maybe split into public/private parts.
-type PublicPeerConfig struct {
-	peerConfig
-}
-
-// GetConfig returns the internal peerConfig configuration struct.
-func (c PublicPeerConfig) GetConfig() peerConfig {
-	return c.peerConfig
 }
 
 // Transport emits and connects to Peers. The implementation of Peer is left to
@@ -631,10 +600,8 @@ func (mt *MultiplexTransport) wrapPeer(
 		peerConn,
 		mt.mConfig,
 		ni,
-		cfg.reactorsByCh,
-		cfg.msgTypeByChID,
-		cfg.chDescs,
-		cfg.onPeerError,
+		cfg,
+		sw,
 		PeerMetrics(cfg.metrics),
 	)
 

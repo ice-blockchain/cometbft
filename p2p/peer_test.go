@@ -71,8 +71,8 @@ func TestPeerSend(t *testing.T) {
 		}
 	})
 
-	assert.True(p.CanSend(testCh))
-	assert.True(p.Send(Envelope{ChannelID: testCh, Message: &p2p.Message{}}))
+	assert.True(p.CanSend("test-chain", testCh))
+	assert.True(p.Send("test-chain", Envelope{ChannelID: testCh, Message: &p2p.Message{}}))
 }
 
 func createOutboundPeerAndPerformHandshake(
@@ -104,7 +104,12 @@ func createOutboundPeerAndPerformHandshake(
 		return nil, err
 	}
 
-	p := newPeer(pc, mConfig, peerNodeInfo, reactorsByCh, msgTypeByChID, chDescs, func(_ Peer, _ any) {})
+	cfg := peerConfig{
+		reactorsByCh:  reactorsByCh,
+		msgTypeByChID: msgTypeByChID,
+		chDescs:       chDescs,
+	}
+	p := newPeer(pc, mConfig, peerNodeInfo, cfg)
 	p.SetLogger(log.TestingLogger().With("peer", addr))
 	return p, nil
 }

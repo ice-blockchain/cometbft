@@ -853,9 +853,6 @@ func (sw *Switch) StopAllPeersAndCleanup() error {
 	sw.Logger.Info("Stopping all peers gracefully",
 		"num_scopes", len(allPeers))
 
-	// First cleanup any remaining MConnection.channelsIdx
-	sw.CleanupChannels()
-
 	// Then stop all peer objects / connections.
 	cleanupWg := new(sync.WaitGroup)
 	for _, peerSet := range allPeers {
@@ -877,6 +874,9 @@ func (sw *Switch) StopAllPeersAndCleanup() error {
 		}
 	}
 	cleanupWg.Wait()
+
+	// Cleanup any remaining MConnection.channelsIdx
+	sw.CleanupChannels()
 
 	// Ping timer must be killed for outbound peers.
 	// NOTE(midas): ForEach() and Close() both lock the conn.
@@ -900,15 +900,13 @@ func (sw *Switch) StopAllPeersAndCleanup() error {
 // the transport instance and removes the peer from all reactors.
 func (sw *Switch) stopPeer(peer *PeerImpl, reason any) error {
 	// Check if peer is already stopped to prevent "already stopped" errors
-	if !peer.IsRunning() {
+	if !peer.IsRunning() && peer.IsStopped() {
 		sw.Logger.Debug("Peer already stopped, skipping stop operation", "peer", peer.ID())
 		return nil
 	}
 
 	if err := peer.Stop(); err != nil {
-		return fmt.Errorf(
-			"error stopping peer for ID %s: %w", string(peer.ID()), err,
-		)
+		sw.Logger.Error("error stopping peer", "peer", peer.ID(), "err", err)
 	}
 
 	sw.transport.Cleanup(peer)
@@ -941,7 +939,7 @@ func (sw *Switch) removePeer(peer *PeerImpl, reason any) error {
 		}
 
 		relevantScopes[scope] = true
-		_ = peerSet.RemovePeer(peer)
+		_ = peerSet.Remove(peer)
 	}
 
 	remainingChannelsForPeer := peer.MConn().GetChannelsIdx()
@@ -952,14 +950,8 @@ func (sw *Switch) removePeer(peer *PeerImpl, reason any) error {
 	// We may need to remove channels we added for this peer.
 	// CAUTION: This updates MConnection.channelsIdx.
 	var connCleanupFn func(*conn.MConnection)
-	connCleanupFn = sw.CloseChannelsForScopes(func(scopes map[string]bool) (out []string) {
-		out = make([]string, 0, len(scopes))
-		for scope, _ := range scopes {
-			out = append(out, scope)
-		}
-		return // out
-	}(relevantScopes))
-
+	scopesToCleanup := valuesFromMapKeys(relevantScopes)
+	connCleanupFn = sw.CloseChannelsForScopes(scopesToCleanup)
 	connCleanupFn(peer.MConn())
 
 	sw.Logger.Debug("Removed all channels for peer", "peer", peer, "scopes", relevantScopes)
@@ -1637,10 +1629,8 @@ func (sw *Switch) addPeer(p *PeerImpl) (err error) {
 
 	// For replication channel, we add the peer to _shared_channels reactors.
 	// For CometBFT channels, we add the peer to relevantChainIds reactors.
-	// reactorsGroup := []string{conn.SharedChannelsNamespace}
 	relevantScopes := []string{ScopeForDiscovery} // i.e. sw.Peers(p2p.ScopeForDiscovery)
 	if sw.Typ != "discovery" {
-		// reactorsGroup = relevantChainIds[:]
 		relevantScopes = relevantChainIds[:]                       // i.e. sw.Peers(ChainID)
 		relevantScopes = append(relevantScopes, ScopeForDiscovery) // AckTransactionBroadcast
 	}
@@ -1890,15 +1880,17 @@ func (sw *Switch) CleanupChannels() {
 		relevantScopes[activeChainID] = true
 	}
 
-	//cleanupWg := new(sync.WaitGroup)
+	cleanupWg := new(sync.WaitGroup)
 
 	remainingPeerSets := sw.PeersByScopes()
 	for _, peerSet := range remainingPeerSets {
-		//cleanupWg.Add(peerSet.Size())
 		peers := peerSet.Copy()
+		cleanupWg.Add(len(peers))
+
 		for _, peer := range peers {
-			//go func(p *PeerImpl, wg *sync.WaitGroup) {
 			go func(p *PeerImpl) {
+				defer cleanupWg.Done()
+
 				mconn := p.MConn()
 				relevantScopesForPeer := map[string]bool{}
 				remainingChannelsForPeer := mconn.GetChannelsIdx()
@@ -1912,26 +1904,21 @@ func (sw *Switch) CleanupChannels() {
 				// We may need to remove channels we added for this peer.
 				// CAUTION: This updates MConnection.channelsIdx.
 				var connCleanupFn func(*conn.MConnection)
-				connCleanupFn = sw.CloseChannelsForScopes(func(scopes map[string]bool) (out []string) {
-					out = make([]string, 0, len(scopes))
-					for scope, _ := range scopes {
-						out = append(out, scope)
-					}
-					return // out
-				}(relevantScopesForPeer))
-
+				scopesToCleanup := valuesFromMapKeys(relevantScopesForPeer)
+				connCleanupFn = sw.CloseChannelsForScopes(scopesToCleanup)
 				connCleanupFn(mconn)
 
 				sw.Logger.Debug("Removed all channels for peer from cleanup", "peer", p, "scopes", relevantScopes)
 			}(peer)
 		}
-		// cleanupWg.Wait()
 	}
+	cleanupWg.Wait()
 }
 
 func (sw *Switch) CloseChannelsForScopes(scopes []string) func(mconn *conn.MConnection) {
 	return func(mconn *conn.MConnection) {
 		channelsIdx := mconn.GetChannelsIdx()
+
 		sw.runtimesMtx.Lock()
 		defer sw.runtimesMtx.Unlock()
 
@@ -2027,4 +2014,14 @@ func (sw *Switch) OpenChannelsForScopes(scopes []string) func(mconn *conn.MConne
 			"num_chs", atomic.LoadUint32(&sw.totalOpenChannels),
 		)
 	}
+}
+
+// ----------------------------------------------------------------------------
+
+func valuesFromMapKeys(in map[string]bool) (out []string) {
+	out = make([]string, 0, len(in))
+	for s, _ := range in {
+		out = append(out, s)
+	}
+	return // out
 }

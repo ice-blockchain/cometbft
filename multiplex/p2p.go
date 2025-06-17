@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ice-blockchain/cometbft/config"
@@ -382,16 +383,21 @@ func (reactor *Reactor) RemoveConnectionChannels(
 	reactor.networkMutex.RLock()
 	defer reactor.networkMutex.RUnlock()
 
-	// CAUTION: Updates the MConnection.channelsIdx to contain channels for scopes.
+	removeWg := new(sync.WaitGroup)
+
+	// CAUTION: Updates the MConnection.channelsIdx, removes channels for scopes.
 	connCleanupFn := sw.CloseChannelsForScopes(scopes)
 	for _, chainOrScope := range scopes {
 		peers := sw.Peers(chainOrScope).Copy()
+		removeWg.Add(len(peers))
 		for _, p := range peers {
-			func(peer *p2p.PeerImpl) {
+			go func(peer *p2p.PeerImpl) {
+				defer removeWg.Done()
 				connCleanupFn(peer.MConn())
 			}(p)
 		}
 	}
+	removeWg.Wait()
 
 	return nil
 }

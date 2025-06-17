@@ -386,7 +386,7 @@ func (reactor *Reactor) StopConsensusInstanceReactors(
 	// Stop all the reactors available for this ChainID.
 	reactorsForChain := cometbftSwitch.Reactors(chainID)
 	for name, r := range reactorsForChain {
-		if r.IsRunning() {
+		if r.IsRunning() || !r.IsStopped() {
 			err := r.Stop()
 
 			if err != nil && err != service.ErrAlreadyStopped {

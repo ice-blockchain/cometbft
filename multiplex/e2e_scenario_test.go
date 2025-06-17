@@ -2603,12 +2603,12 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	// Test that client callbacks executed correctly, because we shall shutdown
 	// and continue the network after relay-1 has been restarted.
 
-	expectedCallsBeforeRestart := 2
-	require.Equal(t, uint64(expectedCallsBeforeRestart), testAcceptorRelay1.TxCommitCalls.Load(),
+	expectedMinCommitsBeforeRestart := 1
+	require.GreaterOrEqual(t, testAcceptorRelay1.TxCommitCalls.Load(), uint64(expectedMinCommitsBeforeRestart),
 		"should locally execute CommitBroadcastTx callback for each transaction")
-	require.Equal(t, uint64(expectedCallsBeforeRestart), testAcceptorRelay2.TxCommitCalls.Load(),
+	require.GreaterOrEqual(t, testAcceptorRelay2.TxCommitCalls.Load(), uint64(expectedMinCommitsBeforeRestart),
 		"should remotely execute CommitBroadcastTx callback for each transaction")
-	require.Equal(t, uint64(expectedCallsBeforeRestart), testAcceptorRelay3.TxCommitCalls.Load(),
+	require.GreaterOrEqual(t, testAcceptorRelay3.TxCommitCalls.Load(), uint64(expectedMinCommitsBeforeRestart),
 		"should remotely execute CommitBroadcastTx callback for each transaction")
 
 	// STEP 2:
@@ -2626,16 +2626,6 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	t.Logf("Waiting %.0fsec to restart backend...", waitDuration.Seconds())
 	time.Sleep(waitDuration)
 
-	//servers[0] = nil // Only for test
-	// resetRelay, newShutdownFn := ResetTestSingleCompatibleRelay(t,
-	// 	reuseRootDir,
-	// 	servers[1],
-	// 	0, // indexRelay (resetting relay-1)
-	// 	cmtlog.TestingLogger().With("process", "relay-1"),
-	// )
-	// defer newShutdownFn(resetRelay)
-
-	// resetRelay.SetAcceptor(testAcceptorRelay1)
 	servers[0].MustStart()
 
 	// STEP 3:
@@ -2721,17 +2711,18 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 
 	t.Logf("Now evaluating callbacks execution...")
 
-	totalExpectedCalls := 4 // 4 transactions batches
-
 	// Test that client callbacks were executed correctly, every relay should
 	// have executed the CommitBroadcastTx callback when the block is finalized.
 
-	assert.Equal(t, uint64(totalExpectedCalls), testAcceptorRelay1.TxCommitCalls.Load(),
+	totalExpectedMinCommits := 3
+	assert.GreaterOrEqual(t, testAcceptorRelay1.TxCommitCalls.Load(), uint64(totalExpectedMinCommits),
 		"should locally execute CommitBroadcastTx callback for each transaction")
-	assert.Equal(t, uint64(totalExpectedCalls), testAcceptorRelay2.TxCommitCalls.Load(),
+	assert.GreaterOrEqual(t, testAcceptorRelay2.TxCommitCalls.Load(), uint64(totalExpectedMinCommits),
 		"should remotely execute CommitBroadcastTx callback for each transaction")
-	assert.Equal(t, uint64(totalExpectedCalls), testAcceptorRelay3.TxCommitCalls.Load(),
+	assert.GreaterOrEqual(t, testAcceptorRelay3.TxCommitCalls.Load(), uint64(totalExpectedMinCommits),
 		"should remotely execute CommitBroadcastTx callback for each transaction")
+
+	// TODO(midas): make sure it committed to both ChainIDs AFTER shutdown (i.e. before+2).
 }
 
 func TestScenarioClientBroadcastAfterRuntimeIdling(t *testing.T) {

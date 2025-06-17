@@ -139,10 +139,8 @@ func newPeer(
 	pc peerConn,
 	mConfig cmtconn.MConnConfig,
 	nodeInfo NodeInfo,
-	reactorsByCh map[string]map[byte]Reactor,
-	msgTypeByChID map[string]map[byte]proto.Message,
-	chDescs map[string][]*cmtconn.ChannelDescriptor,
-	onPeerError func(*PeerImpl, any),
+	cfg peerConfig,
+	sw *Switch,
 	options ...PeerOption,
 ) *PeerImpl {
 	p := &PeerImpl{
@@ -157,11 +155,10 @@ func newPeer(
 	p.mconn = createMConnection(
 		pc.conn,
 		p,
-		reactorsByCh,
-		msgTypeByChID,
-		chDescs,
-		onPeerError,
+		cfg,
+		cfg.onPeerError,
 		mConfig,
+		sw,
 	)
 	p.BaseService = *service.NewBaseService(nil, "Peer", p)
 	for _, option := range options {
@@ -436,14 +433,19 @@ func (p *PeerImpl) metricsReporter() {
 func createMConnection(
 	conn net.Conn,
 	p *PeerImpl,
-	reactorsByCh map[string]map[byte]Reactor,
-	msgTypeByChID map[string]map[byte]proto.Message,
-	chDescs map[string][]*cmtconn.ChannelDescriptor,
+	peerCfg peerConfig,
 	onPeerError func(*PeerImpl, any),
 	config cmtconn.MConnConfig,
+	sw *Switch,
 ) *cmtconn.MConnection {
 	onReceive := func(chainID string, chID byte, msgBytes []byte) {
 		var reactor Reactor
+
+		// Get updated version of reactors and messages maps.
+		sw.reactorsMtx.Lock()
+		reactorsByCh := sw.reactorsByCh
+		msgTypeByChID := sw.msgTypeByChID
+		sw.reactorsMtx.Unlock()
 
 		// If we don't have reactors for this chainID, try to find the channel
 		// in shared channels, otherwise ignore message to stop MConnection from
@@ -490,6 +492,9 @@ func createMConnection(
 		onPeerError(p, r)
 	}
 
+	sw.reactorsMtx.Lock()
+	chDescs := sw.chDescs
+	sw.reactorsMtx.Unlock()
 	return cmtconn.NewMConnectionWithConfig(
 		conn,
 		chDescs,

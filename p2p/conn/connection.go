@@ -283,13 +283,12 @@ func (c *MConnection) AddChannel(chainID string, desc *ChannelDescriptor) (*Chan
 	hasStartedRoutines := c.HasStartedRoutines()
 
 	c.channelsMtx.Lock()
-	defer c.channelsMtx.Unlock()
-
 	if _, ok := c.channelsIdx[chainID]; !ok {
 		c.channelsIdx[chainID] = map[byte]*Channel{}
 	}
 
 	if _, ok := c.channelsIdx[chainID][desc.ID]; ok {
+		defer c.channelsMtx.Unlock()
 		// Nothing to do
 		return c.channelsIdx[chainID][desc.ID], false // channel not added
 	}
@@ -299,6 +298,8 @@ func (c *MConnection) AddChannel(chainID string, desc *ChannelDescriptor) (*Chan
 
 	c.channelsIdx[chainID][channel.desc.ID] = channel
 	c.channels = append(c.channels, channel)
+	c.channelsMtx.Unlock()
+
 	atomic.AddUint32(&c.numOpenChannels, uint32(1))
 
 	// Start routines if it's our first and only channel.
@@ -712,8 +713,14 @@ FOR_LOOP:
 			// something is written to .bufConnWriter.
 			c.flush()
 		case <-c.chStatsTimer.C:
-			for _, channel := range c.channels {
+			c.channelsMtx.Lock()
+			allChannels := c.channels
+			c.channelsMtx.Unlock()
+
+			for _, channel := range allChannels {
+				c.channelsMtx.Lock()
 				channel.updateStats()
+				c.channelsMtx.Unlock()
 			}
 		case <-c.pingTimer.C:
 			c.Logger.Debug("Send Ping")

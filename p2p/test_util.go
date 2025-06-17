@@ -206,14 +206,19 @@ func (sw *Switch) addPeerWithConnection(conn net.Conn) error {
 		return err
 	}
 
+	cfg := peerConfig{
+		reactorsByCh:  sw.reactorsByCh,
+		msgTypeByChID: sw.msgTypeByChID,
+		chDescs:       sw.chDescs,
+		onPeerError:   sw.StopPeerForError,
+	}
+
 	p := newPeer(
 		pc,
 		MConnConfig(sw.config),
 		ni,
-		sw.reactorsByCh,
-		sw.msgTypeByChID,
-		sw.chDescs,
-		sw.StopPeerForError,
+		cfg,
+		sw,
 	)
 
 	if err = sw.addPeer(p); err != nil {

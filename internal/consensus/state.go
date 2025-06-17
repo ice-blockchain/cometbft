@@ -852,7 +852,7 @@ func (cs *State) receiveRoutine(maxSteps int) {
 			}
 		}
 
-		rs := cs.getRoundState()
+		rs := cs.GetRoundState()
 		var mi msgInfo
 
 		select {
