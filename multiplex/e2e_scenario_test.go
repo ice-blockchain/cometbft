@@ -2591,9 +2591,9 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	)
 	assert.NotNil(t, resultStatusMsg)
 	require.NoError(t, resultStatusMsg.Error,
-		"broadcast to existing ChainID before should not contain error status")
+		"broadcast to existing ChainID before restart should not contain error status")
 	require.Len(t, resultStatusMsg.TxHashes, numTransactions,
-		"broadcast to existing ChainID before should contain transaction hashes")
+		"broadcast to existing ChainID before restart should contain transaction hashes")
 	close(notifyCh2)
 
 	waitDuration = 20 * time.Second
@@ -2603,12 +2603,12 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	// Test that client callbacks executed correctly, because we shall shutdown
 	// and continue the network after relay-1 has been restarted.
 
-	expectedMinCommitsBeforeRestart := 1
-	require.GreaterOrEqual(t, testAcceptorRelay1.TxCommitCalls.Load(), uint64(expectedMinCommitsBeforeRestart),
+	expectedCommitsBeforeRestart := 2
+	require.Equal(t, uint64(expectedCommitsBeforeRestart), testAcceptorRelay1.TxCommitCalls.Load(),
 		"should locally execute CommitBroadcastTx callback for each transaction")
-	require.GreaterOrEqual(t, testAcceptorRelay2.TxCommitCalls.Load(), uint64(expectedMinCommitsBeforeRestart),
+	require.Equal(t, uint64(expectedCommitsBeforeRestart), testAcceptorRelay2.TxCommitCalls.Load(),
 		"should remotely execute CommitBroadcastTx callback for each transaction")
-	require.GreaterOrEqual(t, testAcceptorRelay3.TxCommitCalls.Load(), uint64(expectedMinCommitsBeforeRestart),
+	require.Equal(t, uint64(expectedCommitsBeforeRestart), testAcceptorRelay3.TxCommitCalls.Load(),
 		"should remotely execute CommitBroadcastTx callback for each transaction")
 
 	// STEP 2:
@@ -2714,15 +2714,13 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	// Test that client callbacks were executed correctly, every relay should
 	// have executed the CommitBroadcastTx callback when the block is finalized.
 
-	totalExpectedMinCommits := 3
-	assert.GreaterOrEqual(t, testAcceptorRelay1.TxCommitCalls.Load(), uint64(totalExpectedMinCommits),
+	totalExpectedCommits := 4
+	assert.Equal(t, uint64(totalExpectedCommits), testAcceptorRelay1.TxCommitCalls.Load(),
 		"should locally execute CommitBroadcastTx callback for each transaction")
-	assert.GreaterOrEqual(t, testAcceptorRelay2.TxCommitCalls.Load(), uint64(totalExpectedMinCommits),
+	assert.Equal(t, uint64(totalExpectedCommits), testAcceptorRelay2.TxCommitCalls.Load(),
 		"should remotely execute CommitBroadcastTx callback for each transaction")
-	assert.GreaterOrEqual(t, testAcceptorRelay3.TxCommitCalls.Load(), uint64(totalExpectedMinCommits),
+	assert.Equal(t, uint64(totalExpectedCommits), testAcceptorRelay3.TxCommitCalls.Load(),
 		"should remotely execute CommitBroadcastTx callback for each transaction")
-
-	// TODO(midas): make sure it committed to both ChainIDs AFTER shutdown (i.e. before+2).
 }
 
 func TestScenarioClientBroadcastAfterRuntimeIdling(t *testing.T) {

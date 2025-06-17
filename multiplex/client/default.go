@@ -126,9 +126,9 @@ func NewMockAcceptorImpl() *MockAcceptorImpl {
 
 func (acceptor *MockAcceptorImpl) AcceptBroadcastTx(
 	_ context.Context,
-	_ ...Transaction,
+	batch ...Transaction,
 ) error {
-	acceptor.TxAcceptCalls.Add(1)
+	acceptor.TxAcceptCalls.Add(uint64(len(batch)))
 	return nil
 }
 
@@ -136,9 +136,9 @@ func (acceptor *MockAcceptorImpl) AcceptBroadcastTx(
 // should not be committed.
 func (acceptor *MockAcceptorImpl) CommitBroadcastTx(
 	_ context.Context,
-	_ ...Transaction,
+	batch ...Transaction,
 ) error {
-	acceptor.TxCommitCalls.Add(1)
+	acceptor.TxCommitCalls.Add(uint64(len(batch)))
 	return nil
 }
 
@@ -146,32 +146,32 @@ func (acceptor *MockAcceptorImpl) CommitBroadcastTx(
 // could not be added to a replay batch or if the replay fails.
 func (acceptor *MockAcceptorImpl) ReplayBroadcastTxBatch(
 	_ context.Context,
-	_ ...Transaction,
+	batch ...Transaction,
 ) error {
-	acceptor.TxReplayCalls.Add(1)
+	acceptor.TxReplayCalls.Add(uint64(len(batch)))
 	return nil
 }
 
 func (acceptor *MockAcceptorImpl) AcceptBroadcastTxRemoval(
 	_ context.Context,
-	_ ...Transaction,
+	batch ...Transaction,
 ) error {
-	acceptor.TxRemoveCalls.Add(1)
+	acceptor.TxRemoveCalls.Add(uint64(len(batch)))
 	return nil
 }
 
 func (acceptor *MockAcceptorImpl) RollbackTx(
 	_ context.Context,
-	_ ...Transaction,
+	batch ...Transaction,
 ) error {
-	acceptor.RbAcceptCalls.Add(1)
+	acceptor.RbAcceptCalls.Add(uint64(len(batch)))
 	return nil
 }
 
 func (acceptor *MockAcceptorImpl) RollbackTxRemoval(
 	_ context.Context,
-	_ ...Transaction,
+	batch ...Transaction,
 ) error {
-	acceptor.RbRemoveCalls.Add(1)
+	acceptor.RbRemoveCalls.Add(uint64(len(batch)))
 	return nil
 }
