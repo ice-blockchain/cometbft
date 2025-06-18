@@ -458,8 +458,6 @@ func (memR *Reactor) processTxs(
 
 	// Uses the multiplex server.AckBroadcastChannel to send an acknowledgment
 	// message, or receipt, to describe that the transaction has been checked.
-	// peerOutbound := memR.Switch.Peers(memR.ChainID).GetOutbound(publicPeerID)
-	// if peerOutbound != nil {
 	if err := memR.sendAckTransactionBroadcast(peer, protoTxs); err != nil {
 		memR.Logger.Error("Failed to send AckTransactionBroadcast",
 			"err", err,
@@ -468,7 +466,24 @@ func (memR *Reactor) processTxs(
 		)
 		return
 	}
-	// }
+
+	// If we received a ChainReplicationRequest for this ChainID, we should also
+	// report to the sender relay that the replication is complete.
+
+	if multiplexReactor := memR.Switch.GetMultiplexReactor(); multiplexReactor != nil {
+		type inlineCompletionAnnouncer interface {
+			ShouldAnnounceReplication(chainID string) bool
+			UnsetAnnounceReplication(chainID string)
+		}
+
+		// Use type assertion to access multiplex reactor methods.
+		if mxR, ok := multiplexReactor.(inlineCompletionAnnouncer); ok {
+			if mxR.ShouldAnnounceReplication(memR.ChainID) {
+				memR.sendChainReplicationComplete(memR.ChainID)
+				mxR.UnsetAnnounceReplication(memR.ChainID)
+			}
+		}
+	}
 }
 
 // clientAcceptTx delegates the verification of transactions to an Acceptor
@@ -711,4 +726,89 @@ func (memR *Reactor) sendAckTransactionBroadcast(
 	}
 
 	return nil
+}
+
+// sendChainReplicationComplete sends a ChainReplicationComplete message
+// to all peers we are connected to for chainID.
+func (memR *Reactor) sendChainReplicationComplete(
+	chainID string,
+) {
+	sendReplCompleteToPeer := func(fromID p2p.ID, toPeer *p2p.PeerImpl) error {
+		if success := toPeer.Send(chainID, p2p.Envelope{
+			ChannelID: server.RuntimeChannel,
+			Message: &mxp2p.Message{
+				Sum: &mxp2p.Message_ChainReplicationComplete{
+					ChainReplicationComplete: &mxp2p.ChainReplicationComplete{
+						NodeId:  string(fromID),
+						ChainID: chainID,
+					},
+				},
+			},
+		}); !success {
+			return fmt.Errorf(
+				"could not send message to peer, sender: %s, recipient: %s",
+				string(fromID), string(toPeer.ID()))
+		}
+		return nil
+	}
+
+	myPeerID := memR.nodeKey.ID()
+	peerSet := memR.Switch.Peers(chainID)
+	peersToSend := peerSet.Copy()
+
+	// TODO(midas): remove debug logs
+	memR.Logger.Debug("Sending ChainReplicationComplete to peers",
+		"from_id", myPeerID,
+		"num_peers", len(peersToSend),
+		"peers", peersToSend,
+		"chain_id", chainID,
+	)
+
+	var wg sync.WaitGroup
+	wg.Add(len(peersToSend))
+
+	for _, p := range peersToSend {
+		// Broadcast this message concurrently to our peers. Note that
+		// we will be waiting for the operations to complete to proceed.
+		go func(peer *p2p.PeerImpl) {
+			defer wg.Done()
+
+			if !peer.IsOutbound() && peerSet.HasOutbound(peer.ID()) {
+				return // prefer sending to outbound
+			}
+
+			if err := sendReplCompleteToPeer(myPeerID, peer); err != nil {
+				memR.Logger.Error("Failed to send ChainReplicationComplete",
+					"chain_id", chainID,
+					"from", memR.nodeKey.ID(),
+					"to", peer.ID(),
+					"err", err,
+				)
+			}
+		}(p)
+	}
+	wg.Wait()
+
+	// TODO(midas): remove debug logs
+	memR.Logger.Debug("Done sending ChainReplicationComplete to peers",
+		"from_id", myPeerID,
+		"num_peers", len(peersToSend),
+		"peers", peersToSend,
+		"chain_id", chainID,
+	)
+
+	// Completes the runtime activated in [multiplex.Reactor#Receive] upon
+	// reception of a ChainReplicationRequest.
+	if multiplexReactor := memR.Switch.GetMultiplexReactor(); multiplexReactor != nil {
+		type inlineRuntimeCompleter interface {
+			OnCompleteRuntime(chainID string)
+		}
+
+		// Use type assertion to access multiplex reactor methods.
+		if mxR, ok := multiplexReactor.(inlineRuntimeCompleter); ok {
+			mxR.OnCompleteRuntime(chainID)
+		}
+	}
+
+	return
 }

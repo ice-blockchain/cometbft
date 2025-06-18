@@ -222,6 +222,27 @@ conR:
 		}
 	}
 
+	// TODO(midas): consensus reactor to selectively send ChainReplicationComplete.
+	// TODO(midas): and remove msgStatusToPeers, also from StartConsensusInstance.
+
+	// If we received a ChainReplicationRequest for this ChainID, we should also
+	// report to the sender relay that the replication is complete.
+
+	// if multiplexReactor := conR.Switch.GetMultiplexReactor(); multiplexReactor != nil {
+	// 	type inlineCompletionAnnouncer interface {
+	// 		ShouldAnnounceReplication(chainID string) bool
+	// 		UnsetAnnounceReplication(chainID string)
+	// 	}
+
+	// 	// Use type assertion to access multiplex reactor methods.
+	// 	if mxR, ok := multiplexReactor.(inlineCompletionAnnouncer); ok {
+	// 		if mxR.ShouldAnnounceReplication(conR.ChainID) {
+	// 			conR.announceReplicationToPeers(conR.ChainID)
+	// 			mxR.UnsetAnnounceReplication(conR.ChainID)
+	// 		}
+	// 	}
+	// }
+
 	if conR.msgStatusToPeers.Load() {
 		go conR.announceReplicationToPeers(state.ChainID)
 	}

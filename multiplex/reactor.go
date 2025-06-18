@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	dbm "github.com/cometbft/cometbft-db"
@@ -180,6 +181,12 @@ type Reactor struct {
 	chainReadyMtx sync.RWMutex
 	chainReadyChs map[string]chan bool
 
+	// Mapping of ChainID for which we are executing blocksync. When a ChainID
+	// appears in this map, we shall send ChainReplicationComplete messages to
+	// peers for any incoming mempool.Tx, i.e. in mempool.Reactor#processTxs.
+	replRequestsMtx  sync.RWMutex
+	replRequestsRcvd map[string]*uint64
+
 	// ackReplResChs contains channels that are opened on-demand, when the
 	// application expects to receive [ChainReplicationResponse] messages from
 	// relevant relays, mapped by ChainID. Messages forwarded on this channel
@@ -282,6 +289,7 @@ func NewReactor(
 		configsPaths:      MultiplexFS{},
 		knownRelayInfo:    map[string]*server.RPCResultRelayInfo{},
 		rpcRoutes:         map[string]bool{},
+		replRequestsRcvd:  map[string]*uint64{},
 
 		// Internal channels
 		chainReadyChs:     make(map[string]chan bool),
@@ -738,6 +746,50 @@ func (reactor *Reactor) SetRPCMultiplexer(mux *http.ServeMux) {
 	reactor.networkMutex.Lock()
 	defer reactor.networkMutex.Unlock()
 	reactor.rpcMultiplexer = mux
+}
+
+// ShouldAnnounceReplication returns true if a ChainID appears in
+// replRequestsRcvd, meaning if we received a ChainReplicationRequest.
+//
+// We use an atomic counter to make sure that concurrent broadcasts to the
+// same ChainID currently synchronizing will all be announced individually.
+func (reactor *Reactor) ShouldAnnounceReplication(chainID string) bool {
+	reactor.replRequestsMtx.RLock()
+	defer reactor.replRequestsMtx.RUnlock()
+
+	if cntSync, isSync := reactor.replRequestsRcvd[chainID]; isSync {
+		return atomic.LoadUint64(cntSync) > 0
+	}
+
+	return false
+}
+
+// SetAnnounceReplication increments the atomic counter for chainID.
+func (reactor *Reactor) SetAnnounceReplication(chainID string) {
+	reactor.replRequestsMtx.RLock()
+	cntChainSync, hasChainSync := reactor.replRequestsRcvd[chainID]
+	reactor.replRequestsMtx.RUnlock()
+
+	if !hasChainSync {
+		cntChainSync = new(uint64)
+
+		reactor.replRequestsMtx.Lock()
+		reactor.replRequestsRcvd[chainID] = cntChainSync
+		reactor.replRequestsMtx.Unlock()
+	}
+
+	atomic.AddUint64(cntChainSync, uint64(1))
+}
+
+// UnsetAnnounceReplication decrements the atomic counter for chainID.
+func (reactor *Reactor) UnsetAnnounceReplication(chainID string) {
+	reactor.replRequestsMtx.RLock()
+	cntChainSync, hasChainSync := reactor.replRequestsRcvd[chainID]
+	reactor.replRequestsMtx.RUnlock()
+
+	if hasChainSync && atomic.LoadUint64(cntChainSync) > 0 {
+		atomic.AddUint64(cntChainSync, ^uint64(0)) // -1
+	}
 }
 
 // ChannelForAckReplication creates or returns an unbuffered channel that accepts
@@ -1227,6 +1279,9 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 				)
 				return
 			}
+
+			// Register this ChainID in replRequestsRcvd
+			r.SetAnnounceReplication(replRequest.ChainID)
 
 			// if err := r.AddInboundPeerForCometBFT(sourcePeer.ID(), replRequest.ChainID); err != nil {
 			// 	r.logger.Error(
