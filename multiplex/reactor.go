@@ -1266,7 +1266,8 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 
 			// Activate this runtime in our runtime registry.
 			//
-			// OnComplete is called by consensus.Reactor#SwitchToConsensus.
+			// In case of conR.WaitSync, OnComplete is called by conR.SwitchToConsensus,
+			// otherwise OnComplete is called by memR.processTxs.
 			r.OnActivateRuntime(replRequest.ChainID)
 
 			// A ChainReplicationResponse will be sent to the source peer.

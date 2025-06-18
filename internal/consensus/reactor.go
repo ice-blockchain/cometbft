@@ -907,8 +907,8 @@ OUTER_LOOP:
 			}
 		}
 
-		rs := conR.conS.GetRoundState() // under conS.mtx
-		prs := ps.GetRoundState()       // under ps.mtx
+		rs := conR.conS.getRoundState()
+		prs := ps.GetRoundState() // under ps.mtx
 		cid := conR.ChainID
 
 		// --------------------
@@ -971,8 +971,8 @@ OUTER_LOOP:
 			}
 		}
 
-		rs := conR.conS.GetRoundState() // under conS.mtx
-		prs := ps.GetRoundState()       // under ps.mtx
+		rs := conR.conS.getRoundState()
+		prs := ps.GetRoundState() // under ps.mtx
 		cid := conR.ChainID
 
 		switch sleeping {
@@ -1024,8 +1024,8 @@ OUTER_LOOP:
 
 		// Maybe send Height/Round/Prevotes
 		{
-			rs := conR.conS.GetRoundState() // under conS.mtx
-			prs := ps.GetRoundState()       // under ps.mtx
+			rs := conR.conS.getRoundState()
+			prs := ps.GetRoundState() // under ps.mtx
 			if rs.Height == prs.Height {
 				if maj23, ok := rs.Votes.Prevotes(prs.Round).TwoThirdsMajority(); ok {
 					peer.TrySend(conR.ChainID, p2p.Envelope{
@@ -1046,8 +1046,8 @@ OUTER_LOOP:
 
 		// Maybe send Height/Round/Precommits
 		{
-			rs := conR.conS.GetRoundState() // under conS.mtx
-			prs := ps.GetRoundState()       // under ps.mtx
+			rs := conR.conS.getRoundState()
+			prs := ps.GetRoundState() // under ps.mtx
 			if rs.Height == prs.Height {
 				if maj23, ok := rs.Votes.Precommits(prs.Round).TwoThirdsMajority(); ok {
 					peer.TrySend(conR.ChainID, p2p.Envelope{
@@ -1068,8 +1068,8 @@ OUTER_LOOP:
 
 		// Maybe send Height/Round/ProposalPOL
 		{
-			rs := conR.conS.GetRoundState() // under conS.mtx
-			prs := ps.GetRoundState()       // under ps.mtx
+			rs := conR.conS.getRoundState()
+			prs := ps.GetRoundState() // under ps.mtx
 			if rs.Height == prs.Height && prs.ProposalPOLRound >= 0 {
 				if maj23, ok := rs.Votes.Prevotes(prs.ProposalPOLRound).TwoThirdsMajority(); ok {
 					peer.TrySend(conR.ChainID, p2p.Envelope{

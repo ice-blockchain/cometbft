@@ -144,6 +144,11 @@ func (voteSet *VoteSet) Size() int {
 	return voteSet.valSet.Size()
 }
 
+// ValidatorSet returns the validator set.
+func (voteSet *VoteSet) ValidatorSet() *ValidatorSet {
+	return voteSet.valSet
+}
+
 // AddVote returns added=true if vote is valid and new.
 // Otherwise returns err=ErrVote[
 //

@@ -225,7 +225,7 @@ func WithReactorOptions(reactorOpts ...ReactorOption) func(*MultiplexBackend) {
 //
 // The internal [Reactor] instance will be started when calling this method,
 // and individual [node.Node] instances can be retrieved using the reactor's
-// services registry: [Reactor#GetServiceProvider].
+// services registry: [Reactor#GetServicesProvider].
 //
 // The added reactorOptions slices permits to inject custom option helper
 // calls in the [NewReactor] method.
@@ -850,11 +850,12 @@ func (b *MultiplexBackend) Close() error {
 	if b.reactor.runtimeRegistry != nil && b.reactor.runtimeRegistry.IsRunning() {
 		restNodeRuntimes := b.reactor.runtimeRegistry.ActiveRuntimes()
 		if len(restNodeRuntimes) > 0 {
+			// TODO(midas): remove debug logs
+			b.logger.Debug("Shutting down remaining node runtimes",
+				"networks", restNodeRuntimes,
+			)
+
 			for chainID, _ := range restNodeRuntimes {
-				// TODO(midas): remove debug logs
-				b.logger.Debug("Shutting down remaining node runtime",
-					"chain_id", chainID,
-				)
 				b.reactor.runtimeRegistry.OnIdle(chainID)
 			}
 		}
@@ -1307,7 +1308,7 @@ func (b *MultiplexBackend) WaitForRelaysAckChainReplications(
 			numReceived += len(replResult.Relays)
 
 			// Shutdown any living goroutine for this ChainID
-			defer shutdownFn(replResult.ChainID, shutdownWaitChs, localReplResChs, nil)
+			shutdownFn(replResult.ChainID, shutdownWaitChs, localReplResChs, nil)
 
 		case <-b.reactor.Quit():
 			err = errors.New("interrupted by shutdown process")
@@ -1494,7 +1495,7 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 			numReceived += len(txResult.Relays)
 
 			// Shutdown any living goroutine for this txHash
-			defer shutdownFn(txResult.TxHash, shutdownWaitChs, localAckAcceptTxChs, nil)
+			shutdownFn(txResult.TxHash, shutdownWaitChs, localAckAcceptTxChs, nil)
 
 		case <-b.reactor.Quit():
 			err = errors.New("interrupted by shutdown process")
@@ -1652,7 +1653,7 @@ func (b *MultiplexBackend) WaitForRelaysReplicationCompleted(
 			numCompleted += len(updateResult.Relays)
 
 			// Shutdown any living goroutine for this ChainID
-			defer shutdownFn(updateResult.ChainID, shutdownWaitChs, localReplFinChs, nil)
+			shutdownFn(updateResult.ChainID, shutdownWaitChs, localReplFinChs, nil)
 
 		case <-b.reactor.Quit():
 			err = errors.New("interrupted by shutdown process")
@@ -1773,7 +1774,7 @@ func (b *MultiplexBackend) WaitForTransactionsEvents(
 			numCompleted += len(txEventResult.TxHashes)
 
 			// Shutdown any living goroutine for this ChainID
-			defer shutdownFn(txEventResult.ChainID, shutdownWaitChs, nil)
+			shutdownFn(txEventResult.ChainID, shutdownWaitChs, nil)
 
 		case <-b.reactor.Quit():
 			err = errors.New("interrupted by shutdown process")
@@ -2384,22 +2385,20 @@ func (b *MultiplexBackend) StartConsensusInstance(
 	ctx context.Context,
 	chainID string,
 ) error {
-	// icsGenesisDocSet := b.reactor.initialGenesisDocs
-
-	// // Initialize the state machine and block store
-	// if err := b.reactor.InjectStateMachine(chainID, icsGenesisDocSet); err != nil {
-	// 	return fmt.Errorf(
-	// 		"could not inject state machine: %w", err)
-	// }
+	clogger := b.logger.With("chain_id", chainID)
 
 	if err := b.reactor.StartConsensusInstanceReactors(ctx,
 		chainID,
 		false, // disables status updates to peers about replication (ChainReplicationComplete)
 	); err != nil {
-		return err
+		clogger.Error("failed to initialize consensus reactors", "err", err)
 	}
 
-	return b.reactor.InitAndStartNode(ctx, chainID)
+	if err := b.reactor.InitAndStartNode(ctx, chainID); err != nil {
+		clogger.Error("failed to initialize node instance", "err", err)
+	}
+
+	return nil
 }
 
 // ----------------------------------------------------------------------------

@@ -370,18 +370,21 @@ func (reactor *Reactor) StopConsensusInstanceReactors(
 	ctx context.Context,
 	chainID string,
 ) error {
-	// Add channels for the new ChainID to all existing peers
-	// This prevents "unknown channel - missing ChainID" errors when peers
-	// try to send messages for the new ChainID.
+	// TODO(midas): remove debug logs
+	reactor.logger.Debug("StopConsensusInstanceReactors", "chain_id", chainID)
+
 	cometbftSwitch := reactor.GetEventSwitchForCometBFT()
-	if err := reactor.RemoveConnectionChannels(cometbftSwitch, []string{chainID}); err != nil {
-		return fmt.Errorf(
-			"error removing connection channels for ChainID %s: %w", chainID, err)
-	}
 
 	// Also remove this active runtime, so that in sw.addPeer()
 	// we don't include it in relevantScopes anymore.
 	cometbftSwitch.RemoveActiveRuntime(chainID)
+
+	// Remove channels allocated for ChainID, from all existing peers.
+	if err := reactor.RemoveConnectionChannels(cometbftSwitch, []string{chainID}); err != nil {
+		reactor.logger.Error("error removing connection channels",
+			"chain_id", chainID,
+			"err", err)
+	}
 
 	// Stop all the reactors available for this ChainID.
 	reactorsForChain := cometbftSwitch.Reactors(chainID)
@@ -390,11 +393,16 @@ func (reactor *Reactor) StopConsensusInstanceReactors(
 			err := r.Stop()
 
 			if err != nil && err != service.ErrAlreadyStopped {
-				return fmt.Errorf(
-					"error stopping %s reactor: %w", name, err)
+				reactor.logger.Error("error stopping reactor",
+					"chain_id", chainID,
+					"reactor", name,
+					"err", err)
 			}
 		}
 	}
+
+	// TODO(midas): remove debug logs
+	reactor.logger.Debug("Done with StopConsensusInstanceReactors", "chain_id", chainID)
 
 	return nil
 }

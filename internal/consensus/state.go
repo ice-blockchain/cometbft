@@ -166,7 +166,7 @@ func NewState(
 		timeoutTicker:    NewTimeoutTicker(),
 		statsMsgQueue:    make(chan msgInfo, msgQueueSize),
 		done:             make(chan struct{}),
-		doWALCatchup:     false,
+		doWALCatchup:     true,
 		wal:              nilWAL{},
 		evpool:           evpool,
 		evsw:             cmtevents.NewEventSwitch(),
@@ -2508,7 +2508,9 @@ func (cs *State) addVote(vote *types.Vote, peerID p2p.ID) (added bool, err error
 			"round", vote.Round,
 			"validator", vote.ValidatorAddress.String(),
 			"vote_timestamp", vote.Timestamp,
-			"data", precommits.LogString())
+			"data", precommits.LogString(),
+			"power", precommits.ValidatorSet().TotalVotingPower(),
+		)
 
 		blockID, ok := precommits.TwoThirdsMajority()
 		if ok {

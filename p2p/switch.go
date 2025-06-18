@@ -1917,11 +1917,6 @@ func (sw *Switch) CleanupChannels() {
 
 func (sw *Switch) CloseChannelsForScopes(scopes []string) func(mconn *conn.MConnection) {
 	return func(mconn *conn.MConnection) {
-		channelsIdx := mconn.GetChannelsIdx()
-
-		sw.runtimesMtx.Lock()
-		defer sw.runtimesMtx.Unlock()
-
 		for _, scope := range scopes {
 			reactorsScope := scope // ChainID or "discovery"
 			if scope == ScopeForDiscovery {
@@ -1931,45 +1926,55 @@ func (sw *Switch) CloseChannelsForScopes(scopes []string) func(mconn *conn.MConn
 			reactorsByScope := sw.Reactors(reactorsScope)
 			for _, r := range reactorsByScope {
 				channels := r.GetChannels()
+
+				sw.runtimesMtx.Lock()
 				for _, chDesc := range channels {
 					channelRemoved := mconn.RemoveChannel(scope, chDesc)
 					if channelRemoved && atomic.LoadUint32(&sw.totalOpenChannels) > 0 {
 						atomic.AddUint32(&sw.totalOpenChannels, ^uint32(0)) // -1
 					}
 				}
+				sw.runtimesMtx.Unlock()
 			}
 
 			// Close remaining channels from outbound peers.
-			if scope != ScopeForDiscovery {
-				for _, channels := range channelsIdx {
-					replChannel := channels[replicationChannel]
-					ackChannel := channels[ackBroadcastChannel]
-					runChannel := channels[runtimeChannel]
+			channelsIdx := mconn.GetChannelsIdx()
+			channels, ok := channelsIdx[scope]
+			if !ok {
+				continue // move on to next scope
+			}
 
-					shutdownChannels := []*conn.Channel{
-						replChannel,
-						ackChannel,
-						runChannel,
-					}
-					for _, channel := range shutdownChannels {
-						if channel == nil {
-							continue
-						}
+			replChannel := channels[replicationChannel]
+			ackChannel := channels[ackBroadcastChannel]
+			runChannel := channels[runtimeChannel]
 
-						channelRemoved := mconn.RemoveChannel(scope, channel.Desc())
-						if channelRemoved && atomic.LoadUint32(&sw.totalOpenChannels) > 0 {
-							atomic.AddUint32(&sw.totalOpenChannels, ^uint32(0)) // -1
-						}
-					}
+			sw.runtimesMtx.Lock()
+			shutdownChannels := []*conn.Channel{
+				replChannel,
+				ackChannel,
+				runChannel,
+			}
+			for _, channel := range shutdownChannels {
+				if channel == nil {
+					continue
+				}
+
+				channelRemoved := mconn.RemoveChannel(scope, channel.Desc())
+				if channelRemoved && atomic.LoadUint32(&sw.totalOpenChannels) > 0 {
+					atomic.AddUint32(&sw.totalOpenChannels, ^uint32(0)) // -1
 				}
 			}
+			sw.runtimesMtx.Unlock()
 		}
+
+		channelsIdx := mconn.GetChannelsIdx()
 
 		// TODO(midas): remove debug logs
 		sw.Logger.Debug("Removed connection channels",
 			"scopes", scopes,
 			"conn", mconn.SocketAddr().String(),
 			"num_chs", atomic.LoadUint32(&sw.totalOpenChannels),
+			"remains", channelsIdx,
 		)
 	}
 }
