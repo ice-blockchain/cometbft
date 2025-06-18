@@ -149,6 +149,11 @@ func (acceptor *MockAcceptorImpl) ReplayBroadcastTxBatch(
 	batch ...Transaction,
 ) error {
 	acceptor.TxReplayCalls.Add(uint64(len(batch)))
+
+	// In "replay mode", the accept and commit calls should be executed
+	// by the ReplayBroadcastTxBatch callback for all transactions.
+	acceptor.TxAcceptCalls.Add(uint64(len(batch)))
+	acceptor.TxCommitCalls.Add(uint64(len(batch)))
 	return nil
 }
 
