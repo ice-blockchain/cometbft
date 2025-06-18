@@ -825,6 +825,7 @@ func (cs *State) receiveRoutine(maxSteps int) {
 		}
 
 		cs.wal.Wait()
+		cs.wal = nilWAL{} // needed for re-start
 		close(cs.done)
 	}
 
