@@ -2445,7 +2445,11 @@ func (cs *State) addVote(vote *types.Vote, peerID p2p.ID) (added bool, err error
 	switch vote.Type {
 	case types.PrevoteType:
 		prevotes := cs.Votes.Prevotes(vote.Round)
-		cs.Logger.Debug("Added vote to prevote", "vote", vote, "prevotes", prevotes.StringShort())
+		cs.Logger.Debug("Added vote to prevote",
+			"vote", vote,
+			"prevotes", prevotes.StringShort(),
+			"data", prevotes.LogString(),
+		)
 
 		// Check to see if >2/3 of the voting power on the network voted for any non-nil block.
 		if blockID, ok := prevotes.TwoThirdsMajority(); ok && !blockID.IsNil() {
@@ -2510,7 +2514,6 @@ func (cs *State) addVote(vote *types.Vote, peerID p2p.ID) (added bool, err error
 			"validator", vote.ValidatorAddress.String(),
 			"vote_timestamp", vote.Timestamp,
 			"data", precommits.LogString(),
-			"power", precommits.ValidatorSet().TotalVotingPower(),
 		)
 
 		blockID, ok := precommits.TwoThirdsMajority()

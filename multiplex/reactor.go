@@ -1690,10 +1690,6 @@ func (r *Reactor) GetRemoteValidatorsInfo(
 	}
 
 	deadline := time.Now().Add(requestTimeout)
-	// Each call should timeout after max requestTimeout.
-	if ctxDeadline, withDeadline := clientCtx.Deadline(); withDeadline {
-		deadline = ctxDeadline
-	}
 	timeoutCtx, cancelFn := context.WithDeadline(context.Background(), deadline)
 	defer cancelFn()
 
@@ -1744,10 +1740,6 @@ func (r *Reactor) GetRemoteRelayInfo(
 	}
 
 	deadline := time.Now().Add(requestTimeout)
-	// Each call should timeout after max requestTimeout.
-	if ctxDeadline, withDeadline := clientCtx.Deadline(); withDeadline {
-		deadline = ctxDeadline
-	}
 	timeoutCtx, cancelFn := context.WithDeadline(context.Background(), deadline)
 	defer cancelFn()
 
