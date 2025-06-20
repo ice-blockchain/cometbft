@@ -48,6 +48,7 @@ func TestMultiplexBackendNewServer(t *testing.T) {
 	require.NotNil(t, globalCfg)
 
 	backend, err := mx.NewServer(
+		t.Context(),
 		&client.DefaultAcceptor{},
 		globalCfg,
 		cmtlog.NewNopLogger(),
@@ -70,6 +71,7 @@ func TestMultiplexBackendNewServer(t *testing.T) {
 
 	// Act
 	backend2, err2 := mx.NewServer(
+		t.Context(),
 		&client.DefaultAcceptor{},
 		globalCfg2,
 		cmtlog.NewNopLogger(),
@@ -1046,6 +1048,7 @@ func ResetTestMultiplexBackend(
 		globalCfg := ResetTestMultiplexNode(tb, numChains) // DiscoveryPort=30001
 
 	server, err := mx.NewServer(
+		tb.Context(),
 		&client.DefaultAcceptor{},
 		globalCfg,
 		customLogger,
@@ -1093,6 +1096,7 @@ func ResetTestMultiplexBackendTwoInParallel(
 	}
 
 	serverRelay1, err := mx.NewServer(
+		tb.Context(),
 		&client.DefaultAcceptor{},
 		globalCfgRelay1,
 		customLoggerRelay1,
@@ -1101,6 +1105,7 @@ func ResetTestMultiplexBackendTwoInParallel(
 	require.NoError(tb, err, "should create first server instance")
 
 	serverRelay2, err := mx.NewServer(
+		tb.Context(),
 		&client.DefaultAcceptor{},
 		globalCfgRelay2,
 		customLoggerRelay2,
@@ -1146,6 +1151,7 @@ func ResetTestMultiplexBackendCompatibleRelaysWithOptions(
 		relayBackendOpts = backendOptionsPerRelay[0]
 	}
 	serverRelay1, err := mx.NewServer(
+		tb.Context(),
 		&client.DefaultAcceptor{},
 		globalCfgRelay1,
 		customLoggers[0],
@@ -1178,6 +1184,7 @@ func ResetTestMultiplexBackendCompatibleRelaysWithOptions(
 			relayBackendOpts = backendOptionsPerRelay[r]
 		}
 		serverRelayX, err := mx.NewServer(
+			tb.Context(),
 			&client.DefaultAcceptor{},
 			globalCfgRelayX,
 			customLoggers[r],
@@ -1225,6 +1232,7 @@ func ResetTestMultiplexBackendCompatibleRelays(
 
 	relayBackendOpts := backendOptionsPerRelay[0]
 	serverRelay1, err := mx.NewServer(
+		tb.Context(),
 		&client.DefaultAcceptor{},
 		globalCfgRelay1,
 		customLoggers[0],
@@ -1254,6 +1262,7 @@ func ResetTestMultiplexBackendCompatibleRelays(
 
 		relayBackendOpts := backendOptionsPerRelay[r]
 		serverRelayX, err := mx.NewServer(
+			tb.Context(),
 			&client.DefaultAcceptor{},
 			globalCfgRelayX,
 			customLoggers[r],

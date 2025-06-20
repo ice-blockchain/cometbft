@@ -56,6 +56,7 @@ func ResetTestMultiplexClient(
 		globalCfg := ResetTestMultiplexNode(tb, numChains)
 
 	server, err := mx.NewServer(
+		tb.Context(),
 		&client.DefaultAcceptor{},
 		globalCfg,
 		customLogger,

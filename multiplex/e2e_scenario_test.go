@@ -4048,6 +4048,7 @@ func ResetTestSingleCompatibleRelay(
 	}
 
 	serverRelayX, err := mx.NewServer(
+		tb.Context(),
 		&client.DefaultAcceptor{},
 		globalCfgRelayX,
 		customLogger,

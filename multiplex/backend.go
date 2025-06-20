@@ -163,6 +163,7 @@ type MultiplexBackend struct {
 	logger     cmtlog.Logger
 	errorsCh   chan error
 	shutdownCh chan struct{}
+	closed     bool
 	metrics    *Metrics
 }
 
@@ -232,6 +233,7 @@ func WithReactorOptions(reactorOpts ...ReactorOption) func(*MultiplexBackend) {
 //
 // See also: [NewNodesMultiplex]
 func NewServer(
+	ctx context.Context,
 	impl client.Acceptor,
 	nodeConfig *config.Config,
 	nodeLogger cmtlog.Logger,
@@ -243,7 +245,7 @@ func NewServer(
 
 	initTime := time.Now()
 	_, reactor, err := NewNodesMultiplex(
-		context.Background(),
+		ctx,
 		impl,
 		nodeConfig,
 		nodeLogger,
@@ -833,8 +835,12 @@ func (b *MultiplexBackend) MustStart() {
 func (b *MultiplexBackend) Close() error {
 	// Lock the mutex to complete shutdown gracefully
 	b.relayMtx.Lock()
-	defer b.relayMtx.Unlock()
-
+	if b.closed {
+		b.logger.Debug("node backend already closed",
+			"id", b.reactor.GetNodeKey().ID(),
+		)
+		return nil
+	}
 	// TODO(midas): remove debug logs
 	b.logger.Debug("Shutting down node backend",
 		"id", b.reactor.GetNodeKey().ID(),
@@ -843,7 +849,9 @@ func (b *MultiplexBackend) Close() error {
 	if b.shutdownCh != nil {
 		// Shutdown goroutines started by MustStart().
 		close(b.shutdownCh)
+		b.closed = true
 	}
+	b.relayMtx.Unlock()
 
 	// Stop the runtimes registry, it shouldn't interfere with shutdown.
 	b.reactor.runtimesMutex.Lock()
@@ -3380,7 +3388,7 @@ func (b *MultiplexBackend) localTransactionEventsConsumer(
 		resultsCh <- TransactionEventResult{Error: err}
 		return
 	}
-	defer chainEventBus.UnsubscribeAll(context.Background(), subscriberName)
+	defer chainEventBus.UnsubscribeAll(ctx, subscriberName)
 
 	defer cancelTimer.Stop()
 

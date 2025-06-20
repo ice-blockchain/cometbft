@@ -3,6 +3,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync/atomic"
@@ -99,12 +100,13 @@ Typical usage:
 	}
 */
 type BaseService struct {
-	Logger  log.Logger
-	name    string
-	started uint32 // atomic
-	stopped uint32 // atomic
-	quit    chan struct{}
-
+	Logger    log.Logger
+	name      string
+	started   uint32 // atomic
+	stopped   uint32 // atomic
+	quit      chan struct{}
+	ctxCancel context.CancelFunc
+	ctxDone   chan<- struct{}
 	// The "subclass" of BaseService
 	impl Service
 }

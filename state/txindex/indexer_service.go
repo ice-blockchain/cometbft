@@ -48,15 +48,15 @@ func (is *IndexerService) OnStart() error {
 	// Use SubscribeUnbuffered here to ensure both subscriptions does not get
 	// canceled due to not pulling messages fast enough. Cause this might
 	// sometimes happen when there are no other subscribers.
-	blockSub, err := is.eventBus.SubscribeUnbuffered(
+	blockSub, err := is.eventBus.Subscribe(
 		context.Background(),
 		subscriber,
-		types.EventQueryNewBlockEvents)
+		types.EventQueryNewBlockEvents, 1)
 	if err != nil {
 		return err
 	}
 
-	txsSub, err := is.eventBus.SubscribeUnbuffered(context.Background(), subscriber, types.EventQueryTx)
+	txsSub, err := is.eventBus.Subscribe(context.Background(), subscriber, types.EventQueryTx, 1)
 	if err != nil {
 		return err
 	}
@@ -74,6 +74,8 @@ func (is *IndexerService) OnStart() error {
 			select {
 			case <-blockSub.Canceled():
 				return
+			case <-is.Quit():
+				return
 			case msg := <-blockSub.Out():
 				eventNewBlockEvents := msg.Data().(types.EventDataNewBlockEvents)
 				height := eventNewBlockEvents.Height
@@ -82,22 +84,28 @@ func (is *IndexerService) OnStart() error {
 				batch := NewBatch(numTxs)
 
 				for i := int64(0); i < numTxs; i++ {
-					msg2 := <-txsSub.Out()
-					txResult := msg2.Data().(types.EventDataTx).TxResult
+					select {
+					case <-txsSub.Canceled():
+						return
+					case <-is.Quit():
+						return
+					case msg2 := <-txsSub.Out():
+						txResult := msg2.Data().(types.EventDataTx).TxResult
 
-					if err = batch.Add(&txResult); err != nil {
-						is.Logger.Error(
-							"failed to add tx to batch",
-							"height", height,
-							"index", txResult.Index,
-							"err", err,
-						)
+						if err = batch.Add(&txResult); err != nil {
+							is.Logger.Error(
+								"failed to add tx to batch",
+								"height", height,
+								"index", txResult.Index,
+								"err", err,
+							)
 
-						if is.terminateOnError {
-							if err := is.Stop(); err != nil { //nolint:revive // suppress max-control-nesting linter
-								is.Logger.Error("failed to stop", "err", err)
+							if is.terminateOnError {
+								if err := is.Stop(); err != nil { //nolint:revive // suppress max-control-nesting linter
+									is.Logger.Error("failed to stop", "err", err)
+								}
+								return
 							}
-							return
 						}
 					}
 				}
@@ -133,6 +141,7 @@ func (is *IndexerService) OnStart() error {
 
 // OnStop implements service.Service by unsubscribing from all transactions.
 func (is *IndexerService) OnStop() {
+	is.Logger.Debug("Stopping tx indexer", "sub", subscriber)
 	if is.eventBus.IsRunning() {
 		_ = is.eventBus.UnsubscribeAll(context.Background(), subscriber)
 	}
