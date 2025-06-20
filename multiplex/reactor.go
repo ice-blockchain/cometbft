@@ -301,10 +301,12 @@ func NewReactor(
 		logger: logger,
 	}
 
+	// TODO(midas): Idle manager temporarily disabled until shutdown issues are cleared.
+	//
 	// Set default OnIdle callback in case none is set through options.
-	reactor.SetRuntimeRegistryOptions(
-		server.RuntimeRegistryOnIdle(DefaultOnIdleCallback(reactor)),
-	)
+	// reactor.SetRuntimeRegistryOptions(
+	// 	server.RuntimeRegistryOnIdle(DefaultOnIdleCallback(reactor)),
+	// )
 
 	// Enable overwrite of some optional properties.
 	for _, option := range options {

@@ -849,7 +849,7 @@ func (b *MultiplexBackend) Close() error {
 	b.reactor.runtimesMutex.Lock()
 	if b.reactor.runtimeRegistry != nil && b.reactor.runtimeRegistry.IsRunning() {
 		restNodeRuntimes := b.reactor.runtimeRegistry.ActiveRuntimes()
-		if len(restNodeRuntimes) > 0 {
+		if len(restNodeRuntimes) > 0 && b.reactor.runtimeRegistry.OnIdle != nil {
 			// TODO(midas): remove debug logs
 			b.logger.Debug("Shutting down remaining node runtimes",
 				"networks", restNodeRuntimes,
