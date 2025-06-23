@@ -220,7 +220,7 @@ func (bs *BaseService) Reset() error {
 	return bs.impl.OnReset()
 }
 
-// OnReset implements Service by panicking.
+// OnReset implements Service.
 func (*BaseService) OnReset() error {
 	return nil
 }

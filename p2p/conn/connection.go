@@ -404,6 +404,16 @@ func (c *MConnection) startServices() error {
 			return err
 		}
 
+		// Re-initialize all channels in case this conn is reset.
+		c.send = make(chan struct{}, 1)
+		c.pong = make(chan struct{}, 1)
+
+		c.pingTimer = time.NewTicker(c.config.PingInterval)
+		c.pongTimeoutCh = make(chan bool, 1)
+		c.quitSendRoutine = make(chan struct{})
+		c.doneSendRoutine = make(chan struct{})
+		c.quitRecvRoutine = make(chan struct{})
+
 		c.flushTimer = timer.NewThrottleTimer("flush", c.config.FlushThrottle)
 		c.chStatsTimer = time.NewTicker(updateStats)
 
@@ -469,7 +479,7 @@ func (c *MConnection) stopServices() (alreadyStopped bool) {
 // .Send() calls will get flushed before closing
 // the connection.
 func (c *MConnection) FlushStop() {
-	if c.stopServices() {
+	if !c.stopServices() {
 		return
 	}
 
@@ -506,7 +516,7 @@ func (c *MConnection) FlushStop() {
 
 // OnStop implements BaseService.
 func (c *MConnection) OnStop() {
-	if c.stopServices() {
+	if !c.stopServices() {
 		return
 	}
 
@@ -518,6 +528,16 @@ func (c *MConnection) OnStop() {
 	// recvRoutine may write to it after we've stopped.
 	// Though it doesn't need to get closed at all,
 	// we close it @ recvRoutine.
+}
+
+func (c *MConnection) OnReset() error {
+	c.Logger.Debug("MConnection reset")
+
+	atomic.StoreUint32(&c.startedRoutines, 0)
+	atomic.StoreUint32(&c.stoppedRoutines, 0)
+	atomic.StoreUint32(&c.numOpenChannels, 0)
+
+	return nil
 }
 
 func (c *MConnection) String() string {

@@ -1285,15 +1285,6 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			// Register this ChainID in replRequestsRcvd
 			r.SetAnnounceReplication(replRequest.ChainID)
 
-			// if err := r.AddInboundPeerForCometBFT(sourcePeer.ID(), replRequest.ChainID); err != nil {
-			// 	r.logger.Error(
-			// 		"failed to process ChainReplicationRequest: error adding inbound peer for CometBFT",
-			// 		"chain_id", replRequest.ChainID,
-			// 		"err", err,
-			// 	)
-			// 	return
-			// }
-
 			// TODO(midas): dialing MAY be concurrent for both scopes
 
 			// Dials the CometBFT relay to permit faster consensus startup.
@@ -1636,37 +1627,6 @@ func (r *Reactor) DialRelayForCometBFT(
 	// Uses `DiscoveryPort+1`
 	cometbftSwitch := r.GetEventSwitchForCometBFT()
 	return r.DialRelayForScope(cometbftSwitch, cometbftAddr, chainID)
-}
-
-func (r *Reactor) AddInboundPeerForCometBFT(
-	sourcePeerID p2p.ID,
-	chainID string,
-) error {
-	// Uses `DiscoveryPort+1`
-	cometbftSwitch := r.GetEventSwitchForCometBFT()
-	chainPeerSet := cometbftSwitch.Peers(chainID)
-
-	// Find discovery peer's ID, in cometbft
-	peerInbound := chainPeerSet.GetInbound(sourcePeerID)
-	if peerInbound != nil {
-		// TODO(midas): remove debug logs
-		r.logger.Debug("Inbound peer is ready - adding to reactors",
-			"peer_id", sourcePeerID,
-			"chain_id", chainID,
-			"peer", peerInbound,
-		)
-
-		// Inbound peer is ready, manually add peers to reactors.
-		cometbftSwitch.InitPeerForScope(peerInbound, chainID)
-		cometbftSwitch.AddPeerForScope(peerInbound, chainID)
-	} else {
-		r.logger.Error("failed to add inbound peer for CometBFT - peer is not ready",
-			"peer_id", sourcePeerID,
-			"chain_id", chainID,
-		)
-	}
-
-	return nil
 }
 
 func (r *Reactor) IsDialError(err error) bool {

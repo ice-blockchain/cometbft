@@ -486,6 +486,10 @@ func (sw *Switch) OnStart() error {
 	sw.startTz = time.Now()
 	sw.runtimesMtx.Unlock()
 
+	sw.peersMtx.Lock()
+	sw.peersByScope = map[string]*PeerSet{ScopeForDiscovery: NewPeerSet()}
+	sw.peersMtx.Unlock()
+
 	// BREAKING
 	// NOTE(midas): We removed the startup of reactors from this method because
 	// in a multiplex of nodes, the active node runtimes (ChainID) have a short
@@ -744,8 +748,9 @@ func (sw *Switch) InitPeerForScope(peer *PeerImpl, scope string) {
 			// TODO(midas): remove debug logs
 			sw.Logger.Info("Init peer for reactor",
 				"scope", scope,
-				"peer", peer,
 				"reactor", rname,
+				"peer", peer,
+				"running", peer.IsRunning(),
 			)
 		}
 	}
@@ -765,13 +770,6 @@ func (sw *Switch) AddPeerForScope(peer *PeerImpl, scope string) {
 	peerSet := sw.Peers(scope)
 	if !peerSet.HasPeer(peer) {
 		peerSet.Add(peer)
-
-		// TODO(midas): remove debug logs
-		sw.Logger.Info("Added peer to peerset",
-			"scope", scope,
-			"peer", peer,
-			"size", peerSet.Size(),
-		)
 	}
 
 	var reactors map[string]Reactor
@@ -787,13 +785,6 @@ func (sw *Switch) AddPeerForScope(peer *PeerImpl, scope string) {
 		if !sw.IsPeerInitialized(peer, scope, rname) {
 			peerForReactor = reactor.InitPeer(peer)
 			sw.MarkPeerInitialized(peerForReactor, scope, rname)
-
-			// TODO(midas): remove debug logs
-			sw.Logger.Info("Init peer for reactor - just in time",
-				"scope", scope,
-				"peer", peer,
-				"reactor", rname,
-			)
 		} else {
 			// reactor, peer.ID(), in or out
 			lookupKey := sw.peerScopeReactorKey(peer, scope, rname)
@@ -802,14 +793,15 @@ func (sw *Switch) AddPeerForScope(peer *PeerImpl, scope string) {
 			sw.runtimesMtx.RUnlock()
 		}
 
-		reactor.AddPeer(peerForReactor)
-
 		// TODO(midas): remove debug logs
-		sw.Logger.Info("Added peer to reactor",
+		sw.Logger.Info("Adding peer to reactor",
 			"scope", scope,
-			"peer", peer,
 			"reactor", rname,
+			"peer", peer,
+			"running", peer.IsRunning(),
 		)
+
+		reactor.AddPeer(peerForReactor)
 	}
 }
 
@@ -817,28 +809,29 @@ func (sw *Switch) AddPeerForScope(peer *PeerImpl, scope string) {
 // If the peer is persistent, it will attempt to reconnect.
 // TODO: make record depending on reason.
 func (sw *Switch) StopPeerForError(peer *PeerImpl, reason any) {
-	if !peer.IsRunning() {
-		return
-	}
-
 	sw.Logger.Error("Stopping peer for error", "peer", peer, "err", reason)
 	sw.stopAndRemovePeer(peer, reason)
 
-	if peer.IsPersistent() {
-		var addr *NetAddress
-		if peer.IsOutbound() { // socket address for outbound peers
-			addr = peer.SocketAddr()
-		} else { // self-reported address for inbound peers
-			var err error
-			addr, err = peer.NodeInfo().NetAddress()
-			if err != nil {
-				sw.Logger.Error("Wanted to reconnect to inbound peer, but self-reported address is wrong",
-					"peer", peer, "err", err)
-				return
-			}
-		}
-		go sw.reconnectToPeer(addr)
-	}
+	// BREAKING(midas):
+	//
+	// We disable re-connection to persistent peers to permit having
+	// more control over the lifecycle of running peers.
+
+	// if peer.IsPersistent() {
+	// 	var addr *NetAddress
+	// 	if peer.IsOutbound() { // socket address for outbound peers
+	// 		addr = peer.SocketAddr()
+	// 	} else { // self-reported address for inbound peers
+	// 		var err error
+	// 		addr, err = peer.NodeInfo().NetAddress()
+	// 		if err != nil {
+	// 			sw.Logger.Error("Wanted to reconnect to inbound peer, but self-reported address is wrong",
+	// 				"peer", peer, "err", err)
+	// 			return
+	// 		}
+	// 	}
+	// 	go sw.reconnectToPeer(addr)
+	// }
 }
 
 // StopPeerGracefully disconnects from a peer gracefully.
@@ -906,7 +899,7 @@ func (sw *Switch) stopPeer(peer *PeerImpl, reason any) error {
 	}
 
 	if err := peer.Stop(); err != nil {
-		sw.Logger.Error("error stopping peer", "peer", peer.ID(), "err", err)
+		sw.Logger.Error("error stopping peer", "peer", peer, "err", err)
 	}
 
 	sw.transport.Cleanup(peer)
@@ -920,6 +913,8 @@ func (sw *Switch) stopPeer(peer *PeerImpl, reason any) error {
 		}
 	}
 
+	// TODO(midas): remove debug logs
+	sw.Logger.Debug("Peer removed from reactors", "peer", peer)
 	return nil
 }
 
@@ -934,6 +929,28 @@ func (sw *Switch) removePeer(peer *PeerImpl, reason any) error {
 	sw.peersMtx.RUnlock()
 
 	for scope, peerSet := range peersByScope {
+		// Removes the peer from the registry for peers of reactors.
+		sw.runtimesMtx.RLock()
+		peersInitTimes := sw.reactorPeersInit[scope]
+		peersForReactors := sw.peersForReactors[scope]
+		sw.runtimesMtx.RUnlock()
+
+		sw.runtimesMtx.Lock()
+		for lookupKey := range peersInitTimes {
+			peerKey := sw.peerKey(peer)
+			if strings.Contains(lookupKey, peerKey) {
+				delete(sw.reactorPeersInit[scope], lookupKey)
+			}
+		}
+
+		for lookupKey := range peersForReactors {
+			peerKey := sw.peerKey(peer)
+			if strings.Contains(lookupKey, peerKey) {
+				delete(sw.peersForReactors[scope], lookupKey)
+			}
+		}
+		sw.runtimesMtx.Unlock()
+
 		if !peerSet.HasPeer(peer) {
 			continue
 		}
@@ -954,10 +971,10 @@ func (sw *Switch) removePeer(peer *PeerImpl, reason any) error {
 	connCleanupFn = sw.CloseChannelsForScopes(scopesToCleanup)
 	connCleanupFn(peer.MConn())
 
-	sw.Logger.Debug("Removed all channels for peer", "peer", peer, "scopes", relevantScopes)
-
 	sw.metrics.Peers.Add(float64(-1))
 
+	// TODO(midas): remove debug logs
+	sw.Logger.Debug("Removed peer", "peer", peer, "scopes", relevantScopes)
 	return nil
 }
 
@@ -1516,7 +1533,7 @@ func (sw *Switch) addOutboundPeerWithConfig(
 
 		// Find the matching (duplicate) peer by ID, must be added to reactors.
 		if sw.HasPeerID(addr.ID, true) {
-			p = sw.FindMatchingPeerByID(addr.ID, true)
+			p = sw.FindMatchingPeerByID(addr.ID, true) // outbound=true
 		} else {
 			// TODO(midas): remove debug logs
 			sw.Logger.Debug("Duplicate outbound peer ignored - already dialing",
@@ -1603,7 +1620,7 @@ func (sw *Switch) addPeer(p *PeerImpl) (err error) {
 	}
 
 	pubAddr, _ := p.NodeInfo().NetAddress()
-	peerLogger := sw.Logger.With("conn", p.SocketAddr()).With("addr", pubAddr.String()).With("peer", p)
+	peerLogger := sw.Logger.With("peer", p).With("conn", p.SocketAddr()).With("addr", pubAddr.String())
 	p.SetLogger(peerLogger)
 
 	// Handle the shut down case where the switch has stopped but we're
@@ -1613,10 +1630,15 @@ func (sw *Switch) addPeer(p *PeerImpl) (err error) {
 		return // err
 	}
 
+	// In case this peer got stopped before, we must reset it.`
+	if p.IsStopped() {
+		// TODO(midas): remove debug logs
+		sw.Logger.Debug("Resetting peer", "peer", p)
+		p.Reset()
+	}
+
 	// TODO(midas): remove debug logs
-	peerLogger.Debug("Adding peer",
-		"peer", p,
-	)
+	peerLogger.Debug("Adding peer")
 
 	// Find ChainID values that we share with p.
 	relevantChainIds, err := sw.GetPeerActiveChainID(p)
@@ -1647,13 +1669,6 @@ func (sw *Switch) addPeer(p *PeerImpl) (err error) {
 		peerSet := sw.Peers(relevantScope)
 		if !peerSet.HasPeer(p) {
 			peerSet.Add(p)
-
-			// TODO(midas): remove debug logs
-			sw.Logger.Info("Added peer to peerset",
-				"scope", relevantScope,
-				"peer", p,
-				"size", peerSet.Size(),
-			)
 		}
 
 		sw.InitPeerForScope(p, relevantScope)
@@ -1663,6 +1678,11 @@ func (sw *Switch) addPeer(p *PeerImpl) (err error) {
 	// Must start it before adding it to the peer set
 	// to prevent Start and Stop from being called concurrently.
 	if !p.IsRunning() {
+		// TODO(midas): remove debug logs
+		sw.Logger.Debug("Starting peer",
+			"peer", p,
+		)
+
 		if err := p.Start(); err != nil {
 			// Should never happen
 			sw.Logger.Error("Error starting peer", "err", err, "peer", p)
@@ -1677,15 +1697,20 @@ func (sw *Switch) addPeer(p *PeerImpl) (err error) {
 
 	// Start all the reactor protocols on the peer.
 	for _, relevantScope := range relevantScopes {
+		// TODO(midas): remove debug logs
+		peerLogger.Debug("Adding peer for scope",
+			"running", p.IsRunning(),
+			"stopped", p.IsStopped(),
+			"scope", relevantScope,
+		)
+
 		sw.AddPeerForScope(p, relevantScope)
 	}
 
 	sw.metrics.Peers.Add(float64(1))
 
-	peerLogger.Debug("Added peer",
-		"peer", p,
-	)
-
+	// TODO(midas): remove debug logs
+	peerLogger.Debug("Added peer")
 	return nil
 }
 
@@ -1747,6 +1772,16 @@ func (sw *Switch) GetPeerActiveChainID(p *PeerImpl) ([]string, error) {
 }
 
 // ----------------------------------------------------------------------------
+
+func (sw *Switch) peerKey(peer *PeerImpl) string {
+	peerKey := string(peer.ID())
+	if peer.IsOutbound() {
+		peerKey += "_out"
+	} else {
+		peerKey += "_in"
+	}
+	return peerKey
+}
 
 // peerScopeReactorKey returns a combination of a scope, a reactor name,
 // the peer ID and the connection type, i.e. outbound or inbound.

@@ -198,12 +198,14 @@ func (p *PeerImpl) GetLogger() log.Logger {
 // OnStart implements BaseService.
 func (p *PeerImpl) OnStart() error {
 	if err := p.BaseService.OnStart(); err != nil {
-		return err
+		p.Logger.Error("Error starting peer service", "err", err)
 	}
 
 	if err := p.mconn.Start(); err != nil {
-		return err
+		p.Logger.Error("Error starting mconn service", "err", err)
 	}
+
+	p.Logger.Debug("Peer started")
 
 	// if p.mconn.HasStartedRoutines() {
 	// 	go p.metricsReporter()
@@ -221,9 +223,21 @@ func (p *PeerImpl) FlushStop() {
 
 // OnStop implements BaseService.
 func (p *PeerImpl) OnStop() {
-	if err := p.mconn.Stop(); err != nil { // stop everything and close the conn
-		p.Logger.Debug("Error while stopping peer", "err", err)
+	// Stop everything and close the conn
+	if err := p.mconn.Stop(); err != nil && err != service.ErrAlreadyStopped {
+		p.Logger.Error("Error while stopping peer", "err", err)
 	}
+
+	p.Logger.Debug("Peer stopped")
+}
+
+// OnReset implements service.Service.
+func (p *PeerImpl) OnReset() error {
+	p.Logger.Debug("Peer reset")
+	if err := p.mconn.Reset(); err != nil {
+		p.Logger.Error("Error resetting the mconn", "err", err)
+	}
+	return nil
 }
 
 // ---------------------------------------------------

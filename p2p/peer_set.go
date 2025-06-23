@@ -231,7 +231,12 @@ func (ps *PeerSet) RemovePeer(peer *PeerImpl) bool {
 	}
 	ps.mtx.Unlock()
 
-	return ps.remove(peer.ID(), peer.IsOutbound())
+	ok := ps.remove(peer.ID(), peer.IsOutbound())
+	if !ok {
+		peer.SetRemovalFailed()
+		return false
+	}
+	return true
 }
 
 // Remove removes the peer from the PeerSet.

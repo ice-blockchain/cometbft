@@ -484,16 +484,23 @@ func (conR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 		return
 	}
 
-	// TODO(midas): remove debug logs
-	conR.Logger.Debug("Adding peer to consensus reactor", "peer", peer)
-
 	peerState := conR.GetPeerState(peer)
 	if peerState == nil {
-		panic(fmt.Sprintf("Peer %v has no state for %v", peer, conR.PeerStateKey()))
+		conR.Logger.Error("Failed to read peer state",
+			"peer", peer,
+		)
+		return
+	}
+
+	if !peer.IsRunning() {
+		conR.Logger.Info("Not starting consensus routines - peer not running",
+			"peer", peer,
+		)
+		return
 	}
 
 	// TODO(midas): remove debug logs
-	conR.Logger.Debug("Starting consensus routines for peer",
+	conR.Logger.Debug("Starting consensus routines",
 		"peer", peer,
 		"wait", conR.WaitSync(),
 		"state", peerState,
