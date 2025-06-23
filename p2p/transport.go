@@ -44,10 +44,10 @@ type Transport interface {
 	NetAddress() NetAddress
 
 	// Accept returns a newly connected Peer.
-	Accept(config peerConfig) (*PeerImpl, error)
+	Accept(ctx context.Context, config peerConfig) (*PeerImpl, error)
 
 	// Dial connects to the Peer for the address.
-	Dial(addr NetAddress, config peerConfig) (*PeerImpl, error)
+	Dial(ctx context.Context, addr NetAddress, config peerConfig) (*PeerImpl, error)
 
 	// Cleanup any resources associated with Peer.
 	Cleanup(peer *PeerImpl)
@@ -165,6 +165,7 @@ var (
 
 // NewMultiplexTransport returns a tcp connected multiplexed peer.
 func NewMultiplexTransport(
+	ctx context.Context,
 	nodeInfo NodeInfo,
 	nodeKey NodeKey,
 	mConfig conn.MConnConfig,
@@ -216,7 +217,7 @@ func (mt *MultiplexTransport) NetAddress() NetAddress {
 }
 
 // Accept implements Transport.
-func (mt *MultiplexTransport) Accept(cfg peerConfig) (*PeerImpl, error) {
+func (mt *MultiplexTransport) Accept(ctx context.Context, cfg peerConfig) (*PeerImpl, error) {
 	select {
 	// This case should never have any side-effectful/blocking operations to
 	// ensure that quality peers are ready to be used.
@@ -227,7 +228,7 @@ func (mt *MultiplexTransport) Accept(cfg peerConfig) (*PeerImpl, error) {
 
 		cfg.outbound = false
 
-		return mt.wrapPeer(a.conn, a.nodeInfo, cfg, a.netAddr, mt.sw), nil
+		return mt.wrapPeer(ctx, a.conn, a.nodeInfo, cfg, a.netAddr, mt.sw), nil
 	case <-mt.closec:
 		return nil, ErrTransportClosed{}
 	}
@@ -235,6 +236,7 @@ func (mt *MultiplexTransport) Accept(cfg peerConfig) (*PeerImpl, error) {
 
 // Dial implements Transport.
 func (mt *MultiplexTransport) Dial(
+	ctx context.Context,
 	addr NetAddress,
 	cfg peerConfig,
 ) (*PeerImpl, error) {
@@ -260,7 +262,7 @@ func (mt *MultiplexTransport) Dial(
 
 	cfg.outbound = true
 
-	p := mt.wrapPeer(secretConn, nodeInfo, cfg, &addr, mt.sw)
+	p := mt.wrapPeer(ctx, secretConn, nodeInfo, cfg, &addr, mt.sw)
 
 	return p, nil
 }
@@ -571,6 +573,7 @@ func (mt *MultiplexTransport) upgrade(
 }
 
 func (mt *MultiplexTransport) wrapPeer(
+	ctx context.Context,
 	c net.Conn,
 	ni NodeInfo,
 	cfg peerConfig,
@@ -597,6 +600,7 @@ func (mt *MultiplexTransport) wrapPeer(
 	)
 
 	p := newPeer(
+		ctx,
 		peerConn,
 		mt.mConfig,
 		ni,

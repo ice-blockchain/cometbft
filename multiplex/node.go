@@ -118,6 +118,7 @@ func NewNodesMultiplex(
 	// of multiple parallel nodes, as many as there are replicated chains.
 	// Create the reactor instance and safety-check genesis doc.
 	reactor := NewReactor(
+		ctx,
 		nodeKey,
 		globalCfg,
 		logger.With("module", "multiplex"),
@@ -170,6 +171,7 @@ func NewNodesMultiplex(
 	//
 	// BREAKING: we use [proxy.ChainConns] interfaces rather than [proxy.AppConns].
 	abciClient := proxy.NewMultiplexAppConn(
+		ctx,
 		knownNetworks,
 		abciClientCreator,
 		proxy.PrometheusMetrics(globalCfg.Instrumentation.Namespace+"_"+string(nodeKey.ID())),
@@ -186,7 +188,7 @@ func NewNodesMultiplex(
 
 	// We must make sure that the switch will be available for consensus reactors.
 	if cometbftAddr, err := GetAddressForCometBFT(globalCfg, nodeKey); err == nil {
-		reactor.CreateOrLoadCometBFTEventSwitch(cometbftAddr)
+		reactor.CreateOrLoadCometBFTEventSwitch(ctx, cometbftAddr)
 	}
 
 	// Inform about all replicated chains being consensus ready
@@ -248,7 +250,7 @@ func NewLegacyNodeMultiplex(
 		nodeCfg,
 		privValidator,
 		nodeKey,
-		proxy.DefaultClientCreator(nodeCfg.ProxyApp, nodeCfg.ABCI, nodeCfg.DBDir()),
+		proxy.DefaultClientCreator(ctx, nodeCfg.ProxyApp, nodeCfg.ABCI, nodeCfg.DBDir()),
 		genesisDocProvider,
 		config.DefaultDBProvider,
 		node.DefaultMetricsProvider(nodeCfg.Instrumentation),

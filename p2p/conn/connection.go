@@ -2,6 +2,7 @@ package conn
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -165,12 +166,14 @@ func DefaultMConnConfig() MConnConfig {
 
 // NewMConnection wraps net.Conn and creates multiplex connection.
 func NewMConnection(
+	ctx context.Context,
 	conn net.Conn,
 	chDescs map[string][]*ChannelDescriptor,
 	onReceive receiveCbFunc,
 	onError errorCbFunc,
 ) *MConnection {
 	return NewMConnectionWithConfig(
+		ctx,
 		conn,
 		chDescs,
 		onReceive,
@@ -180,6 +183,7 @@ func NewMConnection(
 
 // NewMConnectionWithConfig wraps net.Conn and creates multiplex connection with a config.
 func NewMConnectionWithConfig(
+	ctx context.Context,
 	conn net.Conn,
 	chDescs map[string][]*ChannelDescriptor,
 	onReceive receiveCbFunc,
@@ -244,7 +248,7 @@ func NewMConnectionWithConfig(
 	mconn.channelsMtx.Unlock()
 	atomic.AddUint32(&mconn.numOpenChannels, uint32(len(channels)))
 
-	mconn.BaseService = *service.NewBaseService(nil, "MConnection", mconn)
+	mconn.BaseService = *service.NewBaseService(ctx, nil, "MConnection", mconn)
 
 	// maxPacketMsgSize() is a bit heavy, so call just once,
 	// it uses oneChainID to create a correctly-sized PacketMsg.
@@ -279,7 +283,7 @@ func (c *MConnection) FindMatchingChannelDescriptor(chID byte) *ChannelDescripto
 
 // AddChannel registers a ChannelDescriptor in a running mconn for chainID,
 // reactors may then process messages on a new channel for this network.
-func (c *MConnection) AddChannel(chainID string, desc *ChannelDescriptor) (*Channel, bool) {
+func (c *MConnection) AddChannel(ctx context.Context, chainID string, desc *ChannelDescriptor) (*Channel, bool) {
 	hasStartedRoutines := c.HasStartedRoutines()
 
 	c.channelsMtx.Lock()
@@ -308,7 +312,7 @@ func (c *MConnection) AddChannel(chainID string, desc *ChannelDescriptor) (*Chan
 			"chain_id", chainID,
 			"chID", desc.ID,
 		)
-		c.startServices()
+		c.startServices(ctx)
 	}
 
 	return channel, true // channel added
@@ -361,7 +365,7 @@ func (c *MConnection) NumOpenChannels() uint32 {
 }
 
 // OnStart implements BaseService.
-func (c *MConnection) OnStart() error {
+func (c *MConnection) OnStart(ctx context.Context) error {
 	c.channelsMtx.Lock()
 	_, hasSharedChannels := c.channelsIdx[SharedChannelsNamespace]
 	hasChainIDWithShared := hasSharedChannels && len(c.channelsIdx) > 1
@@ -373,7 +377,7 @@ func (c *MConnection) OnStart() error {
 		c.Logger.Debug("Found at least one ChainID - starting connection services",
 			"num_ch", c.NumOpenChannels(),
 		)
-		return c.startServices()
+		return c.startServices(ctx)
 	}
 
 	return nil
@@ -384,7 +388,7 @@ func (c *MConnection) HasStartedRoutines() bool {
 	return atomic.LoadUint32(&c.startedRoutines) == 1 && atomic.LoadUint32(&c.stoppedRoutines) == 0
 }
 
-func (c *MConnection) startServices() error {
+func (c *MConnection) startServices(ctx context.Context) error {
 	if atomic.CompareAndSwapUint32(&c.startedRoutines, 0, 1) {
 		if atomic.LoadUint32(&c.stoppedRoutines) == 1 {
 			c.Logger.Error(fmt.Sprintf("Not starting %v routines -- already stopped", c.Name()),
@@ -400,7 +404,7 @@ func (c *MConnection) startServices() error {
 
 		// IMPORTANT:
 		// Starting flush timer, stats, send/recv routines
-		if err := c.BaseService.OnStart(); err != nil {
+		if err := c.BaseService.OnStart(ctx); err != nil {
 			return err
 		}
 
@@ -642,7 +646,7 @@ func (c *MConnection) Send(chainID string, chID byte, msgBytes []byte) bool {
 	channel, err := c.getChannel(chainID, chID)
 	if err != nil {
 		if chDesc := c.FindMatchingChannelDescriptor(chID); chDesc != nil {
-			channel, _ = c.AddChannel(chainID, chDesc)
+			channel, _ = c.AddChannel(c.BaseService.Context(), chainID, chDesc)
 		} else {
 			c.Logger.Error(fmt.Sprintf("Cannot send bytes: %s", err.Error()))
 			return false
@@ -676,7 +680,7 @@ func (c *MConnection) TrySend(chainID string, chID byte, msgBytes []byte) bool {
 	channel, err := c.getChannel(chainID, chID)
 	if err != nil {
 		if chDesc := c.FindMatchingChannelDescriptor(chID); chDesc != nil {
-			channel, _ = c.AddChannel(chainID, chDesc)
+			channel, _ = c.AddChannel(c.BaseService.Context(), chainID, chDesc)
 		} else {
 			c.Logger.Error(fmt.Sprintf("Cannot send bytes: %s", err.Error()))
 			return false
@@ -706,7 +710,7 @@ func (c *MConnection) CanSend(chainID string, chID byte) bool {
 	channel, err := c.getChannel(chainID, chID)
 	if err != nil {
 		if chDesc := c.FindMatchingChannelDescriptor(chID); chDesc != nil {
-			channel, _ = c.AddChannel(chainID, chDesc)
+			channel, _ = c.AddChannel(c.BaseService.Context(), chainID, chDesc)
 		} else {
 			c.Logger.Error(fmt.Sprintf("Cannot send bytes: %s", err.Error()))
 			return false
@@ -965,7 +969,7 @@ FOR_LOOP:
 			channel, err := c.getChannel(chainID, channelID)
 			if err != nil {
 				if chDesc := c.FindMatchingChannelDescriptor(channelID); chDesc != nil {
-					channel, _ = c.AddChannel(chainID, chDesc)
+					channel, _ = c.AddChannel(c.BaseService.Context(), chainID, chDesc)
 				} else {
 					c.Logger.Debug("Ignoring message for unknown ChainID",
 						"chainID", chainID,

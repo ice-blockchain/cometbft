@@ -102,6 +102,8 @@ func init() {
 func runProxy(_ *cobra.Command, args []string) error {
 	// Initialize logger.
 	logger := log.NewTMLogger(log.NewSyncWriter(os.Stdout))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	var option log.Option
 	if verbose {
 		option, _ = log.AllowLevel("debug")
@@ -188,6 +190,7 @@ func runProxy(_ *cobra.Command, args []string) error {
 		)
 	} else { // continue from latest state
 		c, err = light.NewHTTPClientFromTrustedStore(
+			ctx,
 			chainID,
 			trustingPeriod,
 			primaryAddr,

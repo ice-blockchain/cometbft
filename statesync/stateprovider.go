@@ -60,7 +60,7 @@ func NewLightClientStateProviderWithDBKeyVersion(ctx context.Context,
 	providers := make([]lightprovider.Provider, 0, len(servers))
 	providerRemotes := make(map[lightprovider.Provider]string)
 	for _, server := range servers {
-		client, err := rpcClient(server)
+		client, err := rpcClient(ctx, server)
 		if err != nil {
 			return nil, fmt.Errorf("failed to set up RPC client: %w", err)
 		}
@@ -189,11 +189,11 @@ func (s *lightClientStateProvider) State(ctx context.Context, height uint64) (sm
 	if !ok || primaryURL == "" {
 		return sm.State{}, errors.New("could not find address for primary light client provider")
 	}
-	primaryRPC, err := rpcClient(primaryURL)
+	primaryRPC, err := rpcClient(ctx, primaryURL)
 	if err != nil {
 		return sm.State{}, fmt.Errorf("unable to create RPC client: %w", err)
 	}
-	rpcclient := lightrpc.NewClient(primaryRPC, s.lc)
+	rpcclient := lightrpc.NewClient(ctx, primaryRPC, s.lc)
 	result, err := rpcclient.ConsensusParams(ctx, &currentLightBlock.Height)
 	if err != nil {
 		return sm.State{}, fmt.Errorf("unable to fetch consensus parameters for height %v: %w",
@@ -206,11 +206,11 @@ func (s *lightClientStateProvider) State(ctx context.Context, height uint64) (sm
 }
 
 // rpcClient sets up a new RPC client.
-func rpcClient(server string) (*rpchttp.HTTP, error) {
+func rpcClient(ctx context.Context, server string) (*rpchttp.HTTP, error) {
 	if !strings.Contains(server, "://") {
 		server = "http://" + server
 	}
-	c, err := rpchttp.New(server)
+	c, err := rpchttp.New(ctx, server)
 	if err != nil {
 		return nil, err
 	}

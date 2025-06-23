@@ -43,11 +43,12 @@ type ChainConns interface {
 
 // NewChainConns calls NewMultiplexAppConn.
 func NewChainConns(
+	ctx context.Context,
 	chainIds []string,
 	clientCreator ClientCreator,
 	metrics *Metrics,
 ) ChainConns {
-	return NewMultiplexAppConn(chainIds, clientCreator, metrics)
+	return NewMultiplexAppConn(ctx, chainIds, clientCreator, metrics)
 }
 
 // -----------------------------------------------------------------------------------------

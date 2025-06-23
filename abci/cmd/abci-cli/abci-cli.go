@@ -64,7 +64,7 @@ var RootCmd = &cobra.Command{
 		}
 		if client == nil {
 			var err error
-			client, err = abcicli.NewClient(flagAddress, flagAbci, false)
+			client, err = abcicli.NewClient(cmd.flagAddress, flagAbci, false)
 			if err != nil {
 				return err
 			}

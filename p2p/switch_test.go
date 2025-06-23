@@ -2,6 +2,7 @@ package p2p
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -50,13 +51,13 @@ type TestReactor struct {
 	msgsReceived map[byte][]PeerMessage
 }
 
-func NewTestReactor(channels []*conn.ChannelDescriptor, logMessages bool) *TestReactor {
+func NewTestReactor(ctx context.Context, channels []*conn.ChannelDescriptor, logMessages bool) *TestReactor {
 	tr := &TestReactor{
 		channels:     channels,
 		logMessages:  logMessages,
 		msgsReceived: make(map[byte][]PeerMessage),
 	}
-	tr.BaseReactor = *NewBaseReactor("TestReactor", tr)
+	tr.BaseReactor = *NewBaseReactor(ctx, "TestReactor", tr)
 	tr.SetLogger(log.TestingLogger())
 	return tr
 }
@@ -89,9 +90,9 @@ func (tr *TestReactor) getMsgs(chID byte) []PeerMessage {
 
 // convenience method for creating two switches connected to each other.
 // XXX: note this uses net.Pipe and not a proper TCP conn.
-func MakeSwitchPair(initSwitch func(int, *Switch) *Switch) (*Switch, *Switch) {
+func MakeSwitchPair(t *testing.T, initSwitch func(int, *Switch) *Switch) (*Switch, *Switch) {
 	// Create two switches that will be interconnected.
-	switches := MakeConnectedSwitches(cfg, 2, initSwitch, Connect2Switches)
+	switches := MakeConnectedSwitches(t, cfg, 2, initSwitch, Connect2Switches)
 	return switches[0], switches[1]
 }
 
@@ -581,7 +582,7 @@ func waitUntilSwitchHasAtLeastNPeers(sw *Switch, n int) {
 }
 
 func TestSwitchFullConnectivity(t *testing.T) {
-	switches := MakeConnectedSwitches(cfg, 3, initSwitchFunc, Connect2Switches)
+	switches := MakeConnectedSwitches(t, cfg, 3, initSwitchFunc, Connect2Switches)
 	defer func() {
 		for _, sw := range switches {
 			t.Cleanup(func() {
@@ -777,7 +778,7 @@ func (r *mockReactor) InitCalledBeforeRemoveFinished() bool {
 func TestSwitchInitPeerIsNotCalledBeforeRemovePeer(t *testing.T) {
 	// make reactor
 	reactor := &mockReactor{}
-	reactor.BaseReactor = NewBaseReactor("mockReactor", reactor)
+	reactor.BaseReactor = NewBaseReactor(t.Context(), "mockReactor", reactor)
 
 	// make switch
 	sw := MakeSwitch(cfg, 1, func(_ int, sw *Switch) *Switch {

@@ -20,7 +20,7 @@ const (
 )
 
 func TestSubscribe(t *testing.T) {
-	s := pubsub.NewServer()
+	s := pubsub.NewServer(context.Background())
 	s.SetLogger(log.TestingLogger())
 	err := s.Start()
 	require.NoError(t, err)

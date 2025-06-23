@@ -64,7 +64,7 @@ func ResetTestMultiplexClient(
 	require.NoError(tb, err, "should create server instance")
 
 	// Start the node backend
-	server.MustStart()
+	server.MustStart(tb.Context())
 
 	return rootDir, server
 }

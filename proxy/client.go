@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"fmt"
 
 	abcicli "github.com/ice-blockchain/cometbft/abci/client"
@@ -16,16 +17,16 @@ import (
 type ClientCreator interface {
 	// NewABCIConsensusClient creates an ABCI client for handling
 	// consensus-related queries.
-	NewABCIConsensusClient() (abcicli.Client, error)
+	NewABCIConsensusClient(ctx context.Context) (abcicli.Client, error)
 	// NewABCIMempoolClient creates an ABCI client for handling mempool-related
 	// queries.
-	NewABCIMempoolClient() (abcicli.Client, error)
+	NewABCIMempoolClient(ctx context.Context) (abcicli.Client, error)
 	// NewABCIQueryClient creates an ABCI client for handling
 	// query/info-related queries.
-	NewABCIQueryClient() (abcicli.Client, error)
+	NewABCIQueryClient(ctx context.Context) (abcicli.Client, error)
 	// NewABCISnapshotClient creates an ABCI client for handling
 	// snapshot-related queries.
-	NewABCISnapshotClient() (abcicli.Client, error)
+	NewABCISnapshotClient(ctx context.Context) (abcicli.Client, error)
 }
 
 // ----------------------------------------------------
@@ -48,27 +49,27 @@ func NewLocalClientCreator(app types.Application) ClientCreator {
 }
 
 // NewABCIConsensusClient implements ClientCreator.
-func (l *localClientCreator) NewABCIConsensusClient() (abcicli.Client, error) {
-	return l.newABCIClient()
+func (l *localClientCreator) NewABCIConsensusClient(ctx context.Context) (abcicli.Client, error) {
+	return l.newABCIClient(ctx)
 }
 
 // NewABCIMempoolClient implements ClientCreator.
-func (l *localClientCreator) NewABCIMempoolClient() (abcicli.Client, error) {
-	return l.newABCIClient()
+func (l *localClientCreator) NewABCIMempoolClient(ctx context.Context) (abcicli.Client, error) {
+	return l.newABCIClient(ctx)
 }
 
 // NewABCIQueryClient implements ClientCreator.
-func (l *localClientCreator) NewABCIQueryClient() (abcicli.Client, error) {
-	return l.newABCIClient()
+func (l *localClientCreator) NewABCIQueryClient(ctx context.Context) (abcicli.Client, error) {
+	return l.newABCIClient(ctx)
 }
 
 // NewABCISnapshotClient implements ClientCreator.
-func (l *localClientCreator) NewABCISnapshotClient() (abcicli.Client, error) {
-	return l.newABCIClient()
+func (l *localClientCreator) NewABCISnapshotClient(ctx context.Context) (abcicli.Client, error) {
+	return l.newABCIClient(ctx)
 }
 
-func (l *localClientCreator) newABCIClient() (abcicli.Client, error) {
-	return abcicli.NewLocalClient(l.mtx, l.app), nil
+func (l *localClientCreator) newABCIClient(ctx context.Context) (abcicli.Client, error) {
+	return abcicli.NewLocalClient(ctx, l.mtx, l.app), nil
 }
 
 // -------------------------------------------------------------------------
@@ -93,27 +94,27 @@ func NewConnSyncLocalClientCreator(app types.Application) ClientCreator {
 }
 
 // NewABCIConsensusClient implements ClientCreator.
-func (c *connSyncLocalClientCreator) NewABCIConsensusClient() (abcicli.Client, error) {
-	return c.newABCIClient()
+func (c *connSyncLocalClientCreator) NewABCIConsensusClient(ctx context.Context) (abcicli.Client, error) {
+	return c.newABCIClient(ctx)
 }
 
 // NewABCIMempoolClient implements ClientCreator.
-func (c *connSyncLocalClientCreator) NewABCIMempoolClient() (abcicli.Client, error) {
-	return c.newABCIClient()
+func (c *connSyncLocalClientCreator) NewABCIMempoolClient(ctx context.Context) (abcicli.Client, error) {
+	return c.newABCIClient(ctx)
 }
 
 // NewABCIQueryClient implements ClientCreator.
-func (c *connSyncLocalClientCreator) NewABCIQueryClient() (abcicli.Client, error) {
-	return c.newABCIClient()
+func (c *connSyncLocalClientCreator) NewABCIQueryClient(ctx context.Context) (abcicli.Client, error) {
+	return c.newABCIClient(ctx)
 }
 
 // NewABCISnapshotClient implements ClientCreator.
-func (c *connSyncLocalClientCreator) NewABCISnapshotClient() (abcicli.Client, error) {
-	return c.newABCIClient()
+func (c *connSyncLocalClientCreator) NewABCISnapshotClient(ctx context.Context) (abcicli.Client, error) {
+	return c.newABCIClient(ctx)
 }
 
-func (c *connSyncLocalClientCreator) newABCIClient() (abcicli.Client, error) {
-	return abcicli.NewLocalClient(nil, c.app), nil
+func (c *connSyncLocalClientCreator) newABCIClient(ctx context.Context) (abcicli.Client, error) {
+	return abcicli.NewLocalClient(ctx, nil, c.app), nil
 }
 
 // -----------------------------------------------------------------------------
@@ -139,31 +140,31 @@ func NewConsensusSyncLocalClientCreator(app types.Application) ClientCreator {
 }
 
 // NewABCIConsensusClient implements ClientCreator.
-func (c *consensusSyncLocalClientCreator) NewABCIConsensusClient() (abcicli.Client, error) {
+func (c *consensusSyncLocalClientCreator) NewABCIConsensusClient(ctx context.Context) (abcicli.Client, error) {
 	// A mutex is created by the local client and applied across all
 	// consensus-related calls.
-	return abcicli.NewLocalClient(nil, c.app), nil
+	return abcicli.NewLocalClient(ctx, nil, c.app), nil
 }
 
 // NewABCIMempoolClient implements ClientCreator.
-func (c *consensusSyncLocalClientCreator) NewABCIMempoolClient() (abcicli.Client, error) {
+func (c *consensusSyncLocalClientCreator) NewABCIMempoolClient(ctx context.Context) (abcicli.Client, error) {
 	// It is up to the ABCI app to manage its concurrency when handling
 	// mempool-related calls.
-	return abcicli.NewUnsyncLocalClient(c.app), nil
+	return abcicli.NewUnsyncLocalClient(ctx, c.app), nil
 }
 
 // NewABCIQueryClient implements ClientCreator.
-func (c *consensusSyncLocalClientCreator) NewABCIQueryClient() (abcicli.Client, error) {
+func (c *consensusSyncLocalClientCreator) NewABCIQueryClient(ctx context.Context) (abcicli.Client, error) {
 	// It is up to the ABCI app to manage its concurrency when handling
 	// query-related calls.
-	return abcicli.NewUnsyncLocalClient(c.app), nil
+	return abcicli.NewUnsyncLocalClient(ctx, c.app), nil
 }
 
 // NewABCISnapshotClient implements ClientCreator.
-func (c *consensusSyncLocalClientCreator) NewABCISnapshotClient() (abcicli.Client, error) {
+func (c *consensusSyncLocalClientCreator) NewABCISnapshotClient(ctx context.Context) (abcicli.Client, error) {
 	// It is up to the ABCI app to manage its concurrency when handling
 	// snapshot-related calls.
-	return abcicli.NewUnsyncLocalClient(c.app), nil
+	return abcicli.NewUnsyncLocalClient(ctx, c.app), nil
 }
 
 // -----------------------------------------------------------------------------
@@ -180,30 +181,30 @@ type unsyncLocalClientCreator struct {
 // application. This is an advanced type of client creator, and requires
 // special care on the application side to ensure that consensus concurrency is
 // not violated.
-func NewUnsyncLocalClientCreator(app types.Application) ClientCreator {
+func NewUnsyncLocalClientCreator(ctx context.Context, app types.Application) ClientCreator {
 	return &unsyncLocalClientCreator{
 		app: app,
 	}
 }
 
 // NewABCIConsensusClient implements ClientCreator.
-func (c *unsyncLocalClientCreator) NewABCIConsensusClient() (abcicli.Client, error) {
-	return abcicli.NewUnsyncLocalClient(c.app), nil
+func (c *unsyncLocalClientCreator) NewABCIConsensusClient(ctx context.Context) (abcicli.Client, error) {
+	return abcicli.NewUnsyncLocalClient(ctx, c.app), nil
 }
 
 // NewABCIMempoolClient implements ClientCreator.
-func (c *unsyncLocalClientCreator) NewABCIMempoolClient() (abcicli.Client, error) {
-	return abcicli.NewUnsyncLocalClient(c.app), nil
+func (c *unsyncLocalClientCreator) NewABCIMempoolClient(ctx context.Context) (abcicli.Client, error) {
+	return abcicli.NewUnsyncLocalClient(ctx, c.app), nil
 }
 
 // NewABCIQueryClient implements ClientCreator.
-func (c *unsyncLocalClientCreator) NewABCIQueryClient() (abcicli.Client, error) {
-	return abcicli.NewUnsyncLocalClient(c.app), nil
+func (c *unsyncLocalClientCreator) NewABCIQueryClient(ctx context.Context) (abcicli.Client, error) {
+	return abcicli.NewUnsyncLocalClient(ctx, c.app), nil
 }
 
 // NewABCISnapshotClient implements ClientCreator.
-func (c *unsyncLocalClientCreator) NewABCISnapshotClient() (abcicli.Client, error) {
-	return abcicli.NewUnsyncLocalClient(c.app), nil
+func (c *unsyncLocalClientCreator) NewABCISnapshotClient(ctx context.Context) (abcicli.Client, error) {
+	return abcicli.NewUnsyncLocalClient(ctx, c.app), nil
 }
 
 // ---------------------------------------------------------------
@@ -227,27 +228,27 @@ func NewRemoteClientCreator(addr, transport string, mustConnect bool) ClientCrea
 }
 
 // NewABCIConsensusClient implements ClientCreator.
-func (r *remoteClientCreator) NewABCIConsensusClient() (abcicli.Client, error) {
-	return r.newABCIClient()
+func (r *remoteClientCreator) NewABCIConsensusClient(ctx context.Context) (abcicli.Client, error) {
+	return r.newABCIClient(ctx)
 }
 
 // NewABCIMempoolClient implements ClientCreator.
-func (r *remoteClientCreator) NewABCIMempoolClient() (abcicli.Client, error) {
-	return r.newABCIClient()
+func (r *remoteClientCreator) NewABCIMempoolClient(ctx context.Context) (abcicli.Client, error) {
+	return r.newABCIClient(ctx)
 }
 
 // NewABCIQueryClient implements ClientCreator.
-func (r *remoteClientCreator) NewABCIQueryClient() (abcicli.Client, error) {
-	return r.newABCIClient()
+func (r *remoteClientCreator) NewABCIQueryClient(ctx context.Context) (abcicli.Client, error) {
+	return r.newABCIClient(ctx)
 }
 
 // NewABCISnapshotClient implements ClientCreator.
-func (r *remoteClientCreator) NewABCISnapshotClient() (abcicli.Client, error) {
-	return r.newABCIClient()
+func (r *remoteClientCreator) NewABCISnapshotClient(ctx context.Context) (abcicli.Client, error) {
+	return r.newABCIClient(ctx)
 }
 
-func (r *remoteClientCreator) newABCIClient() (abcicli.Client, error) {
-	remoteApp, err := abcicli.NewClient(r.addr, r.transport, r.mustConnect)
+func (r *remoteClientCreator) newABCIClient(ctx context.Context) (abcicli.Client, error) {
+	remoteApp, err := abcicli.NewClient(ctx, r.addr, r.transport, r.mustConnect)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to proxy: %w", err)
 	}
@@ -264,20 +265,20 @@ func (r *remoteClientCreator) newABCIClient() (abcicli.Client, error) {
 // Each of "kvstore", "persistent_kvstore" and "e2e" also currently have an
 // "_connsync" variant (i.e. "kvstore_connsync", etc.), which attempts to
 // replicate the same concurrency model as the remote client.
-func DefaultClientCreator(addr, transport, dbDir string) ClientCreator {
+func DefaultClientCreator(ctx context.Context, addr, transport, dbDir string) ClientCreator {
 	switch addr {
 	case "kvstore":
 		return NewLocalClientCreator(kvstore.NewInMemoryApplication())
 	case "kvstore_connsync":
 		return NewConnSyncLocalClientCreator(kvstore.NewInMemoryApplication())
 	case "kvstore_unsync":
-		return NewUnsyncLocalClientCreator(kvstore.NewInMemoryApplication())
+		return NewUnsyncLocalClientCreator(ctx, kvstore.NewInMemoryApplication())
 	case "persistent_kvstore":
 		return NewLocalClientCreator(kvstore.NewPersistentApplication(dbDir))
 	case "persistent_kvstore_connsync":
 		return NewConnSyncLocalClientCreator(kvstore.NewPersistentApplication(dbDir))
 	case "persistent_kvstore_unsync":
-		return NewUnsyncLocalClientCreator(kvstore.NewPersistentApplication(dbDir))
+		return NewUnsyncLocalClientCreator(ctx, kvstore.NewPersistentApplication(dbDir))
 	case "e2e":
 		app, err := e2e.NewApplication(e2e.DefaultConfig(dbDir))
 		if err != nil {
@@ -295,7 +296,7 @@ func DefaultClientCreator(addr, transport, dbDir string) ClientCreator {
 		if err != nil {
 			panic(err)
 		}
-		return NewUnsyncLocalClientCreator(app)
+		return NewUnsyncLocalClientCreator(ctx, app)
 	case "noop":
 		return NewLocalClientCreator(types.NewBaseApplication())
 	default:

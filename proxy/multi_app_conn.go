@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"fmt"
 
 	abcicli "github.com/ice-blockchain/cometbft/abci/client"
@@ -32,8 +33,8 @@ type AppConns interface {
 }
 
 // NewAppConns calls NewMultiAppConn.
-func NewAppConns(clientCreator ClientCreator, metrics *Metrics) AppConns {
-	return NewMultiAppConn(clientCreator, metrics)
+func NewAppConns(ctx context.Context, clientCreator ClientCreator, metrics *Metrics) AppConns {
+	return NewMultiAppConn(ctx, clientCreator, metrics)
 }
 
 // multiAppConn implements AppConns.
@@ -59,12 +60,12 @@ type multiAppConn struct {
 }
 
 // NewMultiAppConn makes all necessary abci connections to the application.
-func NewMultiAppConn(clientCreator ClientCreator, metrics *Metrics) AppConns {
+func NewMultiAppConn(ctx context.Context, clientCreator ClientCreator, metrics *Metrics) AppConns {
 	multiAppConn := &multiAppConn{
 		metrics:       metrics,
 		clientCreator: clientCreator,
 	}
-	multiAppConn.BaseService = *service.NewBaseService(nil, "multiAppConn", multiAppConn)
+	multiAppConn.BaseService = *service.NewBaseService(ctx, nil, "multiAppConn", multiAppConn)
 	return multiAppConn
 }
 
@@ -84,19 +85,19 @@ func (app *multiAppConn) Snapshot() AppConnSnapshot {
 	return app.snapshotConn
 }
 
-func (app *multiAppConn) OnStart() error {
-	if err := app.startQueryClient(); err != nil {
+func (app *multiAppConn) OnStart(ctx context.Context) error {
+	if err := app.startQueryClient(ctx); err != nil {
 		return err
 	}
-	if err := app.startSnapshotClient(); err != nil {
+	if err := app.startSnapshotClient(ctx); err != nil {
 		app.stopAllClients()
 		return err
 	}
-	if err := app.startMempoolClient(); err != nil {
+	if err := app.startMempoolClient(ctx); err != nil {
 		app.stopAllClients()
 		return err
 	}
-	if err := app.startConsensusClient(); err != nil {
+	if err := app.startConsensusClient(ctx); err != nil {
 		app.stopAllClients()
 		return err
 	}
@@ -107,8 +108,8 @@ func (app *multiAppConn) OnStart() error {
 	return nil
 }
 
-func (app *multiAppConn) startQueryClient() error {
-	c, err := app.clientCreator.NewABCIQueryClient()
+func (app *multiAppConn) startQueryClient(ctx context.Context) error {
+	c, err := app.clientCreator.NewABCIQueryClient(ctx)
 	if err != nil {
 		return fmt.Errorf("error creating ABCI client (query client): %w", err)
 	}
@@ -117,8 +118,8 @@ func (app *multiAppConn) startQueryClient() error {
 	return app.startClient(c, "query")
 }
 
-func (app *multiAppConn) startSnapshotClient() error {
-	c, err := app.clientCreator.NewABCISnapshotClient()
+func (app *multiAppConn) startSnapshotClient(ctx context.Context) error {
+	c, err := app.clientCreator.NewABCISnapshotClient(ctx)
 	if err != nil {
 		return fmt.Errorf("error creating ABCI client (snapshot client): %w", err)
 	}
@@ -127,8 +128,8 @@ func (app *multiAppConn) startSnapshotClient() error {
 	return app.startClient(c, "snapshot")
 }
 
-func (app *multiAppConn) startMempoolClient() error {
-	c, err := app.clientCreator.NewABCIMempoolClient()
+func (app *multiAppConn) startMempoolClient(ctx context.Context) error {
+	c, err := app.clientCreator.NewABCIMempoolClient(ctx)
 	if err != nil {
 		return fmt.Errorf("error creating ABCI client (mempool client): %w", err)
 	}
@@ -137,8 +138,8 @@ func (app *multiAppConn) startMempoolClient() error {
 	return app.startClient(c, "mempool")
 }
 
-func (app *multiAppConn) startConsensusClient() error {
-	c, err := app.clientCreator.NewABCIConsensusClient()
+func (app *multiAppConn) startConsensusClient(ctx context.Context) error {
+	c, err := app.clientCreator.NewABCIConsensusClient(ctx)
 	if err != nil {
 		app.stopAllClients()
 		return fmt.Errorf("error creating ABCI client (consensus client): %w", err)

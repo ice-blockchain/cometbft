@@ -29,11 +29,11 @@ var _ Client = (*unsyncLocalClient)(nil)
 // proxy does not impose any concurrency restrictions, it is then left up to
 // the application to implement its own concurrency for the relevant group of
 // calls.
-func NewUnsyncLocalClient(app types.Application) Client {
+func NewUnsyncLocalClient(ctx context.Context, app types.Application) Client {
 	cli := &unsyncLocalClient{
 		Application: app,
 	}
-	cli.BaseService = *service.NewBaseService(nil, "unsyncLocalClient", cli)
+	cli.BaseService = *service.NewBaseService(ctx, nil, "unsyncLocalClient", cli)
 	return cli
 }
 

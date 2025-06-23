@@ -1,6 +1,7 @@
 package mempool
 
 import (
+	"context"
 	"errors"
 
 	abcicli "github.com/ice-blockchain/cometbft/abci/client"
@@ -82,8 +83,8 @@ type NopMempoolReactor struct {
 // NewNopMempoolReactor returns a new `nop` reactor.
 //
 // To be used only in RPC.
-func NewNopMempoolReactor() *NopMempoolReactor {
-	return &NopMempoolReactor{*service.NewBaseService(nil, "NopMempoolReactor", nil)}
+func NewNopMempoolReactor(ctx context.Context) *NopMempoolReactor {
+	return &NopMempoolReactor{*service.NewBaseService(ctx, nil, "NopMempoolReactor", nil)}
 }
 
 var _ p2p.Reactor = &NopMempoolReactor{}

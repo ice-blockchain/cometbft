@@ -129,7 +129,7 @@ func TestByzantinePrevoteEquivocation(t *testing.T) {
 		}
 	}
 	// make connected switches and start all reactors
-	p2p.MakeConnectedSwitches(config.P2P, nValidators, func(i int, s *p2p.Switch) *p2p.Switch {
+	p2p.MakeConnectedSwitches(t, config.P2P, nValidators, func(i int, s *p2p.Switch) *p2p.Switch {
 		s.AddReactor("", "CONSENSUS", reactors[i])
 		s.SetLogger(reactors[i].conS.Logger.With("module", "p2p"))
 		return s

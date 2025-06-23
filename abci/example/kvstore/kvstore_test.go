@@ -318,7 +318,7 @@ func makeClientServer(t *testing.T, app types.Application, name, transport strin
 	})
 
 	// Connect to the client
-	client, err := abcicli.NewClient(addr, transport, false)
+	client, err := abcicli.NewClient(t.Context(), addr, transport, false)
 	require.NoError(t, err)
 	client.SetLogger(logger.With("module", "abci-client"))
 	if err := client.Start(); err != nil {

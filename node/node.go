@@ -360,7 +360,7 @@ func NewNodeWithCliParams(ctx context.Context,
 	}
 
 	// Create the proxyApp and establish connections to the ABCI app (consensus, mempool, query).
-	proxyApp, err := createAndStartProxyAppConns(clientCreator, logger, abciMetrics)
+	proxyApp, err := createAndStartProxyAppConns(ctx, clientCreator, logger, abciMetrics)
 	if err != nil {
 		return nil, err
 	}
@@ -369,12 +369,12 @@ func NewNodeWithCliParams(ctx context.Context,
 	// we might need to index the txs of the replayed block as this might not have happened
 	// when the node stopped last time (i.e. the node stopped after it saved the block
 	// but before it indexed the txs)
-	eventBus, err := createAndStartEventBus(logger)
+	eventBus, err := createAndStartEventBus(ctx, logger)
 	if err != nil {
 		return nil, err
 	}
 
-	indexerService, txIndexer, blockIndexer, err := createAndStartIndexerService(config,
+	indexerService, txIndexer, blockIndexer, err := createAndStartIndexerService(ctx, config,
 		genDoc.ChainID, dbProvider, eventBus, logger)
 	if err != nil {
 		return nil, err
@@ -384,7 +384,7 @@ func NewNodeWithCliParams(ctx context.Context,
 	// external signing process.
 	if config.PrivValidatorListenAddr != "" {
 		// FIXME: we should start services inside OnStart
-		privValidator, err = createAndStartPrivValidatorSocketClient(config.PrivValidatorListenAddr, genDoc.ChainID, logger)
+		privValidator, err = createAndStartPrivValidatorSocketClient(ctx, config.PrivValidatorListenAddr, genDoc.ChainID, logger)
 		if err != nil {
 			return nil, fmt.Errorf("error with private validator socket client: %w", err)
 		}
@@ -427,14 +427,15 @@ func NewNodeWithCliParams(ctx context.Context,
 
 	logNodeStartupInfo(state, pubKey, logger, consensusLogger)
 
-	mempool, mempoolReactor := createMempoolAndMempoolReactor(config, proxyApp, state, waitSync, memplMetrics, logger)
+	mempool, mempoolReactor := createMempoolAndMempoolReactor(ctx, config, proxyApp, state, waitSync, memplMetrics, logger)
 
-	evidenceReactor, evidencePool, err := createEvidenceReactor(config, dbProvider, stateStore, blockStore, logger)
+	evidenceReactor, evidencePool, err := createEvidenceReactor(ctx, config, dbProvider, stateStore, blockStore, logger)
 	if err != nil {
 		return nil, err
 	}
 
 	pruner, err := createPruner(
+		ctx,
 		config,
 		txIndexer,
 		blockIndexer,
@@ -467,12 +468,12 @@ func NewNodeWithCliParams(ctx context.Context,
 		}
 	}
 	// Don't start block sync if we're doing a state sync first.
-	bcReactor, err := createBlocksyncReactor(config, state, blockExec, blockStore, blockSync && !stateSync, localAddr, logger, bsMetrics, offlineStateSyncHeight)
+	bcReactor, err := createBlocksyncReactor(ctx, config, state, blockExec, blockStore, blockSync && !stateSync, localAddr, logger, bsMetrics, offlineStateSyncHeight)
 	if err != nil {
 		return nil, fmt.Errorf("could not create blocksync reactor: %w", err)
 	}
 
-	consensusReactor, consensusState := createConsensusReactor(
+	consensusReactor, consensusState := createConsensusReactor(ctx,
 		config, state, blockExec, blockStore, mempool, evidencePool,
 		privValidator, csMetrics, waitSync, eventBus, consensusLogger, offlineStateSyncHeight,
 	)
@@ -486,6 +487,7 @@ func NewNodeWithCliParams(ctx context.Context,
 	// we should clean this whole thing up. See:
 	// https://github.com/tendermint/tendermint/issues/4644
 	stateSyncReactor := statesync.NewReactor(
+		ctx,
 		*config.StateSync,
 		proxyApp.Snapshot(),
 		proxyApp.Query(),
@@ -498,10 +500,11 @@ func NewNodeWithCliParams(ctx context.Context,
 		return nil, err
 	}
 
-	transport, peerFilters := createTransport(config, nodeInfo, nodeKey, proxyApp)
+	transport, peerFilters := createTransport(ctx, config, nodeInfo, nodeKey, proxyApp)
 
 	p2pLogger := logger.With("module", "p2p")
 	sw := createSwitch(
+		ctx,
 		config, transport, p2pMetrics, peerFilters, mempoolReactor, bcReactor,
 		stateSyncReactor, consensusReactor, evidenceReactor, nodeInfo, nodeKey, p2pLogger,
 	)
@@ -516,7 +519,7 @@ func NewNodeWithCliParams(ctx context.Context,
 		return nil, fmt.Errorf("could not add peer ids from unconditional_peer_ids field: %w", err)
 	}
 
-	addrBook, err := createAddrBookAndSetOnSwitch(config, sw, p2pLogger, nodeKey)
+	addrBook, err := createAddrBookAndSetOnSwitch(ctx, config, sw, p2pLogger, nodeKey)
 	if err != nil {
 		return nil, fmt.Errorf("could not create addrbook: %w", err)
 	}
@@ -535,7 +538,7 @@ func NewNodeWithCliParams(ctx context.Context,
 	// Note we currently use the addrBook regardless at least for AddOurAddress
 	var pexReactor *pex.Reactor
 	if config.P2P.PexReactor {
-		pexReactor = createPEXReactorAndAddToSwitch(addrBook, config, sw, logger)
+		pexReactor = createPEXReactorAndAddToSwitch(ctx, addrBook, config, sw, logger)
 	}
 
 	// Add private IDs to addrbook to block those peers being added
@@ -576,7 +579,7 @@ func NewNodeWithCliParams(ctx context.Context,
 		blockIndexer:     blockIndexer,
 		eventBus:         eventBus,
 	}
-	node.BaseService = *service.NewBaseService(logger, "Node", node)
+	node.BaseService = *service.NewBaseService(ctx, logger, "Node", node)
 
 	for _, option := range options {
 		option(node)
@@ -656,7 +659,7 @@ func NewNodeWithServices(
 }
 
 // OnStart starts the Node. It implements service.Service.
-func (n *Node) OnStart() error {
+func (n *Node) OnStart(ctx context.Context) error {
 	now := cmttime.Now()
 	genTime := n.genesisDoc.GenesisTime
 	if genTime.After(now) {
@@ -1230,6 +1233,7 @@ func makeNodeInfo(
 }
 
 func createPruner(
+	ctx context.Context,
 	config *cfg.Config,
 	txIndexer txindex.TxIndexer,
 	blockIndexer indexer.BlockIndexer,
@@ -1259,7 +1263,7 @@ func createPruner(
 		prunerOpts = append(prunerOpts, sm.WithPrunerCompanionEnabled())
 	}
 
-	return sm.NewPruner(stateStore, blockStore, blockIndexer, txIndexer, logger, prunerOpts...), nil
+	return sm.NewPruner(ctx, stateStore, blockStore, blockIndexer, txIndexer, logger, prunerOpts...), nil
 }
 
 // Set the initial application retain height to 0 to avoid the data companion

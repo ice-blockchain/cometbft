@@ -49,7 +49,7 @@ var _ Client = (*socketClient)(nil)
 // NewSocketClient creates a new socket client, which connects to a given
 // address. If mustConnect is true, the client will return an error upon start
 // if it fails to connect else it will continue to retry.
-func NewSocketClient(addr string, mustConnect bool) Client {
+func NewSocketClient(ctx context.Context, addr string, mustConnect bool) Client {
 	cli := &socketClient{
 		reqQueue:    make(chan *ReqRes, reqQueueSize),
 		flushTimer:  timer.NewThrottleTimer("socketClient", flushThrottleMS),
@@ -59,13 +59,13 @@ func NewSocketClient(addr string, mustConnect bool) Client {
 		reqSent: list.New(),
 		resCb:   nil,
 	}
-	cli.BaseService = *service.NewBaseService(nil, "socketClient", cli)
+	cli.BaseService = *service.NewBaseService(ctx, nil, "socketClient", cli)
 	return cli
 }
 
 // OnStart implements Service by connecting to the server and spawning reading
 // and writing goroutines.
-func (cli *socketClient) OnStart() error {
+func (cli *socketClient) OnStart(ctx context.Context) error {
 	var (
 		err  error
 		conn net.Conn

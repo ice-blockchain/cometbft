@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"slices"
 	"strconv"
 	"sync"
@@ -60,7 +61,7 @@ type RuntimeRegistry struct {
 type RuntimeRegistryOption func(*RuntimeRegistry)
 
 // NewRuntimeRegistry creates a new nodes runtime registry.
-func NewRuntimeRegistry(logger cmtlog.Logger, options ...RuntimeRegistryOption) *RuntimeRegistry {
+func NewRuntimeRegistry(ctx context.Context, logger cmtlog.Logger, options ...RuntimeRegistryOption) *RuntimeRegistry {
 	reg := &RuntimeRegistry{
 		mtx: new(sync.Mutex),
 
@@ -81,7 +82,7 @@ func NewRuntimeRegistry(logger cmtlog.Logger, options ...RuntimeRegistryOption) 
 	// Use option helpers
 	reg.SetOptions(options...)
 
-	reg.BaseService = *service.NewBaseService(nil, "RuntimeRegistry", reg)
+	reg.BaseService = *service.NewBaseService(ctx, nil, "RuntimeRegistry", reg)
 
 	return reg
 }
@@ -123,7 +124,7 @@ func RuntimeRegistryOnIdle(onIdle OnIdleFn) RuntimeRegistryOption {
 // OnStart implements [service.Service] by spawning the sleeper routine.
 //
 // Setting a nil OnIdle disables the cleaner routine.
-func (reg *RuntimeRegistry) OnStart() error {
+func (reg *RuntimeRegistry) OnStart(ctx context.Context) error {
 	reg.logger.Debug("Starting runtime registry",
 		"num_active", reg.NumRuntimes(),
 		"num_sleeping", reg.NumSleeping(),

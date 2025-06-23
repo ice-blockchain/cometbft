@@ -1,6 +1,7 @@
 package blocksync
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -90,7 +91,7 @@ type BlockPool struct {
 
 // NewBlockPool returns a new BlockPool with the height equal to start. Block
 // requests and errors will be sent to requestsCh and errorsCh accordingly.
-func NewBlockPool(start int64, requestsCh chan<- BlockRequest, errorsCh chan<- peerError) *BlockPool {
+func NewBlockPool(ctx context.Context, start int64, requestsCh chan<- BlockRequest, errorsCh chan<- peerError) *BlockPool {
 	bp := &BlockPool{
 		peers:       make(map[p2p.ID]*bpPeer),
 		bannedPeers: make(map[p2p.ID]time.Time),
@@ -101,15 +102,15 @@ func NewBlockPool(start int64, requestsCh chan<- BlockRequest, errorsCh chan<- p
 		requestsCh: requestsCh,
 		errorsCh:   errorsCh,
 	}
-	bp.BaseService = *service.NewBaseService(nil, "BlockPool", bp)
+	bp.BaseService = *service.NewBaseService(ctx, nil, "BlockPool", bp)
 	return bp
 }
 
 // OnStart implements service.Service by spawning requesters routine and recording
 // pool's start time.
-func (pool *BlockPool) OnStart() error {
+func (pool *BlockPool) OnStart(ctx context.Context) error {
 	pool.startTime = time.Now()
-	go pool.makeRequestersRoutine()
+	go pool.makeRequestersRoutine(ctx)
 	return nil
 }
 
@@ -125,8 +126,8 @@ func (pool *BlockPool) OnStop() {
 	}
 }
 
-func (pool *BlockPool) makeRequestersRoutine() {
-	for {
+func (pool *BlockPool) makeRequestersRoutine(ctx context.Context) {
+	for ctx.Err() == nil {
 		if !pool.IsRunning() {
 			return
 		}
@@ -169,7 +170,7 @@ func (pool *BlockPool) makeRequestersRoutine() {
 				return
 			}
 		default:
-			pool.makeNextRequester(nextHeight)
+			pool.makeNextRequester(ctx, nextHeight)
 			// Sleep for a bit to make the requests more ordered.
 			if ok := pool.WaitForInterval(requestInterval); !ok {
 				return
@@ -515,9 +516,9 @@ func (pool *BlockPool) sortPeers() {
 	})
 }
 
-func (pool *BlockPool) makeNextRequester(nextHeight int64) {
+func (pool *BlockPool) makeNextRequester(ctx context.Context, nextHeight int64) {
 	pool.mtx.Lock()
-	request := newBPRequester(pool, nextHeight)
+	request := newBPRequester(ctx, pool, nextHeight)
 	pool.requesters[nextHeight] = request
 	pool.mtx.Unlock()
 
@@ -665,7 +666,7 @@ type bpRequester struct {
 	extCommit    *types.ExtendedCommit
 }
 
-func newBPRequester(pool *BlockPool, height int64) *bpRequester {
+func newBPRequester(ctx context.Context, pool *BlockPool, height int64) *bpRequester {
 	bpr := &bpRequester{
 		pool:        pool,
 		height:      height,
@@ -677,11 +678,11 @@ func newBPRequester(pool *BlockPool, height int64) *bpRequester {
 		secondPeerID: "",
 		block:        nil,
 	}
-	bpr.BaseService = *service.NewBaseService(nil, "bpRequester", bpr)
+	bpr.BaseService = *service.NewBaseService(ctx, nil, "bpRequester", bpr)
 	return bpr
 }
 
-func (bpr *bpRequester) OnStart() error {
+func (bpr *bpRequester) OnStart(ctx context.Context) error {
 	go bpr.requestRoutine()
 	return nil
 }

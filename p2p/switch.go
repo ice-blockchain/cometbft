@@ -1,6 +1,7 @@
 package p2p
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -144,6 +145,7 @@ type SwitchOption func(*Switch)
 
 // NewSwitch creates a new Switch with the given config.
 func NewSwitch(
+	ctx context.Context,
 	cfg *config.P2PConfig,
 	transport Transport,
 	options ...SwitchOption,
@@ -186,7 +188,7 @@ func NewSwitch(
 	// Ensure we have a completely undeterministic PRNG.
 	sw.rng = rand.NewRand()
 
-	sw.BaseService = *service.NewBaseService(nil, "P2P Switch", sw)
+	sw.BaseService = *service.NewBaseService(ctx, nil, "P2P Switch", sw)
 
 	for _, option := range options {
 		option(sw)
@@ -481,7 +483,7 @@ func (sw *Switch) ensureChannelsForNetworks(networks []string) {
 // Service start/stop
 
 // OnStart implements BaseService.
-func (sw *Switch) OnStart() error {
+func (sw *Switch) OnStart(ctx context.Context) error {
 	sw.runtimesMtx.Lock()
 	sw.startTz = time.Now()
 	sw.runtimesMtx.Unlock()
@@ -496,7 +498,7 @@ func (sw *Switch) OnStart() error {
 	// lifecycle that is controller fully by the multiplex reactor.
 
 	// Start accepting Peers.
-	go sw.acceptRoutine()
+	go sw.acceptRoutine(ctx)
 
 	return nil
 }
@@ -1194,7 +1196,7 @@ func (sw *Switch) DialPeerWithAddress(addr *NetAddress) error {
 	sw.dialing.Set(string(addr.ID), addr)
 	defer sw.dialing.Delete(string(addr.ID))
 
-	return sw.addOutboundPeerWithConfig(addr, sw.config, "")
+	return sw.addOutboundPeerWithConfig(sw.BaseService.Context(), addr, sw.config, "")
 }
 
 // sleep for interval plus some random amount of ms on [0, dialRandomizerIntervalMilliseconds].
@@ -1270,7 +1272,7 @@ func (sw *Switch) IsPeerPersistent(na *NetAddress) bool {
 	return false
 }
 
-func (sw *Switch) acceptRoutine() {
+func (sw *Switch) acceptRoutine(ctx context.Context) {
 	for {
 		outbound, inbound, dialing := sw.TotalNumPeers()
 		numPeers := outbound + inbound
@@ -1283,7 +1285,7 @@ func (sw *Switch) acceptRoutine() {
 		}
 
 		safePeerConfig := sw.GetPeerConfig()
-		p, err := sw.transport.Accept(safePeerConfig)
+		p, err := sw.transport.Accept(ctx, safePeerConfig)
 		if p != nil {
 			// TODO(midas): remove debug logs
 			sw.Logger.Debug("Accepting peer connection request",
@@ -1480,6 +1482,7 @@ func (sw *Switch) addPeerByRemoteAddress(
 // If peer is started successfully, reconnectLoop will start when
 // StopPeerForError is called.
 func (sw *Switch) addOutboundPeerWithConfig(
+	ctx context.Context,
 	addr *NetAddress,
 	cfg *config.P2PConfig,
 	chainID string,
@@ -1496,7 +1499,7 @@ func (sw *Switch) addOutboundPeerWithConfig(
 	numPeers := outbound + inbound
 
 	safePeerConfig := sw.GetPeerConfig()
-	p, err := sw.transport.Dial(*addr, safePeerConfig)
+	p, err := sw.transport.Dial(ctx, *addr, safePeerConfig)
 	// TODO(midas): remove debug logs
 	sw.Logger.Debug("Sending outbound peer connection request",
 		"num_peers", numPeers,
@@ -2046,7 +2049,7 @@ func (sw *Switch) OpenChannelsForScopes(scopes []string) func(mconn *conn.MConne
 						}
 					}
 
-					_, channelAdded := mconn.AddChannel(scope, chDesc)
+					_, channelAdded := mconn.AddChannel(sw.BaseService.Context(), scope, chDesc)
 					if channelAdded {
 						atomic.AddUint32(&sw.totalOpenChannels, uint32(1))
 					}

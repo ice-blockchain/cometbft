@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"fmt"
 	"slices"
 
@@ -54,6 +55,7 @@ var _ ChainConns = (*multiplexAppConn)(nil)
 // NewMultiplexAppConn makes all necessary abci connections to the application
 // for a slice of replicated chains by ChainID.
 func NewMultiplexAppConn(
+	ctx context.Context,
 	chainIds []string,
 	clientCreator ClientCreator,
 	metrics *Metrics,
@@ -77,7 +79,7 @@ func NewMultiplexAppConn(
 		},
 		metrics: metrics,
 	}
-	mac.BaseService = *service.NewBaseService(nil, "multiplexAppConn", mac)
+	mac.BaseService = *service.NewBaseService(ctx, nil, "multiplexAppConn", mac)
 	return mac
 }
 
@@ -200,19 +202,19 @@ func (conn *multiplexAppConn) ToAppConns(chainID string) AppConns {
 }
 
 // OnStart implements [service.Service].
-func (conn *multiplexAppConn) OnStart() error {
-	if err := conn.startQueryClient(); err != nil {
+func (conn *multiplexAppConn) OnStart(ctx context.Context) error {
+	if err := conn.startQueryClient(ctx); err != nil {
 		return err
 	}
-	if err := conn.startSnapshotClient(); err != nil {
+	if err := conn.startSnapshotClient(ctx); err != nil {
 		conn.stopAllClients()
 		return err
 	}
-	if err := conn.startMempoolClient(); err != nil {
+	if err := conn.startMempoolClient(ctx); err != nil {
 		conn.stopAllClients()
 		return err
 	}
-	if err := conn.startConsensusClient(); err != nil {
+	if err := conn.startConsensusClient(ctx); err != nil {
 		conn.stopAllClients()
 		return err
 	}
@@ -223,13 +225,13 @@ func (conn *multiplexAppConn) OnStart() error {
 	return nil
 }
 
-func (conn *multiplexAppConn) startQueryClient() error {
+func (conn *multiplexAppConn) startQueryClient(ctx context.Context) error {
 	// Tracks whether a new client is created
 	shouldStart := false
 
 	// One shared ABCI client used by all replicated chains
 	if conn.sharedClients.query == nil {
-		c, err := conn.clientCreator.NewABCIQueryClient()
+		c, err := conn.clientCreator.NewABCIQueryClient(ctx)
 		if err != nil {
 			return fmt.Errorf("error creating ABCI client (query client): %w", err)
 		}
@@ -254,13 +256,13 @@ func (conn *multiplexAppConn) startQueryClient() error {
 	return nil
 }
 
-func (conn *multiplexAppConn) startSnapshotClient() error {
+func (conn *multiplexAppConn) startSnapshotClient(ctx context.Context) error {
 	// Tracks whether a new client is created
 	shouldStart := false
 
 	// One shared ABCI client used by all replicated chains
 	if conn.sharedClients.snapshot == nil {
-		c, err := conn.clientCreator.NewABCISnapshotClient()
+		c, err := conn.clientCreator.NewABCISnapshotClient(ctx)
 		if err != nil {
 			return fmt.Errorf("error creating ABCI client (snapshot client): %w", err)
 		}
@@ -285,13 +287,13 @@ func (conn *multiplexAppConn) startSnapshotClient() error {
 	return nil
 }
 
-func (conn *multiplexAppConn) startMempoolClient() error {
+func (conn *multiplexAppConn) startMempoolClient(ctx context.Context) error {
 	// Tracks whether a new client is created
 	shouldStart := false
 
 	// One shared ABCI client used by all replicated chains
 	if conn.sharedClients.mempool == nil {
-		c, err := conn.clientCreator.NewABCIMempoolClient()
+		c, err := conn.clientCreator.NewABCIMempoolClient(ctx)
 		if err != nil {
 			return fmt.Errorf("error creating ABCI client (mempool client): %w", err)
 		}
@@ -316,13 +318,13 @@ func (conn *multiplexAppConn) startMempoolClient() error {
 	return nil
 }
 
-func (conn *multiplexAppConn) startConsensusClient() error {
+func (conn *multiplexAppConn) startConsensusClient(ctx context.Context) error {
 	// Tracks whether a new client is created
 	shouldStart := false
 
 	// One shared ABCI client used by all replicated chains
 	if conn.sharedClients.consensus == nil {
-		c, err := conn.clientCreator.NewABCIConsensusClient()
+		c, err := conn.clientCreator.NewABCIConsensusClient(ctx)
 		if err != nil {
 			conn.stopAllClients()
 			return fmt.Errorf("error creating ABCI client (consensus client): %w", err)

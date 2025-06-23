@@ -28,7 +28,7 @@ var _ Client = (*localClient)(nil)
 // Concurrency control in each client instance is enforced by way of a single
 // mutex. If a mutex is not supplied (i.e. if mtx is nil), then one will be
 // created.
-func NewLocalClient(mtx *cmtsync.Mutex, app types.Application) Client {
+func NewLocalClient(ctx context.Context, mtx *cmtsync.Mutex, app types.Application) Client {
 	if mtx == nil {
 		mtx = new(cmtsync.Mutex)
 	}
@@ -36,7 +36,7 @@ func NewLocalClient(mtx *cmtsync.Mutex, app types.Application) Client {
 		mtx:         mtx,
 		Application: app,
 	}
-	cli.BaseService = *service.NewBaseService(nil, "localClient", cli)
+	cli.BaseService = *service.NewBaseService(ctx, nil, "localClient", cli)
 	return cli
 }
 

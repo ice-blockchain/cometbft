@@ -1,6 +1,7 @@
 package evidence
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -37,7 +38,7 @@ type Reactor struct {
 }
 
 // NewReactor returns a new Reactor with the given config and evpool.
-func NewReactor(evpool *Pool, options ...func(*Reactor)) *Reactor {
+func NewReactor(ctx context.Context, evpool *Pool, options ...func(*Reactor)) *Reactor {
 	evR := &Reactor{
 		evpool: evpool,
 	}
@@ -47,7 +48,7 @@ func NewReactor(evpool *Pool, options ...func(*Reactor)) *Reactor {
 		option(evR)
 	}
 
-	evR.BaseReactor = *p2p.NewBaseReactor("Evidence", evR)
+	evR.BaseReactor = *p2p.NewBaseReactor(ctx, "Evidence", evR)
 	return evR
 }
 

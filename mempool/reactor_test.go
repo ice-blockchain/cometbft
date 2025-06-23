@@ -430,7 +430,7 @@ func TestMempoolFIFOWithParallelCheckTx(t *testing.T) {
 func TestMempoolReactorMaxActiveOutboundConnectionsStar(t *testing.T) {
 	config := cfg.TestConfig()
 	config.Mempool.ExperimentalMaxGossipConnectionsToNonPersistentPeers = 1
-	reactors, _ := makeAndConnectReactorsStar(config, 0, 4, nil)
+	reactors, _ := makeAndConnectReactorsStar(t, config, 0, 4, nil)
 	defer func() {
 		for _, r := range reactors {
 			if err := r.Stop(); err != nil {
@@ -512,7 +512,7 @@ func makeReactors(config *cfg.Config, n int, logger *log.Logger) []*Reactor {
 }
 
 // connectReactors connects the list of N reactors through N switches.
-func connectReactors(config *cfg.Config, reactors []*Reactor, connect func([]*p2p.Switch, int, int)) []*p2p.Switch {
+func connectReactors(t *testing.T, config *cfg.Config, reactors []*Reactor, connect func(*testing.T, []*p2p.Switch, int, int)) []*p2p.Switch {
 	switches := p2p.MakeSwitches(config.P2P, len(reactors), func(i int, s *p2p.Switch) *p2p.Switch {
 		s.AddReactor("", "MEMPOOL", reactors[i])
 		return s
@@ -520,19 +520,19 @@ func connectReactors(config *cfg.Config, reactors []*Reactor, connect func([]*p2
 	for _, s := range switches {
 		s.SetLogger(log.NewNopLogger())
 	}
-	return p2p.StartAndConnectSwitches(switches, connect)
+	return p2p.StartAndConnectSwitches(t, switches, connect)
 }
 
-func makeAndConnectReactors(config *cfg.Config, n int, logger *log.Logger) ([]*Reactor, []*p2p.Switch) {
+func makeAndConnectReactors(t *testing.T, config *cfg.Config, n int, logger *log.Logger) ([]*Reactor, []*p2p.Switch) {
 	reactors := makeReactors(config, n, logger)
-	switches := connectReactors(config, reactors, p2p.Connect2Switches)
+	switches := connectReactors(t, config, reactors, p2p.Connect2Switches)
 	return reactors, switches
 }
 
 // connect N mempool reactors through N switches as a star centered in c.
-func makeAndConnectReactorsStar(config *cfg.Config, c, n int, logger *log.Logger) ([]*Reactor, []*p2p.Switch) {
+func makeAndConnectReactorsStar(t *testing.T, config *cfg.Config, c, n int, logger *log.Logger) ([]*Reactor, []*p2p.Switch) {
 	reactors := makeReactors(config, n, logger)
-	switches := connectReactors(config, reactors, p2p.ConnectStarSwitches(c))
+	switches := connectReactors(t, config, reactors, p2p.ConnectStarSwitches(t, c))
 	return reactors, switches
 }
 

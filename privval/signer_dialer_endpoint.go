@@ -1,6 +1,7 @@
 package privval
 
 import (
+	"context"
 	"time"
 
 	"github.com/ice-blockchain/cometbft/libs/log"
@@ -48,6 +49,8 @@ type SignerDialerEndpoint struct {
 // dialer and respond to any signature requests over the connection
 // using the given privVal.
 func NewSignerDialerEndpoint(
+
+	ctx context.Context,
 	logger log.Logger,
 	dialer SocketDialer,
 	options ...SignerServiceEndpointOption,
@@ -58,7 +61,7 @@ func NewSignerDialerEndpoint(
 		maxConnRetries: defaultMaxDialRetries,
 	}
 
-	sd.BaseService = *service.NewBaseService(logger, "SignerDialerEndpoint", sd)
+	sd.BaseService = *service.NewBaseService(ctx, logger, "SignerDialerEndpoint", sd)
 	sd.signerEndpoint.timeoutReadWrite = defaultTimeoutReadWriteSeconds * time.Second
 
 	for _, optionFunc := range options {

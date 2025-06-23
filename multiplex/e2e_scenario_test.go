@@ -2447,7 +2447,7 @@ func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
 	defer newShutdownFn(resetRelay)
 
 	resetRelay.SetAcceptor(client.NewMockAcceptorImpl())
-	resetRelay.MustStart()
+	resetRelay.MustStart(t.Context())
 
 	// Separate goroutine for client broadcast process
 	numTransactions := 1
@@ -2635,7 +2635,7 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	t.Logf("Waiting %.0fsec to restart backend...", waitDuration.Seconds())
 	time.Sleep(waitDuration)
 
-	servers[0].MustStart()
+	servers[0].MustStart(t.Context())
 
 	// STEP 3:
 	//
@@ -3786,7 +3786,7 @@ func TestScenarioLegacyBroadcastSevenHealthyRelays(t *testing.T) {
 
 	// Start the node backends
 	for i := 0; i < len(servers); i++ {
-		servers[i].MustStart()
+		servers[i].MustStart(t.Context())
 	}
 
 	testReactor := servers[0].GetReactor()
@@ -3996,7 +3996,7 @@ func StartTestScenarioRelays(
 
 	// Start the node backends
 	for i := 0; i < len(servers); i++ {
-		servers[i].MustStart()
+		servers[i].MustStart(tb.Context())
 	}
 
 	if waitDuration.Seconds() > float64(0) {

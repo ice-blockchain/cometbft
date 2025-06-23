@@ -24,7 +24,7 @@ import (
 	"github.com/ice-blockchain/cometbft/version"
 )
 
-func (reactor *Reactor) CreateOrLoadCometBFTEventSwitch(addr *p2p.NetAddress) *p2p.Switch {
+func (reactor *Reactor) CreateOrLoadCometBFTEventSwitch(ctx context.Context, addr *p2p.NetAddress) *p2p.Switch {
 	cometbftSwitch := reactor.GetEventSwitchForCometBFT()
 	if cometbftSwitch != nil {
 		return cometbftSwitch
@@ -75,6 +75,7 @@ func (reactor *Reactor) CreateOrLoadCometBFTEventSwitch(addr *p2p.NetAddress) *p
 		MultiplexTransportHandshake,
 	)
 	cometbftSwitch = p2p.NewSwitch(
+		ctx,
 		nodeConfig.P2P,
 		localTransport,
 		p2p.WithMetrics(p2pMetricsProvider),
@@ -216,7 +217,7 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 	}
 
 	var (
-		eventSwitch *p2p.Switch           = reactor.CreateOrLoadCometBFTEventSwitch(netAddr)
+		eventSwitch *p2p.Switch           = reactor.CreateOrLoadCometBFTEventSwitch(ctx, netAddr)
 		nodeKey     *p2p.NodeKey          = reactor.GetNodeKey()
 		nodeInfo    *MultiNetworkNodeInfo = reactor.GetMultiNetworkNodeInfo()
 	)
@@ -314,7 +315,7 @@ func (reactor *Reactor) CreateAddressBooks(
 		return fmt.Errorf("could not open address book file %s: %w", addrBookFile, err)
 	}
 
-	addrBook := pex.NewAddrBook(addrBookFile, false) // routabilityStrict=false
+	addrBook := pex.NewAddrBook(ctx, addrBookFile, false) // routabilityStrict=false
 	addrBook.SetLogger(p2pLogger.With("book", addrBookFile))
 
 	cometbftSwitch := reactor.GetEventSwitchForCometBFT()
@@ -345,7 +346,7 @@ func (reactor *Reactor) CreateAddressBooks(
 		//
 		// Here we feed the P2P.Seeds from the config overwrite.
 		pexLogger := reactor.logger.With("module", "pex")
-		pexReactor := pex.NewReactor(addrBook,
+		pexReactor := pex.NewReactor(ctx, addrBook,
 			&pex.ReactorConfig{
 				Seeds:    chainSeedNodes,
 				SeedMode: cfgOverwrite.P2P.SeedMode,

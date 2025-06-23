@@ -91,7 +91,7 @@ type ReplayPool struct {
 type ReplayOption func(*ReplayPool)
 
 // NewReplayPool creates an empty [ReplayPool].
-func NewReplayPool(logger cmtlog.Logger, options ...ReplayOption) *ReplayPool {
+func NewReplayPool(ctx context.Context, logger cmtlog.Logger, options ...ReplayOption) *ReplayPool {
 	pool := &ReplayPool{
 		mtx: new(sync.Mutex),
 
@@ -121,7 +121,7 @@ func NewReplayPool(logger cmtlog.Logger, options ...ReplayOption) *ReplayPool {
 	// Use option helpers
 	pool.SetOptions(options...)
 
-	pool.BaseService = *service.NewBaseService(nil, "ReplayPool", pool)
+	pool.BaseService = *service.NewBaseService(ctx, nil, "ReplayPool", pool)
 
 	return pool
 }
@@ -184,7 +184,7 @@ func ReplayPoolLogger(logger cmtlog.Logger) ReplayOption {
 // OnStart implements [service.Service] by spawning replay routines.
 //
 // Setting a negative threshold disables threshold-processing.
-func (pool *ReplayPool) OnStart() error {
+func (pool *ReplayPool) OnStart(ctx context.Context) error {
 	if pool.txAcceptor == nil {
 		// Do nothing.
 		return nil

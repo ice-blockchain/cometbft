@@ -1,6 +1,7 @@
 package pex
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -136,7 +137,7 @@ type _attemptsToDial struct {
 }
 
 // NewReactor creates new PEX reactor.
-func NewReactor(b AddrBook, config *ReactorConfig, options ...func(*Reactor)) *Reactor {
+func NewReactor(ctx context.Context, b AddrBook, config *ReactorConfig, options ...func(*Reactor)) *Reactor {
 	r := &Reactor{
 		book:                 b,
 		config:               config,
@@ -146,7 +147,7 @@ func NewReactor(b AddrBook, config *ReactorConfig, options ...func(*Reactor)) *R
 		lastReceivedRequests: cmap.NewCMap(),
 		crawlPeerInfos:       make(map[p2p.ID]crawlPeerInfo),
 	}
-	r.BaseReactor = *p2p.NewBaseReactor("PEX", r)
+	r.BaseReactor = *p2p.NewBaseReactor(ctx, "PEX", r)
 
 	for _, option := range options {
 		option(r)
@@ -165,7 +166,7 @@ func WithChainID(
 }
 
 // OnStart implements BaseService.
-func (r *Reactor) OnStart() error {
+func (r *Reactor) OnStart(ctx context.Context) error {
 	if !r.book.IsRunning() {
 		err := r.book.Start()
 		if err != nil && err != service.ErrAlreadyStarted {

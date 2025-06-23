@@ -31,7 +31,7 @@ import (
 // This method also registers services in the servicesRegistry:
 // - `runtime/node`: The node instance or runtime service.
 func (reactor *Reactor) createMultiplexNodesWithServices(
-	_ context.Context,
+	ctx context.Context,
 	networks []string,
 	options ...node.Option,
 ) (MultiplexMap[*node.Node], error) {
@@ -110,6 +110,7 @@ func (reactor *Reactor) createMultiplexNodesWithServices(
 		)
 
 		nodeInstance.BaseService = *service.NewBaseService(
+			ctx,
 			reactor.logger.With("node_id", withNodeKey.ID()),
 			"Node",
 			nodeInstance,

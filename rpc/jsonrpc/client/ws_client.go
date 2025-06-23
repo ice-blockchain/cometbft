@@ -88,7 +88,7 @@ type WSClient struct {
 // functions for a detailed description of how to configure ping period and
 // pong wait time. The endpoint argument must begin with a `/`.
 // An error is returned on invalid remote. The function panics when remote is nil.
-func NewWS(remoteAddr, endpoint string, options ...func(*WSClient)) (*WSClient, error) {
+func NewWS(ctx context.Context, remoteAddr, endpoint string, options ...func(*WSClient)) (*WSClient, error) {
 	parsedURL, err := newParsedURL(remoteAddr)
 	if err != nil {
 		return nil, err
@@ -128,7 +128,7 @@ func NewWS(remoteAddr, endpoint string, options ...func(*WSClient)) (*WSClient, 
 
 		// sentIDs: make(map[types.JSONRPCIntID]bool),
 	}
-	c.BaseService = *service.NewBaseService(nil, "WSClient", c)
+	c.BaseService = *service.NewBaseService(ctx, nil, "WSClient", c)
 	for _, option := range options {
 		option(c)
 	}
@@ -182,7 +182,7 @@ func (c *WSClient) String() string {
 
 // OnStart implements service.Service by dialing a server and creating read and
 // write routines.
-func (c *WSClient) OnStart() error {
+func (c *WSClient) OnStart(ctx context.Context) error {
 	err := c.dial()
 	if err != nil {
 		return err

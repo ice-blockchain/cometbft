@@ -59,6 +59,7 @@ type Reactor struct {
 
 // NewReactor returns a new Reactor with the given config and mempool.
 func NewReactor(
+	ctx context.Context,
 	config *cfg.MempoolConfig,
 	mempool *CListMempool,
 	waitSync bool,
@@ -93,7 +94,7 @@ func NewReactor(
 		memR.recvMessageCapacity = batchMsg.Size()
 	}
 
-	memR.BaseReactor = *p2p.NewBaseReactor("Mempool", memR)
+	memR.BaseReactor = *p2p.NewBaseReactor(ctx, "Mempool", memR)
 	if waitSync {
 		memR.waitSync.Store(true)
 		memR.waitSyncCh = make(chan struct{})
@@ -179,7 +180,7 @@ func (memR *Reactor) SetRuntimeRegistry(reg *server.RuntimeRegistry) {
 }
 
 // OnStart implements p2p.BaseReactor.
-func (memR *Reactor) OnStart() error {
+func (memR *Reactor) OnStart(ctx context.Context) error {
 	if memR.WaitSync() {
 		memR.Logger.Info("Starting reactor in sync mode: tx propagation will start once sync completes")
 	}

@@ -460,7 +460,7 @@ func (b *MultiplexBackend) GetAckResponsePeers(txHash string) []string {
 // which is used to determine the required channels and connection information.
 //
 // The relayMtx is expected to be locked by the caller.
-func (b *MultiplexBackend) CreateOrLoadDiscoveryEventSwitch() *p2p.Switch {
+func (b *MultiplexBackend) CreateOrLoadDiscoveryEventSwitch(ctx context.Context) *p2p.Switch {
 	discoverySwitch := b.reactor.GetEventSwitchForDiscovery()
 	if discoverySwitch != nil {
 		return discoverySwitch
@@ -494,6 +494,7 @@ func (b *MultiplexBackend) CreateOrLoadDiscoveryEventSwitch() *p2p.Switch {
 	)
 
 	sw := p2p.NewSwitch(
+		ctx,
 		nodeConfig.P2P,
 		localTransport,
 		func(s *p2p.Switch) {
@@ -581,7 +582,7 @@ func (b *MultiplexBackend) shutdownOnPanic() {
 // replicated chain.
 //
 // MustStart implements [server.Server]
-func (b *MultiplexBackend) MustStart() {
+func (b *MultiplexBackend) MustStart(ctx context.Context) {
 	startTime := time.Now()
 
 	if b.metrics != nil {
@@ -667,7 +668,7 @@ func (b *MultiplexBackend) MustStart() {
 
 		// We open a discovery port which is required such that the relay may
 		// be communicated to, even without hosting any replicated chain.
-		if _, err := b.StartP2PServerDiscovery(nodeCfg, nodeKey); err != nil {
+		if _, err := b.StartP2PServerDiscovery(ctx, nodeCfg, nodeKey); err != nil {
 			b.errorsCh <- fmt.Errorf("error with discovery P2P server: %w", err)
 		}
 
@@ -751,7 +752,7 @@ func (b *MultiplexBackend) MustStart() {
 		}
 
 		// Then start the P2P server
-		if err := b.StartP2PServerCometBFT(); err != nil {
+		if err := b.StartP2PServerCometBFT(ctx); err != nil {
 			b.errorsCh <- fmt.Errorf("error with CometBFT P2P server: %w", err)
 		}
 
@@ -2430,6 +2431,7 @@ func (b *MultiplexBackend) StartConsensusInstance(
 // network ports open yet (due to not replicating any chain).
 // Creates a transport listening on DiscoveryPort.
 func (b *MultiplexBackend) StartP2PServerDiscovery(
+	ctx context.Context,
 	nodeCfg *config.Config,
 	nodeKey *p2p.NodeKey,
 ) (
@@ -2463,7 +2465,7 @@ func (b *MultiplexBackend) StartP2PServerDiscovery(
 
 	// Initializes the local p2p.Switch
 	// Creates a global P2P switch to respond even without chain info.
-	eventSwitch := b.CreateOrLoadDiscoveryEventSwitch()
+	eventSwitch := b.CreateOrLoadDiscoveryEventSwitch(ctx)
 
 	// And start the switch (the P2P server).
 	err = eventSwitch.Start()
@@ -2587,7 +2589,7 @@ func (b *MultiplexBackend) StartRPCServerDiscovery(
 // transaction.
 // Creates a transport listening on DiscoveryPort+1.
 // This method sets the listen address in cometbftP2PAddr.
-func (b *MultiplexBackend) StartP2PServerCometBFT() error {
+func (b *MultiplexBackend) StartP2PServerCometBFT(ctx context.Context) error {
 	nodeConfig := b.reactor.GetNodeConfig()
 
 	promoteAddr := nodeConfig.P2P.ExternalAddress
@@ -2618,7 +2620,7 @@ func (b *MultiplexBackend) StartP2PServerCometBFT() error {
 	)
 
 	// uses DiscoveryPort+1
-	sw := b.reactor.CreateOrLoadCometBFTEventSwitch(b.cometbftP2PAddr)
+	sw := b.reactor.CreateOrLoadCometBFTEventSwitch(ctx, b.cometbftP2PAddr)
 
 	// Start the transport.
 	if err := sw.Transport().Listen(*b.cometbftP2PAddr); err != nil {

@@ -294,7 +294,7 @@ func (reactor *Reactor) InjectNewRuntime(
 		defer reactor.runtimesMutex.Unlock()
 
 		// Start node listeners
-		if err := reactor.startNodeListeners(network); err != nil {
+		if err := reactor.startNodeListeners(ctx, network); err != nil {
 			clogger.Error("failed to start node for new runtime",
 				"err", err,
 			)

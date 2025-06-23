@@ -1,6 +1,7 @@
 package consensus
 
 import (
+	"context"
 	"time"
 
 	"github.com/ice-blockchain/cometbft/libs/log"
@@ -37,7 +38,7 @@ type timeoutTicker struct {
 }
 
 // NewTimeoutTicker returns a new TimeoutTicker.
-func NewTimeoutTicker() TimeoutTicker {
+func NewTimeoutTicker(ctx context.Context) TimeoutTicker {
 	tt := &timeoutTicker{
 		timer: time.NewTimer(0),
 		// An indicator variable to check if the timer is active or not.
@@ -46,14 +47,14 @@ func NewTimeoutTicker() TimeoutTicker {
 		tickChan:    make(chan timeoutInfo, tickTockBufferSize),
 		tockChan:    make(chan timeoutInfo, tickTockBufferSize),
 	}
-	tt.BaseService = *service.NewBaseService(nil, "TimeoutTicker", tt)
+	tt.BaseService = *service.NewBaseService(ctx, nil, "TimeoutTicker", tt)
 	tt.stopTimer() // don't want to fire until the first scheduled timeout
 	return tt
 }
 
 // OnStart implements service.Service. It starts the timeout routine.
-func (t *timeoutTicker) OnStart() error {
-	go t.timeoutRoutine()
+func (t *timeoutTicker) OnStart(ctx context.Context) error {
+	go t.timeoutRoutine(ctx)
 
 	return nil
 }
@@ -91,10 +92,10 @@ func (t *timeoutTicker) stopTimer() {
 // timeouts of 0 on the tickChan will be immediately relayed to the tockChan.
 // NOTE: timerActive is not concurrency safe, but it's only accessed in NewTimer and timeoutRoutine,
 // making it single-threaded access.
-func (t *timeoutTicker) timeoutRoutine() {
+func (t *timeoutTicker) timeoutRoutine(ctx context.Context) {
 	t.Logger.Debug("Starting timeout routine")
 	var ti timeoutInfo
-	for {
+	for ctx.Err() == nil {
 		select {
 		case newti := <-t.tickChan:
 			t.Logger.Debug("Received tick", "old_ti", ti, "new_ti", newti)
@@ -121,6 +122,9 @@ func (t *timeoutTicker) timeoutRoutine() {
 			//  and managing the timeouts ourselves with a millisecond ticker
 			go func(toi timeoutInfo) { t.tockChan <- toi }(ti)
 		case <-t.Quit():
+			t.stopTimer()
+			return
+		case <-ctx.Done():
 			t.stopTimer()
 			return
 		}

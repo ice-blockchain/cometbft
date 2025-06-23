@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 )
 
@@ -23,4 +24,4 @@ func (DefaultServer) GetAcceptor() client.Acceptor {
 }
 
 // MustStart must start a replication backend or return an error.
-func (DefaultServer) MustStart() {}
+func (DefaultServer) MustStart(ctx context.Context) {}

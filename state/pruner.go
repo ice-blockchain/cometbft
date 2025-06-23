@@ -1,6 +1,7 @@
 package state
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"time"
@@ -92,7 +93,7 @@ func WithPrunerMetrics(metrics *Metrics) PrunerOption {
 //
 // Assumes that the initial application and data companion retain heights have
 // already been configured in the state store.
-func NewPruner(
+func NewPruner(ctx context.Context,
 	stateStore Store,
 	bs BlockStore,
 	blockIndexer indexer.BlockIndexer,
@@ -115,7 +116,7 @@ func NewPruner(
 		metrics:      cfg.metrics,
 		dcEnabled:    cfg.dcEnabled,
 	}
-	p.BaseService = *service.NewBaseService(logger, "Pruner", p)
+	p.BaseService = *service.NewBaseService(ctx, logger, "Pruner", p)
 	return p
 }
 
@@ -123,7 +124,7 @@ func (p *Pruner) SetObserver(obs PrunerObserver) {
 	p.observer = obs
 }
 
-func (p *Pruner) OnStart() error {
+func (p *Pruner) OnStart(ctx context.Context) error {
 	go p.pruneBlocks()
 	// We only care about pruning ABCI results if the data companion has been
 	// enabled.

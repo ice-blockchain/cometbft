@@ -29,7 +29,7 @@ type Service interface {
 	// If it's already started or stopped, will return an error.
 	// If OnStart() returns an error, it's returned by Start()
 	Start() error
-	OnStart() error
+	OnStart(ctx context.Context) error
 
 	// Stop the service.
 	// If it's already stopped, will return an error.
@@ -87,7 +87,7 @@ Typical usage:
 		return fs
 	}
 
-	func (fs *FooService) OnStart() error {
+	func (fs *FooService) OnStart(ctx context.Context) error {
 		fs.BaseService.OnStart() // Always call the overridden method.
 		// initialize private fields
 		// start subroutines, etc.
@@ -106,22 +106,24 @@ type BaseService struct {
 	stopped   uint32 // atomic
 	quit      chan struct{}
 	ctxCancel context.CancelFunc
-	ctxDone   chan<- struct{}
+	ctx       context.Context
 	// The "subclass" of BaseService
 	impl Service
 }
 
 // NewBaseService creates a new BaseService.
-func NewBaseService(logger log.Logger, name string, impl Service) *BaseService {
+func NewBaseService(ctx context.Context, logger log.Logger, name string, impl Service) *BaseService {
 	if logger == nil {
 		logger = log.NewNopLogger()
 	}
-
+	ctx, cancel := context.WithCancel(ctx)
 	return &BaseService{
-		Logger: logger,
-		name:   name,
-		quit:   make(chan struct{}),
-		impl:   impl,
+		Logger:    logger,
+		name:      name,
+		quit:      make(chan struct{}),
+		impl:      impl,
+		ctxCancel: cancel,
+		ctx:       ctx,
 	}
 }
 
@@ -130,9 +132,8 @@ func (bs *BaseService) SetLogger(l log.Logger) {
 	bs.Logger = l
 }
 
-// Start implements Service by calling OnStart (if defined). An error will be
-// returned if the service is already running or stopped. Not to start the
-// stopped service, you need to call Reset.
+// Start implements Service by calling OnStart (if defined). An error will be returned if the
+// service is already running or stopped. Not to start the stopped service, you need to call Reset.
 func (bs *BaseService) Start() error {
 	if atomic.CompareAndSwapUint32(&bs.started, 0, 1) {
 		if atomic.LoadUint32(&bs.stopped) == 1 {
@@ -147,7 +148,7 @@ func (bs *BaseService) Start() error {
 			log.NewLazySprintf("Starting %v service", bs.name),
 			"impl",
 			bs.impl.String())
-		err := bs.impl.OnStart()
+		err := bs.impl.OnStart(bs.ctx)
 		if err != nil {
 			// revert flag
 			atomic.StoreUint32(&bs.started, 0)
@@ -166,7 +167,7 @@ func (bs *BaseService) Start() error {
 // OnStart implements Service by doing nothing.
 // NOTE: Do not put anything in here,
 // that way users don't need to call BaseService.OnStart().
-func (*BaseService) OnStart() error { return nil }
+func (*BaseService) OnStart(ctx context.Context) error { return nil }
 
 // Stop implements Service by calling OnStop (if defined) and closing quit
 // channel. An error will be returned if the service is already stopped.
@@ -244,6 +245,10 @@ func (bs *BaseService) IsStopped() bool {
 // Name returns the name of this service instance.
 func (bs *BaseService) Name() string {
 	return bs.name
+}
+
+func (bs *BaseService) Context() context.Context {
+	return bs.ctx
 }
 
 // Wait blocks until the service is stopped.

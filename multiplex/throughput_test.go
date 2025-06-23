@@ -340,7 +340,7 @@ func ResetTestMultiplexBenchmark(
 
 	// Start the node backends
 	for i := 0; i < len(servers); i++ {
-		servers[i].MustStart()
+		servers[i].MustStart(tb.Context())
 	}
 
 	return servers, shutdownFn

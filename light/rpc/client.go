@@ -88,20 +88,20 @@ func DefaultMerkleKeyPathFn() KeyPathFunc {
 }
 
 // NewClient returns a new client.
-func NewClient(next rpcclient.Client, lc LightClient, opts ...Option) *Client {
+func NewClient(ctx context.Context, next rpcclient.Client, lc LightClient, opts ...Option) *Client {
 	c := &Client{
 		next: next,
 		lc:   lc,
 		prt:  merkle.DefaultProofRuntime(),
 	}
-	c.BaseService = *service.NewBaseService(nil, "Client", c)
+	c.BaseService = *service.NewBaseService(ctx, nil, "Client", c)
 	for _, o := range opts {
 		o(c)
 	}
 	return c
 }
 
-func (c *Client) OnStart() error {
+func (c *Client) OnStart(ctx context.Context) error {
 	if !c.next.IsRunning() {
 		return c.next.Start()
 	}

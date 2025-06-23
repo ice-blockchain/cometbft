@@ -1,6 +1,7 @@
 package consensus
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"reflect"
@@ -67,7 +68,7 @@ type Reactor struct {
 type ReactorOption func(*Reactor)
 
 // NewReactor returns a new Reactor with the given consensusState.
-func NewReactor(consensusState *State, waitSync bool, options ...ReactorOption) *Reactor {
+func NewReactor(ctx context.Context, consensusState *State, waitSync bool, options ...ReactorOption) *Reactor {
 	conR := &Reactor{
 		ChainID:       consensusState.state.ChainID,
 		conS:          consensusState,
@@ -78,7 +79,7 @@ func NewReactor(consensusState *State, waitSync bool, options ...ReactorOption) 
 		pendingPeers:  sync.Map{},
 	}
 	conR.initialHeight.Store(consensusState.state.InitialHeight)
-	conR.BaseReactor = *p2p.NewBaseReactor("Consensus", conR)
+	conR.BaseReactor = *p2p.NewBaseReactor(ctx, "Consensus", conR)
 	if waitSync {
 		conR.waitSync.Store(true)
 	}
@@ -126,7 +127,7 @@ func (conR *Reactor) SetRuntimeRegistry(reg *server.RuntimeRegistry) {
 
 // OnStart implements BaseService by subscribing to events, which later will be
 // broadcasted to other peers and starting state if we're not in block sync.
-func (conR *Reactor) OnStart() error {
+func (conR *Reactor) OnStart(ctx context.Context) error {
 	if conR.WaitSync() {
 		conR.Logger.Info("Starting reactor in sync mode: consensus protocols will start once sync completes")
 	}

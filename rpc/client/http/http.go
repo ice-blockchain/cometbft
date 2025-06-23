@@ -109,27 +109,27 @@ var (
 
 // New takes a remote endpoint in the form <protocol>://<host>:<port>. An error
 // is returned on invalid remote. The function panics when remote is nil.
-func New(remote string) (*HTTP, error) {
+func New(ctx context.Context, remote string) (*HTTP, error) {
 	httpClient, err := jsonrpcclient.DefaultHTTPClient(remote)
 	if err != nil {
 		return nil, err
 	}
-	return NewWithClient(remote, httpClient)
+	return NewWithClient(ctx, remote, httpClient)
 }
 
 // Create timeout enabled http client.
-func NewWithTimeout(remote string, timeout uint) (*HTTP, error) {
+func NewWithTimeout(ctx context.Context, remote string, timeout uint) (*HTTP, error) {
 	httpClient, err := jsonrpcclient.DefaultHTTPClient(remote)
 	if err != nil {
 		return nil, err
 	}
 	httpClient.Timeout = time.Duration(timeout) * time.Second
-	return NewWithClient(remote, httpClient)
+	return NewWithClient(ctx, remote, httpClient)
 }
 
 // NewWithClient allows for setting a custom http client (See New). An error is
 // returned on invalid remote. The function panics when remote is nil.
-func NewWithClient(remote string, client *http.Client) (*HTTP, error) {
+func NewWithClient(ctx context.Context, remote string, client *http.Client) (*HTTP, error) {
 	if client == nil {
 		panic("nil http.Client provided")
 	}
@@ -139,7 +139,7 @@ func NewWithClient(remote string, client *http.Client) (*HTTP, error) {
 		return nil, err
 	}
 
-	wsEvents, err := newWSEvents(remote, "/websocket")
+	wsEvents, err := newWSEvents(ctx, remote, "/websocket")
 	if err != nil {
 		return nil, err
 	}
@@ -606,16 +606,16 @@ type WSEvents struct {
 	subscriptions map[string]chan ctypes.ResultEvent // query -> chan
 }
 
-func newWSEvents(remote, endpoint string) (*WSEvents, error) {
+func newWSEvents(ctx context.Context, remote, endpoint string) (*WSEvents, error) {
 	w := &WSEvents{
 		endpoint:      endpoint,
 		remote:        remote,
 		subscriptions: make(map[string]chan ctypes.ResultEvent),
 	}
-	w.BaseService = *service.NewBaseService(nil, "WSEvents", w)
+	w.BaseService = *service.NewBaseService(ctx, nil, "WSEvents", w)
 
 	var err error
-	w.ws, err = jsonrpcclient.NewWS(w.remote, w.endpoint, jsonrpcclient.OnReconnect(func() {
+	w.ws, err = jsonrpcclient.NewWS(ctx, w.remote, w.endpoint, jsonrpcclient.OnReconnect(func() {
 		// resubscribe immediately
 		w.redoSubscriptionsAfter(0 * time.Second)
 	}))
@@ -628,7 +628,7 @@ func newWSEvents(remote, endpoint string) (*WSEvents, error) {
 }
 
 // OnStart implements service.Service by starting WSClient and event loop.
-func (w *WSEvents) OnStart() error {
+func (w *WSEvents) OnStart(ctx context.Context) error {
 	if err := w.ws.Start(); err != nil {
 		return err
 	}

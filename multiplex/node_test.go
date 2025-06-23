@@ -67,11 +67,11 @@ func TestMultiplexNodeLegacyNodeImplementation(t *testing.T) {
 	require.NoError(t, err)
 
 	n, err := cmtnode.NewNode(
-		context.Background(),
+		t.Context(),
 		globalCfg,
 		privValidator,
 		makeRandomNodeKey(),
-		proxy.DefaultClientCreator(globalCfg.ProxyApp, globalCfg.ABCI, globalCfg.DBDir()),
+		proxy.DefaultClientCreator(t.Context(), globalCfg.ProxyApp, globalCfg.ABCI, globalCfg.DBDir()),
 		cmtnode.DefaultGenesisDocProviderFunc(globalCfg),
 		config.DefaultDBProvider,
 		cmtnode.DefaultMetricsProvider(globalCfg.Instrumentation),

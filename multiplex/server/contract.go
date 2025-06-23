@@ -21,7 +21,7 @@ type Server interface {
 	GetAcceptor() client.Acceptor
 
 	// MustStart executes a replication backend.
-	MustStart()
+	MustStart(ctx context.Context)
 }
 
 // ----------------------------------------------------------------------------

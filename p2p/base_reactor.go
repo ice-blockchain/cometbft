@@ -1,6 +1,7 @@
 package p2p
 
 import (
+	"context"
 	"github.com/ice-blockchain/cometbft/libs/service"
 	"github.com/ice-blockchain/cometbft/p2p/conn"
 )
@@ -50,9 +51,9 @@ type BaseReactor struct {
 	Switch              *Switch
 }
 
-func NewBaseReactor(name string, impl Reactor) *BaseReactor {
+func NewBaseReactor(ctx context.Context, name string, impl Reactor) *BaseReactor {
 	return &BaseReactor{
-		BaseService: *service.NewBaseService(nil, name, impl),
+		BaseService: *service.NewBaseService(ctx, nil, name, impl),
 		Switch:      nil,
 	}
 }

@@ -1,6 +1,7 @@
 package privval
 
 import (
+	"context"
 	"errors"
 	"net"
 	"sync/atomic"
@@ -45,6 +46,7 @@ type SignerListenerEndpoint struct {
 
 // NewSignerListenerEndpoint returns an instance of SignerListenerEndpoint.
 func NewSignerListenerEndpoint(
+	ctx context.Context,
 	logger log.Logger,
 	listener net.Listener,
 	options ...SignerListenerEndpointOption,
@@ -54,7 +56,7 @@ func NewSignerListenerEndpoint(
 		timeoutAccept: defaultTimeoutAcceptSeconds * time.Second,
 	}
 
-	sl.BaseService = *service.NewBaseService(logger, "SignerListenerEndpoint", sl)
+	sl.BaseService = *service.NewBaseService(ctx, logger, "SignerListenerEndpoint", sl)
 	sl.signerEndpoint.timeoutReadWrite = defaultTimeoutReadWriteSeconds * time.Second
 
 	for _, optionFunc := range options {
@@ -65,7 +67,7 @@ func NewSignerListenerEndpoint(
 }
 
 // OnStart implements service.Service.
-func (sl *SignerListenerEndpoint) OnStart() error {
+func (sl *SignerListenerEndpoint) OnStart(ctx context.Context) error {
 	sl.connectRequestCh = make(chan struct{}, 1) // Buffer of 1 to allow `serviceLoop` to re-trigger itself.
 	sl.connectionAvailableCh = make(chan net.Conn)
 
