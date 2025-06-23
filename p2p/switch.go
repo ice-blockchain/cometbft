@@ -1275,6 +1275,13 @@ func (sw *Switch) acceptRoutine() {
 		outbound, inbound, dialing := sw.TotalNumPeers()
 		numPeers := outbound + inbound
 
+		// Early shutdown detection
+		switch {
+		case sw.transport.IsClosing():
+			return
+		default: // proceed to Accept
+		}
+
 		safePeerConfig := sw.GetPeerConfig()
 		p, err := sw.transport.Accept(safePeerConfig)
 		if p != nil {

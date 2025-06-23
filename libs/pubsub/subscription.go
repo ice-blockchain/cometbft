@@ -68,6 +68,7 @@ func (s *Subscription) cancel(err error) {
 	s.err = err
 	s.mtx.Unlock()
 	close(s.canceled)
+	close(s.out)
 }
 
 // Message glues data and events together.

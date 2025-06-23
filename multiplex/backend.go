@@ -3362,7 +3362,7 @@ func (b *MultiplexBackend) localTransactionEventsConsumer(
 	}, "_")
 
 	cancelTimer := time.NewTimer(b.transactionTimeout)
-	txsSub, err := chainEventBus.SubscribeUnbuffered(context.Background(), subscriberName, types.EventQueryTx)
+	txsSub, err := chainEventBus.Subscribe(context.Background(), subscriberName, types.EventQueryTx, len(transactionHashes))
 	if err != nil {
 		resultsCh <- TransactionEventResult{Error: err}
 		return
@@ -3374,7 +3374,11 @@ func (b *MultiplexBackend) localTransactionEventsConsumer(
 	b.txSubscribers[chainID] = subscriberName
 	for {
 		select {
-		case tx := <-txsSub.Out():
+		case tx, ok := <-txsSub.Out():
+			if !ok {
+				return
+			}
+
 			// Interpret received transaction result
 			txResult := tx.Data().(types.EventDataTx).TxResult
 			rawTx := types.Tx(txResult.Tx)
