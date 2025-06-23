@@ -842,7 +842,8 @@ func (b *MultiplexBackend) OnStop() {
 		b.logger.Debug("node backend already closed",
 			"id", b.reactor.GetNodeKey().ID(),
 		)
-		//return nil
+		b.relayMtx.Unlock()
+		return
 	}
 	// TODO(midas): remove debug logs
 	b.logger.Debug("Shutting down node backend",
