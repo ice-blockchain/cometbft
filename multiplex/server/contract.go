@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"io"
 
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/p2p"
@@ -15,13 +14,14 @@ import (
 // A server instance must be started before replication can happen and
 // before broadcast operations can be forwarded to the [client.Client].
 type Server interface {
-	io.Closer
+	//io.Closer
 
 	// GetAcceptor returns the injected [client.Acceptor] implementation.
 	GetAcceptor() client.Acceptor
 
 	// MustStart executes a replication backend.
-	MustStart(ctx context.Context)
+	Start() error
+	Stop() error
 }
 
 // ----------------------------------------------------------------------------

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/ice-blockchain/cometbft/libs/service"
 	"net"
 	"net/http"
 	"runtime/debug"
@@ -113,6 +114,7 @@ type TransactionEventResult struct {
 // Additionally, an internal [client.Acceptor] instance may be used to further
 // extend the broadcast process, e.g. to call RollbackTx.
 type MultiplexBackend struct {
+	*service.BaseService
 	// A mutex is locked for reactor and eventSwitch updates.
 	relayMtx sync.Mutex
 
@@ -268,7 +270,6 @@ func NewServer(
 
 		logger: nodeLogger,
 	}
-
 	// Enable overwrite of optional properties
 	for _, option := range options {
 		option(server)
@@ -285,7 +286,7 @@ func NewServer(
 	if server.metrics != nil {
 		defer addTimeSample(server.metrics.InitDurationSeconds, initTime)()
 	}
-
+	server.BaseService = service.NewBaseService(ctx, server.logger, "backend", server)
 	return server, nil
 }
 
@@ -582,7 +583,7 @@ func (b *MultiplexBackend) shutdownOnPanic() {
 // replicated chain.
 //
 // MustStart implements [server.Server]
-func (b *MultiplexBackend) MustStart(ctx context.Context) {
+func (b *MultiplexBackend) OnStart(ctx context.Context) error {
 	startTime := time.Now()
 
 	if b.metrics != nil {
@@ -826,6 +827,7 @@ func (b *MultiplexBackend) MustStart(ctx context.Context) {
 		"id", b.reactor.GetNodeKey().ID(),
 		"len", b.reactor.Size(),
 	)
+	return nil
 }
 
 // Close stops the multiplex reactor and listeners, as well
@@ -833,14 +835,14 @@ func (b *MultiplexBackend) MustStart(ctx context.Context) {
 // The relayMtx mutex is locked during execution.
 //
 // Close implements io.Closer
-func (b *MultiplexBackend) Close() error {
+func (b *MultiplexBackend) OnStop() {
 	// Lock the mutex to complete shutdown gracefully
 	b.relayMtx.Lock()
 	if b.closed {
 		b.logger.Debug("node backend already closed",
 			"id", b.reactor.GetNodeKey().ID(),
 		)
-		return nil
+		//return nil
 	}
 	// TODO(midas): remove debug logs
 	b.logger.Debug("Shutting down node backend",
@@ -909,7 +911,7 @@ func (b *MultiplexBackend) Close() error {
 		}
 	}
 
-	return nil
+	//return nil
 }
 
 // OnBroadcastError updates a runtime completion status and attaches

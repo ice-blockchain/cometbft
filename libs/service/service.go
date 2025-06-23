@@ -116,15 +116,21 @@ func NewBaseService(ctx context.Context, logger log.Logger, name string, impl Se
 	if logger == nil {
 		logger = log.NewNopLogger()
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	return &BaseService{
-		Logger:    logger,
-		name:      name,
-		quit:      make(chan struct{}),
-		impl:      impl,
-		ctxCancel: cancel,
-		ctx:       ctx,
+	bs := &BaseService{
+		Logger: logger,
+		name:   name,
+		quit:   make(chan struct{}),
+		impl:   impl,
 	}
+	go func() {
+		<-ctx.Done()
+		err := bs.Stop()
+		if bs.Logger != nil {
+			bs.Logger.Error("Failed to close ", "err", err, "service", bs.name)
+		}
+	}()
+	bs.ctx, bs.ctxCancel = context.WithCancel(ctx)
+	return bs
 }
 
 // SetLogger implements Service by setting a logger.
@@ -187,6 +193,7 @@ func (bs *BaseService) Stop() error {
 			bs.impl)
 		bs.impl.OnStop()
 		close(bs.quit)
+		bs.ctxCancel()
 		return nil
 	}
 	bs.Logger.Debug("service stop",

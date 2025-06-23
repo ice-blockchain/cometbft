@@ -95,7 +95,7 @@ func (t *timeoutTicker) stopTimer() {
 func (t *timeoutTicker) timeoutRoutine(ctx context.Context) {
 	t.Logger.Debug("Starting timeout routine")
 	var ti timeoutInfo
-	for ctx.Err() == nil {
+	for {
 		select {
 		case newti := <-t.tickChan:
 			t.Logger.Debug("Received tick", "old_ti", ti, "new_ti", newti)

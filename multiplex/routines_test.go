@@ -49,7 +49,7 @@ func TestMultiplexRoutinesNodeReplRequestEmptyRelays(t *testing.T) {
 
 	// Start the node backends
 	for i := 0; i < len(servers); i++ {
-		servers[i].MustStart(t.Context())
+		servers[i].Start()
 	}
 
 	testRelayAddrs := []*server.RelayAddress{}
