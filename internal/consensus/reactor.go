@@ -143,12 +143,8 @@ func (conR *Reactor) OnStart() error {
 	}
 
 	// Ensure that we have PeerState for all peers added during sync.
-	conR.pendingPeers.Range(func(key, _ interface{}) bool {
-		value, _ := conR.pendingPeers.Load(key)
-		pendingPeer := value.(*p2p.PeerImpl)
-
-		pfr := conR.InitPeer(pendingPeer)
-		conR.AddPeer(pfr)
+	conR.pendingPeers.Range(func(key, value interface{}) bool {
+		conR.AddPeer(value.(*p2p.PeerImpl))
 		return true
 	})
 	conR.pendingPeers.Clear()
@@ -598,7 +594,7 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 			ps.ApplyHasProposalBlockPartMessage(msg)
 		case *VoteSetMaj23Message:
 			// Get the updated round state as our view may be stale
-			rs := conR.conS.GetRoundState()
+			rs := conR.conS.getRoundState()
 			height, votes := rs.Height, rs.Votes
 			if height != msg.Height {
 				return
@@ -664,7 +660,7 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 		switch msg := msg.(type) {
 		case *VoteMessage:
 			// Get the updated round state as our view may be stale
-			rs := conR.conS.GetRoundState()
+			rs := conR.conS.getRoundState()
 
 			height, valSize, lastCommitSize := rs.Height, rs.Validators.Size(), rs.LastCommit.Size()
 			ps.SetHasVoteFromPeer(msg.Vote, height, valSize, lastCommitSize)
@@ -684,7 +680,7 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 		switch msg := msg.(type) {
 		case *VoteSetBitsMessage:
 			// Get the updated round state as our view may be stale
-			rs := conR.conS.GetRoundState()
+			rs := conR.conS.getRoundState()
 
 			height, votes := rs.Height, rs.Votes
 
