@@ -1188,10 +1188,10 @@ func (reactor *Reactor) OnActivateRuntime(chainID string) {
 	idleManager.OnActivate(chainID)
 }
 
-// OnCompleteRuntime executes the OnActivate callback to register chainID
-// in our runtime registry.
+// OnCompleteRuntime executes the OnComplete callback to mark chainID
+// completed in our runtime registry.
 func (reactor *Reactor) OnCompleteRuntime(chainID string) {
-	// Activate this runtime in our runtime registry.
+	// Complete this runtime in our runtime registry.
 	idleManager := reactor.GetRuntimeRegistry()
 	idleManager.OnComplete(chainID)
 }
@@ -1313,7 +1313,8 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			// Activate this runtime in our runtime registry.
 			//
 			// In case of conR.WaitSync, OnComplete is called by conR.SwitchToConsensus,
-			// otherwise OnComplete is called by memR.processTxs.
+			// otherwise OnComplete is called by memR.sendChainReplicationComplete when
+			// transactions are successfully processed with memR.processTxs.
 			r.OnActivateRuntime(replRequest.ChainID)
 
 			// A ChainReplicationResponse will be sent to the source peer.

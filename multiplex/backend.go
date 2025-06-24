@@ -1105,6 +1105,7 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 					"waiting_txes", txHashesToHex(txesWaiting...),
 					"num_completed", numCompleted,
 					"tx_batch", transactionHashes,
+					"err", err,
 				)
 				return
 			}
@@ -3051,7 +3052,7 @@ func (b *MultiplexBackend) remoteAckTransactionConsumer(
 
 		case <-ctx.Done():
 			err := fmt.Errorf(
-				"process timed out waiting for remote ack messages for tx: %s", consumerTxHash)
+				"process timed out waiting for ack messages (remote) for tx: %s", consumerTxHash)
 
 			resultsCh <- AckTransactionResult{Error: err}
 			return
@@ -3162,7 +3163,7 @@ func (b *MultiplexBackend) localAckTransactionConsumer(
 
 		case <-ctx.Done():
 			err := fmt.Errorf(
-				"process timed out waiting for incoming ack messages for tx: %s", consumerTxHash)
+				"process timed out waiting for ack messages (local) for tx: %s", consumerTxHash)
 
 			resultsCh <- AckTransactionResult{Error: err}
 			return
@@ -3213,7 +3214,7 @@ func (b *MultiplexBackend) remoteRuntimeUpdatesConsumer(
 
 		case <-ctx.Done():
 			err := fmt.Errorf(
-				"process timed out waiting for remote runtime status for: %s", chainID)
+				"process timed out waiting for runtime status (remote) for: %s", chainID)
 
 			resultsCh <- RuntimeUpdateResult{Error: err}
 			return
@@ -3315,7 +3316,7 @@ func (b *MultiplexBackend) localRuntimeUpdatesConsumer(
 
 		case <-ctx.Done():
 			err := fmt.Errorf(
-				"process timed out waiting for runtime status updates for %s", chainID)
+				"process timed out waiting for runtime status (local) for %s", chainID)
 
 			resultsCh <- RuntimeUpdateResult{Error: err}
 			return
