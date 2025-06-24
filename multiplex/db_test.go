@@ -113,7 +113,7 @@ func TestMultiplexDBNewMultiplexDB(t *testing.T) {
 		failChainRegistry := makeChainRegistryFromConfig(t, conf.MultiplexConfig)
 		_, err := mx.NewMultiplexDB(&mx.ChainDBContext{
 			DBContext: config.DBContext{ID: "state", Config: conf},
-		}, failChainRegistry)
+		}, failChainRegistry.GetChains())
 		assert.Error(t, err, "should forward error given invalid ChainID: "+failCaseChainID)
 	}
 
@@ -134,7 +134,7 @@ func TestMultiplexDBNewMultiplexDB(t *testing.T) {
 	testChainRegistry := makeChainRegistryFromConfig(t, conf.MultiplexConfig)
 	multiplex, err := mx.NewMultiplexDB(&mx.ChainDBContext{
 		DBContext: config.DBContext{ID: "state", Config: conf},
-	}, testChainRegistry)
+	}, testChainRegistry.GetChains())
 
 	assert.NoError(t, err, "should not error given valid configuration")
 	assert.Len(t, multiplex, len(exampleChains), "should create correct number of databases")

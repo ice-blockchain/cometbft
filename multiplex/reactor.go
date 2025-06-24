@@ -1820,11 +1820,21 @@ func (r *Reactor) GetRemoteDiscoveryAddress(
 //
 // CAUTION: This method spawns one new goroutine for every replicated chain.
 func (reactor *Reactor) OnStart() error {
+	reactor.logger.Debug("Starting multiplex reactor",
+		"num_networks", reactor.Size(),
+	)
+
 	nodeConfig := reactor.GetNodeConfig()
 	chainRegistry := reactor.GetChainRegistry()
 
-	// Initialize filesystem directory structure
-	multiplexFS, err := NewMultiplexFS(nodeConfig, chainRegistry)
+	// We should initialize filesystem only for currently ACTIVE runtimes.
+	activeRuntimes := reactor.runtimeRegistry.ActiveRuntimes()
+	activeChainIds := []string{}
+	for chainID := range activeRuntimes {
+		activeChainIds = append(activeChainIds, chainID)
+	}
+
+	multiplexFS, err := NewMultiplexFS(nodeConfig, activeChainIds)
 	if err != nil {
 		return err
 	}
@@ -1838,10 +1848,6 @@ func (reactor *Reactor) OnStart() error {
 	if err := reactor.loadMultiplexState(); err != nil {
 		return err
 	}
-
-	reactor.logger.Debug("Starting multiplex reactor",
-		"num_networks", reactor.Size(),
-	)
 
 	// For each ChainID, we run a node with a distinct listen address
 	chainIds := reactor.GetNetworks()
@@ -2182,64 +2188,6 @@ func (reactor *Reactor) initMultiplexProviders(
 
 		return multiplexByName
 	}
-}
-
-// initMultiplexDatabases initializes database tables for each replicated
-// chain with table names: blockstore, state, tx_index and evidence.
-//
-// This method registers instances in the multiplexRegistry:
-// - `database/blockstore`: the blockstore databases.
-// - `database/state`: the state machine databases.
-// - `database/tx_index`: the tx_index databases.
-// - `database/evidence`: the evidence databases.
-//
-// TODO(midas): refactoring with MakeNetworkDatabases.
-func (reactor *Reactor) initMultiplexDatabases() error {
-	nodeConfig := reactor.GetNodeConfig()
-	chainRegistry := reactor.GetChainRegistry()
-
-	// Create blockstore databases
-	bsMultiplexDB, err := NewMultiplexDB(&ChainDBContext{
-		DBContext: config.DBContext{ID: "blockstore", Config: nodeConfig},
-	}, chainRegistry)
-	if err != nil {
-		return err
-	}
-
-	// Create state databases
-	stateMultiplexDB, err := NewMultiplexDB(&ChainDBContext{
-		DBContext: config.DBContext{ID: "state", Config: nodeConfig},
-	}, chainRegistry)
-	if err != nil {
-		return err
-	}
-
-	// Create indexer databases
-	indexerMultiplexDB, err := NewMultiplexDB(&ChainDBContext{
-		DBContext: config.DBContext{ID: "tx_index", Config: nodeConfig},
-	}, chainRegistry)
-	if err != nil {
-		return err
-	}
-
-	// Create evidence databases
-	evidenceMultiplexDB, err := NewMultiplexDB(&ChainDBContext{
-		DBContext: config.DBContext{ID: "evidence", Config: nodeConfig},
-	}, chainRegistry)
-	if err != nil {
-		return err
-	}
-
-	// Register the database instances with the Reactor (thread-safe)
-	chainIds := reactor.GetNetworks()
-	for _, chainID := range chainIds {
-		reactor.RegisterInstance(InstanceKeyDatabaseBlock, chainID, bsMultiplexDB[chainID])
-		reactor.RegisterInstance(InstanceKeyDatabaseState, chainID, stateMultiplexDB[chainID])
-		reactor.RegisterInstance(InstanceKeyDatabaseIndex, chainID, indexerMultiplexDB[chainID])
-		reactor.RegisterInstance(InstanceKeyDatabaseEvidence, chainID, evidenceMultiplexDB[chainID])
-	}
-
-	return nil
 }
 
 // loadMultiplexState opens the multiplex databases for multiple

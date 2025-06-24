@@ -399,7 +399,7 @@ func ResetTestMultiplexNodeWithConfigAndPorts(
 	nodeCfg.Consensus.CreateEmptyBlocks = true // when using *Node
 
 	// Make sure we have /data and /config
-	_, err := mx.NewMultiplexFS(nodeCfg, makeChainRegistryFromConfig(tb, mxConfig))
+	_, err := mx.NewMultiplexFS(nodeCfg, makeChainRegistryFromConfig(tb, mxConfig).GetChains())
 	require.NoError(tb, err, "should create filesystem structure for multiplex")
 
 	// Make sure we have a *multi-doc* genesis file (GenesisDocSet)

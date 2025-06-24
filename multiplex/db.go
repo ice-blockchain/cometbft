@@ -38,7 +38,7 @@ type MultiplexDB map[string]*ChainDB
 // it is organized under a user address parent folder in the `data/` folder.
 func NewMultiplexDB(
 	ctx *ChainDBContext,
-	chainRegistry ChainRegistry,
+	chainIds []string,
 ) (multiplex MultiplexDB, err error) {
 	dbType := dbm.BackendType(ctx.Config.DBBackend)
 
@@ -46,7 +46,6 @@ func NewMultiplexDB(
 	multiplex = MultiplexDB{}
 
 	// Storage is located in ChainID subfolders per each user
-	chainIds := chainRegistry.GetChains()
 	for _, chainID := range chainIds {
 		extChainID, err := NewExtendedChainIDFromLegacy(chainID)
 		if err != nil {

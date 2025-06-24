@@ -3,9 +3,66 @@ package multiplex
 import (
 	"fmt"
 
+	"github.com/ice-blockchain/cometbft/config"
 	sm "github.com/ice-blockchain/cometbft/state"
 	bs "github.com/ice-blockchain/cometbft/store"
 )
+
+// initMultiplexDatabases initializes database tables for each replicated
+// chain with table names: blockstore, state, tx_index and evidence.
+//
+// This method registers instances in the multiplexRegistry:
+// - `database/blockstore`: the blockstore databases.
+// - `database/state`: the state machine databases.
+// - `database/tx_index`: the tx_index databases.
+// - `database/evidence`: the evidence databases.
+//
+// TODO(midas): refactoring with MakeNetworkDatabases.
+func (reactor *Reactor) InitMultiplexDatabases(chainIds []string) error {
+	nodeConfig := reactor.GetNodeConfig()
+
+	// Create blockstore databases
+	bsMultiplexDB, err := NewMultiplexDB(&ChainDBContext{
+		DBContext: config.DBContext{ID: "blockstore", Config: nodeConfig},
+	}, chainIds)
+	if err != nil {
+		return err
+	}
+
+	// Create state databases
+	stateMultiplexDB, err := NewMultiplexDB(&ChainDBContext{
+		DBContext: config.DBContext{ID: "state", Config: nodeConfig},
+	}, chainIds)
+	if err != nil {
+		return err
+	}
+
+	// Create indexer databases
+	indexerMultiplexDB, err := NewMultiplexDB(&ChainDBContext{
+		DBContext: config.DBContext{ID: "tx_index", Config: nodeConfig},
+	}, chainIds)
+	if err != nil {
+		return err
+	}
+
+	// Create evidence databases
+	evidenceMultiplexDB, err := NewMultiplexDB(&ChainDBContext{
+		DBContext: config.DBContext{ID: "evidence", Config: nodeConfig},
+	}, chainIds)
+	if err != nil {
+		return err
+	}
+
+	// Register the database instances with the Reactor (thread-safe)
+	for _, chainID := range chainIds {
+		reactor.RegisterInstance(InstanceKeyDatabaseBlock, chainID, bsMultiplexDB[chainID])
+		reactor.RegisterInstance(InstanceKeyDatabaseState, chainID, stateMultiplexDB[chainID])
+		reactor.RegisterInstance(InstanceKeyDatabaseIndex, chainID, indexerMultiplexDB[chainID])
+		reactor.RegisterInstance(InstanceKeyDatabaseEvidence, chainID, evidenceMultiplexDB[chainID])
+	}
+
+	return nil
+}
 
 // InitMultiplexStates loads a state multiplex using the reactor's
 // instance provider to retrieve a state database instance by ChainID.
@@ -21,15 +78,14 @@ import (
 // This method also registers instances in the multiplexRegistry:
 // - `state`: the [sm.State] state machine instances.
 // - `stateStore`: the [sm.Store] instance attached to the database.
-func (reactor *Reactor) InitMultiplexStates() error {
-	if !reactor.HasNetworks() {
+func (reactor *Reactor) InitMultiplexStates(chainIds []string) error {
+	if len(chainIds) == 0 {
 		// Nothing to do for now
 		return nil
 	}
 
 	// Used for database key layouts
 	globalConfig := reactor.GetNodeConfig()
-	chainIds := reactor.GetNetworks()
 
 	// Used for retrieving GenesisDoc instance by chain
 	genesisDocProvider := reactor.GetGenesisProvider()
@@ -85,8 +141,6 @@ func (reactor *Reactor) InitMultiplexStates() error {
 			}
 		}
 
-		// TODO(midas): probably no need to store the state machine in RAM when relay is IDLE
-
 		// Prepare registerable instance mapped to ChainID
 		reactor.RegisterInstance(InstanceKeyState, chainID, stateMachine)
 		reactor.RegisterInstance(InstanceKeyStateStore, chainID, stateStore)
@@ -105,15 +159,14 @@ func (reactor *Reactor) InitMultiplexStates() error {
 //
 // This method also registers instances in the multiplexRegistry:
 // - `blockStore`: the [bs.BlockStore] instance attached to the database.
-func (reactor *Reactor) InitMultiplexBlockStores() error {
-	if !reactor.HasNetworks() {
+func (reactor *Reactor) InitMultiplexBlockStores(chainIds []string) error {
+	if len(chainIds) == 0 {
 		// Nothing to do for now
 		return nil
 	}
 
 	// Used for database key layouts
 	globalConfig := reactor.GetNodeConfig()
-	chainIds := reactor.GetNetworks()
 
 	// Used for retrieving blockstore database instance by chain
 	blockStoreProvider := reactor.GetInstanceProvider(InstanceKeyDatabaseBlock)
@@ -128,9 +181,6 @@ func (reactor *Reactor) InitMultiplexBlockStores() error {
 			bs.WithCompaction(globalConfig.Storage.Compact, globalConfig.Storage.CompactionInterval),
 			bs.WithDBKeyLayout(globalConfig.Storage.ExperimentalKeyLayout),
 		)
-
-		// TODO(midas): probably no need to store the state machine in RAM when relay is IDLE
-		// TODO(midas): BlockStore instances to be created on-the-fly as well.
 
 		// Prepare registerable instance mapped to ChainID
 		reactor.RegisterInstance(InstanceKeyBlockStore, chainID, blockStore)

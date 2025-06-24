@@ -1746,3 +1746,12 @@ type MultiplexConfig struct {
 	// A listener for this port is created in [MultiplexBackend#MustStart].
 	DiscoveryPort uint16 `mapstructure:"discovery_port"`
 }
+
+// GetNetworks returns a flattened string-slice of ChainID values.
+func (c MultiplexConfig) GetNetworks() (out []string) {
+	out = []string{}
+	for _, chainIds := range c.UserChains {
+		out = append(out, chainIds...)
+	}
+	return // out
+}

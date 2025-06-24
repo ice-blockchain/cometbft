@@ -109,8 +109,15 @@ func initMultiplexFilesWithConfig(withCfg *config.Config) error {
 		withCfg.ChainSeeds = chainSeeds
 	}
 
+	// TODO(midas): Adding all ChainIDs here is for backwards compatibility.
+	// TODO(midas): This command may be removed OR adapted for latest runtime impl.
+	allChainIds := []string{}
+	for _, chainIds := range config.UserChains {
+		allChainIds = append(allChainIds, chainIds...)
+	}
+
 	// Make sure we have /data and /config
-	_, err = mx.NewMultiplexFS(withCfg)
+	_, err = mx.NewMultiplexFS(withCfg, allChainIds)
 	if err != nil {
 		return fmt.Errorf("could not create multiplex filesystem: %w", err)
 	}

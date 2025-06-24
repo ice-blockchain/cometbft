@@ -88,7 +88,7 @@ func TestMultiplexReactorStateInitMultiplexStatesEmptyState(t *testing.T) {
 	}
 
 	// Execute the method being tested
-	err := reactor.InitMultiplexStates()
+	err := reactor.InitMultiplexStates(testChainIds)
 	assert.NoError(t, err, "should not error given empty state in database")
 
 	statesProvider := reactor.GetInstanceProvider(mx.InstanceKeyState)
@@ -161,7 +161,7 @@ func TestMultiplexReactorStateInitMultiplexStatesFilledState(t *testing.T) {
 	}
 
 	// Execute the method being tested
-	err := reactor.InitMultiplexStates()
+	err := reactor.InitMultiplexStates(testChainIds)
 	assert.NoError(t, err, "should not error given filled state in database")
 
 	statesProvider := reactor.GetInstanceProvider(mx.InstanceKeyState)
@@ -192,15 +192,16 @@ func TestMultiplexReactorStateInitMultiplexBlockStores(t *testing.T) {
 	databaseProvider := reactor.GetInstanceProvider(mx.InstanceKeyDatabaseBlock)
 	require.NotNil(t, databaseProvider, "should return multiplex map of database instances")
 
+	testChainIds := reactor.GetNetworks()
+
 	// Execute the method being tested
-	err := reactor.InitMultiplexBlockStores()
+	err := reactor.InitMultiplexBlockStores(testChainIds)
 	assert.NoError(t, err, "should not error given empty state in database")
 
 	blockStoresProvider := reactor.GetInstanceProvider(mx.InstanceKeyBlockStore)
 	assert.NotNil(t, blockStoresProvider, "should not error getting states provider")
 
 	// Do we have all blockStore databases?
-	testChainIds := reactor.GetNetworks()
 	for _, chainID := range testChainIds {
 		// Type-assertion makes sure we have correct type
 		chainBlockStore := blockStoresProvider(chainID).(*bs.BlockStore)

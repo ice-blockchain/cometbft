@@ -845,6 +845,8 @@ func (reactor *Reactor) MakeNetworkStateMachine(
 			"could not load state machine from genesis doc: %w", err)
 	}
 
+	// TODO(midas): Save is necessary only if stateMachine.IsEmpty() before above load.
+
 	// Persist the state machine as created from genesis doc
 	if err := stateStore.Save(stateMachine); err != nil {
 		return sm.State{}, nil, nil, fmt.Errorf(

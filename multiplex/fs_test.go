@@ -30,7 +30,7 @@ func TestMultiplexFSDisabled(t *testing.T) {
 	defer os.RemoveAll(rootDir)
 
 	emptyChainRegistry := makeChainRegistryFromConfig(t, config.EmptyMultiplexConfig())
-	multiplex, err := mx.NewMultiplexFS(conf, emptyChainRegistry)
+	multiplex, err := mx.NewMultiplexFS(conf, emptyChainRegistry.GetChains())
 	assert.NoError(t, err)
 	assert.Len(t, multiplex, 1) // default disables multiplex
 
@@ -65,7 +65,7 @@ func TestMultiplexFSNewMultiplexFS(t *testing.T) {
 		conf.SetRoot(rootDir)
 
 		failChainRegistry := makeChainRegistryFromConfig(t, conf.MultiplexConfig)
-		_, err := mx.NewMultiplexFS(conf, failChainRegistry)
+		_, err := mx.NewMultiplexFS(conf, failChainRegistry.GetChains())
 		assert.Error(t, err, "should forward error given invalid configuration")
 	}
 
@@ -84,7 +84,7 @@ func TestMultiplexFSNewMultiplexFS(t *testing.T) {
 	conf.SetRoot(rootDir)
 
 	testChainRegistry := makeChainRegistryFromConfig(t, conf.MultiplexConfig)
-	multiplex, err := mx.NewMultiplexFS(conf, testChainRegistry)
+	multiplex, err := mx.NewMultiplexFS(conf, testChainRegistry.GetChains())
 
 	assert.NoError(t, err, "should not error given valid configuration")
 	assert.Len(t, multiplex, len(exampleChains), "should create correct number of paths")
