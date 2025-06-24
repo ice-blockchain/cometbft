@@ -802,7 +802,7 @@ func (b *MultiplexBackend) OnStart(ctx context.Context) error {
 		)
 
 		for _, replayingChainID := range replayingChainIds {
-			if err := b.StartConsensusInstance(context.Background(), replayingChainID); err != nil {
+			if err := b.StartConsensusInstance(replayingChainID); err != nil {
 				b.errorsCh <- fmt.Errorf(
 					"error activating node runtime for %s: %w", replayingChainID, err,
 				)
@@ -2407,9 +2407,9 @@ func (b *MultiplexBackend) RemoveTransactions(
 //
 // StartConsensusInstance implements [server.Backend].
 func (b *MultiplexBackend) StartConsensusInstance(
-	ctx context.Context,
 	chainID string,
 ) error {
+	ctx := b.Context()
 	clogger := b.logger.With("chain_id", chainID)
 
 	if err := b.reactor.StartConsensusInstanceReactors(ctx,

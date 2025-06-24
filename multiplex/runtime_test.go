@@ -1,7 +1,6 @@
 package multiplex_test
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -674,7 +673,7 @@ func TestMultiplexRuntimeInjectNewRuntime(t *testing.T) {
 	// i.e.: testReactor.SetLogger(cmtlog.TestingLogger())
 
 	// Act
-	runtimeErr := testReactor.InjectNewRuntime(context.Background(), injectChainID)
+	runtimeErr := testReactor.InjectNewRuntime(t.Context(), injectChainID)
 	assert.NoError(t, runtimeErr, "should spawn parallel process for node runtime")
 }
 
@@ -704,7 +703,7 @@ func TestMultiplexRuntimeInjectNewRuntimeWithOthers(t *testing.T) {
 	// i.e.: testReactor.SetLogger(cmtlog.TestingLogger())
 
 	// Act
-	runtimeErr := testReactor.InjectNewRuntime(context.Background(), injectChainID)
+	runtimeErr := testReactor.InjectNewRuntime(t.Context(), injectChainID)
 	assert.NoError(t, runtimeErr, "should spawn parallel process for node runtime")
 
 	waitDuration := 2 * time.Second

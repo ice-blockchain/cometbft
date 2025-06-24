@@ -1,7 +1,6 @@
 package multiplex_test
 
 import (
-	"context"
 	"fmt"
 	"math/rand"
 	"net/http"
@@ -117,7 +116,7 @@ func TestMultiplexNodeNewLegacyNodeMultiplex(t *testing.T) {
 	// Create the [node.Node] instance, using [node.NewNode]
 	// nil-Reactor instance is ignored
 	testMultiplex, _, err := mx.NewLegacyNodeMultiplex(
-		context.Background(),
+		t.Context(),
 		globalCfg,
 		makeRandomNodeKey(),
 		cmtlog.NewNopLogger(),
@@ -178,7 +177,7 @@ func TestMultiplexNodeNewNodesMultiplexFallback(t *testing.T) {
 	// The multiplex configuration will be ignored due to disabled flag.
 	// Should create the [node.Node] instance, using [node.NewNode]
 	testMultiplex, _, err := mx.NewNodesMultiplex(
-		context.Background(),
+		t.Context(),
 		&client.DefaultAcceptor{},
 		globalCfg,
 		cmtlog.NewNopLogger(),
@@ -223,7 +222,7 @@ func TestMultiplexNodeNewNodesMultiplex(t *testing.T) {
 	// The multiplex configuration will be ENABLED.
 	// Should create the [node.Node] instance using [mx.NewNodesMultiplex]
 	_, testReactor, err := mx.NewNodesMultiplex(
-		context.Background(),
+		t.Context(),
 		&client.DefaultAcceptor{},
 		globalCfg,
 		cmtlog.NewNopLogger(),
@@ -563,7 +562,7 @@ func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog
 	// The multiplex configuration will be ENABLED.
 	// Should create the [node.Node] instance using [mx.NewNodesMultiplex]
 	_, testReactor, err := mx.NewNodesMultiplex(
-		context.Background(),
+		tb.Context(),
 		&client.DefaultAcceptor{},
 		globalCfg,
 		customLogger,
@@ -626,7 +625,7 @@ func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog
 
 			// Must start CONSENSUS, MEMPOOL, etc.
 			consensusErr := testReactor.StartConsensusInstanceReactors(
-				context.Background(),
+				tb.Context(),
 				chainID,
 				false, // sendStatusToPeers
 			)
@@ -646,7 +645,7 @@ func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog
 		stoppingServers := false
 		for i, withChainID := range testChainIds {
 			withReactor.StopConsensusInstanceReactors(
-				context.Background(),
+				tb.Context(),
 				withChainID,
 			)
 
@@ -711,14 +710,14 @@ func assertWaitForNodesMultiplexToProduceBlocks(
 		go func(the_chain string, the_node *cmtnode.Node, maxBlocks int) {
 			// Wait for the node to produce blocks
 			blocksSub, err := the_node.EventBus().Subscribe(
-				context.Background(),
+				tb.Context(),
 				subscriberName,
 				types.EventQueryNewBlock,
 			)
 			assert.NoError(tb, err)
 
 			defer the_node.EventBus().Unsubscribe(
-				context.Background(),
+				tb.Context(),
 				subscriberName,
 				types.EventQueryNewBlock,
 			)

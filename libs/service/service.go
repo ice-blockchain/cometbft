@@ -122,13 +122,6 @@ func NewBaseService(ctx context.Context, logger log.Logger, name string, impl Se
 		quit:   make(chan struct{}),
 		impl:   impl,
 	}
-	go func() {
-		<-ctx.Done()
-		err := bs.Stop()
-		if bs.Logger != nil {
-			bs.Logger.Error("Failed to close ", "err", err, "service", bs.name)
-		}
-	}()
 	bs.ctx, bs.ctxCancel = context.WithCancel(ctx)
 	return bs
 }
@@ -160,6 +153,16 @@ func (bs *BaseService) Start() error {
 			atomic.StoreUint32(&bs.started, 0)
 			return err
 		}
+		go func() {
+			select {
+			case <-bs.ctx.Done():
+			case <-bs.quit:
+			}
+			err = bs.Stop()
+			if bs.Logger != nil && err != nil && err != ErrAlreadyStopped {
+				bs.Logger.Error("Failed to close ", "err", err, "service", bs.name)
+			}
+		}()
 		return nil
 	}
 	bs.Logger.Debug("service start",

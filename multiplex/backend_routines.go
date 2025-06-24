@@ -256,7 +256,7 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 // then injects a node runtime using [Reactor#MustInjectNodeRuntime].
 func (b *MultiplexBackend) DefaultNetworksCreatorRoutine() server.NetworksCreatorFn {
 	return func(
-		ctx context.Context,
+		clientCtx context.Context,
 		relaysByChain map[string][]*server.RelayAddress,
 		missingChains []string,
 		validatorsByChain map[string][]string,
@@ -330,7 +330,7 @@ func (b *MultiplexBackend) DefaultNetworksCreatorRoutine() server.NetworksCreato
 
 				// Inject a *running* node.Node for the new network.
 				// TODO(midas): currently not passing any node options.
-				return b.reactor.InjectNewRuntime(ctx, newChainID)
+				return b.reactor.InjectNewRuntime(b.Context(), newChainID)
 			}()
 			if err != nil {
 				return fmt.Errorf(

@@ -67,7 +67,7 @@ type Backend interface {
 
 	// StartConsensusInstance should start the consensus reactors,
 	// including mempool, blocksync, consensus and evidence reactors.
-	StartConsensusInstance(ctx context.Context, chainID string) error
+	StartConsensusInstance(chainID string) error
 
 	// UpdateMultiNetworkNodeInfo should update the NodeInfo pointer and
 	// to permit communication of messages related to new, i.e. unknown
