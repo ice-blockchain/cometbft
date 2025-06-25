@@ -33,17 +33,15 @@ func TestMultiplexReactorConsensusPrepareConsensusInstanceWithReactor(t *testing
 		assert.NoError(t, err)
 	}()
 
+	testChainIds := reactor.GetNetworks()
+
 	// Start the reactor
 	err := reactor.Start()
 	require.NoError(t, err, "should start the multiplex reactor")
 
-	err = reactor.WaitForNetworks()
-	assert.NoError(t, err, "should not error while waiting for networks")
-
 	// Start an ABCI client
-	chainIds := reactor.GetNetworks()
 	abciClient := proxy.NewMultiplexAppConn(
-		chainIds,
+		testChainIds,
 		proxy.DefaultClientCreator(globalCfg.ProxyApp, globalCfg.ABCI, globalCfg.DBDir()),
 		proxy.PrometheusMetrics(globalCfg.Instrumentation.Namespace+"_"+string(reactor.GetNodeKey().ID())),
 	)
@@ -54,8 +52,20 @@ func TestMultiplexReactorConsensusPrepareConsensusInstanceWithReactor(t *testing
 	// Reactor: ABCI; ABCI: Reactor.
 	reactor.SetABCIClient(abciClient)
 
+	// Also setup node listeners, this mimics a runtime allocation.
+	for _, chainID := range testChainIds {
+		allocErr := reactor.AllocateNetwork(chainID)
+		require.NoError(t, allocErr, "should initialize network")
+
+		createErr := reactor.InjectNewNetwork(chainID, []string{})
+		require.NoError(t, createErr, "should inject network")
+
+		injectErr := reactor.InjectNewRuntime(context.Background(), chainID)
+		require.NoError(t, injectErr, "should inject runtime")
+	}
+
 	// Should now be able to do consensus handshake and load state machines
-	for _, chainID := range chainIds {
+	for _, chainID := range testChainIds {
 		err = reactor.PrepareConsensusInstanceWithReactor(context.TODO(), chainID)
 		assert.NoError(t, err, "should not error for consensus handshake")
 	}
@@ -79,13 +89,10 @@ func TestMultiplexReactorConsensusCreateConsensusInstanceReactors(t *testing.T) 
 	err := reactor.Start()
 	require.NoError(t, err, "should start the multiplex reactor")
 
-	err = reactor.WaitForNetworks()
-	assert.NoError(t, err, "should not error while waiting for networks")
-
 	// Start an ABCI client
-	chainIds := reactor.GetNetworks()
+	testChainIds := reactor.GetNetworks()
 	abciClient := proxy.NewMultiplexAppConn(
-		chainIds,
+		testChainIds,
 		proxy.DefaultClientCreator(globalCfg.ProxyApp, globalCfg.ABCI, globalCfg.DBDir()),
 		proxy.NopMetrics(),
 	)
@@ -96,12 +103,24 @@ func TestMultiplexReactorConsensusCreateConsensusInstanceReactors(t *testing.T) 
 	// Reactor: ABCI; ABCI: Reactor.
 	reactor.SetABCIClient(abciClient)
 
+	// Also setup node listeners, this mimics a runtime allocation.
+	for _, chainID := range testChainIds {
+		allocErr := reactor.AllocateNetwork(chainID)
+		require.NoError(t, allocErr, "should initialize network")
+
+		createErr := reactor.InjectNewNetwork(chainID, []string{})
+		require.NoError(t, createErr, "should inject network")
+
+		injectErr := reactor.InjectNewRuntime(context.Background(), chainID)
+		require.NoError(t, injectErr, "should inject runtime")
+	}
+
 	// Uses to retrieve reactors per network
 	servicesProvider := reactor.GetServicesProvider()
 	require.NotNil(t, servicesProvider, "services provider must not be nil")
 
 	// Should now be able to do consensus handshake and load state machines
-	for _, chainID := range chainIds {
+	for _, chainID := range testChainIds {
 		err = reactor.PrepareConsensusInstanceWithReactor(context.TODO(), chainID)
 		assert.NoError(t, err, "should not error for consensus handshake")
 

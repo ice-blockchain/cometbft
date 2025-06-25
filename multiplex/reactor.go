@@ -175,8 +175,7 @@ type Reactor struct {
 	// chainReadyChs contains channels that are opened when node instance
 	// is being started by ChainID. These channels are written on when node
 	// instances have started, inside the [OnStart] method.
-	// Channels are consumed by [WaitForNetworks], by [InjectNewRuntime]
-	// or by [NewNodesMultiplex].
+	// Channels are consumed by [InjectNewRuntime].
 	// This channel is closed by the [OnStop] method.
 	chainReadyMtx sync.RWMutex
 	chainReadyChs map[string]chan bool
@@ -462,6 +461,17 @@ func WithOnIdleCallback(
 func WithRelayInfoTimeout(t time.Duration) func(*Reactor) {
 	return func(r *Reactor) {
 		r.relayInfoTimeout = t
+	}
+}
+
+func ReactorWithActiveRuntimes(chainIds []string) func(*Reactor) {
+	return func(r *Reactor) {
+		// Also setup node listeners, this mimics a runtime allocation.
+		for _, chainID := range chainIds {
+			r.AllocateNetwork(chainID)                        // db, fs, privval
+			r.InjectNewNetwork(chainID, []string{})           // config, genesis, state
+			r.InjectNewRuntime(context.Background(), chainID) // event bus, indexer, p2p
+		}
 	}
 }
 
@@ -1795,30 +1805,12 @@ func (r *Reactor) GetRemoteDiscoveryAddress(
 // ----------------------------------------------------------------------------
 // Reactor implements [cmtlibs.Service]
 
-// OnStart starts the multiplex reactor and must initialize the filesystem and
-// database instances, as well as the block and state stores such that after being
-// started, the reactor can be used to configure the running node services.
+// OnStart starts the multiplex reactor and initializes active node runtimes.
+// A custom deep-copied [*config.Config] is also created here.
 //
-// A custom deep-copied [*config.Config] is prepare for each replicated chain,
-// and when all configuration is ready for a particular network, this method
-// writes a message with the ChainID on its channel `chainReadyCh`.
-//
-// This method registers instances in the multiplexRegistry:
-// - `config`: the configuration overwrite for each network.
-// - `storage`: the filesystem paths for each network.
-// - `state`: the [sm.State] state machine instances (InitMultiplexStates).
-// - `stateStore`: the [sm.Store] instance attached (InitMultiplexStates).
-// - `database/blockstore`: the blockstore databases (initMultiplexDatabases).
-// - `database/state`: the state machine databases (initMultiplexDatabases).
-// - `database/tx_index`: the tx_index databases (initMultiplexDatabases).
-// - `database/evidence`: the evidence databases (initMultiplexDatabases).
-// - `privValidator`: the PrivValidator instance (startNodeListeners).
-//
-// This method also registers services in the servicesRegistry:
-// - `eventBus`: the event bus for block events (startNodeListeners).
-// - `indexers`: the transaction- and block indexers service (startNodeListeners).
-//
-// CAUTION: This method spawns one new goroutine for every replicated chain.
+// CAUTION: This method spawns one new goroutine for every active runtime
+// through the use of [Reactor#InjectNewRuntime]. It will notably start the
+// indexer service, event bus and private validator instances for nodes.
 func (reactor *Reactor) OnStart() error {
 	reactor.logger.Debug("Starting multiplex reactor",
 		"num_networks", reactor.Size(),
@@ -1836,7 +1828,7 @@ func (reactor *Reactor) OnStart() error {
 
 	multiplexFS, err := NewMultiplexFS(nodeConfig, activeChainIds)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to start multiplex reactor; filesystem error: %w", err)
 	}
 
 	// Update the internal storagePaths
@@ -1844,14 +1836,12 @@ func (reactor *Reactor) OnStart() error {
 
 	// Open databases for: state, blockstore, tx_index, evidence
 	// Then load state machines from database or genesis doc
-	// And initialize block stores per replicated chain.
+	// And initialize block stores for active runtimes.
 	if err := reactor.loadMultiplexState(); err != nil {
-		return err
+		return fmt.Errorf("failed to start multiplex reactor; database error: %w", err)
 	}
 
-	// For each ChainID, we run a node with a distinct listen address
-	chainIds := reactor.GetNetworks()
-	for _, chainID := range chainIds {
+	for _, chainID := range activeChainIds {
 		configOverwrite, err := NewConfigOverwrite(
 			nodeConfig,
 			chainRegistry,
@@ -1864,34 +1854,15 @@ func (reactor *Reactor) OnStart() error {
 		reactor.RegisterInstance(InstanceKeyConfig, chainID, configOverwrite)
 		reactor.RegisterInstance(InstanceKeyStorage, chainID, multiplexFS[chainID])
 
-		reactor.chainReadyMtx.Lock()
-		reactor.chainReadyChs[chainID] = make(chan bool, 1)
-		reactor.chainReadyMtx.Unlock()
-
-		// Non-blocking execution using different goroutine
-		// i.e. one goroutine spawned per each replicated chain
-		go func(network string) {
-			// lock the filesystem mutex while creating priv val (fs)
-			reactor.runtimesMutex.Lock()
-			defer reactor.runtimesMutex.Unlock()
-
-			// Start node listeners
-			if err := reactor.startNodeListeners(network); err != nil {
-				reactor.logger.Error(
-					"error starting node runtime",
-					"chain_id", network,
-					"err", err,
-				)
-			}
-
-			reactor.chainReadyMtx.RLock()
-			chainReadyCh := reactor.chainReadyChs[network]
-			reactor.chainReadyMtx.RUnlock()
-
-			// Done starting node listeners
-			// Consumed in [NewNodesMultiplex].
-			chainReadyCh <- true
-		}(chainID)
+		// Starts the node listeners, i.e. event bus, indexer.
+		// Prepares P2P communication transport and address book.
+		if err := reactor.InjectNewRuntime(context.Background(), chainID); err != nil {
+			// Log but don't STOP!
+			reactor.logger.Error("failed to start multiplex reactor; runtime error",
+				"chain_id", chainID,
+				"err", err,
+			)
+		}
 	}
 
 	return nil
@@ -2108,36 +2079,22 @@ func (reactor *Reactor) OnReset() error {
 	return nil
 }
 
-// WaitForNetworks waits for *all* configured networks to be readily configured.
-// This method expects updates on the chainReadyCh private channel for each
-// of the configured replicated chains. A [sync.WaitGroup] is used.
-//
-// TODO(midas): add timeout functionality in case some networks are stuck?
-func (reactor *Reactor) WaitForNetworks() error {
-	reactor.chainReadyMtx.RLock()
-	chainReadyChs := reactor.chainReadyChs
-	reactor.chainReadyMtx.RUnlock()
-
-	var wg sync.WaitGroup
-	wg.Add(len(chainReadyChs))
-
-	// Waits for all nodes to be configured
-	for _, chainReadyCh := range chainReadyChs {
-		go func(ch chan bool) {
-			// The multiplex reactor communicates the ChainID on a channel
-			// to tell about the readiness of an individual network config
-			<-ch
-			wg.Done() // one network is configured
-		}(chainReadyCh)
-	}
-
-	// Waits for all networks to be ready (order doesn't matter).
-	wg.Wait()
-	return nil
-}
-
 // -----------------------------------------------------------------------------
 // Reactor private implementation
+
+// waitForInterval waits for i using time.After, or shutdown channels.
+func (reactor *Reactor) waitForInterval(i time.Duration) (waited bool) {
+	for {
+		select {
+		case <-time.After(i):
+			return true
+		case <-reactor.Quit():
+			return false
+		}
+	}
+
+	return false
+}
 
 // initMultiplexProviders initializes the genesisDocProvider around icsGenesisDocSet,
 // and further initializes the services provider and multiplex providereactor.
@@ -2202,22 +2159,29 @@ func (reactor *Reactor) initMultiplexProviders(
 // TODO(midas): add multiplex metric "MultiplexStateLoadDurationSeconds".
 // TODO(midas): refactoring with MakeNetworkStateMachine.
 func (reactor *Reactor) loadMultiplexState() error {
+	// We should start/open databases only for currently ACTIVE runtimes.
+	activeRuntimes := reactor.runtimeRegistry.ActiveRuntimes()
+	activeChainIds := []string{}
+	for chainID := range activeRuntimes {
+		activeChainIds = append(activeChainIds, chainID)
+	}
+
 	// Initialize database tables and instances
-	err := reactor.initMultiplexDatabases()
+	err := reactor.InitMultiplexDatabases(activeChainIds)
 	if err != nil {
 		return err
 	}
 
 	// Load initial state multiplex from database or from genesis docs
 	// Uses "database/state" instances
-	err = reactor.InitMultiplexStates()
+	err = reactor.InitMultiplexStates(activeChainIds)
 	if err != nil {
 		return err
 	}
 
 	// Create a blockstore multiplex around "database/blockstore" instances
 	// Uses "database/blockStore" instances
-	err = reactor.InitMultiplexBlockStores()
+	err = reactor.InitMultiplexBlockStores(activeChainIds)
 	if err != nil {
 		return err
 	}
@@ -2249,6 +2213,21 @@ func (reactor *Reactor) startNodeListeners(chainID string) error {
 	configProvider := reactor.GetInstanceProvider(InstanceKeyConfig)
 	stateStoreProvider := reactor.GetInstanceProvider(InstanceKeyStateStore)
 	blockStoreProvider := reactor.GetInstanceProvider(InstanceKeyBlockStore)
+	databaseProvider := reactor.GetInstanceProvider(InstanceKeyDatabaseIndex)
+
+	// Make sure required instances have been initialized,
+	// i.e. verifies that InitMultiplexStates was called.
+	switch {
+	case configProvider(chainID) == nil:
+		return errors.New("failed to get node config; missing call to Reactor.Start()?")
+	case stateStoreProvider(chainID) == nil:
+		return errors.New("failed to get state store; missing call to Reactor.InitMultiplexStates()?")
+	case blockStoreProvider(chainID) == nil:
+		return errors.New("failed to get block store; missing call to Reactor.InitMultiplexBlockStores()?")
+	case databaseProvider(chainID) == nil:
+		return errors.New("failed to get database; missing call to InitMultiplexDatabases?")
+	default:
+	}
 
 	// Casting to ChainInstance before is required because the *instanceProviderFn*
 	// implementation provides a `any` typed variable which is not an interface.
@@ -2308,7 +2287,6 @@ func (reactor *Reactor) startNodeListeners(chainID string) error {
 		blockIndexer indexer.BlockIndexer
 	)
 	if nodeConfig.TxIndex.Indexer == "kv" {
-		databaseProvider := reactor.GetInstanceProvider(InstanceKeyDatabaseIndex)
 		indexerDatabase := databaseProvider(chainID).(dbm.DB)
 
 		txIndexer = txidxkv.NewTxIndex(indexerDatabase)

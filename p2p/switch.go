@@ -847,24 +847,24 @@ func (sw *Switch) StopAllPeersAndCleanup() error {
 		"num_scopes", len(allPeers))
 
 	// Then stop all peer objects / connections.
-	cleanupWg := new(sync.WaitGroup)
+	flatPeers := []*PeerImpl{}
 	for _, peerSet := range allPeers {
 		peers := peerSet.Copy()
-		cleanupWg.Add(len(peers))
+		flatPeers = append(flatPeers, peers...)
+	}
 
-		for _, p := range peers {
-			go func(peer *PeerImpl) {
-				defer func() {
-					defer cleanupWg.Done()
-					if err := recover(); err != nil {
-						// ignore peer error during shutdown
-						return
-					}
-				}()
+	cleanupWg := new(sync.WaitGroup)
+	cleanupWg.Add(len(flatPeers))
 
-				sw.StopPeerGracefully(peer)
-			}(p)
-		}
+	for _, p := range flatPeers {
+		go func(peer *PeerImpl) {
+			defer func() {
+				defer cleanupWg.Done()
+				_ = recover() // ignore peer error during shutdown
+			}()
+
+			sw.StopPeerGracefully(peer)
+		}(p)
 	}
 	cleanupWg.Wait()
 

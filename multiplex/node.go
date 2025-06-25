@@ -3,7 +3,6 @@ package multiplex
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/crypto"
@@ -17,7 +16,6 @@ import (
 	"github.com/ice-blockchain/cometbft/privval"
 	"github.com/ice-blockchain/cometbft/proxy"
 	sm "github.com/ice-blockchain/cometbft/state"
-	"github.com/ice-blockchain/cometbft/types"
 	"github.com/ice-blockchain/cometbft/version"
 )
 
@@ -186,149 +184,22 @@ func NewNodesMultiplex(
 	reactor.SetSnapsApp(localSnapsApp)
 	reactor.SetABCIClient(abciClient)
 
-	// We shall wait until all networks are ready.
-	reactor.chainReadyMtx.RLock()
-	chainReadyChs := reactor.chainReadyChs
-	reactor.chainReadyMtx.RUnlock()
-
-	// We will be *blocking* until all nodes are up.
-	var (
-		nodesWg sync.WaitGroup
-		nodeErr error
-	)
-	nodesWg.Add(len(chainReadyChs))
-
 	// We must make sure that the switch will be available for consensus reactors.
 	if cometbftAddr, err := GetAddressForCometBFT(globalCfg, nodeKey); err == nil {
 		reactor.CreateOrLoadCometBFTEventSwitch(cometbftAddr)
 	}
 
-	// Select once for each network we know about, and
-	for cid, cch := range chainReadyChs {
-		// Consumes the channel in a separate goroutine to avoid blocking
-		// the main thread about a slower ChainID.
-		go func(chainID string, chainReadyCh chan bool, wg *sync.WaitGroup, err *error) {
-			defer wg.Done()
-
-			// Block this goroutine until this network is ready.
-			// Written on by Reactor.OnStart.
-			<-chainReadyCh
-
-			clogger := logger.With("chain_id", chainID)
-
-			// Inform about the readiness of this chain
-			clogger.Info("Network configuration done")
-
-			// Used to retrieve configuration and state per chain.
-			statesProvider := reactor.GetInstanceProvider(InstanceKeyState)
-			privvalProvider := reactor.GetInstanceProvider(InstanceKeyPrivValidator)
-
-			// The node config contains the configuration overwrite.
-			stateMachine := statesProvider(chainID).(sm.State)
-			privValidator := privvalProvider(chainID).(types.PrivValidator)
-
-			// Make sure we can access the priv validator
-			privValPubKey, pvErr := privValidator.GetPubKey()
-			if pvErr != nil {
-				*err = fmt.Errorf(
-					"could not read public key from priv validator: %w", pvErr)
-				return
-			}
-
-			// Since we do not run state-sync, we must execute a ABCI handshake
-			// And following a successful handshake, we may load the state machine.
-			//
-			// e.g. This also happens on restart of a node.
-			if consErr := reactor.PrepareConsensusInstanceWithReactor(ctx, chainID); consErr != nil {
-				*err = fmt.Errorf(
-					"error preparing consensus instance: %w", consErr)
-				return
-			}
-
-			// Inform about the state machine block height
-			clogger.Info("State machine loaded",
-				"height", stateMachine.LastBlockHeight,
-			)
-
-			// Determine whether we should do block sync. This must happen after
-			// the handshake, since the app may modify the validator set,
-			// e.g. specifying ourself as the only validator.
-			blockSync := !onlyValidatorIsUs(stateMachine.Copy(), privValPubKey) && !validatorsIncludesUs(stateMachine.Copy(), privValPubKey)
-			waitSyncd := blockSync
-
-			logNodeStartupInfo(stateMachine.Copy(), privValPubKey, clogger)
-
-			// Start the actual consensus instance.
-			//
-			// Creates a mempool, evidence pool, block executor, blocksync
-			// and finally a consensus reactor.
-			if startErr := reactor.CreateConsensusInstanceReactors(ctx, chainID, blockSync, waitSyncd); startErr != nil {
-				*err = fmt.Errorf(
-					"error starting consensus reactors: %w", startErr)
-				return
-			}
-
-			// Inform about the consensus readiness
-			clogger.Info("Network is consensus ready",
-				"waitSync", waitSyncd,
-				"onlyValidatorIsUs", onlyValidatorIsUs(stateMachine.Copy(), privValPubKey),
-				"privValIsValidator", validatorsIncludesUs(stateMachine.Copy(), privValPubKey),
-			)
-		}(cid, cch, &nodesWg, &nodeErr)
-	}
-	// End of for loop, code following this is run *globally*
-	// Note that reaching this section means that *all replicated chains* are
-	// effectively *consensus-ready* and ready to produce blocks (validators).
-
-	// Waits for all required networks to be ready.
-	// Blocks the main thread intentionally to wait for node services.
-	nodesWg.Wait()
-
-	if nodeErr != nil {
-		return nil, nil, nodeErr
-	}
-
 	// Inform about all replicated chains being consensus ready
-	knownNetworks = reactor.GetNetworks()
-	logger.Info("All known networks are consensus ready",
+	logger.Info("All multiplex services are ready",
 		"nodeId", string(nodeKey.ID()),
 		"len", len(knownNetworks),
 	)
 
-	// Reactor: Networks; Networks: Reactor.
-	if _, err := reactor.MakeMultiNetworkNodeInfo(); err != nil {
-		return nil, nil, fmt.Errorf(
-			"error creating multiplex node info: %w", err)
-	}
-
-	// Create the [p2p.MultiplexTransports] instances
-	if err := reactor.CreateTransportSwitchesWithReactors(ctx, knownNetworks); err != nil {
-		return nil, nil, fmt.Errorf(
-			"error creating p2p event switch: %w", err)
-	}
-
-	// Create the peer address books and set on switches
-	if err := reactor.CreateAddressBooks(ctx, knownNetworks); err != nil {
-		return nil, nil, fmt.Errorf(
-			"error creating the pex address books: %w", err)
-	}
-
-	// Inform about all replicated chains being configured
-	knownNetworks = reactor.GetNetworks()
-	logger.Info("All nodes are now configured",
-		"nodeId", string(nodeKey.ID()),
-		"len", len(knownNetworks))
-
-	// Create node.Node instances (runtime) and inject "runtime/node" service.
-	nodesMultiplex, err := reactor.createMultiplexNodesWithServices(
-		ctx,
-		knownNetworks,
-		options...,
-	)
-	if err != nil {
-		return nodesMultiplex, reactor, err
-	}
-
+	// OBSOLETE: The nodes multiplex map is being deprecated in favor of
+	// Reactor.serviceRegistry with ServiceKeyNodeRuntime.
+	//
+	// TODO(midas): Next iteration, remove this return value.
+	nodesMultiplex := MultiplexMap[*node.Node]{}
 	return nodesMultiplex, reactor, nil
 }
 

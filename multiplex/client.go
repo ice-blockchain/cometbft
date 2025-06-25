@@ -50,17 +50,17 @@ func NewClient(
 }
 
 // GetBackend returns the backend [server.Backend] implementation.
-func (c MultiplexClient) GetBackend() server.Backend {
+func (c *MultiplexClient) GetBackend() server.Backend {
 	return c.backend
 }
 
 // SetBackend overwrite the backend [server.Backend] instance.
-func (c MultiplexClient) SetBackend(a server.Backend) {
+func (c *MultiplexClient) SetBackend(a server.Backend) {
 	c.backend = a
 }
 
 // GetRuntimeRegistry returns the reactor's [server.RuntimeRegistry] implementation.
-func (c MultiplexClient) GetRuntimeRegistry() *server.RuntimeRegistry {
+func (c *MultiplexClient) GetRuntimeRegistry() *server.RuntimeRegistry {
 	return c.backend.GetRuntimeRegistry()
 }
 

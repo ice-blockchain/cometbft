@@ -5,8 +5,8 @@ import (
 	"encoding/hex"
 	"os"
 	"strconv"
-	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,7 +17,6 @@ import (
 	mx "github.com/ice-blockchain/cometbft/multiplex"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/server"
-	"github.com/ice-blockchain/cometbft/p2p"
 	sm "github.com/ice-blockchain/cometbft/state"
 )
 
@@ -163,6 +162,14 @@ func TestMultiplexBackendGetLocalNetworkHeights(t *testing.T) {
 	testChainID := testChainIds[0]
 	extdChainID, err := mx.NewExtendedChainIDFromLegacy(testChainID)
 	require.NoError(t, err)
+
+	// Allocate + inject node runtime ("Start node listeners")
+	allocErr := testReactor.AllocateNetwork(testChainID)
+	require.NoError(t, allocErr, "should initialize network")
+	createErr := testReactor.InjectNewNetwork(testChainID, []string{})
+	require.NoError(t, createErr, "should inject network")
+	injectErr := testReactor.InjectNewRuntime(context.Background(), testChainID)
+	require.NoError(t, injectErr, "should inject runtime")
 
 	testAddress := extdChainID.GetUserAddress()
 	testScope := extdChainID.GetFingerprint()
@@ -371,22 +378,16 @@ func TestMultiplexBackendCheckDialCompatibleRelayWithTwoRelays(t *testing.T) {
 	sourceSwitch := sourceReactor.GetEventSwitchForDiscovery()
 	require.NotNil(t, sourceSwitch)
 
-	waitDial := sync.WaitGroup{}
-	waitDial.Add(1)
+	discoverErr := servers[0].CheckDialCompatibleRelay(
+		context.TODO(),
+		sourceSwitch,
+		testRelayAddr,
+	)
 
-	go func(sw *p2p.Switch, addr *server.RelayAddress) {
-		defer waitDial.Done()
+	assert.NoError(t, discoverErr)
 
-		discoverErr := servers[0].CheckDialCompatibleRelay(
-			context.TODO(),
-			sourceSwitch,
-			testRelayAddr,
-		)
-
-		assert.NoError(t, discoverErr)
-	}(sourceSwitch, testRelayAddr) // relay-1 to relay-2
-
-	waitDial.Wait()
+	waitDuration := 2 * time.Second
+	time.Sleep(waitDuration)
 }
 
 func TestMultiplexBackendCheckDialCompatibleRelaySevenCompatibleRelays(t *testing.T) {
@@ -955,6 +956,14 @@ func TestMultiplexBackendAddTransactions(t *testing.T) {
 	testExtChainID, err := mx.NewExtendedChainIDFromLegacy(testChainID)
 	require.NoError(t, err)
 
+	// Allocate + inject node runtime ("Start node listeners")
+	allocErr := testReactor.AllocateNetwork(testChainID)
+	require.NoError(t, allocErr, "should initialize network")
+	createErr := testReactor.InjectNewNetwork(testChainID, []string{})
+	require.NoError(t, createErr, "should inject network")
+	injectErr := testReactor.InjectNewRuntime(context.Background(), testChainID)
+	require.NoError(t, injectErr, "should inject runtime")
+
 	// Act - Adds a transaction to running mempool
 	actualErr := server.AddTransactions(
 		testExtChainID.GetUserAddress(),
@@ -990,6 +999,14 @@ func TestMultiplexBackendRemoveTransactions(t *testing.T) {
 	testChainID := testChainIds[0]
 	testExtChainID, err := mx.NewExtendedChainIDFromLegacy(testChainID)
 	require.NoError(t, err)
+
+	// Allocate + inject node runtime ("Start node listeners")
+	allocErr := testReactor.AllocateNetwork(testChainID)
+	require.NoError(t, allocErr, "should initialize network")
+	createErr := testReactor.InjectNewNetwork(testChainID, []string{})
+	require.NoError(t, createErr, "should inject network")
+	injectErr := testReactor.InjectNewRuntime(context.Background(), testChainID)
+	require.NoError(t, injectErr, "should inject runtime")
 
 	err = server.AddTransactions(
 		testExtChainID.GetUserAddress(),

@@ -1,7 +1,6 @@
 package multiplex_test
 
 import (
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -23,12 +22,14 @@ func TestMultiplexClientNewClient(t *testing.T) {
 	require.NotNil(t, server)
 
 	defer func() {
-		defer os.RemoveAll(rootDir)
-		if server != nil {
-			err := server.Close()
-			assert.NoError(t, err, "should shutdown gracefully")
-		}
+		closeAndRemoveAll(t, rootDir, server)
 	}()
+
+	cli := mx.NewClient()
+	cli.SetBackend(server)
+
+	assert.NotNil(t, cli.GetBackend())
+	assert.NotNil(t, cli.GetRuntimeRegistry())
 }
 
 func TestMultiplexClientBroadcastTx(t *testing.T) {

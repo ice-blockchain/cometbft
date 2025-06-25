@@ -3783,7 +3783,6 @@ func TestScenarioLegacyBroadcastSevenHealthyRelays(t *testing.T) {
 	// First create genesis block
 	assertWaitForNodesMultiplexToProduceBlocks(t,
 		testReactor,
-		testMultiplex,
 		1, // numBlocks
 		5*time.Second,
 		"node_genblock_test",
@@ -3799,7 +3798,6 @@ func TestScenarioLegacyBroadcastSevenHealthyRelays(t *testing.T) {
 
 		actualNumBlocks, actualNumTxes := assertWaitForNodesMultiplexToProduceBlocks(t,
 			testReactor,
-			testMultiplex,
 			-1,             // as many blocks as necessary
 			20*time.Second, // 20 seconds runtime
 			"node_blocks_test",

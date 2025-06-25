@@ -1,7 +1,6 @@
 package multiplex_test
 
 import (
-	"context"
 	"errors"
 	"os"
 	"strconv"
@@ -370,19 +369,6 @@ func TestMultiplexReactorUpdatedGenesisDocProvider(t *testing.T) {
 
 	newTestChainID := testExtChainID.String()
 
-	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
-	// executed earlier, i.e. see MultiplexBackend.InitValidators.
-	allocErr := testReactor.AllocateNetwork(newTestChainID)
-	require.NoError(t, allocErr, "should allocate new network resources")
-
-	// Inject testChainID
-	injectErr := testReactor.InjectNewNetwork(newTestChainID, []string{})
-	require.NoError(t, injectErr, "should create new network resources")
-
-	// And start its runtime
-	runtimeErr := testReactor.InjectNewRuntime(context.Background(), newTestChainID)
-	require.NoError(t, runtimeErr, "should spawn parallel process for node runtime")
-
 	// Make sure that calling the GenesisProvider returns an up-to-date
 	// GenesisDocSet that contains the injected network
 	testGenesisDocsProvider := testReactor.GetGenesisProvider()
@@ -414,8 +400,7 @@ func ResetTestMultiplexReactorRuntimeWithInjection(
 
 	// Initialize and START the nodes multiplex
 	// For debug, change the logger to cmtlog.TestingLogger()
-	_, _, testReactor,
-		shutdownFn := assertStartNodesMultiplex(tb, numChains, customLogger, true) // startServers=true
+	_, testReactor, shutdownFn := assertStartNodesMultiplex(tb, numChains, customLogger, true) // startServers=true
 
 	// Generate new random network ChainID
 	newUserPubKey := ed25519.GenPrivKey().PubKey()
@@ -468,6 +453,9 @@ func ResetTestMultiplexReactorRuntimeWithInjection(
 
 	// .. must also register in Reactor
 	testReactor.RegisterInstance(mx.InstanceKeyConfig, injectChainID, actualConfOverwrite)
+
+	registerErr := testReactor.RegisterNetwork(testInjectChainID.GetUserAddress(), injectChainID)
+	require.NoError(tb, registerErr, "should register network in multiplex reactor")
 
 	return testInjectChainID, testReactor, shutdownFn
 }

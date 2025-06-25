@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	dbm "github.com/cometbft/cometbft-db"
 	"github.com/stretchr/testify/assert"
@@ -417,8 +418,7 @@ func TestMultiplexRuntimeInjectNewNetwork(t *testing.T) {
 
 	// Initialize and START the nodes multiplex
 	// For debug, change the logger to cmtlog.TestingLogger()
-	_, _, testReactor,
-		shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
+	_, testReactor, shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
 
 	defer shutdownFn()
 
@@ -454,8 +454,7 @@ func TestMultiplexRuntimeInjectNewNetworkCallsAllocateNetwork(t *testing.T) {
 
 	// Initialize and START the nodes multiplex
 	// For debug, change the logger to cmtlog.TestingLogger()
-	_, _, testReactor,
-		shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
+	_, testReactor, shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
 
 	defer shutdownFn()
 
@@ -520,8 +519,7 @@ func TestMultiplexRuntimeInjectNewNetworkCallsInjectStateMachine(t *testing.T) {
 
 	// Initialize and START the nodes multiplex
 	// For debug, change the logger to cmtlog.TestingLogger()
-	_, _, testReactor,
-		shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
+	_, testReactor, shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
 
 	defer shutdownFn()
 
@@ -567,8 +565,7 @@ func TestMultiplexRuntimeInjectNewNetworkCallsRegisterNetwork(t *testing.T) {
 
 	// Initialize and START the nodes multiplex
 	// For debug, change the logger to cmtlog.TestingLogger()
-	_, _, testReactor,
-		shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
+	_, testReactor, shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
 
 	defer shutdownFn()
 
@@ -605,8 +602,7 @@ func TestMultiplexRuntimeInjectNewNetworkIncludesOtherValidators(t *testing.T) {
 
 	// Initialize and START the nodes multiplex
 	// For debug, change the logger to cmtlog.TestingLogger()
-	_, _, testReactor,
-		shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
+	_, testReactor, shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
 
 	defer shutdownFn()
 
@@ -659,25 +655,26 @@ func TestMultiplexRuntimeInjectNewRuntime(t *testing.T) {
 
 	// Initialize and START the nodes multiplex
 	// For debug, change the logger to cmtlog.TestingLogger()
-	_, _, testReactor,
-		shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
+	_, testReactor, shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
 
 	defer shutdownFn()
 
+	injectChainID := makeChainID("test-inject-1")
+
 	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
 	// executed earlier, i.e. see MultiplexBackend.InitValidators.
-	allocErr := testReactor.AllocateNetwork(testChainID)
+	allocErr := testReactor.AllocateNetwork(injectChainID)
 	require.NoError(t, allocErr, "should allocate new network resources")
 
-	// Inject testChainID
-	injectErr := testReactor.InjectNewNetwork(testChainID, []string{})
+	// Inject injectChainID
+	injectErr := testReactor.InjectNewNetwork(injectChainID, []string{})
 	require.NoError(t, injectErr)
 
 	// For debug, change the logger cmtlog.TestingLogger()
 	// i.e.: testReactor.SetLogger(cmtlog.TestingLogger())
 
 	// Act
-	runtimeErr := testReactor.InjectNewRuntime(context.Background(), testChainID)
+	runtimeErr := testReactor.InjectNewRuntime(context.Background(), injectChainID)
 	assert.NoError(t, runtimeErr, "should spawn parallel process for node runtime")
 }
 
@@ -688,26 +685,30 @@ func TestMultiplexRuntimeInjectNewRuntimeWithOthers(t *testing.T) {
 
 	// Initialize and START the nodes multiplex
 	// For debug, change the logger to cmtlog.TestingLogger()
-	_, _, testReactor,
-		shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
+	_, testReactor, shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
 
 	defer shutdownFn()
 
+	injectChainID := makeChainID("test-inject-1")
+
 	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
 	// executed earlier, i.e. see MultiplexBackend.InitValidators.
-	allocErr := testReactor.AllocateNetwork(testChainID)
+	allocErr := testReactor.AllocateNetwork(injectChainID)
 	require.NoError(t, allocErr, "should allocate new network resources")
 
-	// Inject testChainID
-	injectErr := testReactor.InjectNewNetwork(testChainID, []string{})
+	// Inject injectChainID
+	injectErr := testReactor.InjectNewNetwork(injectChainID, []string{})
 	require.NoError(t, injectErr)
 
 	// For debug, change the logger cmtlog.TestingLogger()
 	// i.e.: testReactor.SetLogger(cmtlog.TestingLogger())
 
 	// Act
-	runtimeErr := testReactor.InjectNewRuntime(context.Background(), testChainID)
+	runtimeErr := testReactor.InjectNewRuntime(context.Background(), injectChainID)
 	assert.NoError(t, runtimeErr, "should spawn parallel process for node runtime")
+
+	waitDuration := 2 * time.Second
+	time.Sleep(waitDuration)
 }
 
 // ----------------------------------------------------------------------------

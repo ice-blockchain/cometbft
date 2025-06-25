@@ -394,6 +394,12 @@ func (reactor *Reactor) InjectNewRuntime(
 			"error creating the pex address books: %w", err)
 	}
 
+	// Register the [node.Node] instance in servicesRegistry.
+	if _, err := reactor.createMultiplexNodesWithServices(ctx, []string{chainID}); err != nil {
+		return fmt.Errorf(
+			"error injecting node instance: %w", err)
+	}
+
 	// Inform about all replicated chains being configured
 	clogger.Info("The new network is now configured",
 		"nodeId", string(reactor.GetNodeKey().ID()))

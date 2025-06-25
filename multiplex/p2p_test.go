@@ -49,16 +49,18 @@ func TestMultiplexReactorP2PCreateTransportSwitchesWithReactors(t *testing.T) {
 
 	for _, chainID := range testChainIds {
 		testReactors := testSwitch.Reactors(chainID)
-		assert.Len(t, testReactors, 4) // mempool, blocksync, consensus, evidence
+		assert.Len(t, testReactors, 5) // mempool, blocksync, consensus, evidence, pex
 		assert.Contains(t, testReactors, "MEMPOOL")
 		assert.Contains(t, testReactors, "BLOCKSYNC")
 		assert.Contains(t, testReactors, "CONSENSUS")
 		assert.Contains(t, testReactors, "EVIDENCE")
+		assert.Contains(t, testReactors, "PEX")
 
 		assert.NotNil(t, testSwitch.Reactor(chainID, "MEMPOOL"))
 		assert.NotNil(t, testSwitch.Reactor(chainID, "BLOCKSYNC"))
 		assert.NotNil(t, testSwitch.Reactor(chainID, "CONSENSUS"))
 		assert.NotNil(t, testSwitch.Reactor(chainID, "EVIDENCE"))
+		assert.NotNil(t, testSwitch.Reactor(chainID, "PEX"))
 	}
 }
 
@@ -117,7 +119,6 @@ func TestMultiplexReactorP2PCreateAddressBooks(t *testing.T) {
 // Helpers
 
 // CAUTION: this test method sets up a full consensus multiplex with reactors.
-// CAUTION: this method *waits* for all networks to be configured with [Reactor#WaitForNetworks].
 func ResetTestMultiplexP2P(tb testing.TB, numChains int) (string, *config.Config, *mx.Reactor) {
 	tb.Helper()
 
@@ -136,9 +137,6 @@ func ResetTestMultiplexP2P(tb testing.TB, numChains int) (string, *config.Config
 	err = reactor.Start()
 	require.NoError(tb, err, "should start the multiplex reactor")
 
-	err = reactor.WaitForNetworks()
-	require.NoError(tb, err, "should not error while waiting for networks")
-
 	testChainIds := reactor.GetNetworks()
 
 	// Start an ABCI client
@@ -153,6 +151,9 @@ func ResetTestMultiplexP2P(tb testing.TB, numChains int) (string, *config.Config
 
 	// Reactor: ABCI; ABCI: Reactor.
 	reactor.SetABCIClient(abciClient)
+
+	// CAUTION: This activates runtimes for pre-configured networks.
+	mx.ReactorWithActiveRuntimes(testChainIds)(reactor)
 
 	// Should now be able to do consensus handshake and load state machines
 	for _, chainID := range testChainIds {

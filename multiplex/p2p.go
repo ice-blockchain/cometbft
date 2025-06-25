@@ -20,7 +20,6 @@ import (
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/p2p/conn"
 	"github.com/ice-blockchain/cometbft/p2p/pex"
-	sm "github.com/ice-blockchain/cometbft/state"
 	"github.com/ice-blockchain/cometbft/statesync"
 	"github.com/ice-blockchain/cometbft/version"
 )
@@ -113,22 +112,13 @@ func (reactor *Reactor) MakeMultiNetworkNodeInfo() (
 	knownNetworks := reactor.GetNetworks()
 	countNetworks := len(knownNetworks)
 
-	statesProvider := reactor.GetInstanceProvider(InstanceKeyState)
-
 	// Fill ProtocolVersions and Networks fields
 	protocolVersions := make([]ChainProtocolVersion, countNetworks)
 	for i, chainID := range knownNetworks {
-		// Fill only for *fully* supported networks (available now).
-		if nil == statesProvider(chainID) {
-			continue
-		}
-
-		stateMachine := statesProvider(chainID).(sm.State)
-
 		protocolVersions[i] = NewChainProtocolVersion(chainID, p2p.NewProtocolVersion(
 			version.P2PProtocol,
-			stateMachine.Version.Consensus.Block,
-			stateMachine.Version.Consensus.App,
+			version.BlockProtocol,
+			0, // App version may be filled by ABCI Handshake.
 		))
 	}
 

@@ -222,7 +222,7 @@ func TestMultiplexNodeNewNodesMultiplex(t *testing.T) {
 
 	// The multiplex configuration will be ENABLED.
 	// Should create the [node.Node] instance using [mx.NewNodesMultiplex]
-	testMultiplex, testReactor, err := mx.NewNodesMultiplex(
+	_, testReactor, err := mx.NewNodesMultiplex(
 		context.Background(),
 		&client.DefaultAcceptor{},
 		globalCfg,
@@ -232,8 +232,7 @@ func TestMultiplexNodeNewNodesMultiplex(t *testing.T) {
 		node.NodeWithStartMonitor(false),
 	)
 	assert.NoError(t, err, "should create node instance")
-	assert.NotNil(t, testMultiplex, "should return a multiplex map with a node")
-	assert.Len(t, testMultiplex, numChains, fmt.Sprintf(
+	assert.Equal(t, numChains, testReactor.Size(), fmt.Sprintf(
 		"should contain exactly %d networks", numChains))
 
 	configProvider := testReactor.GetInstanceProvider(mx.InstanceKeyConfig)
@@ -241,17 +240,21 @@ func TestMultiplexNodeNewNodesMultiplex(t *testing.T) {
 
 	testChainIds := testReactor.GetNetworks()
 
+	// CAUTION: This activates runtimes for pre-configured networks.
+	mx.ReactorWithActiveRuntimes(testChainIds)(testReactor)
+
 	// Reset wait group for every iteration
 	wg := sync.WaitGroup{}
 	wg.Add(len(testChainIds))
 
 	// Test that we have all the required networks
+	servicesProvider := testReactor.GetServicesProvider()
 	for _, testChainID := range testChainIds {
-		assert.Contains(t, testMultiplex, testChainID)
-		assert.NotNil(t, testMultiplex[testChainID])
+		nodeRuntime := servicesProvider(mx.ServiceKeyNodeRuntime, testChainID)
+		require.NotNil(t, nodeRuntime, "should create node.Node instance")
 
 		// Type-assertion to verify that we have a correct instance
-		nodeInstance := testMultiplex[testChainID].GetInstance().(*cmtnode.Node)
+		nodeInstance := nodeRuntime.(*cmtnode.Node)
 		genesisDoc := nodeInstance.GenesisDoc()
 		cfgOverwrite := configProvider(testChainID).(*config.Config)
 
@@ -287,8 +290,12 @@ func TestMultiplexNodeNewNodesMultiplex(t *testing.T) {
 		wg := sync.WaitGroup{}
 		wg.Add(len(testChainIds))
 
-		for _, chainID := range testChainIds {
-			runningNode := testMultiplex[chainID].GetInstance().(*cmtnode.Node)
+		for _, testChainID := range testChainIds {
+			nodeRuntime := servicesProvider(mx.ServiceKeyNodeRuntime, testChainID)
+			require.NotNil(t, nodeRuntime, "should create node.Node instance")
+
+			// Type-assertion to verify that we have a correct instance
+			nodeInstance := nodeRuntime.(*cmtnode.Node)
 
 			// Stop the running node instance and continue
 			go func(cn *cmtnode.Node) {
@@ -298,7 +305,7 @@ func TestMultiplexNodeNewNodesMultiplex(t *testing.T) {
 					err := cn.Stop()
 					require.NoError(t, err)
 				}
-			}(runningNode)
+			}(nodeInstance)
 		}
 
 		// Wait for all nodes to be shutdown
@@ -320,9 +327,11 @@ func TestMultiplexNodeNewNodesMultiplexSingleNetworkProduceBlocks(t *testing.T) 
 	// For debug, change the logger to cmtlog.TestingLogger()
 	// Initialize and START the nodes multiplex,
 	// i.e. calls method node.Node#Start.
-	_, testMultiplex,
-		testReactor,
-		shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
+	_, testReactor, shutdownFn := assertStartNodesMultiplex(t,
+		numChains,
+		cmtlog.NewNopLogger(),
+		true, // startServers
+	)
 
 	defer shutdownFn()
 
@@ -332,7 +341,6 @@ func TestMultiplexNodeNewNodesMultiplexSingleNetworkProduceBlocks(t *testing.T) 
 	expectedBlocks := 3
 	assertWaitForNodesMultiplexToProduceBlocks(t,
 		testReactor,
-		testMultiplex,
 		expectedBlocks,
 		15*time.Second,
 		"node_test",
@@ -347,9 +355,11 @@ func TestMultiplexNodeNewNodesMultiplexProduceBlocks(t *testing.T) {
 
 	// Initialize and START the nodes multiplex
 	// For debug, change the logger to cmtlog.TestingLogger()
-	_, testMultiplex,
-		testReactor,
-		shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
+	_, testReactor, shutdownFn := assertStartNodesMultiplex(t,
+		numChains,
+		cmtlog.NewNopLogger(),
+		true, // startServers
+	)
 
 	defer shutdownFn()
 
@@ -359,7 +369,6 @@ func TestMultiplexNodeNewNodesMultiplexProduceBlocks(t *testing.T) {
 	expectedBlocks := 2
 	assertWaitForNodesMultiplexToProduceBlocks(t,
 		testReactor,
-		testMultiplex,
 		expectedBlocks,
 		30*time.Second, // 10 blocks in total, leaves 3s per block
 		"node_test",
@@ -399,7 +408,8 @@ func ResetTestMultiplexNodeWithConfigAndPorts(
 	nodeCfg.Consensus.CreateEmptyBlocks = true // when using *Node
 
 	// Make sure we have /data and /config
-	_, err := mx.NewMultiplexFS(nodeCfg, makeChainRegistryFromConfig(tb, mxConfig).GetChains())
+	testChainRegistry := makeChainRegistryFromConfig(tb, mxConfig)
+	_, err := mx.NewMultiplexFS(nodeCfg, testChainRegistry.GetChains())
 	require.NoError(tb, err, "should create filesystem structure for multiplex")
 
 	// Make sure we have a *multi-doc* genesis file (GenesisDocSet)
@@ -528,7 +538,6 @@ func useDefaultKeyGenFunc() func() (crypto.PrivKey, error) {
 // individual nodes in a separate goroutine per network.
 func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog.Logger, startServers bool) (
 	*config.Config,
-	mx.MultiplexMap[*cmtnode.Node],
 	*mx.Reactor,
 	func(),
 ) {
@@ -553,7 +562,7 @@ func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog
 
 	// The multiplex configuration will be ENABLED.
 	// Should create the [node.Node] instance using [mx.NewNodesMultiplex]
-	testMultiplex, testReactor, err := mx.NewNodesMultiplex(
+	_, testReactor, err := mx.NewNodesMultiplex(
 		context.Background(),
 		&client.DefaultAcceptor{},
 		globalCfg,
@@ -563,8 +572,7 @@ func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog
 		node.NodeWithStartMonitor(false),
 	)
 	require.NoError(tb, err, "should create node instance")
-	require.NotNil(tb, testMultiplex, "should return a multiplex map with a node")
-	require.Len(tb, testMultiplex, numChains, fmt.Sprintf(
+	require.Equal(tb, numChains, testReactor.Size(), fmt.Sprintf(
 		"should contain exactly %d networks", numChains))
 
 	require.NotNil(tb, testReactor)
@@ -572,11 +580,16 @@ func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog
 	testChainIds := testReactor.GetNetworks()
 	require.Len(tb, testChainIds, numChains)
 
+	// CAUTION: This activates runtimes for pre-configured networks.
+	mx.ReactorWithActiveRuntimes(testChainIds)(testReactor)
+	servicesProvider := testReactor.GetServicesProvider()
+
 	if startServers && numChains > 0 {
 		firstChainID := testChainIds[0]
-		require.Contains(tb, testMultiplex, firstChainID)
 
-		fstRunningNode := testMultiplex[firstChainID].GetInstance().(*node.Node)
+		nodeRuntime := servicesProvider(mx.ServiceKeyNodeRuntime, firstChainID)
+		require.NotNil(tb, nodeRuntime, "should create node.Node instance")
+		fstRunningNode := nodeRuntime.(*cmtnode.Node)
 
 		var rpcErr error
 		_, rpcErr = fstRunningNode.StartRPC()
@@ -592,11 +605,11 @@ func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog
 
 	// Test that we have all the required networks
 	for _, withChainID := range testChainIds {
-		require.Contains(tb, testMultiplex, withChainID)
-		require.NotNil(tb, testMultiplex[withChainID])
+		nodeRuntime := servicesProvider(mx.ServiceKeyNodeRuntime, withChainID)
+		require.NotNil(tb, nodeRuntime, "should create node.Node instance")
+		nodeInstance, ok := nodeRuntime.(*cmtnode.Node)
+		require.Equal(tb, true, ok, "should register node.Node instance")
 
-		// Type-assertion to verify that we have a correct instance
-		nodeInstance := testMultiplex[withChainID].GetInstance().(*cmtnode.Node)
 		userAddress, err := testReactor.GetChainRegistry().GetAddress(withChainID)
 		require.NoError(tb, err, "should find user address by ChainID")
 
@@ -628,6 +641,7 @@ func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog
 	shutdownFn := func() {
 		defer os.RemoveAll(globalCfg.RootDir)
 
+		nodesProvider := testReactor.GetServicesProvider()
 		testChainIds := testReactor.GetNetworks()
 		stoppingServers := false
 		for i, withChainID := range testChainIds {
@@ -639,9 +653,9 @@ func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog
 			// Since we are not using MultiplexBackend, we must instruct
 			// a node to shutdown servers, i.e. replace MultiplexBackend.Close.
 			if startServers && (i == 0 || !stoppingServers) {
-				if _, ok := testMultiplex[withChainID]; ok {
-					runningNode := testMultiplex[withChainID].GetInstance()
-					if rn, isNode := runningNode.(*cmtnode.Node); isNode {
+				nodeRuntime := nodesProvider(mx.ServiceKeyNodeRuntime, withChainID)
+				if nodeRuntime != nil {
+					if rn, isNode := nodeRuntime.(*cmtnode.Node); isNode {
 						node.NodeWithStartRPC(true)(rn)
 						node.NodeWithStartP2P(true)(rn)
 						node.NodeWithStartMonitor(true)(rn)
@@ -660,13 +674,12 @@ func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog
 		}
 	}
 
-	return globalCfg, testMultiplex, testReactor, shutdownFn
+	return globalCfg, testReactor, shutdownFn
 }
 
 func assertWaitForNodesMultiplexToProduceBlocks(
 	tb testing.TB,
 	testReactor *mx.Reactor,
-	testMultiplex mx.MultiplexMap[*cmtnode.Node],
 	expectedBlocks int,
 	maximumDuration time.Duration,
 	subscriberName string,
@@ -682,13 +695,12 @@ func assertWaitForNodesMultiplexToProduceBlocks(
 	mtx := sync.RWMutex{}
 	actualNumBlocks = make(map[string]int, len(testChainIds))
 	actualNumTxes = make(map[string]int, len(testChainIds))
+	servicesProvider := testReactor.GetServicesProvider()
 	for _, testChainID := range testChainIds {
-		// Test that we have the correct node instance
-		assert.Contains(tb, testMultiplex, testChainID)
-		assert.NotNil(tb, testMultiplex[testChainID])
-
-		// Type-assertion to verify that we have a correct instance
-		nodeInstance := testMultiplex[testChainID].GetInstance().(*cmtnode.Node)
+		nodeRuntime := servicesProvider(mx.ServiceKeyNodeRuntime, testChainID)
+		require.NotNil(tb, nodeRuntime, "should find node.Node instance")
+		nodeInstance, ok := nodeRuntime.(*cmtnode.Node)
+		require.Equal(tb, true, ok, "should register node.Node instance")
 
 		if !nodeInstance.Config().Consensus.CreateEmptyBlocks {
 			// Must broadcast transactions
