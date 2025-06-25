@@ -237,8 +237,8 @@ func NewServer(
 	nodeLogger cmtlog.Logger,
 	options ...MultiplexBackendOption,
 ) (*MultiplexBackend, error) {
-	// Force to create blocks only if there is transactions.
-	nodeConfig.Consensus.CreateEmptyBlocks = false
+	nodeConfig.Consensus.CreateEmptyBlocks = false // Force to create blocks only if there is transactions.
+	nodeConfig.Consensus.TimeoutCommit = 0         // Make progress as soon as the node has all the precommits.
 	nodeConfig.P2P.AllowDuplicateIP = true
 
 	initTime := time.Now()

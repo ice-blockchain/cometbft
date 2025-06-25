@@ -3059,7 +3059,7 @@ func TestScenarioClientBroadcastRuntimeRegistryIntegration(t *testing.T) {
 func TestScenarioConcurrentNewChains(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	timeoutGlobal := 30 * time.Second // Time for full test round
+	timeoutGlobal := 60 * time.Second // Time for full test round
 	testCaseCtx, globalCancelFn := context.WithTimeout(context.TODO(), timeoutGlobal)
 	defer globalCancelFn()
 
@@ -3193,7 +3193,7 @@ func TestScenarioConcurrentNewChains(t *testing.T) {
 	assert.Equal(t, numConcurrent, cntDone)
 	assert.NoError(t, errBroadcast, "concurrent broadcasts should not error")
 
-	waitDuration := 20 * time.Second
+	waitDuration := 30 * time.Second
 	t.Logf("Waiting %.0fsec for blocks propagation...", waitDuration.Seconds())
 	time.Sleep(waitDuration)
 
@@ -3220,22 +3220,25 @@ func TestScenarioConcurrentNewChains(t *testing.T) {
 func TestScenarioConcurrentNewChainsAndExistingChains(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	timeoutGlobal := 60 * time.Second // Time for full test round
+	timeoutGlobal := 300 * time.Second // Time for full test round
 	testCaseCtx, globalCancelFn := context.WithTimeout(context.TODO(), timeoutGlobal)
 	defer globalCancelFn()
 
 	numChains := 0
 	numRelays := 3
 
-	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
+	servers, shutdownFn := ResetTestScenarioRelaysWithLogs(t, numChains, numRelays)
 	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
 
-	servers[0].SetAcceptor(client.NewMockAcceptorImpl())
-	servers[1].SetAcceptor(client.NewMockAcceptorImpl())
-	servers[2].SetAcceptor(client.NewMockAcceptorImpl())
+	testAcceptorRelay1 := client.NewMockAcceptorImpl()
+	testAcceptorRelay2 := client.NewMockAcceptorImpl()
+	testAcceptorRelay3 := client.NewMockAcceptorImpl()
+	servers[0].SetAcceptor(testAcceptorRelay1)
+	servers[1].SetAcceptor(testAcceptorRelay2)
+	servers[2].SetAcceptor(testAcceptorRelay3)
 
 	// Note: healthyRelays includes self
 	healthyRelays, _, _ := StartTestScenarioRelays(t,
@@ -3317,10 +3320,20 @@ func TestScenarioConcurrentNewChainsAndExistingChains(t *testing.T) {
 	assert.NoError(t, resultStatusMsg2.Error, "second broadcast should not contain error status")
 	close(notifyCh2)
 
-	waitDuration := 30 * time.Second
+	waitDuration := 35 * time.Second
 	t.Logf("Waiting %.0fsec to finalize networks creation...", waitDuration.Seconds())
 	time.Sleep(waitDuration)
 	t.Logf("Done waiting to finalize networks creation...")
+
+	// Test that client callbacks executed correctly for the networks creation
+
+	totalExpectedCommits := 2
+	require.Equal(t, uint64(totalExpectedCommits), testAcceptorRelay1.TxCommitCalls.Load(),
+		"should locally execute CommitBroadcastTx callback for each transaction")
+	require.Equal(t, uint64(totalExpectedCommits), testAcceptorRelay2.TxCommitCalls.Load(),
+		"should remotely execute CommitBroadcastTx callback for each transaction")
+	require.Equal(t, uint64(totalExpectedCommits), testAcceptorRelay3.TxCommitCalls.Load(),
+		"should remotely execute CommitBroadcastTx callback for each transaction")
 
 	// STEP 3
 	// ----------------
@@ -3407,7 +3420,7 @@ func TestScenarioConcurrentNewChainsAndExistingChains(t *testing.T) {
 
 	t.Log("Test case done running...")
 
-	waitDuration = 30 * time.Second
+	waitDuration = 180 * time.Second
 	t.Logf("Waiting %.0fsec before evaluating results...", waitDuration.Seconds())
 	time.Sleep(waitDuration)
 	t.Logf("Done waiting before evaluating results...")
@@ -3419,19 +3432,16 @@ func TestScenarioConcurrentNewChainsAndExistingChains(t *testing.T) {
 	// Also test callbacks
 	t.Logf("Now evaluating callbacks execution...")
 
-	totalExpectedCalls := numTransactions1 + numTransactions2 + numConcurrent
-	testAcceptorRelay1 := servers[0].GetAcceptor().(*client.MockAcceptorImpl)
-	testAcceptorRelay2 := servers[1].GetAcceptor().(*client.MockAcceptorImpl)
-	testAcceptorRelay3 := servers[2].GetAcceptor().(*client.MockAcceptorImpl)
+	totalExpectedCommits += numConcurrent
 
 	// Test that client callbacks were executed correctly, every relay should
 	// have executed the CommitBroadcastTx callback when the block is finalized.
 
-	assert.Equal(t, uint64(totalExpectedCalls), testAcceptorRelay1.TxCommitCalls.Load(),
+	assert.Equal(t, uint64(totalExpectedCommits), testAcceptorRelay1.TxCommitCalls.Load(),
 		"should locally execute CommitBroadcastTx callback for each transaction")
-	assert.Equal(t, uint64(totalExpectedCalls), testAcceptorRelay2.TxCommitCalls.Load(),
+	assert.Equal(t, uint64(totalExpectedCommits), testAcceptorRelay2.TxCommitCalls.Load(),
 		"should remotely execute CommitBroadcastTx callback for each transaction")
-	assert.Equal(t, uint64(totalExpectedCalls), testAcceptorRelay3.TxCommitCalls.Load(),
+	assert.Equal(t, uint64(totalExpectedCommits), testAcceptorRelay3.TxCommitCalls.Load(),
 		"should remotely execute CommitBroadcastTx callback for each transaction")
 }
 

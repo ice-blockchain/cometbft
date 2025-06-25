@@ -14,11 +14,11 @@ import (
 const (
 	// DefaultRuntimeCleanerInterval contains the period of time after which the
 	// registry should garbage collect any idle node runtimes.
-	DefaultRuntimeCleanerInterval = 180 * time.Second
+	DefaultRuntimeCleanerInterval = 600 * time.Second
 
 	// DefaultRuntimeIdleDuration contains the period of time after which a
 	// node runtime must be considered idle when it has no more active workers.
-	DefaultRuntimeIdleDuration = 60 * time.Second
+	DefaultRuntimeIdleDuration = 300 * time.Second
 )
 
 type OnIdleFn func(chainID string) error

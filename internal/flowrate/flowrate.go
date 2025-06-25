@@ -171,6 +171,10 @@ func (m *Monitor) Status() Status {
 }
 
 func (m *Monitor) Stop() {
+	if m != nil {
+		m.Done()
+	}
+
 	if atomic.AddInt64(&instances, -1) <= 0 {
 		if st := stopped.CompareAndSwap(false, true); st {
 			close(shutdown)
