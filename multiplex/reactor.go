@@ -2000,8 +2000,12 @@ func (reactor *Reactor) OnStop() {
 	restChainReadyChs := reactor.chainReadyChs
 	reactor.chainReadyMtx.RUnlock()
 
-	for _, chainReadyCh := range restChainReadyChs {
+	for chainID, chainReadyCh := range restChainReadyChs {
 		close(chainReadyCh)
+
+		reactor.chainReadyMtx.Lock()
+		delete(reactor.chainReadyChs, chainID)
+		reactor.chainReadyMtx.Unlock()
 	}
 
 	reactor.ackReplResMtx.RLock()

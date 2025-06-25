@@ -860,14 +860,23 @@ func TestScenarioClientBroadcastHealthyRelays(t *testing.T) {
 
 	defer cancelCtxFn()
 
+	testChainIds := servers[0].GetNetworks()
+	testReactorRelay1 := servers[0].GetReactor()
+	testReactorRelay2 := servers[1].GetReactor()
+	testReactorRelay3 := servers[2].GetReactor()
+
+	// CAUTION: This activates runtimes for pre-configured networks.
+	mx.ReactorWithActiveRuntimes(testChainIds)(testReactorRelay1)
+	mx.ReactorWithActiveRuntimes(testChainIds)(testReactorRelay2)
+	mx.ReactorWithActiveRuntimes(testChainIds)(testReactorRelay3)
+
 	// TEST 1 - Success
 	//
 	// Complete a broadcast operation using a pre-configured ChainID.
 
 	// Separate goroutine for client broadcast process
 	numTransactions := 1
-	chainIds := servers[0].GetNetworks()
-	testWithChainID1 := chainIds[0]
+	testWithChainID1 := testChainIds[0]
 	notifyCh := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
