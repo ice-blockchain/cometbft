@@ -684,7 +684,7 @@ func TestMultiplexRuntimeInjectNewRuntimeWithOthers(t *testing.T) {
 
 	// Initialize and START the nodes multiplex
 	// For debug, change the logger to cmtlog.TestingLogger()
-	_, testReactor, shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
+	_, testReactor, shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), false) // startServers=false
 
 	defer shutdownFn(testReactor)
 
