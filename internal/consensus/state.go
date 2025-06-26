@@ -821,7 +821,7 @@ func (cs *State) receiveRoutine(maxSteps int) {
 		// priv_val tracks LastSig
 
 		// close wal now that we're done writing to it
-		if err := cs.wal.Stop(); err != nil {
+		if err := cs.wal.Stop(); err != nil && err != service.ErrAlreadyStopped {
 			cs.Logger.Error("Failed trying to stop WAL", "error", err)
 		}
 

@@ -240,7 +240,7 @@ func TestMultiplexNodeNewNodesMultiplex(t *testing.T) {
 	testChainIds := testReactor.GetNetworks()
 
 	// CAUTION: This activates runtimes for pre-configured networks.
-	mx.ReactorWithActiveRuntimes(testChainIds)(testReactor)
+	mx.ReactorWithActiveRuntimes(testChainIds, map[string][]string{})(testReactor)
 
 	// Reset wait group for every iteration
 	wg := sync.WaitGroup{}
@@ -385,6 +385,7 @@ func ResetTestMultiplexNodeWithConfigAndPorts(
 	mxConfig config.MultiplexConfig,
 	discoveryPort uint16,
 	createNewRootDir bool,
+	mockGenesisAndPrivVal bool,
 ) (string, *config.Config) {
 	tb.Helper()
 
@@ -411,35 +412,37 @@ func ResetTestMultiplexNodeWithConfigAndPorts(
 	_, err := mx.NewMultiplexFS(nodeCfg, testChainRegistry.GetChains())
 	require.NoError(tb, err, "should create filesystem structure for multiplex")
 
-	// Make sure we have a *multi-doc* genesis file (GenesisDocSet)
-	genesisFilePath := filepath.Join(rootDir, nodeCfg.Genesis)
+	if mockGenesisAndPrivVal {
+		// Make sure we have a *multi-doc* genesis file (GenesisDocSet)
+		genesisFilePath := filepath.Join(rootDir, nodeCfg.Genesis)
 
-	// IMPORTANT:
-	// If there is no genesis file at the configured path, we will create it
-	// with testOneScopedGenesisFmt.
+		// IMPORTANT:
+		// If there is no genesis file at the configured path, we will create it
+		// with testOneScopedGenesisFmt.
 
-	if !cmtos.FileExists(genesisFilePath) {
-		testGenesis := `[`
-		for userAddress, chainIds := range nodeCfg.UserChains {
-			for _, chainID := range chainIds {
-				// Creates one genesis doc per pair of user address and chainId
-				chainTestGenesis := fmt.Sprintf(testGenesisDocWithValidatorsFmt, chainID, testDefaultGenesisValidator)
-				testGenesis += chainTestGenesis + ","
+		if !cmtos.FileExists(genesisFilePath) {
+			testGenesis := `[`
+			for userAddress, chainIds := range nodeCfg.UserChains {
+				for _, chainID := range chainIds {
+					// Creates one genesis doc per pair of user address and chainId
+					chainTestGenesis := fmt.Sprintf(testGenesisDocWithValidatorsFmt, chainID, testDefaultGenesisValidator)
+					testGenesis += chainTestGenesis + ","
 
-				// resets priv validators to default state/key (as present in genesis)
-				// useDefaultPrivValidator=true
-				ResetMultiplexPrivValidator(nodeCfg.BaseConfig, userAddress, chainID, nil, true)
+					// resets priv validators to default state/key (as present in genesis)
+					// useDefaultPrivValidator=true
+					ResetMultiplexPrivValidator(nodeCfg.BaseConfig, userAddress, chainID, nil, true)
+				}
 			}
-		}
 
-		if 0 == len(nodeCfg.UserChains) {
-			testGenesis = testGenesis + `]`
-		} else {
-			// Removes last comma and closes json array
-			testGenesis = testGenesis[:len(testGenesis)-1] + `]`
-		}
+			if 0 == len(nodeCfg.UserChains) {
+				testGenesis = testGenesis + `]`
+			} else {
+				// Removes last comma and closes json array
+				testGenesis = testGenesis[:len(testGenesis)-1] + `]`
+			}
 
-		cmtos.MustWriteFile(genesisFilePath, []byte(testGenesis), 0o644)
+			cmtos.MustWriteFile(genesisFilePath, []byte(testGenesis), 0o644)
+		}
 	}
 
 	return rootDir, nodeCfg
@@ -450,6 +453,7 @@ func ResetTestMultiplexNodeWithRootDirAndPorts(
 	numChains int,
 	rootDir string,
 	discoveryPort uint16,
+	mockGenesisAndPrivVal bool,
 ) (string, *config.Config) {
 	tb.Helper()
 
@@ -460,6 +464,7 @@ func ResetTestMultiplexNodeWithRootDirAndPorts(
 		makeRandomMultiplexConfig(tb, numChains, int(discoveryPort)),
 		discoveryPort,
 		true, // create new temp root dir
+		mockGenesisAndPrivVal,
 	)
 }
 
@@ -473,6 +478,7 @@ func ResetTestMultiplexNode(tb testing.TB, numChains int) (string, *config.Confi
 		numChains,
 		tb.Name(),
 		30001, // discovery
+		false, // tests using this helper have PrivVal/Genesis allocated dynamically.
 	)
 }
 
@@ -580,7 +586,7 @@ func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog
 	require.Len(tb, testChainIds, numChains)
 
 	// CAUTION: This activates runtimes for pre-configured networks.
-	mx.ReactorWithActiveRuntimes(testChainIds)(testReactor)
+	mx.ReactorWithActiveRuntimes(testChainIds, map[string][]string{})(testReactor)
 	servicesProvider := testReactor.GetServicesProvider()
 
 	if startServers && numChains > 0 {

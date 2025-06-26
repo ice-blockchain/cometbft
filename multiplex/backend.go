@@ -2690,8 +2690,9 @@ func (b *MultiplexBackend) StartRPCServerCometBFT() error {
 	for _, chainID := range chainIds {
 		nodeRuntime, ok := nodesProvider(ServiceKeyNodeRuntime, chainID).(*node.Node)
 		if !ok {
-			return fmt.Errorf(
-				"could not get node runtime in StartRPCServerCometBFT with ChainID %s", chainID)
+			// Not activating the RPC now, it will be activated when
+			// [Reactor#EnableNewRuntimeRPC] is called.
+			continue
 		}
 
 		env, err := nodeRuntime.ConfigureRPC()
@@ -3423,11 +3424,9 @@ func (b *MultiplexBackend) localTransactionEventsConsumer(
 			)
 
 			if numReceived >= numExpected {
-				// TODO(midas): remove debug logs
-				b.logger.Debug("Processed enough transaction events",
+				// Transaction is not yet indexed
+				b.logger.Debug("Found all indexed transactions",
 					"chain_id", chainID,
-					"num_rcvd", numReceived,
-					"num_expect", numExpected,
 					"tx_batch", transactionHashes,
 				)
 

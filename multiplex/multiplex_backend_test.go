@@ -174,7 +174,7 @@ func TestMultiplexBackendGetLocalNetworkHeights(t *testing.T) {
 	require.NoError(t, allocErr, "should initialize network")
 	createErr := testReactor.InjectNewNetwork(testChainID, []string{})
 	require.NoError(t, createErr, "should inject network")
-	injectErr := testReactor.InjectNewRuntime(context.Background(), testChainID)
+	injectErr := testReactor.InjectNewRuntime(t.Context(), testChainID)
 	require.NoError(t, injectErr, "should inject runtime")
 
 	testAddress := extdChainID.GetUserAddress()
@@ -967,7 +967,7 @@ func TestMultiplexBackendAddTransactions(t *testing.T) {
 	require.NoError(t, allocErr, "should initialize network")
 	createErr := testReactor.InjectNewNetwork(testChainID, []string{})
 	require.NoError(t, createErr, "should inject network")
-	injectErr := testReactor.InjectNewRuntime(context.Background(), testChainID)
+	injectErr := testReactor.InjectNewRuntime(t.Context(), testChainID)
 	require.NoError(t, injectErr, "should inject runtime")
 
 	// Act - Adds a transaction to running mempool
@@ -1011,7 +1011,7 @@ func TestMultiplexBackendRemoveTransactions(t *testing.T) {
 	require.NoError(t, allocErr, "should initialize network")
 	createErr := testReactor.InjectNewNetwork(testChainID, []string{})
 	require.NoError(t, createErr, "should inject network")
-	injectErr := testReactor.InjectNewRuntime(context.Background(), testChainID)
+	injectErr := testReactor.InjectNewRuntime(t.Context(), testChainID)
 	require.NoError(t, injectErr, "should inject runtime")
 
 	err = server.AddTransactions(
@@ -1080,6 +1080,7 @@ func ResetTestMultiplexBackendTwoInParallel(
 		numChains,
 		tb.Name()+"-1",
 		50001,
+		false, // mockGenesisAndPrivVal
 	)
 
 	// Uses config.TestConfig() and empty MultiplexConfig
@@ -1089,6 +1090,7 @@ func ResetTestMultiplexBackendTwoInParallel(
 		numChains,
 		tb.Name()+"-2",
 		40001,
+		false, // mockGenesisAndPrivVal
 	)
 
 	// Seeds must be valid (or empty), otherwise dialing will fail
@@ -1142,6 +1144,7 @@ func ResetTestMultiplexBackendCompatibleRelaysWithOptions(
 		numChains,
 		tb.Name()+"-1", // rootDir
 		50001,
+		false, // mockGenesisAndPrivVal
 	)
 
 	// Seeds must be valid (or empty), otherwise dialing will fail
@@ -1176,6 +1179,7 @@ func ResetTestMultiplexBackendCompatibleRelaysWithOptions(
 			globalCfgRelay1.MultiplexConfig,
 			uint16(50001+(r*100)), // 50101, 50201, 50301, 50401
 			true,                  // create new temp root dir
+			false,                 // mockGenesisAndPrivVal
 		)
 
 		// Seeds must be valid (or empty), otherwise dialing will fail
@@ -1227,6 +1231,7 @@ func ResetTestMultiplexBackendCompatibleRelays(
 		numChains,
 		tb.Name()+"-1", // rootDir
 		50001,
+		false, // mockGenesisAndPrivVal
 	)
 
 	// Seeds must be valid (or empty), otherwise dialing will fail
@@ -1257,6 +1262,7 @@ func ResetTestMultiplexBackendCompatibleRelays(
 			globalCfgRelay1.MultiplexConfig,
 			uint16(50001+(r*100)), // 50101, 50201, 50301, 50401
 			true,                  // create new temp root dir
+			false,                 // mockGenesisAndPrivVal
 		)
 
 		// Seeds must be valid (or empty), otherwise dialing will fail

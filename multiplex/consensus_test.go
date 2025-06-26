@@ -61,13 +61,13 @@ func TestMultiplexReactorConsensusPrepareConsensusInstanceWithReactor(t *testing
 		createErr := reactor.InjectNewNetwork(chainID, []string{})
 		require.NoError(t, createErr, "should inject network")
 
-		injectErr := reactor.InjectNewRuntime(context.Background(), chainID)
+		injectErr := reactor.InjectNewRuntime(t.Context(), chainID)
 		require.NoError(t, injectErr, "should inject runtime")
 	}
 
 	// Should now be able to do consensus handshake and load state machines
 	for _, chainID := range testChainIds {
-		err = reactor.PrepareConsensusInstanceWithReactor(context.TODO(), chainID)
+		err = reactor.PrepareConsensusInstanceWithReactor(t.Context(), chainID)
 		assert.NoError(t, err, "should not error for consensus handshake")
 	}
 }

@@ -465,13 +465,21 @@ func WithRelayInfoTimeout(t time.Duration) func(*Reactor) {
 	}
 }
 
-func ReactorWithActiveRuntimes(chainIds []string) func(*Reactor) {
+func ReactorWithActiveRuntimes(
+	chainIds []string,
+	otherValidatorsPerChainID map[string][]string,
+) func(*Reactor) {
 	return func(r *Reactor) {
 		// Also setup node listeners, this mimics a runtime allocation.
 		for _, chainID := range chainIds {
-			r.AllocateNetwork(chainID)                        // db, fs, privval
-			r.InjectNewNetwork(chainID, []string{})           // config, genesis, state
-			r.InjectNewRuntime(context.Background(), chainID) // event bus, indexer, p2p
+			otherValidators := []string{}
+			if _, ok := otherValidatorsPerChainID[chainID]; ok {
+				otherValidators = otherValidatorsPerChainID[chainID][:]
+			}
+
+			r.AllocateNetwork(chainID)                   // db, fs, privval
+			r.InjectNewNetwork(chainID, otherValidators) // config, genesis, state
+			r.InjectNewRuntime(r.Context(), chainID)     // event bus, indexer, p2p
 		}
 	}
 }
@@ -1211,7 +1219,7 @@ func (reactor *Reactor) OnCompleteRuntime(chainID string, protoTxs [][]byte) {
 
 	transactionHashes := []string{}
 	for _, bzTx := range protoTxs {
-		transactionHashes = append(transactionHashes, string(types.Tx(bzTx).Hash()))
+		transactionHashes = append(transactionHashes, fmt.Sprintf("%X", types.Tx(bzTx).Hash()))
 	}
 
 	// Whether success or error, we want the runtime completed afterwards.
@@ -1225,7 +1233,7 @@ func (reactor *Reactor) OnCompleteRuntime(chainID string, protoTxs [][]byte) {
 	// hashes, then we wait 5 seconds for next evaluation (or shutdown).
 	maxTries := 12 // 12x5s=1min
 	attempts := 0
-	for {
+	for reactor.Context().Err() == nil {
 		// Read transaction hashes from indexer.
 		missingHashes := []string{}
 		for _, rawTx := range protoTxs {
@@ -1375,7 +1383,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 
 			// Start consensus reactors for newly injected runtime.
 			if err := r.StartConsensusInstanceReactors(
-				context.Background(),
+				r.Context(),
 				replRequest.ChainID,
 				true, // enable status updates to peers about replication (ChainReplicationComplete)
 			); err != nil {
@@ -1884,15 +1892,14 @@ func (reactor *Reactor) OnStart(ctx context.Context) error {
 	)
 	nodeConfig := reactor.GetNodeConfig()
 	chainRegistry := reactor.GetChainRegistry()
+	availableChainIds := chainRegistry.GetChains()
 
-	// We should initialize filesystem only for currently ACTIVE runtimes.
-	activeRuntimes := reactor.runtimeRegistry.ActiveRuntimes()
-	activeChainIds := []string{}
-	for chainID := range activeRuntimes {
-		activeChainIds = append(activeChainIds, chainID)
-	}
+	// ANY AVAILABLE ChainID
+	//
+	// For any available ChainID, ensure the filesystem is available,
+	// and create a PrivValidator instance for each network.
 
-	multiplexFS, err := NewMultiplexFS(nodeConfig, activeChainIds)
+	multiplexFS, err := NewMultiplexFS(nodeConfig, availableChainIds)
 	if err != nil {
 		return fmt.Errorf("failed to start multiplex reactor; filesystem error: %w", err)
 	}
@@ -1900,10 +1907,35 @@ func (reactor *Reactor) OnStart(ctx context.Context) error {
 	// Update the internal storagePaths
 	reactor.SetStoragePaths(multiplexFS)
 
+	// Create databases and priv validator for all available ChainIDs.
+	for _, chainID := range availableChainIds {
+		if err = reactor.AllocateNetwork(chainID); err != nil {
+			reactor.logger.Error("failed to start multiplex reactor; allocation error",
+				"chain_id", chainID,
+				"err", err,
+			)
+		}
+	}
+
+	// ACTIVE RUNTIMES ONLY
+	//
+	// The following initialization happens only for *active runtimes*.
+	//
+	// We should initialize a state machine and inject a node runtime
+	// only for currently ACTIVE runtimes.
+	//
+	// TODO(midas): RuntimeRegistry to persist active runtimes on shutdown.
+
+	activeRuntimes := reactor.runtimeRegistry.ActiveRuntimes()
+	activeChainIds := []string{}
+	for chainID := range activeRuntimes {
+		activeChainIds = append(activeChainIds, chainID)
+	}
+
 	// Open databases for: state, blockstore, tx_index, evidence
 	// Then load state machines from database or genesis doc
 	// And initialize block stores for active runtimes.
-	if err := reactor.loadMultiplexState(); err != nil {
+	if err := reactor.loadMultiplexState(activeChainIds); err != nil {
 		return fmt.Errorf("failed to start multiplex reactor; database error: %w", err)
 	}
 
@@ -1922,7 +1954,7 @@ func (reactor *Reactor) OnStart(ctx context.Context) error {
 
 		// Starts the node listeners, i.e. event bus, indexer.
 		// Prepares P2P communication transport and address book.
-		if err := reactor.InjectNewRuntime(ctx, chainID); err != nil {
+		if err := reactor.InjectNewRuntime(reactor.Context(), chainID); err != nil {
 			// Log but don't STOP!
 			reactor.logger.Error("failed to start multiplex reactor; runtime error",
 				"chain_id", chainID,
@@ -2228,30 +2260,23 @@ func (reactor *Reactor) initMultiplexProviders(
 //
 // TODO(midas): add multiplex metric "MultiplexStateLoadDurationSeconds".
 // TODO(midas): refactoring with MakeNetworkStateMachine.
-func (reactor *Reactor) loadMultiplexState() error {
-	// We should start/open databases only for currently ACTIVE runtimes.
-	activeRuntimes := reactor.runtimeRegistry.ActiveRuntimes()
-	activeChainIds := []string{}
-	for chainID := range activeRuntimes {
-		activeChainIds = append(activeChainIds, chainID)
-	}
-
+func (reactor *Reactor) loadMultiplexState(chainIds []string) error {
 	// Initialize database tables and instances
-	err := reactor.InitMultiplexDatabases(activeChainIds)
+	err := reactor.InitMultiplexDatabases(chainIds)
 	if err != nil {
 		return err
 	}
 
 	// Load initial state multiplex from database or from genesis docs
 	// Uses "database/state" instances
-	err = reactor.InitMultiplexStates(activeChainIds)
+	err = reactor.InitMultiplexStates(chainIds)
 	if err != nil {
 		return err
 	}
 
 	// Create a blockstore multiplex around "database/blockstore" instances
 	// Uses "database/blockStore" instances
-	err = reactor.InitMultiplexBlockStores(activeChainIds)
+	err = reactor.InitMultiplexBlockStores(chainIds)
 	if err != nil {
 		return err
 	}
@@ -2526,7 +2551,7 @@ func (reactor *Reactor) handleChainReplicationRequest(
 
 	// Inject a *running* node.Node for the new network.
 	// TODO(midas): currently not passing any node options.
-	if err = reactor.InjectNewRuntime(context.Background(), req.ChainID); err != nil {
+	if err = reactor.InjectNewRuntime(reactor.Context(), req.ChainID); err != nil {
 		return fmt.Errorf(
 			"could not spawn node runtime: %w", err)
 	}
