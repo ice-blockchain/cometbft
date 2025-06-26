@@ -331,7 +331,7 @@ func (reg *RuntimeRegistry) cleanerRoutine() {
 	}
 
 	// Loops and garbage collects runtimes when timer ticks.
-	for {
+	for reg.Context().Err() == nil {
 		cleanerInterval := reg.CleanerInterval()
 
 		select {

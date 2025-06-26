@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/ice-blockchain/cometbft/libs/service"
 	"net"
 	"net/http"
 	"runtime/debug"
@@ -13,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ice-blockchain/cometbft/libs/service"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -251,9 +252,9 @@ func NewServer(
 		impl,
 		nodeConfig,
 		nodeLogger,
-		node.NodeWithStartRPC(false),     // delegates to MustStart()
-		node.NodeWithStartP2P(false),     // delegates to MustStart()
-		node.NodeWithStartMonitor(false), // delegates to MustStart()
+		node.NodeWithStartRPC(false),     // delegates to OnStart()
+		node.NodeWithStartP2P(false),     // delegates to OnStart()
+		node.NodeWithStartMonitor(false), // delegates to OnStart()
 	)
 	if err != nil {
 		return nil, fmt.Errorf(
@@ -1028,7 +1029,7 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 				numCompleted int
 				err          error
 			)
-			if numCompleted, err = b.WaitForRelaysReplicationCompleted(ctx,
+			if numCompleted, err = b.WaitForRelaysReplicationCompleted(b.Context(),
 				syncingChainIds,
 				transactions...,
 			); err != nil {
@@ -1120,7 +1121,7 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 				numCompleted int
 				err          error
 			)
-			if numCompleted, err = b.WaitForTransactionsEvents(ctx,
+			if numCompleted, err = b.WaitForTransactionsEvents(b.Context(),
 				userAddress,
 				txesWaiting...,
 			); err != nil {
@@ -3474,7 +3475,7 @@ func (b *MultiplexBackend) metricsReporter() {
 	metricsTicker := time.NewTicker(metricsTickerDuration)
 	defer metricsTicker.Stop()
 
-	for {
+	for b.Context().Err() == nil {
 		select {
 		case <-metricsTicker.C:
 			if b.metrics == nil {

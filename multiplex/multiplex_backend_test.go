@@ -34,8 +34,10 @@ func closeAndRemoveAll(tb testing.TB, rootDir string, server *mx.MultiplexBacken
 
 	defer os.RemoveAll(rootDir)
 
-	err := server.Stop()
-	assert.NoError(tb, err, "should shutdown server gracefully")
+	if server.IsRunning() {
+		err := server.Stop()
+		assert.NoError(tb, err, "should shutdown server gracefully")
+	}
 }
 
 func TestMultiplexBackendNewServer(t *testing.T) {
@@ -53,6 +55,7 @@ func TestMultiplexBackendNewServer(t *testing.T) {
 		globalCfg,
 		cmtlog.NewNopLogger(),
 	)
+	assert.NoError(t, backend.Start())
 
 	assert.NoError(t, err, "should create server instance")
 	assert.NotNil(t, backend)
@@ -76,6 +79,7 @@ func TestMultiplexBackendNewServer(t *testing.T) {
 		globalCfg2,
 		cmtlog.NewNopLogger(),
 	)
+	assert.NoError(t, backend2.Start())
 
 	assert.NoError(t, err2, "should create server instance")
 	assert.NotNil(t, backend2)

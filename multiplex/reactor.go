@@ -2154,7 +2154,7 @@ func (reactor *Reactor) OnReset() error {
 
 // waitForInterval waits for i using time.After, or shutdown channels.
 func (reactor *Reactor) waitForInterval(i time.Duration) (waited bool) {
-	for {
+	for reactor.Context().Err() == nil {
 		select {
 		case <-time.After(i):
 			return true

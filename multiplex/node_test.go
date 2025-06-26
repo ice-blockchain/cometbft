@@ -729,7 +729,7 @@ func assertWaitForNodesMultiplexToProduceBlocks(
 			mtx.Unlock()
 
 		NODE_BLOCKS_LOOP:
-			for {
+			for tb.Context().Err() == nil {
 				select {
 				case msg := <-blocksSub.Out():
 					numBlocks++

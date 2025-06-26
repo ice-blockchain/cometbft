@@ -238,7 +238,7 @@ func (pool *ReplayPool) OnStop() {
 // for messages around flushing the pool or capacity updates.
 func (pool *ReplayPool) StopAfterProcessing() error {
 	// Loops until the pool has processed all buckets.
-	for {
+	for pool.Context().Err() == nil {
 		// NOTE(midas): non-blocking select on shutdown channel makes
 		// sure every time before verifying size, we know to shutdown.
 		select {
@@ -263,6 +263,8 @@ func (pool *ReplayPool) StopAfterProcessing() error {
 			return nil
 		}
 	}
+
+	return nil
 }
 
 // ----------------------------------------------------------------------------
@@ -494,7 +496,7 @@ func (pool *ReplayPool) ReplayBroadcastLoop(userAddress string) {
 		"numc", pool.NumConcurrent(),
 	)
 
-	for {
+	for pool.Context().Err() == nil {
 		// NOTE(midas): non-blocking select on shutdown channel makes
 		// sure every time before we try to replay, we know to shutdown.
 		select {
@@ -541,7 +543,7 @@ func (pool *ReplayPool) WaitForBroadcastLoop(userAddress string) {
 	didProcessCh := pool.didProcessCh[userAddress]
 	pool.mtx.Unlock()
 
-	for {
+	for pool.Context().Err() == nil {
 		select {
 		case <-didProcessCh: // block until done
 			// Removes the transaction bucket and closes channels.
@@ -577,7 +579,7 @@ func (pool *ReplayPool) ThrottleBroadcastLoop(userAddress string) {
 	mayProcessCh := pool.mayProcessCh
 	pool.mtx.Unlock()
 
-	for {
+	for pool.Context().Err() == nil {
 		select {
 		case <-mayProcessCh: // block until available
 			// This process is not waiting anymore.
@@ -653,7 +655,7 @@ func (pool *ReplayPool) removeBucket(userAddress string) error {
 // process concurrently, i.e. it processes some buckets as soon as it should.
 func (pool *ReplayPool) thresholdProcessorRoutine() {
 	// Loops undefinitely and processes replays when threshold is reached.
-	for {
+	for pool.Context().Err() == nil {
 		if !pool.IsRunning() {
 			return
 		}
@@ -719,7 +721,7 @@ func (pool *ReplayPool) thresholdProcessorRoutine() {
 // using the maximum number of items it may process concurrently.
 func (pool *ReplayPool) timerProcessorRoutine() {
 	// Loops undefinitely and processes replays when timer ticks.
-	for {
+	for pool.Context().Err() == nil {
 		flushInterval := pool.FlushInterval()
 
 		select {
@@ -764,7 +766,7 @@ func (pool *ReplayPool) timerProcessorRoutine() {
 
 // waitForInterval waits for i using time.After, or shutdown channels.
 func (pool *ReplayPool) waitForInterval(i time.Duration) (waited bool) {
-	for {
+	for pool.Context().Err() == nil {
 		select {
 		case <-time.After(i):
 			return true

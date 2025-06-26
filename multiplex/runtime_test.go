@@ -688,6 +688,10 @@ func TestMultiplexRuntimeInjectNewRuntimeWithOthers(t *testing.T) {
 
 	defer shutdownFn(testReactor)
 
+	// Give the node some time to start RPC, P2P, etc.
+	waitDuration := 2 * time.Second
+	time.Sleep(waitDuration)
+
 	injectChainID := makeChainID("test-inject-1")
 
 	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
@@ -705,9 +709,6 @@ func TestMultiplexRuntimeInjectNewRuntimeWithOthers(t *testing.T) {
 	// Act
 	runtimeErr := testReactor.InjectNewRuntime(t.Context(), injectChainID)
 	assert.NoError(t, runtimeErr, "should spawn parallel process for node runtime")
-
-	waitDuration := 2 * time.Second
-	time.Sleep(waitDuration)
 }
 
 // ----------------------------------------------------------------------------
