@@ -85,7 +85,7 @@ func (wm *WebsocketManager) WebsocketHandler(w http.ResponseWriter, r *http.Requ
 	}()
 
 	// register connection
-	con := newWSConnection(wsConn, wm.funcMap, wm.wsConnOptions...)
+	con := newWSConnection(r.Context(), wsConn, wm.funcMap, wm.wsConnOptions...)
 	con.SetLogger(wm.logger.With("remote", wsConn.RemoteAddr()))
 	wm.logger.Info("New websocket connection", "remote", con.remoteAddr)
 	err = con.Start() // BLOCKING
@@ -147,6 +147,7 @@ type wsConnection struct {
 // write buffer is full, pongs may be dropped, which may cause clients to
 // disconnect. see https://github.com/gorilla/websocket/issues/97
 func newWSConnection(
+	ctx context.Context,
 	baseConn *websocket.Conn,
 	funcMap map[string]*RPCFunc,
 	options ...func(*wsConnection),
@@ -165,7 +166,7 @@ func newWSConnection(
 		option(wsc)
 	}
 	wsc.baseConn.SetReadLimit(wsc.readLimit)
-	wsc.BaseService = *service.NewBaseService(nil, "wsConnection", wsc)
+	wsc.BaseService = *service.NewBaseService(ctx, nil, "wsConnection", wsc)
 	return wsc
 }
 
@@ -219,7 +220,7 @@ func ReadLimit(readLimit int64) func(*wsConnection) {
 
 // OnStart implements service.Service by starting the read and write routines. It
 // blocks until there's some error.
-func (wsc *wsConnection) OnStart() error {
+func (wsc *wsConnection) OnStart(ctx context.Context) error {
 	wsc.writeChan = make(chan types.RPCResponse, wsc.writeChanCapacity)
 
 	// Read subscriptions/unsubscriptions to events

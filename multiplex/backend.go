@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ice-blockchain/cometbft/libs/service"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
@@ -113,6 +115,7 @@ type TransactionEventResult struct {
 // Additionally, an internal [client.Acceptor] instance may be used to further
 // extend the broadcast process, e.g. to call RollbackTx.
 type MultiplexBackend struct {
+	*service.BaseService
 	// A mutex is locked for reactor and eventSwitch updates.
 	relayMtx sync.Mutex
 
@@ -163,6 +166,7 @@ type MultiplexBackend struct {
 	logger     cmtlog.Logger
 	errorsCh   chan error
 	shutdownCh chan struct{}
+	closed     bool
 	metrics    *Metrics
 }
 
@@ -232,6 +236,7 @@ func WithReactorOptions(reactorOpts ...ReactorOption) func(*MultiplexBackend) {
 //
 // See also: [NewNodesMultiplex]
 func NewServer(
+	ctx context.Context,
 	impl client.Acceptor,
 	nodeConfig *config.Config,
 	nodeLogger cmtlog.Logger,
@@ -243,13 +248,13 @@ func NewServer(
 
 	initTime := time.Now()
 	_, reactor, err := NewNodesMultiplex(
-		context.Background(),
+		ctx,
 		impl,
 		nodeConfig,
 		nodeLogger,
-		node.NodeWithStartRPC(false),     // delegates to MustStart()
-		node.NodeWithStartP2P(false),     // delegates to MustStart()
-		node.NodeWithStartMonitor(false), // delegates to MustStart()
+		node.NodeWithStartRPC(false),     // delegates to OnStart()
+		node.NodeWithStartP2P(false),     // delegates to OnStart()
+		node.NodeWithStartMonitor(false), // delegates to OnStart()
 	)
 	if err != nil {
 		return nil, fmt.Errorf(
@@ -266,7 +271,6 @@ func NewServer(
 
 		logger: nodeLogger,
 	}
-
 	// Enable overwrite of optional properties
 	for _, option := range options {
 		option(server)
@@ -283,7 +287,7 @@ func NewServer(
 	if server.metrics != nil {
 		defer addTimeSample(server.metrics.InitDurationSeconds, initTime)()
 	}
-
+	server.BaseService = service.NewBaseService(ctx, server.logger, "backend", server)
 	return server, nil
 }
 
@@ -458,7 +462,7 @@ func (b *MultiplexBackend) GetAckResponsePeers(txHash string) []string {
 // which is used to determine the required channels and connection information.
 //
 // The relayMtx is expected to be locked by the caller.
-func (b *MultiplexBackend) CreateOrLoadDiscoveryEventSwitch() *p2p.Switch {
+func (b *MultiplexBackend) CreateOrLoadDiscoveryEventSwitch(ctx context.Context) *p2p.Switch {
 	discoverySwitch := b.reactor.GetEventSwitchForDiscovery()
 	if discoverySwitch != nil {
 		return discoverySwitch
@@ -492,6 +496,7 @@ func (b *MultiplexBackend) CreateOrLoadDiscoveryEventSwitch() *p2p.Switch {
 	)
 
 	sw := p2p.NewSwitch(
+		ctx,
 		nodeConfig.P2P,
 		localTransport,
 		func(s *p2p.Switch) {
@@ -579,7 +584,7 @@ func (b *MultiplexBackend) shutdownOnPanic() {
 // replicated chain.
 //
 // MustStart implements [server.Server]
-func (b *MultiplexBackend) MustStart() {
+func (b *MultiplexBackend) OnStart(ctx context.Context) error {
 	startTime := time.Now()
 
 	if b.metrics != nil {
@@ -665,7 +670,7 @@ func (b *MultiplexBackend) MustStart() {
 
 		// We open a discovery port which is required such that the relay may
 		// be communicated to, even without hosting any replicated chain.
-		if _, err := b.StartP2PServerDiscovery(nodeCfg, nodeKey); err != nil {
+		if _, err := b.StartP2PServerDiscovery(ctx, nodeCfg, nodeKey); err != nil {
 			b.errorsCh <- fmt.Errorf("error with discovery P2P server: %w", err)
 		}
 
@@ -749,7 +754,7 @@ func (b *MultiplexBackend) MustStart() {
 		}
 
 		// Then start the P2P server
-		if err := b.StartP2PServerCometBFT(); err != nil {
+		if err := b.StartP2PServerCometBFT(ctx); err != nil {
 			b.errorsCh <- fmt.Errorf("error with CometBFT P2P server: %w", err)
 		}
 
@@ -798,7 +803,7 @@ func (b *MultiplexBackend) MustStart() {
 		)
 
 		for _, replayingChainID := range replayingChainIds {
-			if err := b.StartConsensusInstance(context.Background(), replayingChainID); err != nil {
+			if err := b.StartConsensusInstance(replayingChainID); err != nil {
 				b.errorsCh <- fmt.Errorf(
 					"error activating node runtime for %s: %w", replayingChainID, err,
 				)
@@ -823,6 +828,7 @@ func (b *MultiplexBackend) MustStart() {
 		"id", b.reactor.GetNodeKey().ID(),
 		"len", b.reactor.Size(),
 	)
+	return nil
 }
 
 // Close stops the multiplex reactor and listeners, as well
@@ -830,11 +836,16 @@ func (b *MultiplexBackend) MustStart() {
 // The relayMtx mutex is locked during execution.
 //
 // Close implements io.Closer
-func (b *MultiplexBackend) Close() error {
+func (b *MultiplexBackend) OnStop() {
 	// Lock the mutex to complete shutdown gracefully
 	b.relayMtx.Lock()
-	defer b.relayMtx.Unlock()
-
+	if b.closed {
+		b.logger.Debug("node backend already closed",
+			"id", b.reactor.GetNodeKey().ID(),
+		)
+		b.relayMtx.Unlock()
+		return
+	}
 	// TODO(midas): remove debug logs
 	b.logger.Debug("Shutting down node backend",
 		"id", b.reactor.GetNodeKey().ID(),
@@ -843,7 +854,9 @@ func (b *MultiplexBackend) Close() error {
 	if b.shutdownCh != nil {
 		// Shutdown goroutines started by MustStart().
 		close(b.shutdownCh)
+		b.closed = true
 	}
+	b.relayMtx.Unlock()
 
 	// Stop the runtimes registry, it shouldn't interfere with shutdown.
 	b.reactor.runtimesMutex.Lock()
@@ -900,7 +913,7 @@ func (b *MultiplexBackend) Close() error {
 		}
 	}
 
-	return nil
+	//return nil
 }
 
 // OnBroadcastError updates a runtime completion status and attaches
@@ -1016,7 +1029,7 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 				numCompleted int
 				err          error
 			)
-			if numCompleted, err = b.WaitForRelaysReplicationCompleted(ctx,
+			if numCompleted, err = b.WaitForRelaysReplicationCompleted(b.Context(),
 				syncingChainIds,
 				transactions...,
 			); err != nil {
@@ -1108,7 +1121,7 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 				numCompleted int
 				err          error
 			)
-			if numCompleted, err = b.WaitForTransactionsEvents(ctx,
+			if numCompleted, err = b.WaitForTransactionsEvents(b.Context(),
 				userAddress,
 				txesWaiting...,
 			); err != nil {
@@ -2395,9 +2408,9 @@ func (b *MultiplexBackend) RemoveTransactions(
 //
 // StartConsensusInstance implements [server.Backend].
 func (b *MultiplexBackend) StartConsensusInstance(
-	ctx context.Context,
 	chainID string,
 ) error {
+	ctx := b.Context()
 	clogger := b.logger.With("chain_id", chainID)
 
 	if err := b.reactor.StartConsensusInstanceReactors(ctx,
@@ -2422,6 +2435,7 @@ func (b *MultiplexBackend) StartConsensusInstance(
 // network ports open yet (due to not replicating any chain).
 // Creates a transport listening on DiscoveryPort.
 func (b *MultiplexBackend) StartP2PServerDiscovery(
+	ctx context.Context,
 	nodeCfg *config.Config,
 	nodeKey *p2p.NodeKey,
 ) (
@@ -2455,7 +2469,7 @@ func (b *MultiplexBackend) StartP2PServerDiscovery(
 
 	// Initializes the local p2p.Switch
 	// Creates a global P2P switch to respond even without chain info.
-	eventSwitch := b.CreateOrLoadDiscoveryEventSwitch()
+	eventSwitch := b.CreateOrLoadDiscoveryEventSwitch(ctx)
 
 	// And start the switch (the P2P server).
 	err = eventSwitch.Start()
@@ -2579,7 +2593,7 @@ func (b *MultiplexBackend) StartRPCServerDiscovery(
 // transaction.
 // Creates a transport listening on DiscoveryPort+1.
 // This method sets the listen address in cometbftP2PAddr.
-func (b *MultiplexBackend) StartP2PServerCometBFT() error {
+func (b *MultiplexBackend) StartP2PServerCometBFT(ctx context.Context) error {
 	nodeConfig := b.reactor.GetNodeConfig()
 
 	promoteAddr := nodeConfig.P2P.ExternalAddress
@@ -2610,7 +2624,7 @@ func (b *MultiplexBackend) StartP2PServerCometBFT() error {
 	)
 
 	// uses DiscoveryPort+1
-	sw := b.reactor.CreateOrLoadCometBFTEventSwitch(b.cometbftP2PAddr)
+	sw := b.reactor.CreateOrLoadCometBFTEventSwitch(ctx, b.cometbftP2PAddr)
 
 	// Start the transport.
 	if err := sw.Transport().Listen(*b.cometbftP2PAddr); err != nil {
@@ -3380,7 +3394,7 @@ func (b *MultiplexBackend) localTransactionEventsConsumer(
 		resultsCh <- TransactionEventResult{Error: err}
 		return
 	}
-	defer chainEventBus.UnsubscribeAll(context.Background(), subscriberName)
+	defer chainEventBus.UnsubscribeAll(ctx, subscriberName)
 
 	defer cancelTimer.Stop()
 
@@ -3461,7 +3475,7 @@ func (b *MultiplexBackend) metricsReporter() {
 	metricsTicker := time.NewTicker(metricsTickerDuration)
 	defer metricsTicker.Stop()
 
-	for {
+	for b.Context().Err() == nil {
 		select {
 		case <-metricsTicker.C:
 			if b.metrics == nil {

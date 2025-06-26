@@ -2,6 +2,7 @@ package autofile
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -78,7 +79,7 @@ type Group struct {
 
 // OpenGroup creates a new Group with head at headPath. It returns an error if
 // it fails to open head file.
-func OpenGroup(headPath string, groupOptions ...func(*Group)) (*Group, error) {
+func OpenGroup(ctx context.Context, headPath string, groupOptions ...func(*Group)) (*Group, error) {
 	dir, err := filepath.Abs(filepath.Dir(headPath))
 	if err != nil {
 		return nil, err
@@ -105,7 +106,7 @@ func OpenGroup(headPath string, groupOptions ...func(*Group)) (*Group, error) {
 		option(g)
 	}
 
-	g.BaseService = *service.NewBaseService(nil, "Group", g)
+	g.BaseService = *service.NewBaseService(ctx, nil, "Group", g)
 
 	gInfo := g.readGroupInfo()
 	g.minIndex = gInfo.MinIndex
@@ -136,7 +137,7 @@ func GroupTotalSizeLimit(limit int64) func(*Group) {
 
 // OnStart implements service.Service by starting the goroutine that checks file
 // and group limits.
-func (g *Group) OnStart() error {
+func (g *Group) OnStart(ctx context.Context) error {
 	g.ticker = time.NewTicker(g.groupCheckDuration)
 	go g.processTicks()
 	return nil

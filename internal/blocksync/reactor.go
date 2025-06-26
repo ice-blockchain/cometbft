@@ -1,6 +1,7 @@
 package blocksync
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"sync"
@@ -75,7 +76,9 @@ type Reactor struct {
 }
 
 // NewReactor returns new reactor instance.
-func NewReactor(state sm.State, blockExec *sm.BlockExecutor, store *store.BlockStore,
+func NewReactor(
+	ctx context.Context,
+	state sm.State, blockExec *sm.BlockExecutor, store *store.BlockStore,
 	blockSync bool, localAddr crypto.Address, metrics *Metrics, offlineStateSyncHeight int64,
 	options ...func(*Reactor),
 ) *Reactor {
@@ -105,7 +108,7 @@ func NewReactor(state sm.State, blockExec *sm.BlockExecutor, store *store.BlockS
 	if startHeight == 1 {
 		startHeight = state.InitialHeight
 	}
-	pool := NewBlockPool(startHeight, requestsCh, errorsCh)
+	pool := NewBlockPool(ctx, startHeight, requestsCh, errorsCh)
 
 	bcR := &Reactor{
 		initialState: state,
@@ -124,7 +127,7 @@ func NewReactor(state sm.State, blockExec *sm.BlockExecutor, store *store.BlockS
 		option(bcR)
 	}
 
-	bcR.BaseReactor = *p2p.NewBaseReactor("Reactor", bcR)
+	bcR.BaseReactor = *p2p.NewBaseReactor(ctx, "Reactor", bcR)
 	return bcR
 }
 
@@ -158,7 +161,7 @@ func (bcR *Reactor) SetLogger(l log.Logger) {
 }
 
 // OnStart implements service.Service.
-func (bcR *Reactor) OnStart() error {
+func (bcR *Reactor) OnStart(ctx context.Context) error {
 	if bcR.blockSync {
 		err := bcR.pool.Start()
 		if err != nil {

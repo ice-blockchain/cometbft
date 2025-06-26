@@ -1,6 +1,7 @@
 package p2p
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"reflect"
@@ -136,6 +137,7 @@ type PeerImpl struct {
 type PeerOption func(*PeerImpl)
 
 func newPeer(
+	ctx context.Context,
 	pc peerConn,
 	mConfig cmtconn.MConnConfig,
 	nodeInfo NodeInfo,
@@ -153,6 +155,7 @@ func newPeer(
 	}
 
 	p.mconn = createMConnection(
+		ctx,
 		pc.conn,
 		p,
 		cfg,
@@ -160,7 +163,7 @@ func newPeer(
 		mConfig,
 		sw,
 	)
-	p.BaseService = *service.NewBaseService(nil, "Peer", p)
+	p.BaseService = *service.NewBaseService(ctx, nil, "Peer", p)
 	for _, option := range options {
 		option(p)
 	}
@@ -196,8 +199,8 @@ func (p *PeerImpl) GetLogger() log.Logger {
 }
 
 // OnStart implements BaseService.
-func (p *PeerImpl) OnStart() error {
-	if err := p.BaseService.OnStart(); err != nil {
+func (p *PeerImpl) OnStart(ctx context.Context) error {
+	if err := p.BaseService.OnStart(ctx); err != nil {
 		p.Logger.Error("Error starting peer service", "err", err)
 	}
 
@@ -445,6 +448,7 @@ func (p *PeerImpl) metricsReporter() {
 // helper funcs
 
 func createMConnection(
+	ctx context.Context,
 	conn net.Conn,
 	p *PeerImpl,
 	peerCfg peerConfig,
@@ -510,6 +514,7 @@ func createMConnection(
 	chDescs := sw.chDescs
 	sw.reactorsMtx.Unlock()
 	return cmtconn.NewMConnectionWithConfig(
+		ctx,
 		conn,
 		chDescs,
 		onReceive,

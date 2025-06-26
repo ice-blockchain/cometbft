@@ -49,7 +49,7 @@ func TestMultiplexRoutinesNodeReplRequestEmptyRelays(t *testing.T) {
 
 	// Start the node backends
 	for i := 0; i < len(servers); i++ {
-		servers[i].MustStart()
+		servers[i].Start()
 	}
 
 	testRelayAddrs := []*server.RelayAddress{}
@@ -95,7 +95,7 @@ func TestMultiplexRoutinesNodeReplRequestEmptyRelays(t *testing.T) {
 	// (2) inject new networks GenesisDoc
 	injectErr := testReactorRelayOne.InjectNewNetwork(useChainID, []string{})
 	require.NoError(t, injectErr)
-	runtimeErr := testReactorRelayOne.InjectNewRuntime(context.Background(), useChainID)
+	runtimeErr := testReactorRelayOne.InjectNewRuntime(t.Context(), useChainID)
 	require.NoError(t, runtimeErr)
 
 	waitGroup := sync.WaitGroup{}

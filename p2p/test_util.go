@@ -3,6 +3,7 @@ package p2p
 import (
 	"fmt"
 	"net"
+	"testing"
 	"time"
 
 	"github.com/ice-blockchain/cometbft/config"
@@ -84,25 +85,28 @@ const TestHost = "localhost"
 
 // MakeConnectedSwitches returns n switches, initialized according to the
 // initSwitch function, and connected according to the connect function.
-func MakeConnectedSwitches(cfg *config.P2PConfig,
+func MakeConnectedSwitches(
+	t *testing.T,
+	cfg *config.P2PConfig,
 	n int,
 	initSwitch func(int, *Switch) *Switch,
-	connect func([]*Switch, int, int),
+	connect func(*testing.T, []*Switch, int, int),
 ) []*Switch {
-	switches := MakeSwitches(cfg, n, initSwitch)
-	return StartAndConnectSwitches(switches, connect)
+	switches := MakeSwitches(t, cfg, n, initSwitch)
+	return StartAndConnectSwitches(t, switches, connect)
 }
 
 // MakeSwitches returns n switches.
 // initSwitch defines how the i'th switch should be initialized (ie. with what reactors).
 func MakeSwitches(
+	t *testing.T,
 	cfg *config.P2PConfig,
 	n int,
 	initSwitch func(int, *Switch) *Switch,
 ) []*Switch {
 	switches := make([]*Switch, n)
 	for i := 0; i < n; i++ {
-		switches[i] = MakeSwitch(cfg, i, initSwitch)
+		switches[i] = MakeSwitch(t, cfg, i, initSwitch)
 	}
 	return switches
 }
@@ -111,8 +115,9 @@ func MakeSwitches(
 // If connect==Connect2Switches, the switches will be fully connected.
 // NOTE: panics if any switch fails to start.
 func StartAndConnectSwitches(
+	t *testing.T,
 	switches []*Switch,
-	connect func([]*Switch, int, int),
+	connect func(*testing.T, []*Switch, int, int),
 ) []*Switch {
 	if err := StartSwitches(switches); err != nil {
 		panic(err)
@@ -120,7 +125,7 @@ func StartAndConnectSwitches(
 
 	for i := 0; i < len(switches); i++ {
 		for j := i + 1; j < len(switches); j++ {
-			connect(switches, i, j)
+			connect(t, switches, i, j)
 		}
 	}
 
@@ -130,7 +135,7 @@ func StartAndConnectSwitches(
 // Connect2Switches will connect switches i and j via net.Pipe().
 // Blocks until a connection is established.
 // NOTE: caller ensures i and j are within bounds.
-func Connect2Switches(switches []*Switch, i, j int) {
+func Connect2Switches(t *testing.T, switches []*Switch, i, j int) {
 	switchI := switches[i]
 	switchJ := switches[j]
 
@@ -138,14 +143,14 @@ func Connect2Switches(switches []*Switch, i, j int) {
 
 	doneCh := make(chan struct{})
 	go func() {
-		err := switchI.addPeerWithConnection(c1)
+		err := switchI.addPeerWithConnection(t, c1)
 		if err != nil {
 			panic(err)
 		}
 		doneCh <- struct{}{}
 	}()
 	go func() {
-		err := switchJ.addPeerWithConnection(c2)
+		err := switchJ.addPeerWithConnection(t, c2)
 		if err != nil {
 			panic(err)
 		}
@@ -156,10 +161,10 @@ func Connect2Switches(switches []*Switch, i, j int) {
 }
 
 // ConnectStartSwitches will connect switches c and j via net.Pipe().
-func ConnectStarSwitches(c int) func([]*Switch, int, int) {
+func ConnectStarSwitches(t *testing.T, c int) func(*testing.T, []*Switch, int, int) {
 	// Blocks until a connection is established.
 	// NOTE: caller ensures i and j is within bounds.
-	return func(switches []*Switch, i, j int) {
+	return func(t *testing.T, switches []*Switch, i, j int) {
 		if i != c {
 			return
 		}
@@ -171,14 +176,14 @@ func ConnectStarSwitches(c int) func([]*Switch, int, int) {
 
 		doneCh := make(chan struct{})
 		go func() {
-			err := switchI.addPeerWithConnection(c1)
+			err := switchI.addPeerWithConnection(t, c1)
 			if err != nil {
 				panic(err)
 			}
 			doneCh <- struct{}{}
 		}()
 		go func() {
-			err := switchJ.addPeerWithConnection(c2)
+			err := switchJ.addPeerWithConnection(t, c2)
 			if err != nil {
 				panic(err)
 			}
@@ -189,7 +194,7 @@ func ConnectStarSwitches(c int) func([]*Switch, int, int) {
 	}
 }
 
-func (sw *Switch) addPeerWithConnection(conn net.Conn) error {
+func (sw *Switch) addPeerWithConnection(t *testing.T, conn net.Conn) error {
 	pc, err := testInboundPeerConn(conn, sw.config, sw.nodeKey.PrivKey)
 	if err != nil {
 		if err := conn.Close(); err != nil {
@@ -214,6 +219,7 @@ func (sw *Switch) addPeerWithConnection(conn net.Conn) error {
 	}
 
 	p := newPeer(
+		t.Context(),
 		pc,
 		MConnConfig(sw.config),
 		ni,
@@ -242,6 +248,7 @@ func StartSwitches(switches []*Switch) error {
 }
 
 func MakeSwitch(
+	t *testing.T,
 	cfg *config.P2PConfig,
 	i int,
 	initSwitch func(int, *Switch) *Switch,
@@ -258,14 +265,14 @@ func MakeSwitch(
 		panic(err)
 	}
 
-	t := NewMultiplexTransport(nodeInfo, nodeKey, MConnConfig(cfg))
+	tr := NewMultiplexTransport(t.Context(), nodeInfo, nodeKey, MConnConfig(cfg))
 
-	if err := t.Listen(*addr); err != nil {
+	if err := tr.Listen(*addr); err != nil {
 		panic(err)
 	}
 
 	// TODO: let the config be passed in?
-	sw := initSwitch(i, NewSwitch(cfg, t, opts...))
+	sw := initSwitch(i, NewSwitch(t.Context(), cfg, tr, opts...))
 	sw.SetLogger(log.TestingLogger().With("switch", i))
 	sw.SetNodeKey(&nodeKey)
 
@@ -277,7 +284,7 @@ func MakeSwitch(
 
 	// TODO: We need to setup reactors ahead of time so the NodeInfo is properly
 	// populated and we don't have to do those awkward overrides and setters.
-	t.nodeInfo = nodeInfo
+	tr.nodeInfo = nodeInfo
 	sw.SetNodeInfo(nodeInfo)
 
 	return sw

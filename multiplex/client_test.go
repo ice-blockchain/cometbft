@@ -56,6 +56,7 @@ func ResetTestMultiplexClient(
 		globalCfg := ResetTestMultiplexNode(tb, numChains)
 
 	server, err := mx.NewServer(
+		tb.Context(),
 		&client.DefaultAcceptor{},
 		globalCfg,
 		customLogger,
@@ -63,7 +64,7 @@ func ResetTestMultiplexClient(
 	require.NoError(tb, err, "should create server instance")
 
 	// Start the node backend
-	server.MustStart()
+	server.Start()
 
 	return rootDir, server
 }

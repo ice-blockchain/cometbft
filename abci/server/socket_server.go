@@ -59,7 +59,7 @@ func (s *SocketServer) SetLogger(l cmtlog.Logger) {
 	s.isLoggerSet = true
 }
 
-func (s *SocketServer) OnStart() error {
+func (s *SocketServer) OnStart(ctx context.Context) error {
 	ln, err := net.Listen(s.proto, s.addr)
 	if err != nil {
 		return err

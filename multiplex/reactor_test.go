@@ -65,6 +65,7 @@ func TestMultiplexReactorNewReactor(t *testing.T) {
 	// Should panic given an error when executing the GenesisDocProvider.
 	assert.Panics(t, func() {
 		mx.NewReactor(
+			t.Context(),
 			nodeKey,
 			nodeCfg,
 			cmtlog.NewNopLogger(),
@@ -78,6 +79,7 @@ func TestMultiplexReactorNewReactor(t *testing.T) {
 
 	// Test a successful configuration of a Reactor
 	reactor := mx.NewReactor(
+		t.Context(),
 		nodeKey,
 		nodeCfg,
 		cmtlog.NewNopLogger(),
@@ -126,7 +128,7 @@ func TestMultiplexReactorRegisterService(t *testing.T) {
 	for _, chainIds := range nodeCfg.MultiplexConfig.UserChains {
 		for _, chainID := range chainIds {
 			// Test registering a valid service
-			eventBus := types.NewEventBus()
+			eventBus := types.NewEventBus(t.Context())
 			reactor.RegisterService(mx.ServiceKeyEventBus, chainID, eventBus)
 		}
 	}
@@ -156,7 +158,7 @@ func TestMultiplexReactorRegisterService(t *testing.T) {
 			wg.Add(1)
 			go func(concurrentChainID string) {
 				// Test registering a valid service in parallel goroutine
-				eventBus := types.NewEventBus()
+				eventBus := types.NewEventBus(t.Context())
 				otherReactor.RegisterService(mx.ServiceKeyEventBus, concurrentChainID, eventBus)
 
 				wg.Done()
@@ -480,6 +482,7 @@ func makeTestReactorWithGenesisDocProvider(
 	require.NoError(tb, err, "should create chain registry instance")
 
 	return mx.NewReactor(
+		tb.Context(),
 		nodeKey,
 		nodeCfg,
 		cmtlog.NewNopLogger(),

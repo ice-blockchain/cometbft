@@ -294,7 +294,7 @@ func (reactor *Reactor) InjectNewRuntime(
 		defer reactor.runtimesMutex.Unlock()
 
 		// Start node listeners
-		if err := reactor.startNodeListeners(network); err != nil {
+		if err := reactor.startNodeListeners(ctx, network); err != nil {
 			clogger.Error("failed to start node for new runtime",
 				"err", err,
 			)
@@ -394,8 +394,19 @@ func (reactor *Reactor) InjectNewRuntime(
 			"error creating the pex address books: %w", err)
 	}
 
+	// For injected ChainIDs, we do not need to start the RPC/P2P servers as
+	// they are already started by [MultiplexBackend#OnStart].
+	nodeOptions := []node.Option{
+		node.NodeWithStartRPC(false),
+		node.NodeWithStartP2P(false),
+		node.NodeWithStartMonitor(false),
+	}
+
 	// Register the [node.Node] instance in servicesRegistry.
-	if _, err := reactor.createMultiplexNodesWithServices(ctx, []string{chainID}); err != nil {
+	if _, err := reactor.createMultiplexNodesWithServices(ctx,
+		[]string{chainID},
+		nodeOptions...,
+	); err != nil {
 		return fmt.Errorf(
 			"error injecting node instance: %w", err)
 	}

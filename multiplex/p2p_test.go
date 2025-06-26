@@ -141,8 +141,9 @@ func ResetTestMultiplexP2P(tb testing.TB, numChains int) (string, *config.Config
 
 	// Start an ABCI client
 	abciClient := proxy.NewMultiplexAppConn(
+		tb.Context(),
 		testChainIds,
-		proxy.DefaultClientCreator(globalCfg.ProxyApp, globalCfg.ABCI, globalCfg.DBDir()),
+		proxy.DefaultClientCreator(tb.Context(), globalCfg.ProxyApp, globalCfg.ABCI, globalCfg.DBDir()),
 		proxy.NopMetrics(),
 	)
 	abciClient.SetLogger(cmtlog.NewNopLogger())

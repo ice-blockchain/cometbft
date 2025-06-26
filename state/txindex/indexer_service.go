@@ -26,7 +26,7 @@ type IndexerService struct {
 }
 
 // NewIndexerService returns a new service instance.
-func NewIndexerService(
+func NewIndexerService(ctx context.Context,
 	txIdxr TxIndexer,
 	blockIdxr indexer.BlockIndexer,
 	eventBus *types.EventBus,
@@ -38,13 +38,13 @@ func NewIndexerService(
 		eventBus:         eventBus,
 		terminateOnError: terminateOnError,
 	}
-	is.BaseService = *service.NewBaseService(nil, "IndexerService", is)
+	is.BaseService = *service.NewBaseService(ctx, nil, "IndexerService", is)
 	return is
 }
 
 // OnStart implements service.Service by subscribing for all transactions
 // and indexing them by events.
-func (is *IndexerService) OnStart() error {
+func (is *IndexerService) OnStart(ctx context.Context) error {
 	// Use SubscribeUnbuffered here to ensure both subscriptions does not get
 	// canceled due to not pulling messages fast enough. Cause this might
 	// sometimes happen when there are no other subscribers.

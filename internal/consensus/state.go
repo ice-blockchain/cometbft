@@ -148,6 +148,7 @@ type StateOption func(*State)
 
 // NewState returns a new State.
 func NewState(
+	ctx context.Context,
 	config *cfg.ConsensusConfig,
 	state sm.State,
 	blockExec *sm.BlockExecutor,
@@ -163,13 +164,13 @@ func NewState(
 		txNotifier:       txNotifier,
 		peerMsgQueue:     make(chan msgInfo, msgQueueSize),
 		internalMsgQueue: make(chan msgInfo, msgQueueSize),
-		timeoutTicker:    NewTimeoutTicker(),
+		timeoutTicker:    NewTimeoutTicker(ctx),
 		statsMsgQueue:    make(chan msgInfo, msgQueueSize),
 		done:             make(chan struct{}),
 		doWALCatchup:     true,
 		wal:              nilWAL{},
 		evpool:           evpool,
-		evsw:             cmtevents.NewEventSwitch(),
+		evsw:             cmtevents.NewEventSwitch(ctx),
 		metrics:          NopMetrics(),
 	}
 	for _, option := range options {
@@ -198,7 +199,7 @@ func NewState(
 
 	// NOTE: we do not call scheduleRound0 yet, we do that upon Start()
 
-	cs.BaseService = *service.NewBaseService(nil, "State", cs)
+	cs.BaseService = *service.NewBaseService(ctx, nil, "State", cs)
 
 	return cs
 }
@@ -318,7 +319,7 @@ func (cs *State) LoadCommit(height int64) *types.Commit {
 
 // OnStart loads the latest state via the WAL, and starts the timeout and
 // receive routines.
-func (cs *State) OnStart() error {
+func (cs *State) OnStart(ctx context.Context) error {
 	// We may set the WAL in testing before calling Start, so only OpenWAL if its
 	// still the nilWAL.
 	if _, ok := cs.wal.(nilWAL); ok {
@@ -327,7 +328,7 @@ func (cs *State) OnStart() error {
 			"height", cs.Height,
 		)
 
-		if err := cs.loadWalFile(); err != nil {
+		if err := cs.loadWalFile(ctx); err != nil {
 			return err
 		}
 	}
@@ -394,7 +395,7 @@ func (cs *State) OnStart() error {
 			cs.Logger.Info("Successfully repaired WAL file")
 
 			// reload WAL file
-			if err := cs.loadWalFile(); err != nil {
+			if err := cs.loadWalFile(ctx); err != nil {
 				return err
 			}
 		}
@@ -433,8 +434,8 @@ func (cs *State) startRoutines(maxSteps int) {
 }
 
 // loadWalFile loads WAL data from file. It overwrites cs.wal.
-func (cs *State) loadWalFile() error {
-	wal, err := cs.OpenWAL(cs.config.WalFile())
+func (cs *State) loadWalFile(ctx context.Context) error {
+	wal, err := cs.OpenWAL(ctx, cs.config.WalFile())
 	if err != nil {
 		cs.Logger.Error("Failed to load state WAL", "err", err)
 		return err
@@ -481,8 +482,8 @@ func (cs *State) Wait() {
 
 // OpenWAL opens a file to log all consensus messages and timeouts for
 // deterministic accountability.
-func (cs *State) OpenWAL(walFile string) (WAL, error) {
-	wal, err := NewWAL(walFile)
+func (cs *State) OpenWAL(ctx context.Context, walFile string) (WAL, error) {
+	wal, err := NewWAL(ctx, walFile)
 	if err != nil {
 		cs.Logger.Error("Failed to open WAL", "file", walFile, "err", err)
 		return nil, err

@@ -33,13 +33,13 @@ type http struct {
 // New creates a HTTP provider, which is using the rpchttp.HTTP client under
 // the hood. If no scheme is provided in the remote URL, http will be used by
 // default. The 5s timeout is used for all requests.
-func New(chainID, remote string) (provider.Provider, error) {
+func New(ctx context.Context, chainID, remote string) (provider.Provider, error) {
 	// Ensure URL scheme is set (default HTTP) when not provided.
 	if !strings.Contains(remote, "://") {
 		remote = "http://" + remote
 	}
 
-	httpClient, err := rpchttp.NewWithTimeout(remote, timeout)
+	httpClient, err := rpchttp.NewWithTimeout(ctx, remote, timeout)
 	if err != nil {
 		return nil, err
 	}

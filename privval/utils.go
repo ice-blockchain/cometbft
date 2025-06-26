@@ -1,6 +1,7 @@
 package privval
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -26,7 +27,7 @@ func IsConnTimeout(err error) bool {
 }
 
 // NewSignerListener creates a new SignerListenerEndpoint using the corresponding listen address.
-func NewSignerListener(listenAddr string, logger log.Logger) (*SignerListenerEndpoint, error) {
+func NewSignerListener(ctx context.Context, listenAddr string, logger log.Logger) (*SignerListenerEndpoint, error) {
 	var listener net.Listener
 
 	protocol, address := cmtnet.ProtocolAndAddress(listenAddr)
@@ -47,7 +48,7 @@ func NewSignerListener(listenAddr string, logger log.Logger) (*SignerListenerEnd
 		)
 	}
 
-	pve := NewSignerListenerEndpoint(logger.With("module", "privval"), listener)
+	pve := NewSignerListenerEndpoint(ctx, logger.With("module", "privval"), listener)
 
 	return pve, nil
 }

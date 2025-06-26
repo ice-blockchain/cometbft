@@ -37,16 +37,16 @@ type EventBus struct {
 }
 
 // NewEventBus returns a new event bus.
-func NewEventBus() *EventBus {
-	return NewEventBusWithBufferCapacity(defaultCapacity)
+func NewEventBus(ctx context.Context) *EventBus {
+	return NewEventBusWithBufferCapacity(ctx, defaultCapacity)
 }
 
 // NewEventBusWithBufferCapacity returns a new event bus with the given buffer capacity.
-func NewEventBusWithBufferCapacity(cap int) *EventBus {
+func NewEventBusWithBufferCapacity(ctx context.Context, cap int) *EventBus {
 	// capacity could be exposed later if needed
-	pubsub := cmtpubsub.NewServer(cmtpubsub.BufferCapacity(cap))
+	pubsub := cmtpubsub.NewServer(ctx, cmtpubsub.BufferCapacity(cap))
 	b := &EventBus{pubsub: pubsub}
-	b.BaseService = *service.NewBaseService(nil, "EventBus", b)
+	b.BaseService = *service.NewBaseService(ctx, nil, "EventBus", b)
 	return b
 }
 
@@ -55,7 +55,7 @@ func (b *EventBus) SetLogger(l log.Logger) {
 	b.pubsub.SetLogger(l.With("module", "pubsub"))
 }
 
-func (b *EventBus) OnStart() error {
+func (b *EventBus) OnStart(ctx context.Context) error {
 	return b.pubsub.Start()
 }
 

@@ -1,7 +1,6 @@
 package multiplex_test
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -674,7 +673,7 @@ func TestMultiplexRuntimeInjectNewRuntime(t *testing.T) {
 	// i.e.: testReactor.SetLogger(cmtlog.TestingLogger())
 
 	// Act
-	runtimeErr := testReactor.InjectNewRuntime(context.Background(), injectChainID)
+	runtimeErr := testReactor.InjectNewRuntime(t.Context(), injectChainID)
 	assert.NoError(t, runtimeErr, "should spawn parallel process for node runtime")
 }
 
@@ -685,9 +684,13 @@ func TestMultiplexRuntimeInjectNewRuntimeWithOthers(t *testing.T) {
 
 	// Initialize and START the nodes multiplex
 	// For debug, change the logger to cmtlog.TestingLogger()
-	_, testReactor, shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
+	_, testReactor, shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), false) // startServers=false
 
 	defer shutdownFn(testReactor)
+
+	// Give the node some time to start RPC, P2P, etc.
+	waitDuration := 2 * time.Second
+	time.Sleep(waitDuration)
 
 	injectChainID := makeChainID("test-inject-1")
 
@@ -704,11 +707,8 @@ func TestMultiplexRuntimeInjectNewRuntimeWithOthers(t *testing.T) {
 	// i.e.: testReactor.SetLogger(cmtlog.TestingLogger())
 
 	// Act
-	runtimeErr := testReactor.InjectNewRuntime(context.Background(), injectChainID)
+	runtimeErr := testReactor.InjectNewRuntime(t.Context(), injectChainID)
 	assert.NoError(t, runtimeErr, "should spawn parallel process for node runtime")
-
-	waitDuration := 2 * time.Second
-	time.Sleep(waitDuration)
 }
 
 // ----------------------------------------------------------------------------

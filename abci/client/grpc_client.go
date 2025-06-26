@@ -33,7 +33,7 @@ type grpcClient struct {
 	resCb Callback // listens to all callbacks
 }
 
-func NewGRPCClient(addr string, mustConnect bool) Client {
+func NewGRPCClient(ctx context.Context, addr string, mustConnect bool) Client {
 	cli := &grpcClient{
 		addr:        addr,
 		mustConnect: mustConnect,
@@ -45,7 +45,7 @@ func NewGRPCClient(addr string, mustConnect bool) Client {
 		// gRPC calls while processing a slow callback at the channel head.
 		chReqRes: make(chan *ReqRes, 64),
 	}
-	cli.BaseService = *service.NewBaseService(nil, "grpcClient", cli)
+	cli.BaseService = *service.NewBaseService(ctx, nil, "grpcClient", cli)
 	return cli
 }
 
@@ -53,8 +53,8 @@ func dialerFunc(_ context.Context, addr string) (net.Conn, error) {
 	return cmtnet.Connect(addr)
 }
 
-func (cli *grpcClient) OnStart() error {
-	if err := cli.BaseService.OnStart(); err != nil {
+func (cli *grpcClient) OnStart(ctx context.Context) error {
+	if err := cli.BaseService.OnStart(ctx); err != nil {
 		return err
 	}
 

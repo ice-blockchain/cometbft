@@ -2,6 +2,7 @@
 package events
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/ice-blockchain/cometbft/libs/service"
@@ -59,16 +60,16 @@ type eventSwitch struct {
 	listeners  map[string]*eventListener
 }
 
-func NewEventSwitch() EventSwitch {
+func NewEventSwitch(ctx context.Context) EventSwitch {
 	evsw := &eventSwitch{
 		eventCells: make(map[string]*eventCell),
 		listeners:  make(map[string]*eventListener),
 	}
-	evsw.BaseService = *service.NewBaseService(nil, "EventSwitch", evsw)
+	evsw.BaseService = *service.NewBaseService(ctx, nil, "EventSwitch", evsw)
 	return evsw
 }
 
-func (*eventSwitch) OnStart() error {
+func (*eventSwitch) OnStart(ctx context.Context) error {
 	return nil
 }
 

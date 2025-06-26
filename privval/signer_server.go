@@ -1,6 +1,7 @@
 package privval
 
 import (
+	"context"
 	"io"
 
 	privvalproto "github.com/ice-blockchain/cometbft/api/cometbft/privval/v1"
@@ -27,7 +28,7 @@ type SignerServer struct {
 	validationRequestHandler ValidationRequestHandlerFunc
 }
 
-func NewSignerServer(endpoint *SignerDialerEndpoint, chainID string, privVal types.PrivValidator) *SignerServer {
+func NewSignerServer(ctx context.Context, endpoint *SignerDialerEndpoint, chainID string, privVal types.PrivValidator) *SignerServer {
 	ss := &SignerServer{
 		endpoint:                 endpoint,
 		chainID:                  chainID,
@@ -35,13 +36,13 @@ func NewSignerServer(endpoint *SignerDialerEndpoint, chainID string, privVal typ
 		validationRequestHandler: DefaultValidationRequestHandler,
 	}
 
-	ss.BaseService = *service.NewBaseService(endpoint.Logger, "SignerServer", ss)
+	ss.BaseService = *service.NewBaseService(ctx, endpoint.Logger, "SignerServer", ss)
 
 	return ss
 }
 
 // OnStart implements service.Service.
-func (ss *SignerServer) OnStart() error {
+func (ss *SignerServer) OnStart(ctx context.Context) error {
 	go ss.serviceLoop()
 	return nil
 }

@@ -1,11 +1,13 @@
 package server
 
 import (
+	"context"
+	"github.com/ice-blockchain/cometbft/libs/service"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 )
 
 type (
-	DefaultServer struct{}
+	DefaultServer struct{ service.BaseService }
 )
 
 var (
@@ -13,7 +15,7 @@ var (
 )
 
 // Close implements io.Closer
-func (DefaultServer) Close() error {
+func (DefaultServer) OnStop() error {
 	return nil
 }
 
@@ -23,4 +25,4 @@ func (DefaultServer) GetAcceptor() client.Acceptor {
 }
 
 // MustStart must start a replication backend or return an error.
-func (DefaultServer) MustStart() {}
+func (DefaultServer) OnStart(ctx context.Context) {}

@@ -34,8 +34,10 @@ func closeAndRemoveAll(tb testing.TB, rootDir string, server *mx.MultiplexBacken
 
 	defer os.RemoveAll(rootDir)
 
-	err := server.Close()
-	assert.NoError(tb, err, "should shutdown server gracefully")
+	if server.IsRunning() {
+		err := server.Stop()
+		assert.NoError(tb, err, "should shutdown server gracefully")
+	}
 }
 
 func TestMultiplexBackendNewServer(t *testing.T) {
@@ -48,10 +50,12 @@ func TestMultiplexBackendNewServer(t *testing.T) {
 	require.NotNil(t, globalCfg)
 
 	backend, err := mx.NewServer(
+		t.Context(),
 		&client.DefaultAcceptor{},
 		globalCfg,
 		cmtlog.NewNopLogger(),
 	)
+	assert.NoError(t, backend.Start())
 
 	assert.NoError(t, err, "should create server instance")
 	assert.NotNil(t, backend)
@@ -70,10 +74,12 @@ func TestMultiplexBackendNewServer(t *testing.T) {
 
 	// Act
 	backend2, err2 := mx.NewServer(
+		t.Context(),
 		&client.DefaultAcceptor{},
 		globalCfg2,
 		cmtlog.NewNopLogger(),
 	)
+	assert.NoError(t, backend2.Start())
 
 	assert.NoError(t, err2, "should create server instance")
 	assert.NotNil(t, backend2)
@@ -97,7 +103,7 @@ func TestMultiplexBackendMustStart(t *testing.T) {
 	defer closeAndRemoveAll(t, rootDir, backend)
 
 	// Act
-	backend.MustStart()
+	backend.Start()
 
 	testReactor := backend.GetReactor()
 	require.NotNil(t, testReactor)
@@ -123,7 +129,7 @@ func TestMultiplexBackendMustStartEmpty(t *testing.T) {
 	defer closeAndRemoveAll(t, rootDir, backend)
 
 	// Act
-	backend.MustStart()
+	backend.Start()
 
 	testReactor := backend.GetReactor()
 	require.NotNil(t, testReactor)
@@ -150,7 +156,7 @@ func TestMultiplexBackendGetLocalNetworkHeights(t *testing.T) {
 	defer closeAndRemoveAll(t, rootDir, backend)
 
 	// Start the node backend
-	backend.MustStart()
+	backend.Start()
 
 	testReactor := backend.GetReactor()
 	require.NotNil(t, testReactor)
@@ -255,7 +261,7 @@ func TestMultiplexBackendGetLocalNetworkHeightsEmpty(t *testing.T) {
 	defer closeAndRemoveAll(t, rootDir, backend)
 
 	// Start the node backend
-	backend.MustStart()
+	backend.Start()
 
 	testReactor := backend.GetReactor()
 	require.NotNil(t, testReactor)
@@ -308,7 +314,7 @@ func TestMultiplexBackendCheckDialCompatibleRelayWithOnlySelfRelay(t *testing.T)
 	defer closeAndRemoveAll(t, rootDir, backend)
 
 	// Start the node backend
-	backend.MustStart()
+	backend.Start()
 
 	testReactor := backend.GetReactor()
 	require.NotNil(t, testReactor)
@@ -357,8 +363,8 @@ func TestMultiplexBackendCheckDialCompatibleRelayWithTwoRelays(t *testing.T) {
 	}()
 
 	// Start the node backend
-	servers[0].MustStart()
-	servers[1].MustStart()
+	servers[0].Start()
+	servers[1].Start()
 
 	// server 0 talks to server 1
 	recipientReactor := servers[1].GetReactor()
@@ -431,7 +437,7 @@ func TestMultiplexBackendCheckDialCompatibleRelaySevenCompatibleRelays(t *testin
 
 	// Start the node backends
 	for i := 0; i < len(servers); i++ {
-		servers[i].MustStart()
+		servers[i].Start()
 	}
 
 	// Test where RELAY_1 talks to RELAY_X
@@ -496,7 +502,7 @@ func TestMultiplexBackendGetRemoteRelayInfo(t *testing.T) {
 
 	// Start the node backends
 	for i := 0; i < len(servers); i++ {
-		servers[i].MustStart()
+		servers[i].Start()
 	}
 
 	// Act - Relay 1 discovers ID of Relay 2
@@ -542,7 +548,7 @@ func TestMultiplexBackendGetRemoteRelayInfoEmpty(t *testing.T) {
 
 	// Start the node backends
 	for i := 0; i < len(servers); i++ {
-		servers[i].MustStart()
+		servers[i].Start()
 	}
 
 	// Act - Relay 1 discovers ID of Relay 2
@@ -592,7 +598,7 @@ func TestMultiplexBackendGetRemoteRelayInfoWithFourRelays(t *testing.T) {
 
 	// Start the node backends
 	for i := 0; i < len(servers); i++ {
-		servers[i].MustStart()
+		servers[i].Start()
 	}
 
 	// Act - Relay 1 discovers ID of Relay X
@@ -644,7 +650,7 @@ func TestMultiplexBackendGetRemoteRelayInfoWithFourRelaysEmpty(t *testing.T) {
 
 	// Start the node backends
 	for i := 0; i < len(servers); i++ {
-		servers[i].MustStart()
+		servers[i].Start()
 	}
 
 	// Act - Relay 1 discovers ID of Relay X
@@ -692,7 +698,7 @@ func TestMultiplexBackendGetRelaysByNetwork(t *testing.T) {
 
 	// Start the node backends
 	for i := 0; i < len(servers); i++ {
-		servers[i].MustStart()
+		servers[i].Start()
 	}
 
 	// server 0 talks to server 1
@@ -749,7 +755,7 @@ func TestMultiplexBackendGetRelaysByNetworkEmptyRelays(t *testing.T) {
 
 	// Start the node backends
 	for i := 0; i < len(servers); i++ {
-		servers[i].MustStart()
+		servers[i].Start()
 	}
 
 	// server 0 talks to server 1
@@ -823,7 +829,7 @@ func TestMultiplexBackendGetRemoteValidatorsInfo(t *testing.T) {
 
 	// Start the node backends
 	for i := 0; i < len(servers); i++ {
-		servers[i].MustStart()
+		servers[i].Start()
 	}
 
 	// Act - Relay 1 orchestrates validators of Relay 2
@@ -884,7 +890,7 @@ func TestMultiplexBackendGetValidatorsByNetwork(t *testing.T) {
 
 	// Start the node backends
 	for i := 0; i < len(servers); i++ {
-		servers[i].MustStart()
+		servers[i].Start()
 	}
 
 	testRelayAddresses := []*server.RelayAddress{}
@@ -944,7 +950,7 @@ func TestMultiplexBackendAddTransactions(t *testing.T) {
 	defer closeAndRemoveAll(t, rootDir, server)
 
 	// Start the node backend
-	server.MustStart()
+	server.Start()
 
 	testReactor := server.GetReactor()
 	require.NotNil(t, testReactor)
@@ -988,7 +994,7 @@ func TestMultiplexBackendRemoveTransactions(t *testing.T) {
 	defer closeAndRemoveAll(t, rootDir, server)
 
 	// Start the node backend
-	server.MustStart()
+	server.Start()
 
 	testReactor := server.GetReactor()
 	require.NotNil(t, testReactor)
@@ -1046,6 +1052,7 @@ func ResetTestMultiplexBackend(
 		globalCfg := ResetTestMultiplexNode(tb, numChains) // DiscoveryPort=30001
 
 	server, err := mx.NewServer(
+		tb.Context(),
 		&client.DefaultAcceptor{},
 		globalCfg,
 		customLogger,
@@ -1093,6 +1100,7 @@ func ResetTestMultiplexBackendTwoInParallel(
 	}
 
 	serverRelay1, err := mx.NewServer(
+		tb.Context(),
 		&client.DefaultAcceptor{},
 		globalCfgRelay1,
 		customLoggerRelay1,
@@ -1101,6 +1109,7 @@ func ResetTestMultiplexBackendTwoInParallel(
 	require.NoError(tb, err, "should create first server instance")
 
 	serverRelay2, err := mx.NewServer(
+		tb.Context(),
 		&client.DefaultAcceptor{},
 		globalCfgRelay2,
 		customLoggerRelay2,
@@ -1146,6 +1155,7 @@ func ResetTestMultiplexBackendCompatibleRelaysWithOptions(
 		relayBackendOpts = backendOptionsPerRelay[0]
 	}
 	serverRelay1, err := mx.NewServer(
+		tb.Context(),
 		&client.DefaultAcceptor{},
 		globalCfgRelay1,
 		customLoggers[0],
@@ -1178,6 +1188,7 @@ func ResetTestMultiplexBackendCompatibleRelaysWithOptions(
 			relayBackendOpts = backendOptionsPerRelay[r]
 		}
 		serverRelayX, err := mx.NewServer(
+			tb.Context(),
 			&client.DefaultAcceptor{},
 			globalCfgRelayX,
 			customLoggers[r],
@@ -1225,6 +1236,7 @@ func ResetTestMultiplexBackendCompatibleRelays(
 
 	relayBackendOpts := backendOptionsPerRelay[0]
 	serverRelay1, err := mx.NewServer(
+		tb.Context(),
 		&client.DefaultAcceptor{},
 		globalCfgRelay1,
 		customLoggers[0],
@@ -1254,6 +1266,7 @@ func ResetTestMultiplexBackendCompatibleRelays(
 
 		relayBackendOpts := backendOptionsPerRelay[r]
 		serverRelayX, err := mx.NewServer(
+			tb.Context(),
 			&client.DefaultAcceptor{},
 			globalCfgRelayX,
 			customLoggers[r],

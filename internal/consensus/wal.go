@@ -1,6 +1,7 @@
 package consensus
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -90,13 +91,13 @@ var _ WAL = &BaseWAL{}
 
 // NewWAL returns a new write-ahead logger based on `baseWAL`, which implements
 // WAL. It's flushed and synced to disk every 2s and once when stopped.
-func NewWAL(walFile string, groupOptions ...func(*auto.Group)) (*BaseWAL, error) {
+func NewWAL(ctx context.Context, walFile string, groupOptions ...func(*auto.Group)) (*BaseWAL, error) {
 	err := cmtos.EnsureDir(filepath.Dir(walFile), 0o700)
 	if err != nil {
 		return nil, fmt.Errorf("failed to ensure WAL directory is in place: %w", err)
 	}
 
-	group, err := auto.OpenGroup(walFile, groupOptions...)
+	group, err := auto.OpenGroup(ctx, walFile, groupOptions...)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +106,7 @@ func NewWAL(walFile string, groupOptions ...func(*auto.Group)) (*BaseWAL, error)
 		enc:           NewWALEncoder(group),
 		flushInterval: walDefaultFlushInterval,
 	}
-	wal.BaseService = *service.NewBaseService(nil, "baseWAL", wal)
+	wal.BaseService = *service.NewBaseService(ctx, nil, "baseWAL", wal)
 	return wal, nil
 }
 
@@ -136,7 +137,7 @@ func (wal *BaseWAL) SetLogger(l log.Logger) {
 	wal.group.SetLogger(l)
 }
 
-func (wal *BaseWAL) OnStart() error {
+func (wal *BaseWAL) OnStart(ctx context.Context) error {
 	size, err := wal.group.Head.Size()
 	if err != nil {
 		return err

@@ -332,7 +332,7 @@ func ResetTestMultiplexBenchmark(
 			defer os.RemoveAll(rootDirs[i])
 
 			if servers[i] != nil {
-				err := servers[i].Close()
+				err := servers[i].Stop()
 				assert.NoError(tb, err, "should shutdown server at index: "+strconv.Itoa(i))
 			}
 		}
@@ -340,7 +340,7 @@ func ResetTestMultiplexBenchmark(
 
 	// Start the node backends
 	for i := 0; i < len(servers); i++ {
-		servers[i].MustStart()
+		servers[i].Start()
 	}
 
 	return servers, shutdownFn

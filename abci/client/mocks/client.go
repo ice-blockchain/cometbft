@@ -452,7 +452,7 @@ func (_m *Client) OnReset() error {
 }
 
 // OnStart provides a mock function with given fields:
-func (_m *Client) OnStart() error {
+func (_m *Client) OnStart(ctx context.Context) error {
 	ret := _m.Called()
 
 	if len(ret) == 0 {

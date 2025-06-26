@@ -24,7 +24,7 @@ func NewHTTPClient(
 	trustedStore store.Store,
 	options ...Option,
 ) (*Client, error) {
-	providers, err := providersFromAddresses(append(witnessesAddresses, primaryAddress), chainID)
+	providers, err := providersFromAddresses(ctx, append(witnessesAddresses, primaryAddress), chainID)
 	if err != nil {
 		return nil, err
 	}
@@ -46,6 +46,7 @@ func NewHTTPClient(
 // See all Option(s) for the additional configuration.
 // See NewClientFromTrustedStore.
 func NewHTTPClientFromTrustedStore(
+	ctx context.Context,
 	chainID string,
 	trustingPeriod time.Duration,
 	primaryAddress string,
@@ -53,7 +54,7 @@ func NewHTTPClientFromTrustedStore(
 	trustedStore store.Store,
 	options ...Option,
 ) (*Client, error) {
-	providers, err := providersFromAddresses(append(witnessesAddresses, primaryAddress), chainID)
+	providers, err := providersFromAddresses(ctx, append(witnessesAddresses, primaryAddress), chainID)
 	if err != nil {
 		return nil, err
 	}
@@ -67,10 +68,10 @@ func NewHTTPClientFromTrustedStore(
 		options...)
 }
 
-func providersFromAddresses(addrs []string, chainID string) ([]provider.Provider, error) {
+func providersFromAddresses(ctx context.Context, addrs []string, chainID string) ([]provider.Provider, error) {
 	providers := make([]provider.Provider, len(addrs))
 	for idx, address := range addrs {
-		p, err := http.New(chainID, address)
+		p, err := http.New(ctx, chainID, address)
 		if err != nil {
 			return nil, err
 		}

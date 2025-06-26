@@ -41,8 +41,9 @@ func TestMultiplexReactorConsensusPrepareConsensusInstanceWithReactor(t *testing
 
 	// Start an ABCI client
 	abciClient := proxy.NewMultiplexAppConn(
+		t.Context(),
 		testChainIds,
-		proxy.DefaultClientCreator(globalCfg.ProxyApp, globalCfg.ABCI, globalCfg.DBDir()),
+		proxy.DefaultClientCreator(t.Context(), globalCfg.ProxyApp, globalCfg.ABCI, globalCfg.DBDir()),
 		proxy.PrometheusMetrics(globalCfg.Instrumentation.Namespace+"_"+string(reactor.GetNodeKey().ID())),
 	)
 	abciClient.SetLogger(cmtlog.NewNopLogger())
@@ -92,8 +93,9 @@ func TestMultiplexReactorConsensusCreateConsensusInstanceReactors(t *testing.T) 
 	// Start an ABCI client
 	testChainIds := reactor.GetNetworks()
 	abciClient := proxy.NewMultiplexAppConn(
+		t.Context(),
 		testChainIds,
-		proxy.DefaultClientCreator(globalCfg.ProxyApp, globalCfg.ABCI, globalCfg.DBDir()),
+		proxy.DefaultClientCreator(t.Context(), globalCfg.ProxyApp, globalCfg.ABCI, globalCfg.DBDir()),
 		proxy.NopMetrics(),
 	)
 	abciClient.SetLogger(cmtlog.NewNopLogger())

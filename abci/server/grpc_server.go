@@ -36,7 +36,7 @@ func NewGRPCServer(protoAddr string, app types.Application) service.Service {
 }
 
 // OnStart starts the gRPC service.
-func (s *GRPCServer) OnStart() error {
+func (s *GRPCServer) OnStart(ctx context.Context) error {
 	ln, err := net.Listen(s.proto, s.addr)
 	if err != nil {
 		return err

@@ -444,7 +444,7 @@ func (h *Handshaker) ReplayBlocks(
 			if len(finalizeBlockResponse.AppHash) == 0 {
 				finalizeBlockResponse.AppHash = appHash
 			}
-			mockApp := newMockProxyApp(finalizeBlockResponse)
+			mockApp := newMockProxyApp(ctx, finalizeBlockResponse)
 			h.logger.Info("Replay last block using mock app")
 			state, err = h.replayBlock(state, storeBlockHeight, mockApp)
 			return state.AppHash, err

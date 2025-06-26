@@ -50,6 +50,7 @@ type Reactor struct {
 
 // NewReactor creates a new state sync reactor.
 func NewReactor(
+	ctx context.Context,
 	cfg config.StateSyncConfig,
 	conn proxy.AppConnSnapshot,
 	connQuery proxy.AppConnQuery,
@@ -68,7 +69,7 @@ func NewReactor(
 		option(r)
 	}
 
-	r.BaseReactor = *p2p.NewBaseReactor("StateSync", r)
+	r.BaseReactor = *p2p.NewBaseReactor(ctx, "StateSync", r)
 
 	return r
 }
@@ -101,7 +102,7 @@ func (*Reactor) GetChannels() []*p2p.ChannelDescriptor {
 }
 
 // OnStart implements p2p.Reactor.
-func (*Reactor) OnStart() error {
+func (*Reactor) OnStart(ctx context.Context) error {
 	return nil
 }
 

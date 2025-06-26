@@ -233,6 +233,7 @@ var _ snapsapp.Reactor = (*Reactor)(nil)
 // Note that the genesisDocsProvider must be passed as well but is being
 // used only at Start of the reactor, when the initial [sm.State] is loaded.
 func NewReactor(
+	ctx context.Context,
 	nodeKey *p2p.NodeKey,
 	nodeCfg *config.Config,
 	logger cmtlog.Logger,
@@ -274,7 +275,7 @@ func NewReactor(
 		// Provides a default acceptor implementation
 		acceptorImpl: &client.DefaultAcceptor{},
 
-		runtimeRegistry: server.NewRuntimeRegistry(
+		runtimeRegistry: server.NewRuntimeRegistry(ctx,
 			logger.With("module", "idle-manager"),
 		),
 
@@ -310,7 +311,7 @@ func NewReactor(
 		option(reactor)
 	}
 
-	reactor.BaseReactor = *p2p.NewBaseReactor("Multiplex", reactor)
+	reactor.BaseReactor = *p2p.NewBaseReactor(ctx, "Multiplex", reactor)
 
 	// Note that this expects the `genesis.json` to contain a GenesisDocSet.
 	// This call to the underlying provider Validates the GenesisDocSet or
@@ -328,7 +329,7 @@ func NewReactor(
 
 	// TODO(midas): Write some more tests to determine correct threshold.
 	reactor.replayPoolMtx.Lock()
-	reactor.replayPool = server.NewReplayPool(
+	reactor.replayPool = server.NewReplayPool(ctx,
 		reactor.logger.With("module", "replay"),
 		server.ReplayPoolThreshold(10),
 		server.ReplayPoolAcceptor(reactor.acceptorImpl),
@@ -1877,11 +1878,10 @@ func (r *Reactor) GetRemoteDiscoveryAddress(
 // CAUTION: This method spawns one new goroutine for every active runtime
 // through the use of [Reactor#InjectNewRuntime]. It will notably start the
 // indexer service, event bus and private validator instances for nodes.
-func (reactor *Reactor) OnStart() error {
+func (reactor *Reactor) OnStart(ctx context.Context) error {
 	reactor.logger.Debug("Starting multiplex reactor",
 		"num_networks", reactor.Size(),
 	)
-
 	nodeConfig := reactor.GetNodeConfig()
 	chainRegistry := reactor.GetChainRegistry()
 
@@ -1922,7 +1922,7 @@ func (reactor *Reactor) OnStart() error {
 
 		// Starts the node listeners, i.e. event bus, indexer.
 		// Prepares P2P communication transport and address book.
-		if err := reactor.InjectNewRuntime(context.Background(), chainID); err != nil {
+		if err := reactor.InjectNewRuntime(ctx, chainID); err != nil {
 			// Log but don't STOP!
 			reactor.logger.Error("failed to start multiplex reactor; runtime error",
 				"chain_id", chainID,
@@ -2154,7 +2154,7 @@ func (reactor *Reactor) OnReset() error {
 
 // waitForInterval waits for i using time.After, or shutdown channels.
 func (reactor *Reactor) waitForInterval(i time.Duration) (waited bool) {
-	for {
+	for reactor.Context().Err() == nil {
 		select {
 		case <-time.After(i):
 			return true
@@ -2275,7 +2275,7 @@ func (reactor *Reactor) loadMultiplexState() error {
 //
 // The caller must make sure about thread-safety of filesystem operations,
 // i.e. caller should always lock runtimesMutex during call.
-func (reactor *Reactor) startNodeListeners(chainID string) error {
+func (reactor *Reactor) startNodeListeners(ctx context.Context, chainID string) error {
 	clogger := reactor.logger.With("chain_id", chainID)
 	nodeKey := reactor.GetNodeKey()
 
@@ -2319,7 +2319,7 @@ func (reactor *Reactor) startNodeListeners(chainID string) error {
 	}).(*sm.Metrics)
 
 	// 1) Event Bus Service
-	eventBus := types.NewEventBus()
+	eventBus := types.NewEventBus(ctx)
 	eventBus.SetLogger(clogger.With("module", "events"))
 	if err := eventBus.Start(); err != nil {
 		return fmt.Errorf("error starting event bus: %w", err)
@@ -2369,7 +2369,7 @@ func (reactor *Reactor) startNodeListeners(chainID string) error {
 		blockIndexer = &blockidxnull.BlockerIndexer{}
 	}
 
-	indexerService := txindex.NewIndexerService(txIndexer, blockIndexer, eventBus, false) // stopOnError
+	indexerService := txindex.NewIndexerService(ctx, txIndexer, blockIndexer, eventBus, false) // stopOnError
 	indexerService.SetLogger(clogger.With("module", "txindex"))
 	if err := indexerService.Start(); err != nil {
 		return fmt.Errorf("error starting indexers: %w", err)
@@ -2391,6 +2391,7 @@ func (reactor *Reactor) startNodeListeners(chainID string) error {
 		sm.WithPrunerMetrics(stateMetricsProvider),
 	}
 	pruner := sm.NewPruner(
+		ctx,
 		stateStore,
 		blockStore,
 		blockIndexer,

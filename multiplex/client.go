@@ -516,7 +516,7 @@ func (c MultiplexClient) BroadcastTx(
 	for _, chainID := range requiredNetworks {
 		// No-op in case the reactors are already running, i.e. this method
 		// calls [mempool.Reactor#IsRunning] before starting.
-		if err := c.backend.StartConsensusInstance(ctx, chainID); err != nil {
+		if err := c.backend.StartConsensusInstance(chainID); err != nil {
 			reactErr := fmt.Errorf(
 				"CLIENT ERROR: failed to start reactors for %s: %w", chainID, err)
 

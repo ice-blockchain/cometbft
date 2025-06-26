@@ -12,9 +12,9 @@ type Reactor struct {
 	Channels []*conn.ChannelDescriptor
 }
 
-func NewReactor() *Reactor {
+func NewReactor(ctx context.Context) *Reactor {
 	r := &Reactor{}
-	r.BaseReactor = *p2p.NewBaseReactor("Mock-PEX", r)
+	r.BaseReactor = *p2p.NewBaseReactor(ctx, "Mock-PEX", r)
 	r.SetLogger(log.TestingLogger())
 	return r
 }

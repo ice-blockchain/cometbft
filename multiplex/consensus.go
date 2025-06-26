@@ -192,6 +192,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	)
 	mempool.SetLogger(memplLogger)
 	mempoolReactor := mempl.NewReactor(
+		ctx,
 		cfgOverwrite.Mempool,
 		mempool,
 		waitSync, // "waitSync"
@@ -228,7 +229,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	if err != nil {
 		return fmt.Errorf("error creating the evidence pool: %w", err)
 	}
-	evidenceReactor := evidence.NewReactor(evidencePool, evidence.WithChainID(chainID))
+	evidenceReactor := evidence.NewReactor(ctx, evidencePool, evidence.WithChainID(chainID))
 	evidenceReactor.SetLogger(evidenceLogger)
 
 	// 3) Create the block executor
@@ -253,6 +254,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	// Don't start block sync if we're doing a state sync first or if
 	// we are the only validator on the network (caller sets blockSync).
 	blockSyncReactor := blocksync.NewReactor(
+		ctx,
 		stateMachine.Copy(),
 		blockExecutor,
 		blockStore,
@@ -274,6 +276,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	// for every replicated chain.
 	consensusLogger := clogger.With("module", "consensus")
 	consensusState := cs.NewState(
+		ctx,
 		cfgOverwrite.Consensus, // contains overwrite of WAL
 		stateMachine.Copy(),
 		blockExecutor,
@@ -288,6 +291,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 		consensusState.SetPrivValidator(privValidator)
 	}
 	consensusReactor := cs.NewReactor(
+		ctx,
 		consensusState,
 		waitSync, // "waitSync"
 		cs.ReactorMetrics(consensusMetricsProvider),

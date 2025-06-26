@@ -268,7 +268,7 @@ func makeAndConnectReactorsAndPools(config *cfg.Config, stateStores []sm.Store) 
 		reactors[i].SetLogger(logger.With("validator", i))
 	}
 
-	p2p.MakeConnectedSwitches(config.P2P, n, func(i int, s *p2p.Switch) *p2p.Switch {
+	p2p.MakeConnectedSwitches(t, config.P2P, n, func(i int, s *p2p.Switch) *p2p.Switch {
 		s.AddReactor("", "EVIDENCE", reactors[i])
 		return s
 	}, p2p.Connect2Switches)

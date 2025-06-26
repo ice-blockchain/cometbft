@@ -61,11 +61,11 @@ func (emptyMempool) CloseWAL()      {}
 // Useful because we don't want to call Commit() twice for the same block on
 // the real app.
 
-func newMockProxyApp(finalizeBlockResponse *abci.FinalizeBlockResponse) proxy.AppConnConsensus {
+func newMockProxyApp(ctx context.Context, finalizeBlockResponse *abci.FinalizeBlockResponse) proxy.AppConnConsensus {
 	clientCreator := proxy.NewLocalClientCreator(&mockProxyApp{
 		finalizeBlockResponse: finalizeBlockResponse,
 	})
-	cli, _ := clientCreator.NewABCIConsensusClient()
+	cli, _ := clientCreator.NewABCIConsensusClient(ctx)
 	err := cli.Start()
 	if err != nil {
 		panic(err)

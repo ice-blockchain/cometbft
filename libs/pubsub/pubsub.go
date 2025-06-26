@@ -108,11 +108,11 @@ type Option func(*Server)
 // NewServer returns a new server. See the commentary on the Option functions
 // for a detailed description of how to configure buffering. If no options are
 // provided, the resulting server's queue is unbuffered.
-func NewServer(options ...Option) *Server {
+func NewServer(ctx context.Context, options ...Option) *Server {
 	s := &Server{
 		subscriptions: make(map[string]map[string]struct{}),
 	}
-	s.BaseService = *service.NewBaseService(nil, "PubSub", s)
+	s.BaseService = *service.NewBaseService(ctx, nil, "PubSub", s)
 
 	for _, option := range options {
 		option(s)
@@ -309,7 +309,7 @@ type queryPlusRefCount struct {
 }
 
 // OnStart implements Service.OnStart by starting the server.
-func (s *Server) OnStart() error {
+func (s *Server) OnStart(ctx context.Context) error {
 	go s.loop(state{
 		subscriptions: make(map[string]map[string]*Subscription),
 		queries:       make(map[string]*queryPlusRefCount),

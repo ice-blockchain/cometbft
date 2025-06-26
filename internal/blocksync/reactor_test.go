@@ -78,7 +78,7 @@ func newReactor(
 
 	app := abci.NewBaseApplication()
 	cc := proxy.NewLocalClientCreator(app)
-	proxyApp := proxy.NewAppConns(cc, proxy.NopMetrics())
+	proxyApp := proxy.NewAppConns(t.Context(), cc, proxy.NopMetrics())
 	err := proxyApp.Start()
 	if err != nil {
 		panic(fmt.Errorf("error start app: %w", err))
@@ -180,7 +180,7 @@ func newReactor(
 	}
 
 	// As the tests only support one validator in the valSet, we pass a different address to bypass the `localNodeBlocksTheChain` check. Namely, the tested node is not an active validator.
-	bcReactor := NewByzantineReactor(incorrectBlock, NewReactor(state.Copy(), blockExec, blockStore, blockSync, []byte("anotherAddress"), NopMetrics(), 0))
+	bcReactor := NewByzantineReactor(incorrectBlock, NewReactor(t.Context(), state.Copy(), blockExec, blockStore, blockSync, []byte("anotherAddress"), NopMetrics(), 0))
 	bcReactor.SetLogger(logger.With("module", "blocksync"))
 	bcReactor.SetChainID(state.ChainID)
 	return ReactorPair{bcReactor, proxyApp}
@@ -198,7 +198,7 @@ func TestNoBlockResponse(t *testing.T) {
 	reactorPairs[0] = newReactor(t, log.TestingLogger(), genDoc, privVals, maxBlockHeight)
 	reactorPairs[1] = newReactor(t, log.TestingLogger(), genDoc, privVals, 0)
 
-	p2p.MakeConnectedSwitches(config.P2P, 2, func(i int, s *p2p.Switch) *p2p.Switch {
+	p2p.MakeConnectedSwitches(t, config.P2P, 2, func(i int, s *p2p.Switch) *p2p.Switch {
 		s.AddReactor("", "BLOCKSYNC", reactorPairs[i].reactor)
 		return s
 	}, p2p.Connect2Switches)
@@ -272,7 +272,7 @@ func TestBadBlockStopsPeer(t *testing.T) {
 	reactorPairs[2] = newReactor(t, log.TestingLogger(), genDoc, privVals, 0)
 	reactorPairs[3] = newReactor(t, log.TestingLogger(), genDoc, privVals, 0)
 
-	switches := p2p.MakeConnectedSwitches(config.P2P, 4, func(i int, s *p2p.Switch) *p2p.Switch {
+	switches := p2p.MakeConnectedSwitches(t, config.P2P, 4, func(i int, s *p2p.Switch) *p2p.Switch {
 		s.AddReactor("", "BLOCKSYNC", reactorPairs[i].reactor)
 		return s
 	}, p2p.Connect2Switches)
@@ -312,13 +312,13 @@ func TestBadBlockStopsPeer(t *testing.T) {
 	lastReactorPair := newReactor(t, log.TestingLogger(), genDoc, privVals, 0)
 	reactorPairs = append(reactorPairs, lastReactorPair) //nolint:makezero // when initializing with 0, the test breaks.
 
-	switches = append(switches, p2p.MakeConnectedSwitches(config.P2P, 1, func(_ int, s *p2p.Switch) *p2p.Switch {
+	switches = append(switches, p2p.MakeConnectedSwitches(t, config.P2P, 1, func(_ int, s *p2p.Switch) *p2p.Switch {
 		s.AddReactor("", "BLOCKSYNC", reactorPairs[len(reactorPairs)-1].reactor)
 		return s
 	}, p2p.Connect2Switches)...)
 
 	for i := 0; i < len(reactorPairs)-1; i++ {
-		p2p.Connect2Switches(switches, i, len(reactorPairs)-1)
+		p2p.Connect2Switches(t, switches, i, len(reactorPairs)-1)
 	}
 
 	for {
@@ -356,7 +356,7 @@ func TestCheckSwitchToConsensusLastHeightZero(t *testing.T) {
 
 	var switches []*p2p.Switch
 	for _, r := range reactorPairs {
-		switches = append(switches, p2p.MakeConnectedSwitches(config.P2P, 1, func(_ int, s *p2p.Switch) *p2p.Switch {
+		switches = append(switches, p2p.MakeConnectedSwitches(t, config.P2P, 1, func(_ int, s *p2p.Switch) *p2p.Switch {
 			s.AddReactor("", "BLOCKSYNC", r.reactor)
 			return s
 		}, p2p.Connect2Switches)...)
@@ -422,7 +422,7 @@ func ExtendedCommitNetworkHelper(t *testing.T, maxBlockHeight int64, enableVoteE
 
 	var switches []*p2p.Switch
 	for _, r := range reactorPairs {
-		switches = append(switches, p2p.MakeConnectedSwitches(config.P2P, 1, func(_ int, s *p2p.Switch) *p2p.Switch {
+		switches = append(switches, p2p.MakeConnectedSwitches(t, config.P2P, 1, func(_ int, s *p2p.Switch) *p2p.Switch {
 			s.AddReactor("", "BLOCKSYNC", r.reactor)
 			return s
 		}, p2p.Connect2Switches)...)

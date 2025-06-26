@@ -2425,7 +2425,7 @@ func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
 	reuseRootDir := servers[0].GetReactor().GetNodeConfig().RootDir
 
 	// Stop the receiving backend, then start it again.
-	err := servers[0].Close()
+	err := servers[0].Stop()
 	require.NoError(t, err, "should shutdown server")
 
 	waitDuration := 2 * time.Second
@@ -2447,7 +2447,7 @@ func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
 	defer newShutdownFn(resetRelay)
 
 	resetRelay.SetAcceptor(client.NewMockAcceptorImpl())
-	resetRelay.MustStart()
+	resetRelay.Start()
 
 	// Separate goroutine for client broadcast process
 	numTransactions := 1
@@ -2628,14 +2628,14 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	// is only necessary during shutdown tests.
 
 	// Stop the receiving backend, then start it again.
-	err := servers[0].Close()
+	err := servers[0].Stop()
 	require.NoError(t, err, "should shutdown server")
 
 	waitDuration = 5 * time.Second
 	t.Logf("Waiting %.0fsec to restart backend...", waitDuration.Seconds())
 	time.Sleep(waitDuration)
 
-	servers[0].MustStart()
+	servers[0].Start()
 
 	// STEP 3:
 	//
@@ -3786,7 +3786,7 @@ func TestScenarioLegacyBroadcastSevenHealthyRelays(t *testing.T) {
 
 	// Start the node backends
 	for i := 0; i < len(servers); i++ {
-		servers[i].MustStart()
+		servers[i].Start()
 	}
 
 	testReactor := servers[0].GetReactor()
@@ -3996,7 +3996,7 @@ func StartTestScenarioRelays(
 
 	// Start the node backends
 	for i := 0; i < len(servers); i++ {
-		servers[i].MustStart()
+		servers[i].Start()
 	}
 
 	if waitDuration.Seconds() > float64(0) {
@@ -4048,6 +4048,7 @@ func ResetTestSingleCompatibleRelay(
 	}
 
 	serverRelayX, err := mx.NewServer(
+		tb.Context(),
 		&client.DefaultAcceptor{},
 		globalCfgRelayX,
 		customLogger,
@@ -4058,7 +4059,7 @@ func ResetTestSingleCompatibleRelay(
 		defer os.RemoveAll(rootDirRelayX)
 
 		if backend != nil {
-			err := backend.Close()
+			err := backend.Stop()
 			assert.NoError(tb, err, "should shutdown reset server at index: "+strconv.Itoa(indexRelay))
 		}
 	}

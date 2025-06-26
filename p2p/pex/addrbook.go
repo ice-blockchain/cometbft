@@ -5,6 +5,7 @@
 package pex
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"hash"
@@ -120,7 +121,7 @@ func mustNewHasher() hash.Hash64 {
 
 // NewAddrBook creates a new address book.
 // Use Start to begin processing asynchronous address updates.
-func NewAddrBook(filePath string, routabilityStrict bool) AddrBook {
+func NewAddrBook(ctx context.Context, filePath string, routabilityStrict bool) AddrBook {
 	am := &addrBook{
 		rand:              cmtrand.NewRand(),
 		ourAddrs:          make(map[string]struct{}),
@@ -131,7 +132,7 @@ func NewAddrBook(filePath string, routabilityStrict bool) AddrBook {
 		routabilityStrict: routabilityStrict,
 	}
 	am.init()
-	am.BaseService = *service.NewBaseService(nil, "AddrBook", am)
+	am.BaseService = *service.NewBaseService(ctx, nil, "AddrBook", am)
 	return am
 }
 
@@ -153,7 +154,7 @@ func (a *addrBook) init() {
 }
 
 // OnStart implements Service.
-func (a *addrBook) OnStart() error {
+func (a *addrBook) OnStart(ctx context.Context) error {
 	a.loadFromFile(a.filePath)
 
 	a.wg.Add(1)

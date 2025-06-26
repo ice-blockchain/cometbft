@@ -121,6 +121,7 @@ type Provider func(*cfg.Config, log.Logger, CliParams, func() (crypto.PrivKey, e
 // PrivValidator, ClientCreator, GenesisDoc, and DBProvider.
 // It implements Provider.
 func DefaultNewNode(
+	ctx context.Context,
 	config *cfg.Config,
 	logger log.Logger,
 	cliParams CliParams,
@@ -147,7 +148,7 @@ func DefaultNewNode(
 	return NewNodeWithCliParams(context.Background(), config,
 		pv,
 		nodeKey,
-		proxy.DefaultClientCreator(config.ProxyApp, config.ABCI, config.DBDir()),
+		proxy.DefaultClientCreator(ctx, config.ProxyApp, config.ABCI, config.DBDir()),
 		DefaultGenesisDocProviderFunc(config),
 		cfg.DefaultDBProvider,
 		DefaultMetricsProvider(config.Instrumentation),
@@ -197,8 +198,8 @@ func initDBs(config *cfg.Config, dbProvider cfg.DBProvider) (bsDB dbm.DB, stateD
 	return bsDB, stateDB, nil
 }
 
-func createAndStartProxyAppConns(clientCreator proxy.ClientCreator, logger log.Logger, metrics *proxy.Metrics) (proxy.AppConns, error) {
-	proxyApp := proxy.NewAppConns(clientCreator, metrics)
+func createAndStartProxyAppConns(ctx context.Context, clientCreator proxy.ClientCreator, logger log.Logger, metrics *proxy.Metrics) (proxy.AppConns, error) {
+	proxyApp := proxy.NewAppConns(ctx, clientCreator, metrics)
 	proxyApp.SetLogger(logger.With("module", "proxy"))
 	if err := proxyApp.Start(); err != nil {
 		return nil, fmt.Errorf("error starting proxy app connections: %v", err)
@@ -206,8 +207,8 @@ func createAndStartProxyAppConns(clientCreator proxy.ClientCreator, logger log.L
 	return proxyApp, nil
 }
 
-func createAndStartEventBus(logger log.Logger) (*types.EventBus, error) {
-	eventBus := types.NewEventBus()
+func createAndStartEventBus(ctx context.Context, logger log.Logger) (*types.EventBus, error) {
+	eventBus := types.NewEventBus(ctx)
 	eventBus.SetLogger(logger.With("module", "events"))
 	if err := eventBus.Start(); err != nil {
 		return nil, err
@@ -216,6 +217,7 @@ func createAndStartEventBus(logger log.Logger) (*types.EventBus, error) {
 }
 
 func createAndStartIndexerService(
+	ctx context.Context,
 	config *cfg.Config,
 	chainID string,
 	dbProvider cfg.DBProvider,
@@ -238,7 +240,7 @@ func createAndStartIndexerService(
 	txIndexer.SetLogger(logger.With("module", "txindex"))
 	blockIndexer.SetLogger(logger.With("module", "txindex"))
 
-	indexerService := txindex.NewIndexerService(txIndexer, blockIndexer, eventBus, false)
+	indexerService := txindex.NewIndexerService(ctx, txIndexer, blockIndexer, eventBus, false)
 	indexerService.SetLogger(logger.With("module", "txindex"))
 	if err := indexerService.Start(); err != nil {
 		return nil, nil, nil, err
@@ -303,6 +305,7 @@ func onlyValidatorIsUs(state sm.State, localAddr crypto.Address) bool {
 
 // createMempoolAndMempoolReactor creates a mempool and a mempool reactor based on the config.
 func createMempoolAndMempoolReactor(
+	ctx context.Context,
 	config *cfg.Config,
 	proxyApp proxy.AppConns,
 	state sm.State,
@@ -324,6 +327,7 @@ func createMempoolAndMempoolReactor(
 		)
 		mp.SetLogger(logger)
 		reactor := mempl.NewReactor(
+			ctx,
 			config.Mempool,
 			mp,
 			waitSync,
@@ -337,13 +341,13 @@ func createMempoolAndMempoolReactor(
 	case cfg.MempoolTypeNop:
 		// Strictly speaking, there's no need to have a `mempl.NopMempoolReactor`, but
 		// adding it leads to a cleaner code.
-		return &mempl.NopMempool{}, mempl.NewNopMempoolReactor()
+		return &mempl.NopMempool{}, mempl.NewNopMempoolReactor(ctx)
 	default:
 		panic(fmt.Sprintf("unknown mempool type: %q", config.Mempool.Type))
 	}
 }
 
-func createEvidenceReactor(config *cfg.Config, dbProvider cfg.DBProvider,
+func createEvidenceReactor(ctx context.Context, config *cfg.Config, dbProvider cfg.DBProvider,
 	stateStore sm.Store, blockStore *store.BlockStore, logger log.Logger,
 ) (*evidence.Reactor, *evidence.Pool, error) {
 	evidenceDB, err := dbProvider(&cfg.DBContext{ID: "evidence", Config: config})
@@ -355,12 +359,14 @@ func createEvidenceReactor(config *cfg.Config, dbProvider cfg.DBProvider,
 	if err != nil {
 		return nil, nil, err
 	}
-	evidenceReactor := evidence.NewReactor(evidencePool)
+	evidenceReactor := evidence.NewReactor(ctx, evidencePool)
 	evidenceReactor.SetLogger(evidenceLogger)
 	return evidenceReactor, evidencePool, nil
 }
 
-func createBlocksyncReactor(config *cfg.Config,
+func createBlocksyncReactor(
+	ctx context.Context,
+	config *cfg.Config,
 	state sm.State,
 	blockExec *sm.BlockExecutor,
 	blockStore *store.BlockStore,
@@ -372,7 +378,7 @@ func createBlocksyncReactor(config *cfg.Config,
 ) (bcReactor p2p.Reactor, err error) {
 	switch config.BlockSync.Version {
 	case "v0":
-		bcReactor = blocksync.NewReactor(state.Copy(), blockExec, blockStore, blockSync, localAddr, metrics, offlineStateSyncHeight)
+		bcReactor = blocksync.NewReactor(ctx, state.Copy(), blockExec, blockStore, blockSync, localAddr, metrics, offlineStateSyncHeight)
 	case "v1", "v2":
 		return nil, fmt.Errorf("block sync version %s has been deprecated. Please use v0", config.BlockSync.Version)
 	default:
@@ -383,7 +389,9 @@ func createBlocksyncReactor(config *cfg.Config,
 	return bcReactor, nil
 }
 
-func createConsensusReactor(config *cfg.Config,
+func createConsensusReactor(
+	ctx context.Context,
+	config *cfg.Config,
 	state sm.State,
 	blockExec *sm.BlockExecutor,
 	blockStore sm.BlockStore,
@@ -397,6 +405,7 @@ func createConsensusReactor(config *cfg.Config,
 	offlineStateSyncHeight int64,
 ) (*cs.Reactor, *cs.State) {
 	consensusState := cs.NewState(
+		ctx,
 		config.Consensus,
 		state.Copy(),
 		blockExec,
@@ -410,7 +419,7 @@ func createConsensusReactor(config *cfg.Config,
 	if privValidator != nil {
 		consensusState.SetPrivValidator(privValidator)
 	}
-	consensusReactor := cs.NewReactor(consensusState, waitSync, cs.ReactorMetrics(csMetrics))
+	consensusReactor := cs.NewReactor(ctx, consensusState, waitSync, cs.ReactorMetrics(csMetrics))
 	consensusReactor.SetLogger(consensusLogger)
 	// services which will be publishing and/or subscribing for messages (events)
 	// consensusReactor will set it on consensusState and blockExecutor
@@ -419,6 +428,7 @@ func createConsensusReactor(config *cfg.Config,
 }
 
 func createTransport(
+	ctx context.Context,
 	config *cfg.Config,
 	nodeInfo p2p.NodeInfo,
 	nodeKey *p2p.NodeKey,
@@ -429,7 +439,7 @@ func createTransport(
 ) {
 	var (
 		mConnConfig = p2p.MConnConfig(config.P2P)
-		transport   = p2p.NewMultiplexTransport(nodeInfo, *nodeKey, mConnConfig)
+		transport   = p2p.NewMultiplexTransport(ctx, nodeInfo, *nodeKey, mConnConfig)
 		connFilters = []p2p.ConnFilterFunc{}
 		peerFilters = []p2p.PeerFilterFunc{}
 	)
@@ -487,7 +497,9 @@ func createTransport(
 	return transport, peerFilters
 }
 
-func createSwitch(config *cfg.Config,
+func createSwitch(
+	ctx context.Context,
+	config *cfg.Config,
 	transport p2p.Transport,
 	p2pMetrics *p2p.Metrics,
 	peerFilters []p2p.PeerFilterFunc,
@@ -501,6 +513,7 @@ func createSwitch(config *cfg.Config,
 	p2pLogger log.Logger,
 ) *p2p.Switch {
 	sw := p2p.NewSwitch(
+		ctx,
 		config.P2P,
 		transport,
 		p2p.WithMetrics(p2pMetrics),
@@ -523,10 +536,10 @@ func createSwitch(config *cfg.Config,
 	return sw
 }
 
-func createAddrBookAndSetOnSwitch(config *cfg.Config, sw *p2p.Switch,
+func createAddrBookAndSetOnSwitch(ctx context.Context, config *cfg.Config, sw *p2p.Switch,
 	p2pLogger log.Logger, nodeKey *p2p.NodeKey,
 ) (pex.AddrBook, error) {
-	addrBook := pex.NewAddrBook(config.P2P.AddrBookFile(), config.P2P.AddrBookStrict)
+	addrBook := pex.NewAddrBook(ctx, config.P2P.AddrBookFile(), config.P2P.AddrBookStrict)
 	addrBook.SetLogger(p2pLogger.With("book", config.P2P.AddrBookFile()))
 
 	// Add ourselves to addrbook to prevent dialing ourselves
@@ -550,11 +563,13 @@ func createAddrBookAndSetOnSwitch(config *cfg.Config, sw *p2p.Switch,
 	return addrBook, nil
 }
 
-func createPEXReactorAndAddToSwitch(addrBook pex.AddrBook, config *cfg.Config,
+func createPEXReactorAndAddToSwitch(ctx context.Context, addrBook pex.AddrBook, config *cfg.Config,
 	sw *p2p.Switch, logger log.Logger,
 ) *pex.Reactor {
 	// TODO persistent peers ? so we can have their DNS addrs saved
-	pexReactor := pex.NewReactor(addrBook,
+	pexReactor := pex.NewReactor(
+		ctx,
+		addrBook,
 		&pex.ReactorConfig{
 			Seeds:    splitAndTrimEmpty(config.P2P.Seeds, ",", " "),
 			SeedMode: config.P2P.SeedMode,
@@ -713,11 +728,12 @@ func LoadStateFromDBOrGenesisDocProvider(
 }
 
 func createAndStartPrivValidatorSocketClient(
+	ctx context.Context,
 	listenAddr,
 	chainID string,
 	logger log.Logger,
 ) (types.PrivValidator, error) {
-	pve, err := privval.NewSignerListener(listenAddr, logger)
+	pve, err := privval.NewSignerListener(ctx, listenAddr, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to start private validator: %w", err)
 	}
