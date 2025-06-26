@@ -1198,12 +1198,78 @@ func (reactor *Reactor) OnActivateRuntime(chainID string) {
 	idleManager.OnActivate(chainID)
 }
 
-// OnCompleteRuntime executes the OnComplete callback to mark chainID
-// completed in our runtime registry.
-func (reactor *Reactor) OnCompleteRuntime(chainID string) {
-	// Complete this runtime in our runtime registry.
-	idleManager := reactor.GetRuntimeRegistry()
-	idleManager.OnComplete(chainID)
+// OnCompleteRuntime waits for all transactions to be indexed before it executes
+// the OnComplete callback to mark chainID completed in our runtime registry.
+//
+// CAUTION: We use a fallback completer after too many attempts (12) (+- 1min).
+// TODO(midas): Instead of using a fallback completer, use the service context.
+func (reactor *Reactor) OnCompleteRuntime(chainID string, protoTxs [][]byte) {
+	// Retrieve the tx indexer for this ChainID.
+	indexerProvider := reactor.GetServicesProvider()
+	indexerService := indexerProvider(ServiceKeyIndexers, chainID).(*txindex.IndexerService)
+
+	transactionHashes := []string{}
+	for _, bzTx := range protoTxs {
+		transactionHashes = append(transactionHashes, string(types.Tx(bzTx).Hash()))
+	}
+
+	// Whether success or error, we want the runtime completed afterwards.
+	defer func() {
+		// Complete the runtime in our runtime registry.
+		idleManager := reactor.GetRuntimeRegistry()
+		idleManager.OnComplete(chainID)
+	}()
+
+	// Every iteration, we read from indexer service to find all transaction
+	// hashes, then we wait 5 seconds for next evaluation (or shutdown).
+	maxTries := 12 // 12x5s=1min
+	attempts := 0
+	for {
+		// Read transaction hashes from indexer.
+		missingHashes := []string{}
+		for _, rawTx := range protoTxs {
+			txHash := types.Tx(rawTx).Hash()
+			if idxTx, err := indexerService.GetTxIndexer().Get(
+				txHash,
+			); idxTx == nil || err != nil {
+				missingHashes = append(missingHashes, string(txHash))
+			}
+		}
+
+		// When all transactions are indexed, we may execute `OnComplete`.
+		if len(missingHashes) == 0 {
+			// Transaction is not yet indexed
+			reactor.logger.Debug("Found all indexed transactions",
+				"chain_id", chainID,
+				"tx_hashes", transactionHashes,
+			)
+			return
+		}
+
+		attempts++
+
+		// CAUTION:
+		//
+		// Fallback completer after too many attempts (+- 1min).
+		if attempts == maxTries {
+			// Transaction is not yet indexed
+			reactor.logger.Error("Failed to index transactions; exceed max inclusion time",
+				"chain_id", chainID,
+				"tx_hashes", transactionHashes,
+			)
+			return
+		}
+
+		// Give the runtime some more time to index the transaction(s).
+		if ok := reactor.waitForInterval(5 * time.Second); !ok {
+			// TODO(midas): remove debug logs
+			reactor.logger.Error("Failed to index transactions; interrupted by shutdown",
+				"chain_id", chainID,
+				"tx_hashes", transactionHashes,
+			)
+			return
+		}
+	}
 }
 
 // ----------------------------------------------------------------------------

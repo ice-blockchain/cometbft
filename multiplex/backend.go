@@ -937,7 +937,8 @@ func (b *MultiplexBackend) OnBroadcastError(
 // until they have completed replication.
 //
 // When replication is announced as completed for all the relays currently
-// catching up, we proceed to mark the active runtime as completed.
+// catching up AND when all transactions are indexed, we proceed to mark the
+// active runtime as completed, i.e. `OnComplete` is executed.
 //
 // Node runtimes that are not currently processing replications may be safely
 // completed upon querying the indexerService until all transactions
@@ -995,7 +996,16 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 			// Upon completion or error, we may plan to idle the active runtime.
 			defer func() {
 				for _, chainID := range syncingChainIds {
-					withReg.OnComplete(chainID)
+					cliTxes := transactionsByChain[chainID]
+					rawTxes := [][]byte{}
+					for _, tx := range cliTxes {
+						rawTxes = append(rawTxes, []byte(client.TransactionToRawTx(tx)))
+					}
+
+					// Note that this method will check that the transaction
+					// got indexed locally, otherwise it will keep querying
+					// the tx indexer until the transaction is indexed.
+					b.reactor.OnCompleteRuntime(chainID, rawTxes)
 				}
 			}()
 
@@ -1031,7 +1041,8 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 	}
 
 	// All other relays participated in consensus, thus transactions for
-	// these ChainID should have been indexed by now.
+	// these ChainID should have been indexed by now, if they were not
+	// we shall be listening for transaction events, i.e. `EventQueryTx`.
 	indexerProvider := b.reactor.GetServicesProvider()
 	completedChainIds := map[string]bool{}
 	transactionsNotFound := make([]client.Transaction, 0, len(transactions))
@@ -1062,6 +1073,7 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 			)
 
 			if _, ok := completedChainIds[txChainID]; !ok {
+				// We may call OnComplete directly here, this tx is indexed.
 				b.GetRuntimeRegistry().OnComplete(txChainID)
 				completedChainIds[txChainID] = true
 			}

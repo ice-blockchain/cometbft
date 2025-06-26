@@ -333,7 +333,7 @@ func TestMultiplexNodeNewNodesMultiplexSingleNetworkProduceBlocks(t *testing.T) 
 		true, // startServers
 	)
 
-	defer shutdownFn()
+	defer shutdownFn(testReactor)
 
 	require.NotNil(t, testReactor)
 	require.Len(t, testReactor.GetNetworks(), numChains)
@@ -361,7 +361,7 @@ func TestMultiplexNodeNewNodesMultiplexProduceBlocks(t *testing.T) {
 		true, // startServers
 	)
 
-	defer shutdownFn()
+	defer shutdownFn(testReactor)
 
 	require.NotNil(t, testReactor)
 	require.Len(t, testReactor.GetNetworks(), numChains)
@@ -539,7 +539,7 @@ func useDefaultKeyGenFunc() func() (crypto.PrivKey, error) {
 func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog.Logger, startServers bool) (
 	*config.Config,
 	*mx.Reactor,
-	func(),
+	func(*mx.Reactor),
 ) {
 	tb.Helper()
 
@@ -638,14 +638,14 @@ func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog
 	// t.Logf("Waiting for %d nodes to be up and running.", len(testChainIds))
 	wg.Wait()
 
-	shutdownFn := func() {
+	shutdownFn := func(withReactor *mx.Reactor) {
 		defer os.RemoveAll(globalCfg.RootDir)
 
-		nodesProvider := testReactor.GetServicesProvider()
-		testChainIds := testReactor.GetNetworks()
+		nodesProvider := withReactor.GetServicesProvider()
+		testChainIds := withReactor.GetNetworks()
 		stoppingServers := false
 		for i, withChainID := range testChainIds {
-			testReactor.StopConsensusInstanceReactors(
+			withReactor.StopConsensusInstanceReactors(
 				context.Background(),
 				withChainID,
 			)
@@ -666,10 +666,10 @@ func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog
 		}
 
 		// assertStartNodesMultiplex started the *Node(s).
-		testReactor.StopAllNodeInstances()
+		withReactor.StopAllNodeInstances()
 
-		if testReactor.IsRunning() {
-			err := testReactor.Stop()
+		if withReactor.IsRunning() {
+			err := withReactor.Stop()
 			require.NoError(tb, err)
 		}
 	}

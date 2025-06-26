@@ -202,6 +202,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 		mempl.WithChainID(chainID),
 		mempl.WithNodeKey(reactor.GetNodeKey()),
 		mempl.WithDialerFn(reactor.GetRelayDialerForCometBFT()),
+		mempl.WithRuntimeRegistry(reactor.GetRuntimeRegistry()),
 	)
 	if cfgOverwrite.Consensus.WaitForTxs() {
 		mempool.EnableTxsAvailable()
@@ -338,6 +339,9 @@ func (reactor *Reactor) StartConsensusInstanceReactors(
 	consensusReactor := cometbftSwitch.Reactor(chainID, "CONSENSUS").(*cs.Reactor)
 	consensusReactor.SetSendStatusToPeers(sendStatusToPeers)
 	consensusReactor.SetRuntimeRegistry(reactor.GetRuntimeRegistry())
+
+	memplReactor := cometbftSwitch.Reactor(chainID, "MEMPOOL").(*mempl.Reactor)
+	memplReactor.SetRuntimeRegistry(reactor.GetRuntimeRegistry())
 
 	// Start all the reactors available for this ChainID.
 	reactorsForChain := cometbftSwitch.Reactors(chainID)

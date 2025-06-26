@@ -329,7 +329,7 @@ func TestMultiplexReactorRegisterNetwork(t *testing.T) {
 		shutdownFn := ResetTestMultiplexReactorRuntimeWithInjection(t, numNetworks, cmtlog.NewNopLogger())
 
 	// Shutdown routine
-	defer shutdownFn()
+	defer shutdownFn(testReactor)
 
 	testUserAddress := testExtChainID.GetUserAddress()
 	testChainID := testExtChainID.String()
@@ -365,7 +365,7 @@ func TestMultiplexReactorUpdatedGenesisDocProvider(t *testing.T) {
 		shutdownFn := ResetTestMultiplexReactorRuntimeWithInjection(t, numChainsToInject, cmtlog.NewNopLogger())
 
 	// Shutdown routine
-	defer shutdownFn()
+	defer shutdownFn(testReactor)
 
 	newTestChainID := testExtChainID.String()
 
@@ -395,7 +395,7 @@ func ResetTestMultiplexReactorRuntimeWithInjection(
 	tb testing.TB,
 	numChains int,
 	customLogger cmtlog.Logger,
-) (mx.ExtendedChainID, *mx.Reactor, func()) {
+) (mx.ExtendedChainID, *mx.Reactor, func(*mx.Reactor)) {
 	tb.Helper()
 
 	// Initialize and START the nodes multiplex

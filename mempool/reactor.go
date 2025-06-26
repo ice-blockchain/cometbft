@@ -41,11 +41,12 @@ type Reactor struct {
 	activeNonPersistentPeersSemaphore *semaphore.Weighted
 
 	// Inject custom transaction verification with an acceptor implementation.
-	nodeKey     *p2p.NodeKey
-	txAcceptor  client.Acceptor
-	userAddress string
-	ChainID     string // Exported.
-	dialerFn    RelayDialerFn
+	nodeKey         *p2p.NodeKey
+	txAcceptor      client.Acceptor
+	userAddress     string
+	ChainID         string // Exported.
+	dialerFn        RelayDialerFn
+	runtimeRegistry *server.RuntimeRegistry
 
 	// Stores messages received during WaitSync() which are processed
 	// in [EnableInOutTxs] and then deleted.
@@ -142,6 +143,15 @@ func WithDialerFn(
 	}
 }
 
+// WithRuntimeRegistry is an option helper to inject a custom runtime registry.
+func WithRuntimeRegistry(
+	reg *server.RuntimeRegistry,
+) func(*Reactor) {
+	return func(r *Reactor) {
+		r.runtimeRegistry = reg
+	}
+}
+
 // GetMempoolPtr returns a pointer to the CListMempool object.
 func (memR *Reactor) GetMempoolPtr() *CListMempool {
 	return memR.mempool
@@ -161,6 +171,11 @@ func (memR *Reactor) SetChainID(chainID string) {
 // SetAcceptor sets a custom acceptor implementation.
 func (memR *Reactor) SetAcceptor(acceptor client.Acceptor) {
 	memR.txAcceptor = acceptor
+}
+
+// SetRuntimeRegistry sets a cuustom runtime registry.
+func (memR *Reactor) SetRuntimeRegistry(reg *server.RuntimeRegistry) {
+	memR.runtimeRegistry = reg
 }
 
 // OnStart implements p2p.BaseReactor.
@@ -362,7 +377,7 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 				) error
 
 				OnActivateRuntime(chainID string)
-				OnCompleteRuntime(chainID string)
+				OnCompleteRuntime(chainID string, protoTxs [][]byte)
 			}
 
 			// Use type assertion to access multiplex reactor methods.
@@ -382,13 +397,12 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 
 				mxR.OnActivateRuntime(memR.ChainID)
 
-				// TODO(midas): call OnComplete upon transaction inclusion,
-				// due to the completion done in deferral, we ensure that
-				// this runtime activation won't last too long.
-				// Known issue: In case of very short RuntimeRegistry.IdleDuration,
-				// the completion of this runtime may happen before block inclusion,
-				// i.e. this relay might not have time to call CommitBroadcastTx.
-				defer mxR.OnCompleteRuntime(memR.ChainID)
+				// CAUTION: This runtime for ChainID *must be long-living* because it
+				// is used to execute cometbft consensus (blocks proposal). Thus we shall
+				// wait for transactions to be **indexed** before the runtime is completed.
+				//
+				// Completes the runtime activated here.
+				defer mxR.OnCompleteRuntime(memR.ChainID, protoTxs)
 			}
 		}
 
@@ -479,7 +493,7 @@ func (memR *Reactor) processTxs(
 		// Use type assertion to access multiplex reactor methods.
 		if mxR, ok := multiplexReactor.(inlineCompletionAnnouncer); ok {
 			if mxR.ShouldAnnounceReplication(memR.ChainID) {
-				memR.sendChainReplicationComplete(memR.ChainID)
+				memR.sendChainReplicationComplete(memR.ChainID, protoTxs)
 				mxR.UnsetAnnounceReplication(memR.ChainID)
 			}
 		}
@@ -732,6 +746,7 @@ func (memR *Reactor) sendAckTransactionBroadcast(
 // to all peers we are connected to for chainID.
 func (memR *Reactor) sendChainReplicationComplete(
 	chainID string,
+	protoTxs [][]byte,
 ) {
 	sendReplCompleteToPeer := func(fromID p2p.ID, toPeer *p2p.PeerImpl) error {
 		if success := toPeer.Send(chainID, p2p.Envelope{
@@ -797,17 +812,14 @@ func (memR *Reactor) sendChainReplicationComplete(
 		"chain_id", chainID,
 	)
 
-	// Completes the runtime activated in [multiplex.Reactor#Receive] upon
-	// reception of a ChainReplicationRequest.
-	if multiplexReactor := memR.Switch.GetMultiplexReactor(); multiplexReactor != nil {
-		type inlineRuntimeCompleter interface {
-			OnCompleteRuntime(chainID string)
-		}
-
-		// Use type assertion to access multiplex reactor methods.
-		if mxR, ok := multiplexReactor.(inlineRuntimeCompleter); ok {
-			mxR.OnCompleteRuntime(chainID)
-		}
+	if memR.runtimeRegistry != nil {
+		// CAUTION: This runtime for ChainID *is not* the one that will be used
+		// to execute cometbft consensus (blocks proposal). Thus we mark this
+		// runtime as completed because another one gets activated for consensus.
+		//
+		// Completes the runtime activated in [multiplex.Reactor#Receive] upon
+		// reception of a ChainReplicationRequest.
+		memR.runtimeRegistry.OnComplete(chainID)
 	}
 
 	return

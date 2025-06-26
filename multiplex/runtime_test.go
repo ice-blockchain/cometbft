@@ -420,7 +420,7 @@ func TestMultiplexRuntimeInjectNewNetwork(t *testing.T) {
 	// For debug, change the logger to cmtlog.TestingLogger()
 	_, testReactor, shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
 
-	defer shutdownFn()
+	defer shutdownFn(testReactor)
 
 	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
 	// executed earlier, i.e. see MultiplexBackend.InitValidators.
@@ -456,7 +456,7 @@ func TestMultiplexRuntimeInjectNewNetworkCallsAllocateNetwork(t *testing.T) {
 	// For debug, change the logger to cmtlog.TestingLogger()
 	_, testReactor, shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
 
-	defer shutdownFn()
+	defer shutdownFn(testReactor)
 
 	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
 	// executed earlier, i.e. see MultiplexBackend.InitValidators.
@@ -521,7 +521,7 @@ func TestMultiplexRuntimeInjectNewNetworkCallsInjectStateMachine(t *testing.T) {
 	// For debug, change the logger to cmtlog.TestingLogger()
 	_, testReactor, shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
 
-	defer shutdownFn()
+	defer shutdownFn(testReactor)
 
 	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
 	// executed earlier, i.e. see MultiplexBackend.InitValidators.
@@ -567,7 +567,7 @@ func TestMultiplexRuntimeInjectNewNetworkCallsRegisterNetwork(t *testing.T) {
 	// For debug, change the logger to cmtlog.TestingLogger()
 	_, testReactor, shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
 
-	defer shutdownFn()
+	defer shutdownFn(testReactor)
 
 	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
 	// executed earlier, i.e. see MultiplexBackend.InitValidators.
@@ -604,7 +604,7 @@ func TestMultiplexRuntimeInjectNewNetworkIncludesOtherValidators(t *testing.T) {
 	// For debug, change the logger to cmtlog.TestingLogger()
 	_, testReactor, shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
 
-	defer shutdownFn()
+	defer shutdownFn(testReactor)
 
 	numValidators := 10
 	testOtherValidators := make([]string, 0, numValidators)
@@ -657,7 +657,7 @@ func TestMultiplexRuntimeInjectNewRuntime(t *testing.T) {
 	// For debug, change the logger to cmtlog.TestingLogger()
 	_, testReactor, shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
 
-	defer shutdownFn()
+	defer shutdownFn(testReactor)
 
 	injectChainID := makeChainID("test-inject-1")
 
@@ -687,7 +687,7 @@ func TestMultiplexRuntimeInjectNewRuntimeWithOthers(t *testing.T) {
 	// For debug, change the logger to cmtlog.TestingLogger()
 	_, testReactor, shutdownFn := assertStartNodesMultiplex(t, numChains, cmtlog.NewNopLogger(), true) // startServers=true
 
-	defer shutdownFn()
+	defer shutdownFn(testReactor)
 
 	injectChainID := makeChainID("test-inject-1")
 

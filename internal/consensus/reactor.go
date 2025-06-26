@@ -100,7 +100,7 @@ func WithNodeKey(
 	}
 }
 
-// WithRuntimeRegistry is an option helper to inject a custom nodeKey.
+// WithRuntimeRegistry is an option helper to inject a custom runtime registry.
 func WithRuntimeRegistry(
 	reg *server.RuntimeRegistry,
 ) func(*Reactor) {
@@ -119,6 +119,7 @@ func (conR *Reactor) GetState() *State {
 	return conR.conS
 }
 
+// SetRuntimeRegistry sets a cuustom runtime registry.
 func (conR *Reactor) SetRuntimeRegistry(reg *server.RuntimeRegistry) {
 	conR.runtimeRegistry = reg
 }
@@ -318,9 +319,15 @@ func (conR *Reactor) announceReplicationToPeers(
 		"chain_id", chainID,
 	)
 
-	// Completes the runtime activated in [multiplex.Reactor#Receive] upon
-	// reception of a ChainReplicationRequest.
-	conR.runtimeRegistry.OnComplete(chainID)
+	if conR.runtimeRegistry != nil {
+		// CAUTION: This runtime for ChainID *is not* the one that will be used
+		// to execute cometbft consensus (blocks proposal). Thus we mark this
+		// runtime as completed because another one gets activated for consensus.
+		//
+		// Completes the runtime activated in [multiplex.Reactor#Receive] upon
+		// reception of a ChainReplicationRequest.
+		conR.runtimeRegistry.OnComplete(chainID)
+	}
 
 	return
 }
