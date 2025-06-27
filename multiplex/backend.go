@@ -1884,7 +1884,7 @@ func (b *MultiplexBackend) InitValidators(
 		}
 
 		// Otherwise, pre-allocates priv validator instance.
-		if err = b.reactor.AllocateNetwork(chainID); err != nil {
+		if err = b.reactor.AllocateNetwork(chainID, true); err != nil {
 			b.logger.Error("Failed to allocate new priv validator",
 				"chain_id", chainID,
 				"err", err,

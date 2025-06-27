@@ -9,12 +9,12 @@ import (
 )
 
 // initMultiplexDatabases initializes database tables for each replicated
-// chain with table names: blockstore, state, tx_index and evidence.
+// chain with table names: blockstore, state, txindex and evidence.
 //
 // This method registers instances in the multiplexRegistry:
 // - `database/blockstore`: the blockstore databases.
 // - `database/state`: the state machine databases.
-// - `database/tx_index`: the tx_index databases.
+// - `database/txindex`: the txindex databases.
 // - `database/evidence`: the evidence databases.
 //
 // TODO(midas): refactoring with MakeNetworkDatabases.
@@ -39,7 +39,7 @@ func (reactor *Reactor) InitMultiplexDatabases(chainIds []string) error {
 
 	// Create indexer databases
 	indexerMultiplexDB, err := NewMultiplexDB(&ChainDBContext{
-		DBContext: config.DBContext{ID: "tx_index", Config: nodeConfig},
+		DBContext: config.DBContext{ID: "txindex", Config: nodeConfig},
 	}, chainIds)
 	if err != nil {
 		return err

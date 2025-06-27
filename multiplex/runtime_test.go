@@ -78,14 +78,14 @@ func TestMultiplexRuntimeMakeNetworkDatabases(t *testing.T) {
 	actualDBs, err := testReactor.MakeNetworkDatabases(testExtChainID, []string{
 		"state",
 		"blockstore",
-		"tx_index",
+		"txindex",
 		"evidence",
-	})
+	}, true)
 	assert.NoError(t, err, "should create network databases")
 	assert.Len(t, actualDBs, 4)
 	assert.Contains(t, actualDBs, "state")
 	assert.Contains(t, actualDBs, "blockstore")
-	assert.Contains(t, actualDBs, "tx_index")
+	assert.Contains(t, actualDBs, "txindex")
 	assert.Contains(t, actualDBs, "evidence")
 	assert.NotNil(t, actualDBs["state"])
 
@@ -225,7 +225,7 @@ func TestMultiplexRuntimeMakeNetworkStateMachine(t *testing.T) {
 	actualDBs, err := testReactor.MakeNetworkDatabases(testExtChainID, []string{
 		"state",
 		"blockstore",
-	})
+	}, true)
 	require.NoError(t, err)
 
 	actualGenesisDoc, _, err := testGenesisDocSet.SearchGenesisDocByChainID(
@@ -292,7 +292,7 @@ func TestMultiplexRuntimeAllocateNetwork(t *testing.T) {
 	defer os.RemoveAll(rootDir)
 
 	// Act
-	allocErr := testReactor.AllocateNetwork(testChainID)
+	allocErr := testReactor.AllocateNetwork(testChainID, false)
 	assert.NoError(t, allocErr, "should allocate network resources")
 
 	// Test that we injected a config path
@@ -426,7 +426,7 @@ func TestMultiplexRuntimeInjectNewNetwork(t *testing.T) {
 
 	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
 	// executed earlier, i.e. see MultiplexBackend.InitValidators.
-	allocErr := testReactor.AllocateNetwork(testChainID)
+	allocErr := testReactor.AllocateNetwork(testChainID, true)
 	require.NoError(t, allocErr, "should allocate new network resources")
 
 	// Act
@@ -462,7 +462,7 @@ func TestMultiplexRuntimeInjectNewNetworkCallsAllocateNetwork(t *testing.T) {
 
 	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
 	// executed earlier, i.e. see MultiplexBackend.InitValidators.
-	allocErr := testReactor.AllocateNetwork(testChainID)
+	allocErr := testReactor.AllocateNetwork(testChainID, true)
 	require.NoError(t, allocErr, "should allocate new network resources")
 
 	// Act
@@ -527,7 +527,7 @@ func TestMultiplexRuntimeInjectNewNetworkCallsInjectStateMachine(t *testing.T) {
 
 	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
 	// executed earlier, i.e. see MultiplexBackend.InitValidators.
-	allocErr := testReactor.AllocateNetwork(testChainID)
+	allocErr := testReactor.AllocateNetwork(testChainID, true)
 	require.NoError(t, allocErr, "should allocate new network resources")
 
 	// Act
@@ -573,7 +573,7 @@ func TestMultiplexRuntimeInjectNewNetworkCallsRegisterNetwork(t *testing.T) {
 
 	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
 	// executed earlier, i.e. see MultiplexBackend.InitValidators.
-	allocErr := testReactor.AllocateNetwork(testChainID)
+	allocErr := testReactor.AllocateNetwork(testChainID, true)
 	require.NoError(t, allocErr, "should allocate new network resources")
 
 	// Act
@@ -621,7 +621,7 @@ func TestMultiplexRuntimeInjectNewNetworkIncludesOtherValidators(t *testing.T) {
 
 	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
 	// executed earlier, i.e. see MultiplexBackend.InitValidators.
-	allocErr := testReactor.AllocateNetwork(testWithChainID)
+	allocErr := testReactor.AllocateNetwork(testWithChainID, true)
 	require.NoError(t, allocErr, "should allocate new network resources")
 
 	// Inject testWithChainID
@@ -665,7 +665,7 @@ func TestMultiplexRuntimeInjectNewRuntime(t *testing.T) {
 
 	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
 	// executed earlier, i.e. see MultiplexBackend.InitValidators.
-	allocErr := testReactor.AllocateNetwork(injectChainID)
+	allocErr := testReactor.AllocateNetwork(injectChainID, true)
 	require.NoError(t, allocErr, "should allocate new network resources")
 
 	// Inject injectChainID
@@ -699,7 +699,7 @@ func TestMultiplexRuntimeInjectNewRuntimeWithOthers(t *testing.T) {
 
 	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
 	// executed earlier, i.e. see MultiplexBackend.InitValidators.
-	allocErr := testReactor.AllocateNetwork(injectChainID)
+	allocErr := testReactor.AllocateNetwork(injectChainID, true)
 	require.NoError(t, allocErr, "should allocate new network resources")
 
 	// Inject injectChainID
@@ -791,7 +791,7 @@ func ResetTestMultiplexRuntimeWithInjection(tb testing.TB, numChains int) (
 		testReactor := ResetTestMultiplexRuntime(tb, numChains)
 
 	// Inject testChainID
-	err := testReactor.AllocateNetwork(testChainID)
+	err := testReactor.AllocateNetwork(testChainID, true)
 	require.NoError(tb, err, "should allocate network resources")
 
 	configsPaths := testReactor.GetConfigsPaths()

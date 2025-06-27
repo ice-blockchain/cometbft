@@ -344,9 +344,9 @@ func (reactor *Reactor) StartConsensusInstanceReactors(
 	if _, err := reactor.MakeNetworkDatabases(extChainID, []string{
 		"blockstore",
 		"state",
-		"tx_index",
+		"txindex",
 		"evidence",
-	}); err != nil {
+	}, true); err != nil {
 		return fmt.Errorf(
 			"error with consensus reactors; database unavailable for %s - %w",
 			chainID, err)

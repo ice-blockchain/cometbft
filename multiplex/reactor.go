@@ -52,9 +52,9 @@ const (
 	InstanceKeyStateStore       = "stateStore"
 	InstanceKeyBlockStore       = "blockStore"
 	InstanceKeyPrivValidator    = "privValidator"
-	InstanceKeyDatabaseBlock    = "database/blockStore"
+	InstanceKeyDatabaseBlock    = "database/blockstore"
 	InstanceKeyDatabaseState    = "database/state"
-	InstanceKeyDatabaseIndex    = "database/txIndex"
+	InstanceKeyDatabaseIndex    = "database/txindex"
 	InstanceKeyDatabaseEvidence = "database/evidence"
 	InstanceKeyP2PSwitch        = "p2p/switch"
 	InstanceKeyP2PTransport     = "p2p/transport"
@@ -491,7 +491,7 @@ func ReactorWithActiveRuntimes(
 				otherValidators = otherValidatorsPerChainID[chainID][:]
 			}
 
-			r.AllocateNetwork(chainID)                   // db, fs, privval
+			r.AllocateNetwork(chainID, true)             // db, fs, privval
 			r.InjectNewNetwork(chainID, otherValidators) // config, genesis, state
 			r.InjectNewRuntime(r.Context(), chainID)     // event bus, indexer, p2p
 		}
@@ -1923,7 +1923,8 @@ func (reactor *Reactor) OnStart(ctx context.Context) error {
 
 	// Create databases and priv validator for all available ChainIDs.
 	for _, chainID := range availableChainIds {
-		if err = reactor.AllocateNetwork(chainID); err != nil {
+		// keepAliveDB=false
+		if err = reactor.AllocateNetwork(chainID, false); err != nil {
 			reactor.logger.Error("failed to start multiplex reactor; allocation error",
 				"chain_id", chainID,
 				"err", err,
@@ -1946,7 +1947,7 @@ func (reactor *Reactor) OnStart(ctx context.Context) error {
 		activeChainIds = append(activeChainIds, chainID)
 	}
 
-	// Open databases for: state, blockstore, tx_index, evidence
+	// Open databases for: state, blockstore, txindex, evidence
 	// Then load state machines from database or genesis doc
 	// And initialize block stores for active runtimes.
 	if err := reactor.loadMultiplexState(activeChainIds); err != nil {
@@ -2522,9 +2523,9 @@ func (reactor *Reactor) handleChainReplicationRequest(
 	if _, err := reactor.MakeNetworkDatabases(extChainID, []string{
 		"blockstore",
 		"state",
-		"tx_index",
+		"txindex",
 		"evidence",
-	}); err != nil {
+	}, true); err != nil {
 		return fmt.Errorf(
 			"database error for %s - %w", req.ChainID, err)
 	}

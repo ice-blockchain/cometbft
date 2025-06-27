@@ -415,7 +415,7 @@ func ResetTestMultiplexReactorRuntimeWithInjection(
 	injectChainID := testInjectChainID.String()
 
 	// Inject injectChainID resources
-	allocErr := testReactor.AllocateNetwork(injectChainID)
+	allocErr := testReactor.AllocateNetwork(injectChainID, true)
 	require.NoError(tb, allocErr, "should allocate network resources")
 
 	// Inject GenesisDoc to prepare state machine

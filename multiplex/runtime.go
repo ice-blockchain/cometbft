@@ -29,6 +29,7 @@ import (
 // structure, the databases and a priv validator.
 func (reactor *Reactor) AllocateNetwork(
 	chainID string,
+	keepAliveDB bool,
 ) error {
 	// Build the ExtendedChainID to retrieve user address from ChainID.
 	extChainID, err := NewExtendedChainIDFromLegacy(chainID)
@@ -58,9 +59,9 @@ func (reactor *Reactor) AllocateNetwork(
 	databasesByName, err := reactor.MakeNetworkDatabases(extChainID, []string{
 		"blockstore",
 		"state",
-		"tx_index",
+		"txindex",
 		"evidence",
-	})
+	}, false)
 	if err != nil {
 		return fmt.Errorf(
 			"could not create databases for ChainID %s: %w", chainID, err)
@@ -73,16 +74,12 @@ func (reactor *Reactor) AllocateNetwork(
 	// database connections are only *opened* when a ChainID is active.
 	//
 	// The conn will be opened just-in-time by InjectNewNetwork.
-	databasesByName["blockstore"].Close()
-	databasesByName["state"].Close()
-	databasesByName["tx_index"].Close()
-	databasesByName["evidence"].Close()
-
-	// Register/inject in running reactor
-	reactor.RegisterInstance(InstanceKeyDatabaseBlock, chainID, databasesByName["blockstore"])
-	reactor.RegisterInstance(InstanceKeyDatabaseState, chainID, databasesByName["state"])
-	reactor.RegisterInstance(InstanceKeyDatabaseIndex, chainID, databasesByName["tx_index"])
-	reactor.RegisterInstance(InstanceKeyDatabaseEvidence, chainID, databasesByName["evidence"])
+	if !keepAliveDB {
+		databasesByName["blockstore"].Close()
+		databasesByName["state"].Close()
+		databasesByName["txindex"].Close()
+		databasesByName["evidence"].Close()
+	}
 
 	// ------------------------------------------------------------------------
 	// Step 3: Create priv validator
@@ -241,9 +238,9 @@ func (reactor *Reactor) InjectNewNetwork(
 	if _, err := reactor.MakeNetworkDatabases(extChainID, []string{
 		"blockstore",
 		"state",
-		"tx_index",
+		"txindex",
 		"evidence",
-	}); err != nil {
+	}, true); err != nil {
 		return fmt.Errorf(
 			"failed network injection: database error for %s - %w", chainID, err)
 	}
@@ -767,6 +764,7 @@ func (reactor *Reactor) MakeNetworkFilesystem(
 func (reactor *Reactor) MakeNetworkDatabases(
 	chainID ExtendedChainID,
 	databases []string,
+	forceOpenConn bool,
 ) (dbs map[string]dbm.DB, err error) {
 	nodeConfig := reactor.GetNodeConfig()
 
@@ -787,7 +785,7 @@ func (reactor *Reactor) MakeNetworkDatabases(
 	dbs = map[string]dbm.DB{}
 	for _, dbName := range databases {
 		dbProvider := reactor.GetInstanceProvider(dbName)
-		if db, ok := dbProvider(chainID.String()).(dbm.DB); ok {
+		if db, ok := dbProvider(chainID.String()).(dbm.DB); ok && !forceOpenConn {
 			dbs[dbName] = db
 		} else {
 			dbs[dbName], err = dbm.NewDB(dbName, dbBackend, dbStorage)
@@ -795,6 +793,9 @@ func (reactor *Reactor) MakeNetworkDatabases(
 				return map[string]dbm.DB{}, fmt.Errorf(
 					"could not create database %s for ChainID %s: %w", dbName, chainID.String(), err)
 			}
+
+			// Register/inject in running reactor
+			reactor.RegisterInstance("database/"+dbName, chainID.String(), dbs[dbName])
 		}
 	}
 
