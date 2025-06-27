@@ -1018,6 +1018,8 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 					// Note that this method will check that the transaction
 					// got indexed locally, otherwise it will keep querying
 					// the tx indexer until the transaction is indexed.
+					//
+					// This blocks the goroutine until shutdown and/or indexing.
 					b.reactor.OnCompleteRuntime(chainID, rawTxes)
 				}
 			}()

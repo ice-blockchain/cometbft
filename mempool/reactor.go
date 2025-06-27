@@ -403,7 +403,9 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 				// wait for transactions to be **indexed** before the runtime is completed.
 				//
 				// Completes the runtime activated here.
-				defer mxR.OnCompleteRuntime(memR.ChainID, protoTxs)
+				defer func() {
+					go mxR.OnCompleteRuntime(memR.ChainID, protoTxs)
+				}()
 			}
 		}
 
