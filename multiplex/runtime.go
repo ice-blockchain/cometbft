@@ -788,6 +788,10 @@ func (reactor *Reactor) MakeNetworkDatabases(
 		if db, ok := dbProvider(chainID.String()).(dbm.DB); ok && !forceOpenConn {
 			dbs[dbName] = db
 		} else {
+			if db != nil {
+				db.Close()
+			}
+
 			dbs[dbName], err = dbm.NewDB(dbName, dbBackend, dbStorage)
 			if err != nil {
 				return map[string]dbm.DB{}, fmt.Errorf(
