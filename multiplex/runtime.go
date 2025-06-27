@@ -784,7 +784,7 @@ func (reactor *Reactor) MakeNetworkDatabases(
 
 	dbs = map[string]dbm.DB{}
 	for _, dbName := range databases {
-		dbProvider := reactor.GetInstanceProvider(dbName)
+		dbProvider := reactor.GetInstanceProvider("database/" + dbName)
 		if db, ok := dbProvider(chainID.String()).(dbm.DB); ok && !forceOpenConn {
 			dbs[dbName] = db
 		} else {
