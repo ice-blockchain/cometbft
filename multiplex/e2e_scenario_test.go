@@ -870,42 +870,12 @@ func TestScenarioClientBroadcastHealthyRelays(t *testing.T) {
 	testReactorRelay3 := servers[2].GetReactor()
 
 	// Make sure to remotely create the validators as well.
-	relay1ValPubKeysPerChainID := servers[0].GetValidatorPubs()
-	relay2ValPubKeysPerChainID, val2Err := servers[1].InitValidators(testChainIds)
-	require.NoError(t, val2Err)
-	relay3ValPubKeysPerChainID, val3Err := servers[2].InitValidators(testChainIds)
-	require.NoError(t, val3Err)
-
-	t.Logf("using valPubKeys for relay-1: %v", servers[0].GetValidatorPubs())
-	t.Logf("using valPubKeys for relay-2: %v", relay2ValPubKeysPerChainID)
-	t.Logf("using valPubKeys for relay-3: %v", relay3ValPubKeysPerChainID)
-
-	otherValidatorsRelay1 := map[string][]string{}
-	otherValidatorsRelay2 := map[string][]string{}
-	otherValidatorsRelay3 := map[string][]string{}
-	for _, chainID := range testChainIds {
-		otherValidatorsRelay1[chainID] = []string{
-			relay2ValPubKeysPerChainID[chainID],
-			relay3ValPubKeysPerChainID[chainID],
-		}
-		otherValidatorsRelay2[chainID] = []string{
-			relay1ValPubKeysPerChainID[chainID],
-			relay3ValPubKeysPerChainID[chainID],
-		}
-		otherValidatorsRelay3[chainID] = []string{
-			relay1ValPubKeysPerChainID[chainID],
-			relay2ValPubKeysPerChainID[chainID],
-		}
-	}
-
-	t.Logf("using otherValidators for relay-1: %v", otherValidatorsRelay1)
-	t.Logf("using otherValidators for relay-2: %v", otherValidatorsRelay2)
-	t.Logf("using otherValidators for relay-3: %v", otherValidatorsRelay3)
+	otherValidators := ResetTestBackendValidators(t, servers, testChainIds)
 
 	// CAUTION: This activates runtimes for pre-configured networks.
-	mx.ReactorWithActiveRuntimes(testChainIds, otherValidatorsRelay1)(testReactorRelay1)
-	mx.ReactorWithActiveRuntimes(testChainIds, otherValidatorsRelay2)(testReactorRelay2)
-	mx.ReactorWithActiveRuntimes(testChainIds, otherValidatorsRelay3)(testReactorRelay3)
+	mx.ReactorWithActiveRuntimes(testChainIds, otherValidators[0])(testReactorRelay1)
+	mx.ReactorWithActiveRuntimes(testChainIds, otherValidators[1])(testReactorRelay2)
+	mx.ReactorWithActiveRuntimes(testChainIds, otherValidators[2])(testReactorRelay3)
 
 	// TEST 1 - Success
 	//
@@ -956,10 +926,9 @@ func TestScenarioClientBroadcastHealthyRelays(t *testing.T) {
 	// -------------------
 	// Also test callbacks
 
-	totalExpectedCalls := 1
-
 	// Test that client callbacks were executed correctly, every relay should
 	// have executed the CommitBroadcastTx callback when the block is finalized.
+	totalExpectedCalls := 1
 
 	require.Equal(t, uint64(totalExpectedCalls), testAcceptorRelay1.TxCommitCalls.Load(),
 		"should locally execute CommitBroadcastTx callback for each transaction")
@@ -1041,9 +1010,12 @@ func TestScenarioClientBroadcastEmptyRelays(t *testing.T) {
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
 
-	servers[0].SetAcceptor(client.NewMockAcceptorImpl())
-	servers[1].SetAcceptor(client.NewMockAcceptorImpl())
-	servers[2].SetAcceptor(client.NewMockAcceptorImpl())
+	testAcceptorRelay1 := client.NewMockAcceptorImpl()
+	testAcceptorRelay2 := client.NewMockAcceptorImpl()
+	testAcceptorRelay3 := client.NewMockAcceptorImpl()
+	servers[0].SetAcceptor(testAcceptorRelay1)
+	servers[1].SetAcceptor(testAcceptorRelay2)
+	servers[2].SetAcceptor(testAcceptorRelay3)
 
 	// Note: relays includes self
 	relays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
@@ -1103,9 +1075,6 @@ func TestScenarioClientBroadcastEmptyRelays(t *testing.T) {
 	t.Logf("Now evaluating callbacks execution...")
 
 	totalExpectedCalls := 1
-	testAcceptorRelay1 := servers[0].GetAcceptor().(*client.MockAcceptorImpl)
-	testAcceptorRelay2 := servers[1].GetAcceptor().(*client.MockAcceptorImpl)
-	testAcceptorRelay3 := servers[2].GetAcceptor().(*client.MockAcceptorImpl)
 
 	// Test that client callbacks were executed correctly, every relay should
 	// have executed the CommitBroadcastTx callback when the block is finalized.
@@ -1133,9 +1102,12 @@ func TestScenarioClientBroadcastEmptyRelaysProduceBlockWithTx(t *testing.T) {
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
 
-	servers[0].SetAcceptor(client.NewMockAcceptorImpl())
-	servers[1].SetAcceptor(client.NewMockAcceptorImpl())
-	servers[2].SetAcceptor(client.NewMockAcceptorImpl())
+	testAcceptorRelay1 := client.NewMockAcceptorImpl()
+	testAcceptorRelay2 := client.NewMockAcceptorImpl()
+	testAcceptorRelay3 := client.NewMockAcceptorImpl()
+	servers[0].SetAcceptor(testAcceptorRelay1)
+	servers[1].SetAcceptor(testAcceptorRelay2)
+	servers[2].SetAcceptor(testAcceptorRelay3)
 
 	// Note: relays includes self
 	relays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
@@ -1159,6 +1131,7 @@ func TestScenarioClientBroadcastEmptyRelaysProduceBlockWithTx(t *testing.T) {
 		numTransactions,
 		notifyCh,
 	)
+	t.Logf("Broadcast goroutine #1 started and should succeed...")
 
 	// Blocks the main thread until we consume from notifyCh.
 	resultStatusMsg := waitForClientBroadcastStatus(t,
@@ -1203,13 +1176,9 @@ func TestScenarioClientBroadcastEmptyRelaysProduceBlockWithTx(t *testing.T) {
 	// Also test callbacks
 	t.Logf("Now evaluating callbacks execution...")
 
-	totalExpectedCalls := 1
-	testAcceptorRelay1 := servers[0].GetAcceptor().(*client.MockAcceptorImpl)
-	testAcceptorRelay2 := servers[1].GetAcceptor().(*client.MockAcceptorImpl)
-	testAcceptorRelay3 := servers[2].GetAcceptor().(*client.MockAcceptorImpl)
-
 	// Test that client callbacks were executed correctly, every relay should
 	// have executed the CommitBroadcastTx callback when the block is finalized.
+	totalExpectedCalls := 1
 
 	assert.Equal(t, uint64(totalExpectedCalls), testAcceptorRelay1.TxCommitCalls.Load(),
 		"should locally execute CommitBroadcastTx callback for each transaction")
@@ -1738,8 +1707,10 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 	require.Len(t, servers, numHealthy)
 
 	// only 2 healthy relays to evaluate callbacks
-	servers[0].SetAcceptor(client.NewMockAcceptorImpl())
-	servers[1].SetAcceptor(client.NewMockAcceptorImpl())
+	testAcceptorRelay1 := client.NewMockAcceptorImpl()
+	testAcceptorRelay2 := client.NewMockAcceptorImpl()
+	servers[0].SetAcceptor(testAcceptorRelay1)
+	servers[1].SetAcceptor(testAcceptorRelay2)
 
 	// Note: relays includes self
 	relays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
@@ -1855,12 +1826,9 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 	// -------------------
 	// Also test callbacks
 
-	totalExpectedCalls := 2 // we sent 2 transaction batches
-	testAcceptorRelay1 := servers[0].GetAcceptor().(*client.MockAcceptorImpl)
-	testAcceptorRelay2 := servers[1].GetAcceptor().(*client.MockAcceptorImpl)
-
 	// Test that client callbacks were executed correctly, every relay should
 	// have executed the CommitBroadcastTx callback when the block is finalized.
+	totalExpectedCalls := 2 // we sent 2 transaction batches
 
 	assert.Equal(t, uint64(totalExpectedCalls), testAcceptorRelay1.TxCommitCalls.Load(),
 		"should locally execute CommitBroadcastTx callback for each transaction")
@@ -1949,8 +1917,10 @@ func TestScenarioClientBroadcastNotEnoughHealthyRelays(t *testing.T) {
 	require.Len(t, servers, numHealthy)
 
 	// only 2 healthy relays to evaluate callbacks
-	servers[0].SetAcceptor(client.NewMockAcceptorImpl())
-	servers[1].SetAcceptor(client.NewMockAcceptorImpl())
+	testAcceptorRelay1 := client.NewMockAcceptorImpl()
+	testAcceptorRelay2 := client.NewMockAcceptorImpl()
+	servers[0].SetAcceptor(testAcceptorRelay1)
+	servers[1].SetAcceptor(testAcceptorRelay2)
 
 	// Note: relays contains self for this test
 	healthyRelays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
@@ -2060,12 +2030,9 @@ func TestScenarioClientBroadcastNotEnoughHealthyRelays(t *testing.T) {
 	// Also test callbacks (TEST 1)
 	t.Logf("Now evaluating callbacks execution...")
 
-	totalExpectedCalls := 1 // only TEST 1 should have committed a block
-	testAcceptorRelay1 := servers[0].GetAcceptor().(*client.MockAcceptorImpl)
-	testAcceptorRelay2 := servers[1].GetAcceptor().(*client.MockAcceptorImpl)
-
 	// Test that client callbacks were executed correctly, every relay should
 	// have executed the CommitBroadcastTx callback when the block is finalized.
+	totalExpectedCalls := 1 // only TEST 1 should have committed a block
 
 	assert.Equal(t, uint64(totalExpectedCalls), testAcceptorRelay1.TxCommitCalls.Load(),
 		"should locally execute CommitBroadcastTx callback for each transaction")
@@ -2090,9 +2057,12 @@ func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
 
-	servers[0].SetAcceptor(client.NewMockAcceptorImpl())
-	servers[1].SetAcceptor(client.NewMockAcceptorImpl())
-	servers[2].SetAcceptor(client.NewMockAcceptorImpl())
+	testAcceptorRelay1 := client.NewMockAcceptorImpl()
+	testAcceptorRelay2 := client.NewMockAcceptorImpl()
+	testAcceptorRelay3 := client.NewMockAcceptorImpl()
+	servers[0].SetAcceptor(testAcceptorRelay1)
+	servers[1].SetAcceptor(testAcceptorRelay2)
+	servers[2].SetAcceptor(testAcceptorRelay3)
 
 	// Note: relays contains self for this test
 	healthyRelays, firstBroadcastCtx, firstCancelCtxFn := StartTestScenarioRelays(t,
@@ -2151,13 +2121,9 @@ func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 	// -------------------
 	// Also test callbacks (TEST 1)
 
-	totalExpectedCalls := 1
-	testAcceptorRelay1 := servers[0].GetAcceptor().(*client.MockAcceptorImpl)
-	testAcceptorRelay2 := servers[1].GetAcceptor().(*client.MockAcceptorImpl)
-	testAcceptorRelay3 := servers[2].GetAcceptor().(*client.MockAcceptorImpl)
-
 	// Test that client callbacks were executed correctly, every relay should
 	// have executed the CommitBroadcastTx callback when the block is finalized.
+	totalExpectedCalls := 1
 
 	require.Equal(t, uint64(totalExpectedCalls), testAcceptorRelay1.TxCommitCalls.Load(),
 		"should locally execute CommitBroadcastTx callback for each transaction")
@@ -3894,6 +3860,47 @@ func TestScenarioLegacyBroadcastSevenHealthyRelays(t *testing.T) {
 
 // ----------------------------------------------------------------------------
 // Helpers
+
+// For each backend, we return a list of "other validators" by ChainID.
+//
+// Calls the [MultiplexBackend#InitValidators] method to initialize PrivValidator.
+func ResetTestBackendValidators(
+	tb testing.TB,
+	servers []*mx.MultiplexBackend,
+	testChainIds []string,
+) (
+	otherValidators []map[string][]string,
+) {
+	tb.Helper()
+
+	for i, server := range servers {
+		valPubKeysPerChainID, err := server.InitValidators(testChainIds)
+		require.NoError(tb, err, "should initialize validators for relay-"+strconv.Itoa(i+1))
+
+		tb.Logf("using valPubKeys for relay-%d: %v", i+1, valPubKeysPerChainID)
+	}
+
+	otherValidators = make([]map[string][]string, len(servers))
+	for i := 0; i < len(servers); i++ {
+		otherValidators[i] = map[string][]string{}
+		serverValidators := []map[string]string{}
+		for j, serverX := range servers {
+			if j != i {
+				serverValidators = append(serverValidators, serverX.GetValidatorPubs())
+			}
+		}
+
+		for _, chainID := range testChainIds {
+			for _, otherValPubKeys := range serverValidators {
+				otherValidators[i][chainID] = append(otherValidators[i][chainID], otherValPubKeys[chainID])
+			}
+		}
+
+		tb.Logf("using otherValidators for relay-%d: %v", i+1, otherValidators[i])
+	}
+
+	return // otherValidators
+}
 
 func ResetTestScenarioRelaysWithOptions(
 	tb testing.TB,
