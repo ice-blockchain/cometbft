@@ -331,12 +331,26 @@ func (reactor *Reactor) StartConsensusInstanceReactors(
 	cometbftSwitch := reactor.GetEventSwitchForCometBFT()
 	if err := reactor.AddConnectionChannels(cometbftSwitch, []string{chainID}); err != nil {
 		return fmt.Errorf(
-			"error adding connection channels for ChainID %s: %w", chainID, err)
+			"error with consensus reactors; adding channels for ChainID %s: %w",
+			chainID, err)
 	}
 
 	// Also register this active runtime, so that in sw.addPeer()
 	// we include it in relevantScopes and call reactors.InitPeer().
 	cometbftSwitch.AddActiveRuntime(chainID)
+
+	// Make sure database connections are open for this ChainID.
+	extChainID, _ := NewExtendedChainIDFromLegacy(chainID)
+	if _, err := reactor.MakeNetworkDatabases(extChainID, []string{
+		"blockstore",
+		"state",
+		"tx_index",
+		"evidence",
+	}); err != nil {
+		return fmt.Errorf(
+			"error with consensus reactors; database unavailable for %s - %w",
+			chainID, err)
+	}
 
 	// Given sendStatusToPeers, we should send completion updates to
 	// all consensus peers, i.e. send a ChainReplicationComplete msg.

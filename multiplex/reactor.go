@@ -398,6 +398,20 @@ func DefaultOnIdleCallback(reactor *Reactor) func(chainID string) error {
 				"err", err)
 		}
 
+		// Close all databases conns for this ChainID.
+		dbKeys := []string{
+			InstanceKeyDatabaseBlock,
+			InstanceKeyDatabaseState,
+			InstanceKeyDatabaseIndex,
+			InstanceKeyDatabaseEvidence,
+		}
+		for _, dbKey := range dbKeys {
+			dbProvider := reactor.GetInstanceProvider(dbKey)
+			if db, ok := dbProvider(chainID).(dbm.DB); ok {
+				db.Close()
+			}
+		}
+
 		return nil
 	}
 }
@@ -2503,6 +2517,17 @@ func (reactor *Reactor) handleChainReplicationRequest(
 			"invalid ChainID %s: %w", req.ChainID, err)
 	}
 	userAddress := extChainID.GetUserAddress()
+
+	// Make sure database connections are open for this ChainID.
+	if _, err := reactor.MakeNetworkDatabases(extChainID, []string{
+		"blockstore",
+		"state",
+		"tx_index",
+		"evidence",
+	}); err != nil {
+		return fmt.Errorf(
+			"database error for %s - %w", req.ChainID, err)
+	}
 
 	// CAUTION:
 	// We do not need the AllocateNetwork call anymore as it is now

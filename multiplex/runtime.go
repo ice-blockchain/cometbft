@@ -66,6 +66,18 @@ func (reactor *Reactor) AllocateNetwork(
 			"could not create databases for ChainID %s: %w", chainID, err)
 	}
 
+	// IMPORTANT
+	//
+	// Close the database connections for now (free RAM). This permits
+	// to reduce the RAM required to allocate networks, such that the
+	// database connections are only *opened* when a ChainID is active.
+	//
+	// The conn will be opened just-in-time by InjectNewNetwork.
+	databasesByName["blockstore"].Close()
+	databasesByName["state"].Close()
+	databasesByName["tx_index"].Close()
+	databasesByName["evidence"].Close()
+
 	// Register/inject in running reactor
 	reactor.RegisterInstance(InstanceKeyDatabaseBlock, chainID, databasesByName["blockstore"])
 	reactor.RegisterInstance(InstanceKeyDatabaseState, chainID, databasesByName["state"])
@@ -77,6 +89,7 @@ func (reactor *Reactor) AllocateNetwork(
 
 	// Create the priv validator for this network. used in the genesis doc.
 	privValidator, err := reactor.MakeNetworkValidator(
+		extChainID,
 		chainConfFolder,
 		chainDataFolder,
 	)
@@ -220,6 +233,20 @@ func (reactor *Reactor) InjectNewNetwork(
 	reactor.envMutex.RLock()
 	newConfFolder := reactor.configsPaths[chainID]
 	reactor.envMutex.RUnlock()
+
+	// ------------------------------------------------------------------------
+	// Database connections
+
+	// Create the databases and open connections for this network.
+	if _, err := reactor.MakeNetworkDatabases(extChainID, []string{
+		"blockstore",
+		"state",
+		"tx_index",
+		"evidence",
+	}); err != nil {
+		return fmt.Errorf(
+			"failed network injection: database error for %s - %w", chainID, err)
+	}
 
 	// Create the [types.GenesisDoc] instance for this network.
 	if _, err := reactor.MakeNetworkGenesis(
@@ -711,6 +738,12 @@ func (reactor *Reactor) MakeNetworkFilesystem(
 	rootDir := reactor.nodeConfig.RootDir
 	reactor.envMutex.RUnlock()
 
+	// TODO(midas): remove debug logs
+	reactor.logger.Debug("MakeNetworkFilesystem",
+		"chain_id", chainID.String(),
+		"root", rootDir,
+	)
+
 	// Uses default folder names
 	dataDir := filepath.Join(rootDir, config.DefaultDataDir)
 	confDir := filepath.Join(rootDir, config.DefaultConfigDir)
@@ -737,6 +770,12 @@ func (reactor *Reactor) MakeNetworkDatabases(
 ) (dbs map[string]dbm.DB, err error) {
 	nodeConfig := reactor.GetNodeConfig()
 
+	// TODO(midas): remove debug logs
+	reactor.logger.Debug("MakeNetworkDatabases",
+		"chain_id", chainID.String(),
+		"db_names", databases,
+	)
+
 	// Prepare database parameters
 	dbBackend := dbm.BackendType(nodeConfig.DBBackend)
 	dbStorage := filepath.Join(
@@ -747,10 +786,15 @@ func (reactor *Reactor) MakeNetworkDatabases(
 
 	dbs = map[string]dbm.DB{}
 	for _, dbName := range databases {
-		dbs[dbName], err = dbm.NewDB(dbName, dbBackend, dbStorage)
-		if err != nil {
-			return map[string]dbm.DB{}, fmt.Errorf(
-				"could not create database %s for ChainID %s: %w", dbName, chainID.String(), err)
+		dbProvider := reactor.GetInstanceProvider(dbName)
+		if db, ok := dbProvider(chainID.String()).(dbm.DB); ok {
+			dbs[dbName] = db
+		} else {
+			dbs[dbName], err = dbm.NewDB(dbName, dbBackend, dbStorage)
+			if err != nil {
+				return map[string]dbm.DB{}, fmt.Errorf(
+					"could not create database %s for ChainID %s: %w", dbName, chainID.String(), err)
+			}
 		}
 	}
 
@@ -760,6 +804,7 @@ func (reactor *Reactor) MakeNetworkDatabases(
 // MakeNetworkValidator creates the priv validator for a new network
 // chainID which will also be added to the new GenesisDoc.
 func (reactor *Reactor) MakeNetworkValidator(
+	chainID ExtendedChainID,
 	confDir string,
 	dataDir string,
 ) (types.PrivValidator, error) {
@@ -768,6 +813,13 @@ func (reactor *Reactor) MakeNetworkValidator(
 	// Uses filenames from configuration
 	keyFile := filepath.Base(nodeConfig.PrivValidatorKeyFile())
 	stateFile := filepath.Base(nodeConfig.PrivValidatorStateFile())
+
+	// TODO(midas): remove debug logs
+	reactor.logger.Debug("MakeNetworkValidator",
+		"chain_id", chainID.String(),
+		"pv_data", dataDir,
+		"pv_conf", confDir,
+	)
 
 	// runtimesMutex shall be locked during filesystem ops.
 	reactor.runtimesMutex.Lock()
@@ -797,6 +849,17 @@ func (reactor *Reactor) MakeNetworkGenesis(
 		return nil, fmt.Errorf(
 			"could not read validator pubkey for ChainID %s: %w", chainID, err)
 	}
+
+	localValidatorPubKeyHex := fmt.Sprintf("%X", localValidatorPubKey.Bytes())
+	networkValidators := []string{localValidatorPubKeyHex}
+	networkValidators = append(networkValidators, otherValidators...)
+
+	// TODO(midas): remove debug logs
+	reactor.logger.Debug("MakeNetworkGenesis",
+		"chain_id", chainID,
+		"validators", networkValidators,
+		"config_dir", confDir,
+	)
 
 	powerPerValidator := 10
 	genesisValidators := make([]types.GenesisValidator, 0, len(otherValidators)+1)
@@ -850,6 +913,12 @@ func (reactor *Reactor) MakeNetworkStateMachine(
 	dbCompactionMethod := nodeConfig.Storage.Compact
 	dbCompactionPeriod := nodeConfig.Storage.CompactionInterval
 
+	// TODO(midas): remove debug logs
+	reactor.logger.Debug("MakeNetworkStateMachine",
+		"chain_id", genesisDoc.ChainID,
+		"stats", stateDB.Stats(),
+	)
+
 	// Initialize a replicable sm.Store
 	stateStore := sm.NewStore(stateDB, sm.StoreOptions{
 		DBKeyLayout: dbKeyLayoutVersion,
@@ -887,6 +956,12 @@ func (reactor *Reactor) MakeNetworkConfigOverwrite(
 	chainID ExtendedChainID,
 ) (*config.Config, error) {
 	nodeConfig := reactor.GetNodeConfig()
+
+	// TODO(midas): remove debug logs
+	reactor.logger.Debug("MakeNetworkConfigOverwrite",
+		"chain_id", chainID.String(),
+		"dport", int(nodeConfig.DiscoveryPort),
+	)
 
 	// Create a config overwrite without using the ChainRegistry
 	// We only update the ChainRegistry after initializing the network.

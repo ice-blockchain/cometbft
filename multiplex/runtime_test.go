@@ -117,6 +117,7 @@ func TestMultiplexRuntimeMakeNetworkValidator(t *testing.T) {
 
 	// Act
 	actualPrivValidator, err := testReactor.MakeNetworkValidator(
+		testExtChainID,
 		testConfDir,
 		testDataDir,
 	)
@@ -124,6 +125,7 @@ func TestMultiplexRuntimeMakeNetworkValidator(t *testing.T) {
 
 	// Re-act should LOAD, not GEN!
 	actualPrivValidatorReload, err := testReactor.MakeNetworkValidator(
+		testExtChainID,
 		testConfDir,
 		testDataDir,
 	)
@@ -156,6 +158,7 @@ func TestMultiplexRuntimeMakeNetworkGenesis(t *testing.T) {
 	require.NoError(t, err)
 
 	testPrivValidator, err := testReactor.MakeNetworkValidator(
+		testExtChainID,
 		testConfDir,
 		testDataDir,
 	)
@@ -757,6 +760,7 @@ func ResetTestMultiplexRuntimeMock(tb testing.TB, numChains int) (
 	testReactor.SetConfigsPaths(configsPaths)
 
 	testPrivValidator, err := testReactor.MakeNetworkValidator(
+		testExtChainID,
 		testConfDir,
 		testDataDir,
 	)
