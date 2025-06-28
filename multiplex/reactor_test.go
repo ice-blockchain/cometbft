@@ -220,7 +220,7 @@ func TestMultiplexReactorRegisterInstance(t *testing.T) {
 
 		// Test registering a valid instance
 		reactor.RegisterInstance(mx.InstanceKeyConfig, chainID, perChainCfg) // "config"
-		reactor.RegisterInstance(mx.InstanceKeyDatabaseState, chainID, &mx.ChainDB{
+		reactor.RegisterInstance(mx.ServiceKeyDatabaseState, chainID, &mx.ChainDB{
 			ChainID: chainID,
 			DB:      perChainDB,
 		}) // "database/state"
@@ -230,7 +230,7 @@ func TestMultiplexReactorRegisterInstance(t *testing.T) {
 	configProvider := reactor.GetInstanceProvider(mx.InstanceKeyConfig)
 	assert.NotNil(t, configProvider, "should return multiplex map of config instances")
 
-	databaseProvider := reactor.GetInstanceProvider(mx.InstanceKeyDatabaseState)
+	databaseProvider := reactor.GetInstanceProvider(mx.ServiceKeyDatabaseState)
 	assert.NotNil(t, databaseProvider, "should return multiplex map of database instances")
 
 	// Using ORDERED networks because of ports overwrite content test
@@ -283,7 +283,7 @@ func TestMultiplexReactorRegisterInstance(t *testing.T) {
 
 			// Test registering a valid instance in parallel goroutines
 			otherReactor.RegisterInstance(mx.InstanceKeyConfig, concurrentChainID, perChainCfg) // "config"
-			otherReactor.RegisterInstance(mx.InstanceKeyDatabaseState, concurrentChainID, &mx.ChainDB{
+			otherReactor.RegisterInstance(mx.ServiceKeyDatabaseState, concurrentChainID, &mx.ChainDB{
 				ChainID: concurrentChainID,
 				DB:      perChainDB,
 			}) // "database/state"
@@ -298,7 +298,7 @@ func TestMultiplexReactorRegisterInstance(t *testing.T) {
 	otherConfigProvider := reactor.GetInstanceProvider(mx.InstanceKeyConfig)
 	assert.NotNil(t, otherConfigProvider, "should return multiplex map of config instances")
 
-	otherDatabaseProvider := reactor.GetInstanceProvider(mx.InstanceKeyDatabaseState)
+	otherDatabaseProvider := reactor.GetInstanceProvider(mx.ServiceKeyDatabaseState)
 	assert.NotNil(t, otherDatabaseProvider, "should return multiplex map of database instances")
 	for _, chainID := range otherChainIds {
 		// 1. Type-assertion to cast back to actual instance
@@ -415,8 +415,17 @@ func ResetTestMultiplexReactorRuntimeWithInjection(
 	injectChainID := testInjectChainID.String()
 
 	// Inject injectChainID resources
-	allocErr := testReactor.AllocateNetwork(injectChainID, true)
+	allocErr := testReactor.AllocateNetwork(injectChainID)
 	require.NoError(tb, allocErr, "should allocate network resources")
+
+	// Start the database connections for injectChainID.
+	startDbErr := testReactor.MakeNetworkDatabases(testInjectChainID, []string{
+		"blockstore",
+		"state",
+		"txindex",
+		"evidence",
+	}, true)
+	require.NoError(tb, startDbErr, "should start databases")
 
 	// Inject GenesisDoc to prepare state machine
 	configsPaths := testReactor.GetConfigsPaths()

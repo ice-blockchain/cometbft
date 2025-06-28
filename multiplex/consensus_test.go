@@ -55,7 +55,7 @@ func TestMultiplexReactorConsensusPrepareConsensusInstanceWithReactor(t *testing
 
 	// Also setup node listeners, this mimics a runtime allocation.
 	for _, chainID := range testChainIds {
-		allocErr := reactor.AllocateNetwork(chainID, true)
+		allocErr := reactor.AllocateNetwork(chainID)
 		require.NoError(t, allocErr, "should initialize network")
 
 		createErr := reactor.InjectNewNetwork(chainID, []string{})
@@ -107,7 +107,7 @@ func TestMultiplexReactorConsensusCreateConsensusInstanceReactors(t *testing.T) 
 
 	// Also setup node listeners, this mimics a runtime allocation.
 	for _, chainID := range testChainIds {
-		allocErr := reactor.AllocateNetwork(chainID, true)
+		allocErr := reactor.AllocateNetwork(chainID)
 		require.NoError(t, allocErr, "should initialize network")
 
 		createErr := reactor.InjectNewNetwork(chainID, []string{})

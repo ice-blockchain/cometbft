@@ -170,7 +170,7 @@ func TestMultiplexBackendGetLocalNetworkHeights(t *testing.T) {
 	require.NoError(t, err)
 
 	// Allocate + inject node runtime ("Start node listeners")
-	allocErr := testReactor.AllocateNetwork(testChainID, true)
+	allocErr := testReactor.AllocateNetwork(testChainID)
 	require.NoError(t, allocErr, "should initialize network")
 	createErr := testReactor.InjectNewNetwork(testChainID, []string{})
 	require.NoError(t, createErr, "should inject network")
@@ -963,7 +963,7 @@ func TestMultiplexBackendAddTransactions(t *testing.T) {
 	require.NoError(t, err)
 
 	// Allocate + inject node runtime ("Start node listeners")
-	allocErr := testReactor.AllocateNetwork(testChainID, true)
+	allocErr := testReactor.AllocateNetwork(testChainID)
 	require.NoError(t, allocErr, "should initialize network")
 	createErr := testReactor.InjectNewNetwork(testChainID, []string{})
 	require.NoError(t, createErr, "should inject network")
@@ -1007,7 +1007,7 @@ func TestMultiplexBackendRemoveTransactions(t *testing.T) {
 	require.NoError(t, err)
 
 	// Allocate + inject node runtime ("Start node listeners")
-	allocErr := testReactor.AllocateNetwork(testChainID, true)
+	allocErr := testReactor.AllocateNetwork(testChainID)
 	require.NoError(t, allocErr, "should initialize network")
 	createErr := testReactor.InjectNewNetwork(testChainID, []string{})
 	require.NoError(t, createErr, "should inject network")

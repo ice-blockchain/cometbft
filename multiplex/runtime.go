@@ -29,7 +29,6 @@ import (
 // structure, the databases and a priv validator.
 func (reactor *Reactor) AllocateNetwork(
 	chainID string,
-	keepAliveDB bool,
 ) error {
 	// Build the ExtendedChainID to retrieve user address from ChainID.
 	extChainID, err := NewExtendedChainIDFromLegacy(chainID)
@@ -56,29 +55,14 @@ func (reactor *Reactor) AllocateNetwork(
 	// Step 2: Create databases
 
 	// Create the databases and open connections for this network.
-	databasesByName, err := reactor.MakeNetworkDatabases(extChainID, []string{
+	if err := reactor.MakeNetworkDatabases(extChainID, []string{
 		"blockstore",
 		"state",
 		"txindex",
 		"evidence",
-	}, false)
-	if err != nil {
+	}, false); err != nil {
 		return fmt.Errorf(
 			"could not create databases for ChainID %s: %w", chainID, err)
-	}
-
-	// IMPORTANT
-	//
-	// Close the database connections for now (free RAM). This permits
-	// to reduce the RAM required to allocate networks, such that the
-	// database connections are only *opened* when a ChainID is active.
-	//
-	// The conn will be opened just-in-time by InjectNewNetwork.
-	if !keepAliveDB {
-		databasesByName["blockstore"].Close()
-		databasesByName["state"].Close()
-		databasesByName["txindex"].Close()
-		databasesByName["evidence"].Close()
 	}
 
 	// ------------------------------------------------------------------------
@@ -158,8 +142,9 @@ func (reactor *Reactor) InjectStateMachine(
 	chainID string,
 	icsGenesisDocSet *ChecksummedGenesisDocSet,
 ) error {
-	stateDatabaseProvider := reactor.GetInstanceProvider(InstanceKeyDatabaseState)
-	blockDatabaseProvider := reactor.GetInstanceProvider(InstanceKeyDatabaseBlock)
+	servicesProvider := reactor.GetServicesProvider()
+	stateDatabaseService := servicesProvider(ServiceKeyDatabaseState, chainID)
+	blockDatabaseService := servicesProvider(ServiceKeyDatabaseBlock, chainID)
 
 	// The state machine is created using the genesis doc.
 	genesisDoc, err := icsGenesisDocSet.GenesisDocByChainID(chainID)
@@ -168,8 +153,8 @@ func (reactor *Reactor) InjectStateMachine(
 			"could not read newly created genesis doc for ChainID %s: %w", chainID, err)
 	}
 
-	stateDB := stateDatabaseProvider(chainID).(dbm.DB)
-	blockDB := blockDatabaseProvider(chainID).(dbm.DB)
+	stateDB := stateDatabaseService.(*DBService).DB()
+	blockDB := blockDatabaseService.(*DBService).DB()
 
 	// Create a state machine, a state store and a block store for this network.
 	stateMachine,
@@ -235,7 +220,7 @@ func (reactor *Reactor) InjectNewNetwork(
 	// Database connections
 
 	// Create the databases and open connections for this network.
-	if _, err := reactor.MakeNetworkDatabases(extChainID, []string{
+	if err := reactor.MakeNetworkDatabases(extChainID, []string{
 		"blockstore",
 		"state",
 		"txindex",
@@ -764,8 +749,8 @@ func (reactor *Reactor) MakeNetworkFilesystem(
 func (reactor *Reactor) MakeNetworkDatabases(
 	chainID ExtendedChainID,
 	databases []string,
-	forceOpenConn bool,
-) (dbs map[string]dbm.DB, err error) {
+	startDatabase bool,
+) (err error) {
 	nodeConfig := reactor.GetNodeConfig()
 
 	// TODO(midas): remove debug logs
@@ -782,28 +767,35 @@ func (reactor *Reactor) MakeNetworkDatabases(
 		chainID.String(),
 	)
 
-	dbs = map[string]dbm.DB{}
+	servicesProvider := reactor.GetServicesProvider()
+
+	dbs := map[string]*DBService{}
 	for _, dbName := range databases {
-		dbProvider := reactor.GetInstanceProvider("database/" + dbName)
-		if db, ok := dbProvider(chainID.String()).(dbm.DB); ok && !forceOpenConn {
-			dbs[dbName] = db
+		databaseService := servicesProvider("database/"+dbName, chainID.String())
+		databaseLogger := reactor.logger.With("module", "database")
+
+		if dbService, ok := databaseService.(*DBService); ok {
+			dbs[dbName] = dbService
 		} else {
-			if db != nil {
-				db.Close()
-			}
+			dbs[dbName] = NewDBService(reactor.Context(),
+				dbName,
+				dbStorage,
+				string(dbBackend),
+				databaseLogger,
+			)
 
-			dbs[dbName], err = dbm.NewDB(dbName, dbBackend, dbStorage)
-			if err != nil {
-				return map[string]dbm.DB{}, fmt.Errorf(
-					"could not create database %s for ChainID %s: %w", dbName, chainID.String(), err)
-			}
+			reactor.RegisterService("database/"+dbName, chainID.String(), dbs[dbName])
+		}
 
-			// Register/inject in running reactor
-			reactor.RegisterInstance("database/"+dbName, chainID.String(), dbs[dbName])
+		if startDatabase && !dbs[dbName].IsRunning() {
+			if err = dbs[dbName].Start(); err != nil {
+				return fmt.Errorf(
+					"failed to open %s database for %s: %w", dbName, chainID, err)
+			}
 		}
 	}
 
-	return dbs, nil
+	return // nil
 }
 
 // MakeNetworkValidator creates the priv validator for a new network

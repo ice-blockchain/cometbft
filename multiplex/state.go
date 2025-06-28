@@ -3,66 +3,9 @@ package multiplex
 import (
 	"fmt"
 
-	"github.com/ice-blockchain/cometbft/config"
 	sm "github.com/ice-blockchain/cometbft/state"
 	bs "github.com/ice-blockchain/cometbft/store"
 )
-
-// initMultiplexDatabases initializes database tables for each replicated
-// chain with table names: blockstore, state, txindex and evidence.
-//
-// This method registers instances in the multiplexRegistry:
-// - `database/blockstore`: the blockstore databases.
-// - `database/state`: the state machine databases.
-// - `database/txindex`: the txindex databases.
-// - `database/evidence`: the evidence databases.
-//
-// TODO(midas): refactoring with MakeNetworkDatabases.
-func (reactor *Reactor) InitMultiplexDatabases(chainIds []string) error {
-	nodeConfig := reactor.GetNodeConfig()
-
-	// Create blockstore databases
-	bsMultiplexDB, err := NewMultiplexDB(&ChainDBContext{
-		DBContext: config.DBContext{ID: "blockstore", Config: nodeConfig},
-	}, chainIds)
-	if err != nil {
-		return err
-	}
-
-	// Create state databases
-	stateMultiplexDB, err := NewMultiplexDB(&ChainDBContext{
-		DBContext: config.DBContext{ID: "state", Config: nodeConfig},
-	}, chainIds)
-	if err != nil {
-		return err
-	}
-
-	// Create indexer databases
-	indexerMultiplexDB, err := NewMultiplexDB(&ChainDBContext{
-		DBContext: config.DBContext{ID: "txindex", Config: nodeConfig},
-	}, chainIds)
-	if err != nil {
-		return err
-	}
-
-	// Create evidence databases
-	evidenceMultiplexDB, err := NewMultiplexDB(&ChainDBContext{
-		DBContext: config.DBContext{ID: "evidence", Config: nodeConfig},
-	}, chainIds)
-	if err != nil {
-		return err
-	}
-
-	// Register the database instances with the Reactor (thread-safe)
-	for _, chainID := range chainIds {
-		reactor.RegisterInstance(InstanceKeyDatabaseBlock, chainID, bsMultiplexDB[chainID])
-		reactor.RegisterInstance(InstanceKeyDatabaseState, chainID, stateMultiplexDB[chainID])
-		reactor.RegisterInstance(InstanceKeyDatabaseIndex, chainID, indexerMultiplexDB[chainID])
-		reactor.RegisterInstance(InstanceKeyDatabaseEvidence, chainID, evidenceMultiplexDB[chainID])
-	}
-
-	return nil
-}
 
 // InitMultiplexStates loads a state multiplex using the reactor's
 // instance provider to retrieve a state database instance by ChainID.
@@ -91,7 +34,7 @@ func (reactor *Reactor) InitMultiplexStates(chainIds []string) error {
 	genesisDocProvider := reactor.GetGenesisProvider()
 
 	// Used for retrieving state database instance by chain
-	stateMachineProvider := reactor.GetInstanceProvider(InstanceKeyDatabaseState)
+	servicesProvider := reactor.GetServicesProvider()
 
 	// Validate genesis configuration
 	// Then get genesis doc set hashes from dbs or update
@@ -108,7 +51,13 @@ func (reactor *Reactor) InitMultiplexStates(chainIds []string) error {
 		}
 
 		// Retrieve this chain's state database instance
-		stateDB := stateMachineProvider(chainID).(*ChainDB)
+		databaseService := servicesProvider(ServiceKeyDatabaseState, chainID)
+
+		// TODO(midas): remove ChainDB, mapping unnecessary.
+		stateDB := &ChainDB{
+			ChainID: chainID,
+			DB:      databaseService.(*DBService).DB(),
+		}
 
 		// Validate the genesis doc hash vs. database
 		if err := ValidateGenesisDocChecksum(stateDB, genesisDoc); err != nil {
@@ -169,11 +118,12 @@ func (reactor *Reactor) InitMultiplexBlockStores(chainIds []string) error {
 	globalConfig := reactor.GetNodeConfig()
 
 	// Used for retrieving blockstore database instance by chain
-	blockStoreProvider := reactor.GetInstanceProvider(InstanceKeyDatabaseBlock)
+	servicesProvider := reactor.GetServicesProvider()
 
 	for _, chainID := range chainIds {
 		// Retrieve this chain's state database instance
-		blockstoreDB := blockStoreProvider(chainID).(*ChainDB)
+		databaseService := servicesProvider(ServiceKeyDatabaseBlock, chainID)
+		blockstoreDB := databaseService.(*DBService).DB()
 
 		// Initialize a [bs.BlockStore] (not snapshottable)
 		blockStore := bs.NewBlockStore(

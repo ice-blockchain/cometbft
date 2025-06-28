@@ -46,24 +46,24 @@ import (
 
 const (
 	// Instance types.
-	InstanceKeyConfig           = "config"
-	InstanceKeyStorage          = "storage"
-	InstanceKeyState            = "state"
-	InstanceKeyStateStore       = "stateStore"
-	InstanceKeyBlockStore       = "blockStore"
-	InstanceKeyPrivValidator    = "privValidator"
-	InstanceKeyDatabaseBlock    = "database/blockstore"
-	InstanceKeyDatabaseState    = "database/state"
-	InstanceKeyDatabaseIndex    = "database/txindex"
-	InstanceKeyDatabaseEvidence = "database/evidence"
-	InstanceKeyP2PSwitch        = "p2p/switch"
-	InstanceKeyP2PTransport     = "p2p/transport"
-	InstanceKeyFlagBlockSync    = "flag/blockSync"
+	InstanceKeyConfig        = "config"
+	InstanceKeyStorage       = "storage"
+	InstanceKeyState         = "state"
+	InstanceKeyStateStore    = "stateStore"
+	InstanceKeyBlockStore    = "blockStore"
+	InstanceKeyPrivValidator = "privValidator"
+	InstanceKeyP2PSwitch     = "p2p/switch"
+	InstanceKeyP2PTransport  = "p2p/transport"
+	InstanceKeyFlagBlockSync = "flag/blockSync"
 
 	// Services types.
 	ServiceKeyEventBus         = "eventBus"
 	ServiceKeyIndexers         = "indexers"
 	ServiceKeyPruner           = "pruner"
+	ServiceKeyDatabaseBlock    = "database/blockstore"
+	ServiceKeyDatabaseState    = "database/state"
+	ServiceKeyDatabaseIndex    = "database/txindex"
+	ServiceKeyDatabaseEvidence = "database/evidence"
 	ServiceKeyMempoolReactor   = "reactor/mempool"
 	ServiceKeyBlockSyncReactor = "reactor/blockSync"
 	ServiceKeyConsensusReactor = "reactor/consensus"
@@ -400,15 +400,16 @@ func DefaultOnIdleCallback(reactor *Reactor) func(chainID string) error {
 
 		// Close all databases conns for this ChainID.
 		dbKeys := []string{
-			InstanceKeyDatabaseBlock,
-			InstanceKeyDatabaseState,
-			InstanceKeyDatabaseIndex,
-			InstanceKeyDatabaseEvidence,
+			ServiceKeyDatabaseBlock,
+			ServiceKeyDatabaseState,
+			ServiceKeyDatabaseIndex,
+			ServiceKeyDatabaseEvidence,
 		}
+		servicesProvider := reactor.GetServicesProvider()
 		for _, dbKey := range dbKeys {
-			dbProvider := reactor.GetInstanceProvider(dbKey)
-			if db, ok := dbProvider(chainID).(dbm.DB); ok {
-				db.Close()
+			dbService := servicesProvider(dbKey, chainID)
+			if dbService != nil {
+				dbService.Stop()
 			}
 		}
 
@@ -491,7 +492,7 @@ func ReactorWithActiveRuntimes(
 				otherValidators = otherValidatorsPerChainID[chainID][:]
 			}
 
-			r.AllocateNetwork(chainID, true)             // db, fs, privval
+			r.AllocateNetwork(chainID)                   // db, fs, privval
 			r.InjectNewNetwork(chainID, otherValidators) // config, genesis, state
 			r.InjectNewRuntime(r.Context(), chainID)     // event bus, indexer, p2p
 		}
@@ -1924,7 +1925,7 @@ func (reactor *Reactor) OnStart(ctx context.Context) error {
 	// Create databases and priv validator for all available ChainIDs.
 	for _, chainID := range availableChainIds {
 		// keepAliveDB=false
-		if err = reactor.AllocateNetwork(chainID, false); err != nil {
+		if err = reactor.AllocateNetwork(chainID); err != nil {
 			reactor.logger.Error("failed to start multiplex reactor; allocation error",
 				"chain_id", chainID,
 				"err", err,
@@ -2043,6 +2044,7 @@ func (reactor *Reactor) OnStop() {
 	reactor.servicesMutex.Lock()
 
 	// Uses LIFO strategy to shutdown registered services
+	// This includes stopping database services as well.
 	servicesLIFO := reactor.servicesSequence[:]
 	sort.Sort(sort.Reverse(sort.StringSlice(
 		servicesLIFO,
@@ -2082,31 +2084,6 @@ func (reactor *Reactor) OnStop() {
 		}
 	}
 	reactor.replayPoolMtx.Unlock()
-
-	// Each database multiplex opens x dbs, no ordering or reversing is
-	// applied here as it doesn't matter which database is closed first.
-	dbKeys := []string{
-		InstanceKeyDatabaseBlock,
-		InstanceKeyDatabaseState,
-		InstanceKeyDatabaseIndex,
-		InstanceKeyDatabaseEvidence,
-	}
-
-	// Close database connections
-	for _, dbMultiplexKey := range dbKeys {
-		// Close all open database connections individually
-		reactor.multiplexMutex.RLock()
-
-		// Instances multiplex contains one instance per ChainID
-		if mx, ok := reactor.multiplexRegistry[dbMultiplexKey]; ok {
-			// Every database connection must be stopped
-			for _, chainInstance := range mx {
-				db := chainInstance.GetInstance().(dbm.DB)
-				db.Close()
-			}
-		}
-		reactor.multiplexMutex.RUnlock()
-	}
 
 	// and close internal channels
 	reactor.chainReadyMtx.RLock()
@@ -2154,6 +2131,7 @@ func (reactor *Reactor) OnReset() error {
 	reactor.servicesMutex.Lock()
 
 	// Uses FIFO strategy to reset registered services
+	// This includes database services.
 	servicesFIFO := reactor.servicesSequence[:]
 	sort.Sort(sort.StringSlice(
 		servicesFIFO,
@@ -2275,13 +2253,7 @@ func (reactor *Reactor) initMultiplexProviders(
 //
 // TODO(midas): add multiplex metric "MultiplexStateLoadDurationSeconds".
 // TODO(midas): refactoring with MakeNetworkStateMachine.
-func (reactor *Reactor) loadMultiplexState(chainIds []string) error {
-	// Initialize database tables and instances
-	err := reactor.InitMultiplexDatabases(chainIds)
-	if err != nil {
-		return err
-	}
-
+func (reactor *Reactor) loadMultiplexState(chainIds []string) (err error) {
 	// Load initial state multiplex from database or from genesis docs
 	// Uses "database/state" instances
 	err = reactor.InitMultiplexStates(chainIds)
@@ -2320,10 +2292,11 @@ func (reactor *Reactor) startNodeListeners(ctx context.Context, chainID string) 
 	nodeKey := reactor.GetNodeKey()
 
 	// Retrieve the node's config overwrite object
+	servicesProvider := reactor.GetServicesProvider()
 	configProvider := reactor.GetInstanceProvider(InstanceKeyConfig)
 	stateStoreProvider := reactor.GetInstanceProvider(InstanceKeyStateStore)
 	blockStoreProvider := reactor.GetInstanceProvider(InstanceKeyBlockStore)
-	databaseProvider := reactor.GetInstanceProvider(InstanceKeyDatabaseIndex)
+	databaseService := servicesProvider(ServiceKeyDatabaseIndex, chainID)
 
 	// Make sure required instances have been initialized,
 	// i.e. verifies that InitMultiplexStates was called.
@@ -2334,8 +2307,8 @@ func (reactor *Reactor) startNodeListeners(ctx context.Context, chainID string) 
 		return errors.New("failed to get state store; missing call to Reactor.InitMultiplexStates()?")
 	case blockStoreProvider(chainID) == nil:
 		return errors.New("failed to get block store; missing call to Reactor.InitMultiplexBlockStores()?")
-	case databaseProvider(chainID) == nil:
-		return errors.New("failed to get database; missing call to InitMultiplexDatabases?")
+	case databaseService == nil:
+		return errors.New("failed to get database; missing call to MakeNetworkDatabases()?")
 	default:
 	}
 
@@ -2397,8 +2370,7 @@ func (reactor *Reactor) startNodeListeners(ctx context.Context, chainID string) 
 		blockIndexer indexer.BlockIndexer
 	)
 	if nodeConfig.TxIndex.Indexer == "kv" {
-		indexerDatabase := databaseProvider(chainID).(dbm.DB)
-
+		indexerDatabase := databaseService.(*DBService).DB()
 		txIndexer = txidxkv.NewTxIndex(indexerDatabase)
 		blockIndexer = blockidxkv.New(
 			dbm.NewPrefixDB(indexerDatabase, []byte("block_events")),
@@ -2520,7 +2492,7 @@ func (reactor *Reactor) handleChainReplicationRequest(
 	userAddress := extChainID.GetUserAddress()
 
 	// Make sure database connections are open for this ChainID.
-	if _, err := reactor.MakeNetworkDatabases(extChainID, []string{
+	if err := reactor.MakeNetworkDatabases(extChainID, []string{
 		"blockstore",
 		"state",
 		"txindex",

@@ -9,10 +9,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 
-	dbm "github.com/cometbft/cometbft-db"
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/crypto/tmhash"
 	cmtjson "github.com/ice-blockchain/cometbft/libs/json"
+	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	mx "github.com/ice-blockchain/cometbft/multiplex"
 	"github.com/ice-blockchain/cometbft/node"
 	sm "github.com/ice-blockchain/cometbft/state"
@@ -53,8 +53,17 @@ func TestMultiplexReactorStateInitMultiplexStatesEmptyState(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 5
-	rootDir, _, reactor := ResetTestMultiplexState(t, numChains, mx.InstanceKeyDatabaseState) // Uses database/state
+	rootDir, _, reactor := ResetTestMultiplexState(t, numChains, mx.ServiceKeyDatabaseState) // Uses database/state
 	defer os.RemoveAll(rootDir)
+
+	// This test does not start the reactor, we must stop dbs manually.
+	defer func() {
+		servicesProvider := reactor.GetServicesProvider()
+		for _, chainID := range reactor.GetNetworks() {
+			dbService := servicesProvider(mx.ServiceKeyDatabaseState, chainID)
+			dbService.Stop()
+		}
+	}()
 
 	// InitMultiplexStates() uses `ValidateGenesisDocChecksum()` which reads
 	// a genesisDocHashKey from the database. This following loop sets up a
@@ -62,6 +71,7 @@ func TestMultiplexReactorStateInitMultiplexStatesEmptyState(t *testing.T) {
 	// and where even chain indexes *do* have a *valid* hash in db.
 	// This permits to test the Checksum validation feature.
 	testChainIds := reactor.GetNetworks()
+	servicesProvider := reactor.GetServicesProvider()
 	for index, chainID := range testChainIds {
 		// odd indexes do NOT have genesisDocHashKey set
 		// this means that InitMultiplexStates will set it
@@ -69,10 +79,10 @@ func TestMultiplexReactorStateInitMultiplexStatesEmptyState(t *testing.T) {
 			continue
 		}
 
-		databaseProvider := reactor.GetInstanceProvider(mx.InstanceKeyDatabaseState)
-		assert.NotNil(t, databaseProvider, "should return multiplex map of database instances")
+		databaseService := servicesProvider(mx.ServiceKeyDatabaseState, chainID)
+		assert.NotNil(t, databaseService, "should return multiplex map of database instances")
 
-		stateDB := databaseProvider(chainID).(*mx.ChainDB)
+		stateDB := databaseService.(*mx.DBService).DB()
 		assert.NotNil(t, stateDB, "should return valid ChainDB per ChainID")
 
 		// even indexes do have genesisDocHashKey set
@@ -83,7 +93,7 @@ func TestMultiplexReactorStateInitMultiplexStatesEmptyState(t *testing.T) {
 		genesisDocJSON, err := cmtjson.Marshal(genesisDoc)
 		assert.NoError(t, err, "should marshal genesis doc to JSON")
 		genesisDocHash := tmhash.Sum(genesisDocJSON)
-		err = stateDB.DB.SetSync(genesisDocHashKey, genesisDocHash)
+		err = stateDB.SetSync(genesisDocHashKey, genesisDocHash)
 		assert.NoError(t, err, "should store genesis doc hash in db")
 	}
 
@@ -103,12 +113,12 @@ func TestMultiplexReactorStateInitMultiplexStatesEmptyState(t *testing.T) {
 		assert.Equal(t, chainID, chainState.ChainID)
 
 		// Test that we also have a genesisDocHashKey filled now
-		databaseProvider := reactor.GetInstanceProvider(mx.InstanceKeyDatabaseState)
-		assert.NotNil(t, databaseProvider, "should return multiplex map of database instances")
-		stateDB := databaseProvider(chainID).(*mx.ChainDB)
+		databaseService := servicesProvider(mx.ServiceKeyDatabaseState, chainID)
+		assert.NotNil(t, databaseService, "should return multiplex map of database instances")
+		stateDB := databaseService.(*mx.DBService).DB()
 		assert.NotNil(t, stateDB, "should return valid ChainDB per ChainID")
 
-		genesisDocHash, err := stateDB.DB.Get(genesisDocHashKey)
+		genesisDocHash, err := stateDB.Get(genesisDocHashKey)
 		assert.NoError(t, err)
 		assert.NotEmpty(t, genesisDocHash)
 		assert.Len(t, genesisDocHash, tmhash.Size)
@@ -119,12 +129,21 @@ func TestMultiplexReactorStateInitMultiplexStatesFilledState(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 5
-	rootDir, _, reactor := ResetTestMultiplexState(t, numChains, mx.InstanceKeyDatabaseState) // Uses database/state
+	rootDir, _, reactor := ResetTestMultiplexState(t, numChains, mx.ServiceKeyDatabaseState) // Uses database/state
 	defer os.RemoveAll(rootDir)
 
+	// This test does not start the reactor, we must stop dbs manually.
+	defer func() {
+		servicesProvider := reactor.GetServicesProvider()
+		for _, chainID := range reactor.GetNetworks() {
+			dbService := servicesProvider(mx.ServiceKeyDatabaseState, chainID)
+			dbService.Stop()
+		}
+	}()
+
 	genesisDocProvider := reactor.GetGenesisProvider()
-	databaseProvider := reactor.GetInstanceProvider(mx.InstanceKeyDatabaseState)
-	require.NotNil(t, databaseProvider, "should return multiplex map of database instances")
+	servicesProvider := reactor.GetServicesProvider()
+	require.NotNil(t, servicesProvider, "should return multiplex map of database instances")
 
 	testChainBlockHeight := int64(123)
 
@@ -133,7 +152,7 @@ func TestMultiplexReactorStateInitMultiplexStatesFilledState(t *testing.T) {
 	for _, chainID := range testChainIds {
 		genesisDoc, err := genesisDocProvider(chainID)
 		require.NoError(t, err, "should load genesis doc by ChainID")
-		stateDB := databaseProvider(chainID).(*mx.ChainDB)
+		stateDB := servicesProvider(mx.ServiceKeyDatabaseState, chainID).(*mx.DBService).DB()
 		require.NotNil(t, stateDB, "should return valid ChainDB per ChainID")
 
 		customState, err := sm.MakeGenesisState(genesisDoc)
@@ -156,7 +175,7 @@ func TestMultiplexReactorStateInitMultiplexStatesFilledState(t *testing.T) {
 		// TODO(midas): Fill customState.Data with custom data
 
 		// CAUTION: we inject a custom State here
-		err = stateDB.DB.SetSync(stateKey, customState.Bytes())
+		err = stateDB.SetSync(stateKey, customState.Bytes())
 		require.NoError(t, err, "should update state instance in database")
 	}
 
@@ -186,11 +205,17 @@ func TestMultiplexReactorStateInitMultiplexBlockStores(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 5
-	rootDir, _, reactor := ResetTestMultiplexState(t, numChains, mx.InstanceKeyDatabaseBlock) // Uses database/blockStore
+	rootDir, _, reactor := ResetTestMultiplexState(t, numChains, mx.ServiceKeyDatabaseBlock) // Uses database/blockStore
 	defer os.RemoveAll(rootDir)
 
-	databaseProvider := reactor.GetInstanceProvider(mx.InstanceKeyDatabaseBlock)
-	require.NotNil(t, databaseProvider, "should return multiplex map of database instances")
+	// This test does not start the reactor, we must stop dbs manually.
+	defer func() {
+		servicesProvider := reactor.GetServicesProvider()
+		for _, chainID := range reactor.GetNetworks() {
+			dbService := servicesProvider(mx.ServiceKeyDatabaseBlock, chainID)
+			dbService.Stop()
+		}
+	}()
 
 	testChainIds := reactor.GetNetworks()
 
@@ -215,7 +240,7 @@ func TestMultiplexReactorStateInitMultiplexBlockStores(t *testing.T) {
 
 // CAUTION: the GenesisDocProvider is maleated to contain correct ChainIDs
 // CAUTION: the MultiplexConfig is entirely random and *not synchronized* with genesis docs.
-func ResetTestMultiplexState(tb testing.TB, numChains int, dbInstanceKey string) (string, *config.Config, *mx.Reactor) {
+func ResetTestMultiplexState(tb testing.TB, numChains int, dbServiceKey string) (string, *config.Config, *mx.Reactor) {
 	tb.Helper()
 
 	rootDir, err := os.MkdirTemp("", tb.Name())
@@ -234,14 +259,17 @@ func ResetTestMultiplexState(tb testing.TB, numChains int, dbInstanceKey string)
 	for index, chainID := range testChainIds {
 		// We create one state database instance per chain
 		dbName := "chaindb-state-" + strconv.Itoa(index)
-		stateDB, err := dbm.NewDB(dbName, dbm.BackendType("memdb"), rootDir)
-		require.NoError(tb, err)
+		dbService := mx.NewDBService(reactor.Context(),
+			dbName,
+			rootDir,
+			"memdb",
+			cmtlog.NewNopLogger(),
+		)
 
-		// This instance is retrieved in InitMultiplexStates()
-		reactor.RegisterInstance(dbInstanceKey, chainID, &mx.ChainDB{
-			ChainID: chainID,
-			DB:      stateDB,
-		}) // "database/state"
+		startErr := dbService.Start()
+		require.NoError(tb, startErr)
+
+		reactor.RegisterService(dbServiceKey, chainID, dbService)
 	}
 
 	return rootDir, nodeCfg, reactor

@@ -318,7 +318,7 @@ func (b *MultiplexBackend) DefaultNetworksCreatorRoutine() server.NetworksCreato
 				)
 
 				// AllocateNetwork is NOT part of InjectNewNetwork anymore.
-				if err = b.reactor.AllocateNetwork(newChainID, true); err != nil {
+				if err = b.reactor.AllocateNetwork(newChainID); err != nil {
 					return err
 				}
 

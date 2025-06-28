@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	dbm "github.com/cometbft/cometbft-db"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -75,28 +74,38 @@ func TestMultiplexRuntimeMakeNetworkDatabases(t *testing.T) {
 	require.NoError(t, err)
 
 	// Act
-	actualDBs, err := testReactor.MakeNetworkDatabases(testExtChainID, []string{
+	err = testReactor.MakeNetworkDatabases(testExtChainID, []string{
 		"state",
 		"blockstore",
 		"txindex",
 		"evidence",
 	}, true)
 	assert.NoError(t, err, "should create network databases")
-	assert.Len(t, actualDBs, 4)
-	assert.Contains(t, actualDBs, "state")
-	assert.Contains(t, actualDBs, "blockstore")
-	assert.Contains(t, actualDBs, "txindex")
-	assert.Contains(t, actualDBs, "evidence")
-	assert.NotNil(t, actualDBs["state"])
+
+	testServicesProvider := testReactor.GetServicesProvider()
+	testStateService := testServicesProvider(mx.ServiceKeyDatabaseState, testExtChainID.String())
+	assert.NotNil(t, testStateService)
+	testBlockService := testServicesProvider(mx.ServiceKeyDatabaseBlock, testExtChainID.String())
+	assert.NotNil(t, testBlockService)
+	testIndexService := testServicesProvider(mx.ServiceKeyDatabaseIndex, testExtChainID.String())
+	assert.NotNil(t, testIndexService)
+	testEvidenceService := testServicesProvider(mx.ServiceKeyDatabaseEvidence, testExtChainID.String())
+	assert.NotNil(t, testEvidenceService)
+
+	testStateDB := testStateService.(*mx.DBService).DB()
 
 	// Test db read/write operations
-	actualStateDB := actualDBs["state"]
-	setErr := actualStateDB.SetSync([]byte("testKey"), []byte("testValue"))
+	setErr := testStateDB.SetSync([]byte("testKey"), []byte("testValue"))
 	assert.NoError(t, setErr, "should set test key in newly created database")
 
-	actualValue, getErr := actualStateDB.Get([]byte("testKey"))
+	actualValue, getErr := testStateDB.Get([]byte("testKey"))
 	assert.NoError(t, getErr, "should get test key in newly created database")
 	assert.Equal(t, []byte("testValue"), actualValue)
+
+	testStateService.Stop()
+	testBlockService.Stop()
+	testIndexService.Stop()
+	testEvidenceService.Stop()
 }
 
 func TestMultiplexRuntimeMakeNetworkValidator(t *testing.T) {
@@ -222,7 +231,7 @@ func TestMultiplexRuntimeMakeNetworkStateMachine(t *testing.T) {
 	testExtChainID, err := mx.NewExtendedChainIDFromLegacy(testChainID)
 	require.NoError(t, err)
 
-	actualDBs, err := testReactor.MakeNetworkDatabases(testExtChainID, []string{
+	err = testReactor.MakeNetworkDatabases(testExtChainID, []string{
 		"state",
 		"blockstore",
 	}, true)
@@ -233,14 +242,23 @@ func TestMultiplexRuntimeMakeNetworkStateMachine(t *testing.T) {
 	)
 	require.NoError(t, err)
 
+	testServicesProvider := testReactor.GetServicesProvider()
+	testStateService := testServicesProvider(mx.ServiceKeyDatabaseState, testExtChainID.String())
+	require.NotNil(t, testStateService)
+	testBlockService := testServicesProvider(mx.ServiceKeyDatabaseBlock, testExtChainID.String())
+	require.NotNil(t, testBlockService)
+
+	testStateDB := testStateService.(*mx.DBService).DB()
+	testBlockDB := testStateService.(*mx.DBService).DB()
+
 	// Act
 	actualStateMachine,
 		actualStateStore,
 		actualBlockStore,
 		err := testReactor.MakeNetworkStateMachine(
 		&actualGenesisDoc,
-		actualDBs["state"],
-		actualDBs["blockstore"],
+		testStateDB,
+		testBlockDB,
 	)
 	assert.NoError(t, err, "should create network state machine")
 
@@ -251,6 +269,11 @@ func TestMultiplexRuntimeMakeNetworkStateMachine(t *testing.T) {
 	assert.Equal(t, testChainID, actualStateMachine.ChainID)
 	assert.Equal(t, int64(1), actualStateMachine.InitialHeight)
 	assert.Equal(t, int64(0), actualStateMachine.LastBlockHeight) // LastBlockHeight=0 at genesis
+
+	stopSmErr := testStateService.Stop()
+	assert.NoError(t, stopSmErr)
+	stopBsErr := testBlockService.Stop()
+	assert.NoError(t, stopBsErr)
 }
 
 func TestMultiplexRuntimeMakeNetworkConfigOverwrite(t *testing.T) {
@@ -292,7 +315,7 @@ func TestMultiplexRuntimeAllocateNetwork(t *testing.T) {
 	defer os.RemoveAll(rootDir)
 
 	// Act
-	allocErr := testReactor.AllocateNetwork(testChainID, false)
+	allocErr := testReactor.AllocateNetwork(testChainID)
 	assert.NoError(t, allocErr, "should allocate network resources")
 
 	// Test that we injected a config path
@@ -300,10 +323,14 @@ func TestMultiplexRuntimeAllocateNetwork(t *testing.T) {
 	require.Contains(t, configsPaths, testChainID)
 
 	// Also test that instances were correctly registered
+	servicesProvider := testReactor.GetServicesProvider()
 	storageProvider := testReactor.GetInstanceProvider(mx.InstanceKeyStorage)
-	blockDBProvider := testReactor.GetInstanceProvider(mx.InstanceKeyDatabaseBlock)
-	stateDBProvider := testReactor.GetInstanceProvider(mx.InstanceKeyDatabaseState)
+	blockDBService := servicesProvider(mx.ServiceKeyDatabaseBlock, testChainID)
+	stateDBService := servicesProvider(mx.ServiceKeyDatabaseState, testChainID)
 	privValProvider := testReactor.GetInstanceProvider(mx.InstanceKeyPrivValidator)
+
+	assert.NotNil(t, blockDBService, "blockstore DBService should not be nil")
+	assert.NotNil(t, stateDBService, "statestore DBService should not be nil")
 
 	perUserFolder := "/" + testAddress + "/"
 	perChainFolder := "/" + testChainID
@@ -312,19 +339,35 @@ func TestMultiplexRuntimeAllocateNetwork(t *testing.T) {
 	assert.Contains(t, chainDataFolder, perUserFolder)
 	assert.Contains(t, chainDataFolder, perChainFolder)
 
-	blockDB := blockDBProvider(testChainID).(dbm.DB)
-	stateDB := stateDBProvider(testChainID).(dbm.DB)
+	blockDB := blockDBService.(*mx.DBService).DB()
+	stateDB := stateDBService.(*mx.DBService).DB()
 	privVal := privValProvider(testChainID).(types.PrivValidator)
 
-	assert.NotNil(t, blockDB)
-	assert.NotNil(t, stateDB)
+	// AllocateNetwork should not OPEN the db conn.
+	assert.Nil(t, blockDB, "AllocateNetwork should not open blockstore database")
+	assert.Nil(t, stateDB, "AllocateNetwork should not open statestore database")
 	assert.NotNil(t, privVal)
 
-	// And test that we can query the priv validator
+	// Also test that we can query the priv validator
 	actualPubKey, err := privVal.GetPubKey()
 	assert.NoError(t, err)
 	assert.NotNil(t, actualPubKey)
 	assert.NotEmpty(t, actualPubKey.Bytes())
+
+	// And after starting the DBService, the DB must be available.
+	startBsErr := blockDBService.Start()
+	assert.NoError(t, startBsErr)
+	defer blockDBService.Stop()
+
+	startSmErr := stateDBService.Start()
+	assert.NoError(t, startSmErr)
+	defer stateDBService.Stop()
+
+	actualBlockDB := blockDBService.(*mx.DBService).DB()
+	assert.NotNil(t, actualBlockDB)
+
+	actualStateDB := stateDBService.(*mx.DBService).DB()
+	assert.NotNil(t, actualStateDB)
 }
 
 func TestMultiplexRuntimeInjectGenesisDoc(t *testing.T) {
@@ -391,6 +434,28 @@ func TestMultiplexRuntimeInjectStateMachine(t *testing.T) {
 
 	testIcsGenDocSet := testReactor.GetChecksummedGenesisDocSet()
 
+	testExtChainID, cidErr := mx.NewExtendedChainIDFromLegacy(testChainID)
+	require.NoError(t, cidErr)
+
+	testDbNames := []string{
+		"state",
+		"blockstore",
+		"txindex",
+		"evidence",
+	}
+
+	dbErr := testReactor.MakeNetworkDatabases(testExtChainID, testDbNames, true)
+	require.NoError(t, dbErr, "should open network databases")
+
+	// This test does not start the reactor, we must stop dbs manually.
+	defer func() {
+		servicesProvider := testReactor.GetServicesProvider()
+		for _, dbName := range testDbNames {
+			dbService := servicesProvider("database/"+dbName, testChainID)
+			dbService.Stop()
+		}
+	}()
+
 	// Act
 	err := testReactor.InjectStateMachine(testChainID, testIcsGenDocSet)
 	assert.NoError(t, err, "should inject network state machine")
@@ -426,7 +491,7 @@ func TestMultiplexRuntimeInjectNewNetwork(t *testing.T) {
 
 	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
 	// executed earlier, i.e. see MultiplexBackend.InitValidators.
-	allocErr := testReactor.AllocateNetwork(testChainID, true)
+	allocErr := testReactor.AllocateNetwork(testChainID)
 	require.NoError(t, allocErr, "should allocate new network resources")
 
 	// Act
@@ -462,7 +527,7 @@ func TestMultiplexRuntimeInjectNewNetworkCallsAllocateNetwork(t *testing.T) {
 
 	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
 	// executed earlier, i.e. see MultiplexBackend.InitValidators.
-	allocErr := testReactor.AllocateNetwork(testChainID, true)
+	allocErr := testReactor.AllocateNetwork(testChainID)
 	require.NoError(t, allocErr, "should allocate new network resources")
 
 	// Act
@@ -492,17 +557,16 @@ func TestMultiplexRuntimeInjectNewNetworkCallsAllocateNetwork(t *testing.T) {
 	assert.Contains(t, actualDataDir, perChainFolder)
 
 	// Also test that we have important database instances
-	stateDBProvider := testReactor.GetInstanceProvider(mx.InstanceKeyDatabaseState)
-	blockDBProvider := testReactor.GetInstanceProvider(mx.InstanceKeyDatabaseBlock)
+	servicesProvider := testReactor.GetServicesProvider()
+	stateDBService := servicesProvider(mx.ServiceKeyDatabaseState, testChainID)
+	blockDBService := servicesProvider(mx.ServiceKeyDatabaseBlock, testChainID)
 
-	stateDBUnsafe := stateDBProvider(testChainID)
-	assert.NotNil(t, stateDBUnsafe)
-	stateDB := stateDBUnsafe.(dbm.DB)
+	assert.NotNil(t, stateDBService)
+	stateDB := stateDBService.(*mx.DBService).DB()
 	assert.NotNil(t, stateDB)
 
-	blockDBUnsafe := blockDBProvider(testChainID)
-	assert.NotNil(t, blockDBUnsafe)
-	blockDB := blockDBUnsafe.(dbm.DB)
+	assert.NotNil(t, blockDBService)
+	blockDB := blockDBService.(*mx.DBService).DB()
 	assert.NotNil(t, blockDB)
 
 	// .. and a priv validator instance
@@ -511,7 +575,6 @@ func TestMultiplexRuntimeInjectNewNetworkCallsAllocateNetwork(t *testing.T) {
 	assert.NotNil(t, privValidatorUnsafe)
 	privValidator := privValidatorUnsafe.(types.PrivValidator)
 	assert.NotNil(t, privValidator)
-
 }
 
 func TestMultiplexRuntimeInjectNewNetworkCallsInjectStateMachine(t *testing.T) {
@@ -527,7 +590,7 @@ func TestMultiplexRuntimeInjectNewNetworkCallsInjectStateMachine(t *testing.T) {
 
 	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
 	// executed earlier, i.e. see MultiplexBackend.InitValidators.
-	allocErr := testReactor.AllocateNetwork(testChainID, true)
+	allocErr := testReactor.AllocateNetwork(testChainID)
 	require.NoError(t, allocErr, "should allocate new network resources")
 
 	// Act
@@ -573,7 +636,7 @@ func TestMultiplexRuntimeInjectNewNetworkCallsRegisterNetwork(t *testing.T) {
 
 	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
 	// executed earlier, i.e. see MultiplexBackend.InitValidators.
-	allocErr := testReactor.AllocateNetwork(testChainID, true)
+	allocErr := testReactor.AllocateNetwork(testChainID)
 	require.NoError(t, allocErr, "should allocate new network resources")
 
 	// Act
@@ -621,7 +684,7 @@ func TestMultiplexRuntimeInjectNewNetworkIncludesOtherValidators(t *testing.T) {
 
 	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
 	// executed earlier, i.e. see MultiplexBackend.InitValidators.
-	allocErr := testReactor.AllocateNetwork(testWithChainID, true)
+	allocErr := testReactor.AllocateNetwork(testWithChainID)
 	require.NoError(t, allocErr, "should allocate new network resources")
 
 	// Inject testWithChainID
@@ -665,7 +728,7 @@ func TestMultiplexRuntimeInjectNewRuntime(t *testing.T) {
 
 	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
 	// executed earlier, i.e. see MultiplexBackend.InitValidators.
-	allocErr := testReactor.AllocateNetwork(injectChainID, true)
+	allocErr := testReactor.AllocateNetwork(injectChainID)
 	require.NoError(t, allocErr, "should allocate new network resources")
 
 	// Inject injectChainID
@@ -699,7 +762,7 @@ func TestMultiplexRuntimeInjectNewRuntimeWithOthers(t *testing.T) {
 
 	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
 	// executed earlier, i.e. see MultiplexBackend.InitValidators.
-	allocErr := testReactor.AllocateNetwork(injectChainID, true)
+	allocErr := testReactor.AllocateNetwork(injectChainID)
 	require.NoError(t, allocErr, "should allocate new network resources")
 
 	// Inject injectChainID
@@ -791,7 +854,7 @@ func ResetTestMultiplexRuntimeWithInjection(tb testing.TB, numChains int) (
 		testReactor := ResetTestMultiplexRuntime(tb, numChains)
 
 	// Inject testChainID
-	err := testReactor.AllocateNetwork(testChainID, true)
+	err := testReactor.AllocateNetwork(testChainID)
 	require.NoError(tb, err, "should allocate network resources")
 
 	configsPaths := testReactor.GetConfigsPaths()

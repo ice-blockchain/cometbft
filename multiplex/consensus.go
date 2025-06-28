@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	dbm "github.com/cometbft/cometbft-db"
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/internal/blocksync"
 	cs "github.com/ice-blockchain/cometbft/internal/consensus"
@@ -132,13 +131,13 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	clogger := reactor.logger.With("chain_id", chainID)
 
 	// Used to retrieve configuration and state per chain.
+	servicesProvider := reactor.GetServicesProvider()
 	configProvider := reactor.GetInstanceProvider(InstanceKeyConfig)
 	statesProvider := reactor.GetInstanceProvider(InstanceKeyState)
 	stateStoreProvider := reactor.GetInstanceProvider(InstanceKeyStateStore)
 	blockStoreProvider := reactor.GetInstanceProvider(InstanceKeyBlockStore)
-	evidenceDBProvider := reactor.GetInstanceProvider(InstanceKeyDatabaseEvidence)
 	privvalProvider := reactor.GetInstanceProvider(InstanceKeyPrivValidator)
-	servicesProvider := reactor.GetServicesProvider()
+	evidenceDBService := servicesProvider(ServiceKeyDatabaseEvidence, chainID)
 
 	// The node config contains the configuration overwrite.
 	cfgOverwrite := configProvider(chainID).(*config.Config)
@@ -215,7 +214,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	mempoolReactor.SetSwitch(reactor.GetEventSwitchForCometBFT())
 
 	// 2) Create the evidence pool / evidence reactor
-	evidenceDB := evidenceDBProvider(chainID).(dbm.DB)
+	evidenceDB := evidenceDBService.(*DBService).DB()
 	stateStore := stateStoreProvider(chainID).(sm.Store)
 	blockStore := blockStoreProvider(chainID).(*bs.BlockStore)
 
@@ -341,7 +340,7 @@ func (reactor *Reactor) StartConsensusInstanceReactors(
 
 	// Make sure database connections are open for this ChainID.
 	extChainID, _ := NewExtendedChainIDFromLegacy(chainID)
-	if _, err := reactor.MakeNetworkDatabases(extChainID, []string{
+	if err := reactor.MakeNetworkDatabases(extChainID, []string{
 		"blockstore",
 		"state",
 		"txindex",
