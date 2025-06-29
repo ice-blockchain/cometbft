@@ -166,7 +166,6 @@ type MultiplexBackend struct {
 	logger     cmtlog.Logger
 	errorsCh   chan error
 	shutdownCh chan struct{}
-	closed     bool
 	metrics    *Metrics
 }
 
@@ -596,28 +595,14 @@ func (b *MultiplexBackend) OnStart(ctx context.Context) error {
 		"id", b.reactor.GetNodeKey().ID(),
 	)
 
-	// Reset services that have been stopped.
-	if b.reactor.IsStopped() {
-		b.reactor.Reset()
-
-		// Multiplex reactor is started in NewNodesMultiplex, so if the backend
-		// was shutdown (and had to be reset), we restart the reactor here.
+	// Multiplex reactor is started in NewNodesMultiplex, so if the backend
+	// was shutdown (and had to be reset), we restart the reactor here.
+	if !b.reactor.IsRunning() {
 		if err := b.reactor.Start(); err != nil {
 			b.logger.Error(
 				"Error starting multiplex reactor", "err", err)
 		}
 	}
-	if b.reactor.runtimeRegistry.IsStopped() {
-		b.reactor.runtimeRegistry.Reset()
-	}
-
-	// Before anything else, start the runtimes registry
-	b.reactor.runtimesMutex.Lock()
-	if err := b.reactor.runtimeRegistry.Start(); err != nil {
-		b.logger.Error(
-			"Error starting runtimes registry", "err", err)
-	}
-	b.reactor.runtimesMutex.Unlock()
 
 	// Filled with relay IDs upon sending ChainReplicationRequest.
 	b.replRequestsMtx.Lock()
@@ -837,48 +822,17 @@ func (b *MultiplexBackend) OnStart(ctx context.Context) error {
 //
 // Close implements io.Closer
 func (b *MultiplexBackend) OnStop() {
-	// Lock the mutex to complete shutdown gracefully
-	b.relayMtx.Lock()
-	if b.closed {
-		b.logger.Debug("node backend already closed",
-			"id", b.reactor.GetNodeKey().ID(),
-		)
-		b.relayMtx.Unlock()
-		return
-	}
 	// TODO(midas): remove debug logs
 	b.logger.Debug("Shutting down node backend",
 		"id", b.reactor.GetNodeKey().ID(),
 	)
 
+	b.relayMtx.Lock()
 	if b.shutdownCh != nil {
 		// Shutdown goroutines started by MustStart().
 		close(b.shutdownCh)
-		b.closed = true
 	}
 	b.relayMtx.Unlock()
-
-	// Stop the runtimes registry, it shouldn't interfere with shutdown.
-	b.reactor.runtimesMutex.Lock()
-	if b.reactor.runtimeRegistry != nil && b.reactor.runtimeRegistry.IsRunning() {
-		restNodeRuntimes := b.reactor.runtimeRegistry.ActiveRuntimes()
-		if len(restNodeRuntimes) > 0 && b.reactor.runtimeRegistry.OnIdle != nil {
-			// TODO(midas): remove debug logs
-			b.logger.Debug("Shutting down remaining node runtimes",
-				"networks", restNodeRuntimes,
-			)
-
-			for chainID, _ := range restNodeRuntimes {
-				b.reactor.runtimeRegistry.OnIdle(chainID)
-			}
-		}
-
-		if err := b.reactor.runtimeRegistry.Stop(); err != nil {
-			b.logger.Error(
-				"Error stopping the runtimes registry (idle-manager)", "err", err)
-		}
-	}
-	b.reactor.runtimesMutex.Unlock()
 
 	// Close transaction listeners (event bus) before reactor.
 	serviceProvider := b.reactor.GetServicesProvider()
@@ -890,12 +844,13 @@ func (b *MultiplexBackend) OnStop() {
 		}
 	}
 
-	// Now we may stop the multiplex reactor
-	if b.reactor != nil {
+	b.relayMtx.Lock()
+	defer b.relayMtx.Unlock()
+
+	if b.reactor != nil && b.reactor.IsRunning() {
 		b.reactor.Stop()
 	}
 
-	// Stop RelayInfo RPC and CometBFT RPC
 	for _, rpcListener := range b.rpcListeners {
 		rpcListener.Close()
 	}
@@ -912,8 +867,31 @@ func (b *MultiplexBackend) OnStop() {
 				"Error stopping HTTP server while shutting down", "err", err)
 		}
 	}
+}
 
-	//return nil
+// OnReset implements Service.
+func (b *MultiplexBackend) OnReset() error {
+	b.logger.Debug("Reset multiplex backend")
+
+	if err := b.reactor.Reset(); err != nil {
+		b.logger.Error(
+			"Error resetting the multiplex reactor", "err", err)
+	}
+
+	b.relayMtx.Lock()
+	b.rpcListeners = []net.Listener{}
+	b.httpServers = make(map[string]*http.Server)
+	b.httpClients = []*http.Client{}
+	b.txSubscribers = map[string]string{}
+	b.relayMtx.Unlock()
+
+	b.reactor.networkMutex.Lock()
+	b.reactor.discoverySwitch = nil
+	b.reactor.cometbftSwitch = nil
+	b.reactor.networkMutex.Unlock()
+
+	b.logger.Debug("Done resetting multiplex backend")
+	return nil
 }
 
 // OnBroadcastError updates a runtime completion status and attaches

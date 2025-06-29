@@ -870,6 +870,7 @@ func TestScenarioClientBroadcastHealthyRelays(t *testing.T) {
 	testReactorRelay3 := servers[2].GetReactor()
 
 	// Make sure to remotely create the validators as well.
+	// This is necessary only when using pre-configured networks.
 	otherValidators := ResetTestBackendValidators(t, servers, testChainIds)
 
 	// CAUTION: This activates runtimes for pre-configured networks.
@@ -2369,7 +2370,7 @@ func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 		"second broadcast should contain transaction hashes")
 	close(notifyCh2)
 
-	waitDuration := 20 * time.Second
+	waitDuration := 25 * time.Second
 	t.Logf("Waiting %.0fsec for blocks propagation...", waitDuration.Seconds())
 	time.Sleep(waitDuration)
 
@@ -2511,7 +2512,7 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	numChains := 0
 	numRelays := 3
 
-	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
+	servers, shutdownFn := ResetTestScenarioRelaysWithLogs(t, numChains, numRelays)
 	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)
@@ -2628,14 +2629,18 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	// is only necessary during shutdown tests.
 
 	// Stop the receiving backend, then start it again.
-	err := servers[0].Stop()
-	require.NoError(t, err, "should shutdown server")
+	stopErr := servers[0].Stop()
+	require.NoError(t, stopErr, "should shutdown relay")
 
-	waitDuration = 5 * time.Second
+	resetErr := servers[0].Reset()
+	require.NoError(t, resetErr, "should reset relay")
+
+	waitDuration = 2 * time.Second
 	t.Logf("Waiting %.0fsec to restart backend...", waitDuration.Seconds())
 	time.Sleep(waitDuration)
 
-	servers[0].Start()
+	startErr := servers[0].Start()
+	require.NoError(t, startErr, "should restart relay")
 
 	// STEP 3:
 	//
@@ -3874,10 +3879,8 @@ func ResetTestBackendValidators(
 	tb.Helper()
 
 	for i, server := range servers {
-		valPubKeysPerChainID, err := server.InitValidators(testChainIds)
+		_, err := server.InitValidators(testChainIds)
 		require.NoError(tb, err, "should initialize validators for relay-"+strconv.Itoa(i+1))
-
-		tb.Logf("using valPubKeys for relay-%d: %v", i+1, valPubKeysPerChainID)
 	}
 
 	otherValidators = make([]map[string][]string, len(servers))
@@ -3895,8 +3898,6 @@ func ResetTestBackendValidators(
 				otherValidators[i][chainID] = append(otherValidators[i][chainID], otherValPubKeys[chainID])
 			}
 		}
-
-		tb.Logf("using otherValidators for relay-%d: %v", i+1, otherValidators[i])
 	}
 
 	return // otherValidators

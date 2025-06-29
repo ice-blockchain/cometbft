@@ -834,6 +834,7 @@ func (n *Node) OnReset() error {
 	if err := n.indexerService.Reset(); err != nil {
 		n.Logger.Error("Error resetting indexerService", "err", err)
 	}
+	n.Logger.Debug("Done resetting node runtime")
 	return nil
 }
 

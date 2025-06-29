@@ -109,7 +109,7 @@ func (dbS *DBService) OnReset() error {
 	dbS.db = nil
 	dbS.mtx.Unlock()
 
-	dbS.logger.Debug("Reset database service")
+	dbS.logger.Debug("Reset database service", "name", dbS.name)
 	return nil
 }
 

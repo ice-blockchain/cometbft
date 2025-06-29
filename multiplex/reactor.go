@@ -1933,6 +1933,14 @@ func (reactor *Reactor) OnStart(ctx context.Context) error {
 		}
 	}
 
+	// Starts the runtimes registry (active runtimes idle manager).
+	reactor.runtimesMutex.Lock()
+	if err := reactor.runtimeRegistry.Start(); err != nil {
+		reactor.logger.Error(
+			"Error starting runtimes registry", "err", err)
+	}
+	reactor.runtimesMutex.Unlock()
+
 	// ACTIVE RUNTIMES ONLY
 	//
 	// The following initialization happens only for *active runtimes*.
@@ -1993,6 +2001,29 @@ func (reactor *Reactor) OnStart(ctx context.Context) error {
 // no specific order is used to close the database connection because every
 // database connection is independent of other database connections.
 func (reactor *Reactor) OnStop() {
+	// At first, stop the runtimes registry as it shouldn't interfere with shutdown.
+	reactor.runtimesMutex.Lock()
+	if reactor.runtimeRegistry != nil && reactor.runtimeRegistry.IsRunning() {
+		// Try to shutdown gracefully (each ChainID individually).
+		restNodeRuntimes := reactor.runtimeRegistry.ActiveRuntimes()
+		if len(restNodeRuntimes) > 0 && reactor.runtimeRegistry.OnIdle != nil {
+			// TODO(midas): remove debug logs
+			reactor.logger.Debug("Shutting down remaining node runtimes",
+				"networks", restNodeRuntimes,
+			)
+
+			for chainID, _ := range restNodeRuntimes {
+				reactor.runtimeRegistry.OnIdle(chainID)
+			}
+		}
+
+		if err := reactor.runtimeRegistry.Stop(); err != nil {
+			reactor.logger.Error(
+				"Error stopping the runtimes registry (idle-manager)", "err", err)
+		}
+	}
+	reactor.runtimesMutex.Unlock()
+
 	// Shutdown all network resources atomically
 	reactor.networkMutex.RLock()
 	discoverySwitch := reactor.discoverySwitch
@@ -2127,6 +2158,10 @@ func (reactor *Reactor) OnStop() {
 func (reactor *Reactor) OnReset() error {
 	reactor.logger.Debug("Reset multiplex reactor")
 
+	// NOTE:
+	// reactor.discoverySwitch is nil-ified by OnStop.
+	// reactor.cometbftSwitch is nil-ified by OnStop.
+
 	// Reset all registered services atomically.
 	reactor.servicesMutex.Lock()
 
@@ -2171,6 +2206,17 @@ func (reactor *Reactor) OnReset() error {
 	}
 	reactor.replayPoolMtx.Unlock()
 
+	// Reset the runtime registry service.
+	reactor.runtimesMutex.Lock()
+	if reactor.runtimeRegistry != nil && reactor.runtimeRegistry.IsStopped() {
+		if err := reactor.runtimeRegistry.Reset(); err != nil {
+			reactor.logger.Error(
+				"Error resetting the runtime registry", "err", err)
+		}
+	}
+	reactor.runtimesMutex.Unlock()
+
+	reactor.logger.Debug("Done resetting multiplex reactor")
 	return nil
 }
 

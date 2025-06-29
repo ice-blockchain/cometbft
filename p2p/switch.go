@@ -495,7 +495,7 @@ func (sw *Switch) OnStart(ctx context.Context) error {
 	// BREAKING
 	// NOTE(midas): We removed the startup of reactors from this method because
 	// in a multiplex of nodes, the active node runtimes (ChainID) have a short
-	// lifecycle that is controller fully by the multiplex reactor.
+	// lifecycle that is controlled fully by the multiplex reactor.
 
 	// Start accepting Peers.
 	go sw.acceptRoutine(ctx)
