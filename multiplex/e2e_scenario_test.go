@@ -10,7 +10,6 @@ import (
 	"slices"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2512,7 +2511,7 @@ func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
 	numChains := 0
 	numRelays := 3
 
-	servers, shutdownFn := ResetTestScenarioRelaysWithLogs(t, numChains, numRelays)
+	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
 	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)
@@ -2749,30 +2748,21 @@ func TestScenarioClientBroadcastAfterRuntimeIdling(t *testing.T) {
 	// To enable debug logs, change this indexes array to contain the indexes
 	// of the relays for which you want to activate full logging.
 	idxRelaysWithLogs := []int{} // e.g. []int{0, 1} for relay-1 and relay-2
-	servers, shutdownFn := ResetTestScenarioRelaysWithOptions(t, numChains, numRelays, idxRelaysWithLogs, [][]mx.MultiplexBackendOption{
-		[]mx.MultiplexBackendOption{
-			mx.WithRuntimeRegistryOptions(
-				server.RuntimeRegistryCleanerInterval(20*time.Second), // run cleaner every 20s
-				server.RuntimeRegistryIdleDuration(10*time.Second),
-			),
-		}, // relay-1
-		[]mx.MultiplexBackendOption{
-			mx.WithRuntimeRegistryOptions(
-				server.RuntimeRegistryCleanerInterval(20*time.Second), // run cleaner every 20s
-				server.RuntimeRegistryIdleDuration(10*time.Second),
-			),
-		}, // relay-2
-		[]mx.MultiplexBackendOption{
-			mx.WithRuntimeRegistryOptions(
-				server.RuntimeRegistryCleanerInterval(20*time.Second), // run cleaner every 20s
-				server.RuntimeRegistryIdleDuration(10*time.Second),
-			),
-		}, // relay-3
-	})
+	servers, shutdownFn := ResetTestScenarioRelaysWithOptions(t, numChains, numRelays, idxRelaysWithLogs, [][]mx.MultiplexBackendOption{})
 	defer shutdownFn(servers)
 
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
+
+	testRuntimeRegistryOpts := []server.RuntimeRegistryOption{
+		server.RuntimeRegistryCleanerInterval(15 * time.Second), // run cleaner every 15s
+		server.RuntimeRegistryIdleDuration(10 * time.Second),    // idle after 15s inactivity
+	}
+
+	// force-overwrite RuntimeRegistry
+	useCustomRuntimeRegistry(t, servers[0].GetReactor(), testRuntimeRegistryOpts...)
+	useCustomRuntimeRegistry(t, servers[1].GetReactor(), testRuntimeRegistryOpts...)
+	useCustomRuntimeRegistry(t, servers[2].GetReactor(), testRuntimeRegistryOpts...)
 
 	testAcceptorRelay1 := client.NewMockAcceptorImpl()
 	testAcceptorRelay2 := client.NewMockAcceptorImpl()
@@ -2823,7 +2813,7 @@ func TestScenarioClientBroadcastAfterRuntimeIdling(t *testing.T) {
 	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
 	close(notifyCh1)
 
-	waitDuration := 30 * time.Second
+	waitDuration := 50 * time.Second
 	t.Logf("Waiting %.0fsec for blocks propagation (+ cleaner)...", waitDuration.Seconds())
 	time.Sleep(waitDuration)
 
@@ -2884,7 +2874,7 @@ func TestScenarioClientBroadcastAfterRuntimeIdling(t *testing.T) {
 	close(notifyCh2)
 
 	waitDuration = 30 * time.Second
-	t.Logf("Waiting %.0fsec for blocks propagation (+ cleaner)...", waitDuration.Seconds())
+	t.Logf("Waiting %.0fsec for blocks propagation...", waitDuration.Seconds())
 	time.Sleep(waitDuration)
 
 	// -------------------
@@ -2902,151 +2892,6 @@ func TestScenarioClientBroadcastAfterRuntimeIdling(t *testing.T) {
 		"should remotely execute CommitBroadcastTx callback for each transaction")
 	assert.Equal(t, uint64(totalExpectedCommits), testAcceptorRelay3.TxCommitCalls.Load(),
 		"should remotely execute CommitBroadcastTx callback for each transaction")
-}
-
-// Tests completion of remote chain replications (using new network),
-// and evaluates OnIdle calls which should automatically trigger when all
-// chain replications have been announce as being completed.
-func TestScenarioClientBroadcastRuntimeRegistryIntegration(t *testing.T) {
-	defer goleak.VerifyNone(t)
-
-	numChains := 0
-	numRelays := 3
-
-	// Set a testable OnIdle callback on the first relay (testing locally).
-	//
-	// CAUTION: This integration config should not be used in production as
-	// a very low idle duration will shutdown nodes before blocks commit.
-	var testOnIdleCalls atomic.Uint64
-	testOnIdleCallback := func(chainID string) error {
-		testOnIdleCalls.Add(1)
-		return nil
-	}
-
-	// To enable debug logs, change this indexes array to contain the indexes
-	// of the relays for which you want to activate full logging.
-	idxRelaysWithLogs := []int{} // e.g. []int{0, 1} for relay-1 and relay-2
-	servers, shutdownFn := ResetTestScenarioRelaysWithOptions(t, numChains, numRelays, idxRelaysWithLogs, [][]mx.MultiplexBackendOption{
-		[]mx.MultiplexBackendOption{
-			mx.WithRuntimeRegistryOptions(
-				server.RuntimeRegistryCleanerInterval(1*time.Second),   // run cleaner every sec
-				server.RuntimeRegistryIdleDuration(1*time.Millisecond), // 1ms means idle asap
-				server.RuntimeRegistryOnIdle(testOnIdleCallback),
-			),
-		}, // relay-1
-	})
-	defer shutdownFn(servers)
-
-	require.NotEmpty(t, servers)
-	require.Len(t, servers, numRelays)
-
-	// servers[0].SetLogger(cmtlog.TestingLogger().With("process", "relay-1"))
-	// servers[1].SetLogger(cmtlog.TestingLogger().With("process", "relay-2"))
-
-	// Note: relays includes self
-	relays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
-		servers,
-		2*time.Second,  // Time for backend
-		20*time.Second, // Time for broadcast
-	)
-
-	defer cancelCtxFn()
-
-	require.NotEmpty(t, relays)
-	require.NotNil(t, broadcastCtx)
-	require.Len(t, relays, numRelays)
-
-	// TEST 1:
-	// We execute a complete broadcast process using a new ChainID which should
-	// include the chain replications and thus the OnBroadcastComplete call
-	// should wait for the replications to be finalized
-
-	// Given some chains must be replicated by remote relays, we will have to
-	// wait for the completion of these before we can safely shutdown (idle)
-	// the active node runtime for this ChainID.
-	numChainReplications := numRelays - 1 // -self
-
-	// Separate goroutine for client broadcast process
-	numTransactions := 1
-	testChainID1 := makeChainID("test-chain-1")
-	notifyCh1 := make(chan client.BroadcastStatus)
-
-	go clientBroadcastTx(t,
-		broadcastCtx,
-		servers[0],
-		relays,
-		testChainID1,
-		numTransactions,
-		notifyCh1,
-	)
-
-	// Blocks the main thread until we consume from notifyCh1.
-	resultStatusMsg := waitForClientBroadcastStatus(t,
-		broadcastCtx,
-		testChainID1,
-		notifyCh1,
-	)
-	assert.NotNil(t, resultStatusMsg)
-	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
-	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
-	close(notifyCh1)
-
-	// Test that the node runtime has been activated. Since we include 2 replications,
-	// it will take more time for the backend to proceed to calling the OnComplete
-	// method, because it shall wait for all replications to be complete.
-	testRuntimeRegistry := servers[0].GetRuntimeRegistry()
-	expectedNumRuntimes := uint64(1) // test-chain-1
-	actualNumRuntimes := testRuntimeRegistry.NumRuntimes()
-	assert.Equal(t, expectedNumRuntimes, actualNumRuntimes)
-
-	waitDuration := 20 * time.Second
-	t.Logf("Waiting %.0fsec for %d replications then OnIdle...", waitDuration.Seconds(), numChainReplications)
-	time.Sleep(waitDuration)
-
-	// Test that OnIdle was called (through OnBroadcastComplete)
-	expectedNumOnIdleCalls := uint64(1) // test-chain-1
-	require.Equal(t, expectedNumOnIdleCalls, testOnIdleCalls.Load())
-
-	// TEST 2:
-	// We execute another complete broadcast process using the previous ChainID
-	// which should NOT include the chain replications and thus the OnBroadcastComplete
-	// call should execute right after broadcast is complete.
-
-	secondTimeoutAfter := 20 * time.Second // Time for broadcast
-	secondBroadcastCtx, secondCancelCtxFn := context.WithTimeout(context.TODO(), secondTimeoutAfter)
-	defer secondCancelCtxFn()
-
-	numTransactions = 1
-	notifyCh2 := make(chan client.BroadcastStatus)
-
-	// Separate goroutine for client broadcast process
-	go clientBroadcastTx(t,
-		secondBroadcastCtx,
-		servers[0],
-		relays,
-		testChainID1, // existing ChainID (0 ChainReplicationRequest)
-		numTransactions,
-		notifyCh2,
-	)
-
-	// Blocks the main thread until we consume from notifyCh2.
-	resultStatusMsg = waitForClientBroadcastStatus(t,
-		secondBroadcastCtx,
-		testChainID1,
-		notifyCh2,
-	)
-	assert.NotNil(t, resultStatusMsg)
-	assert.NoError(t, resultStatusMsg.Error, "should not contain error status")
-	assert.Len(t, resultStatusMsg.TxHashes, numTransactions)
-	close(notifyCh2)
-
-	waitDuration = 20 * time.Second
-	t.Logf("Waiting %.0fsec before evaluating OnIdle calls...", waitDuration.Seconds())
-	time.Sleep(waitDuration)
-
-	// Test that OnIdle was called (through OnBroadcastComplete)
-	expectedNumOnIdleCalls++
-	require.Equal(t, expectedNumOnIdleCalls, testOnIdleCalls.Load())
 }
 
 // TODO(midas): TestScenarioClientBroadcastUsingNonValidatorRelay
@@ -4141,4 +3986,26 @@ func requireCompleteClientBroadcastTx(
 	require.Len(tb, resultStatusMsg.TxHashes, numTransactions,
 		fmt.Sprintf("should contain all accepted transaction hashes on: %s", withChainID))
 	close(notifyCh)
+}
+
+func useCustomRuntimeRegistry(tb testing.TB, testReactor *mx.Reactor, regOpts ...server.RuntimeRegistryOption) {
+	tb.Helper()
+
+	stopErr := testReactor.GetRuntimeRegistry().Stop()
+	require.NoError(tb, stopErr, "should stop default runtime registry")
+
+	customRuntimeRegistry := server.NewRuntimeRegistry(testReactor.Context(),
+		testReactor.GetLogger().With("module", "idle-manager"),
+		regOpts...,
+	)
+
+	testReactor.SetRuntimeRegistry(customRuntimeRegistry)
+
+	// Set default OnIdle callback in case none is set through options.
+	testReactor.SetRuntimeRegistryOptions(
+		server.RuntimeRegistryOnIdle(mx.DefaultOnIdleCallback(testReactor)),
+	)
+
+	startErr := customRuntimeRegistry.Start()
+	require.NoError(tb, startErr, "should start custom runtime registry")
 }

@@ -681,6 +681,14 @@ func (reactor *Reactor) GetRuntimeRegistry() *server.RuntimeRegistry {
 	return reactor.runtimeRegistry
 }
 
+// SetRuntimeRegistry returns the active node runtime manager.
+func (reactor *Reactor) SetRuntimeRegistry(r *server.RuntimeRegistry) {
+	reactor.runtimesMutex.Lock()
+	defer reactor.runtimesMutex.Unlock()
+
+	reactor.runtimeRegistry = r
+}
+
 // GetChecksummedGenesisDocSet returns a [ChecksummedGenesisDocSet] instance.
 // Internal mutex genesisDocsMutex is locked for read.
 func (reactor *Reactor) GetChecksummedGenesisDocSet() *ChecksummedGenesisDocSet {

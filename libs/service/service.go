@@ -153,6 +153,9 @@ func (bs *BaseService) Start() error {
 			atomic.StoreUint32(&bs.started, 0)
 			return err
 		}
+
+		// NOTE(midas):
+		// When bs.ctx is cancelled, the start procedure triggers Stop call!
 		go func() {
 			select {
 			case <-bs.ctx.Done():
@@ -196,7 +199,10 @@ func (bs *BaseService) Stop() error {
 			bs.impl)
 		bs.impl.OnStop()
 		close(bs.quit)
-		bs.ctxCancel()
+
+		// NOTE(midas):
+		// When bs.ctx is cancelled, the start procedure triggers Stop!
+		// bs.ctxCancel()
 		return nil
 	}
 	bs.Logger.Debug("service stop",

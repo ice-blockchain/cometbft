@@ -787,6 +787,10 @@ func (reactor *Reactor) MakeNetworkDatabases(
 			reactor.RegisterService("database/"+dbName, chainID.String(), dbs[dbName])
 		}
 
+		if startDatabase && dbs[dbName].IsStopped() {
+			dbs[dbName].Reset()
+		}
+
 		if startDatabase && !dbs[dbName].IsRunning() {
 			if err = dbs[dbName].Start(); err != nil {
 				return fmt.Errorf(

@@ -55,8 +55,6 @@ func TestMultiplexBackendNewServer(t *testing.T) {
 		globalCfg,
 		cmtlog.NewNopLogger(),
 	)
-	assert.NoError(t, backend.Start())
-
 	assert.NoError(t, err, "should create server instance")
 	assert.NotNil(t, backend)
 	assert.NotNil(t, backend.GetAcceptor())
@@ -64,7 +62,16 @@ func TestMultiplexBackendNewServer(t *testing.T) {
 
 	actualNetworks := backend.GetReactor().GetNetworks()
 	assert.Len(t, actualNetworks, numChains)
-	closeAndRemoveAll(t, rootDir, backend)
+
+	// shutdownFn
+	func() {
+		testReactor := backend.GetReactor()
+		if testReactor.IsRunning() {
+			testReactor.Stop()
+		}
+
+		closeAndRemoveAll(t, rootDir, backend)
+	}()
 
 	// TEST 2: Create a server without pre-configured networks.
 	zeroChains := 0
@@ -79,7 +86,6 @@ func TestMultiplexBackendNewServer(t *testing.T) {
 		globalCfg2,
 		cmtlog.NewNopLogger(),
 	)
-	assert.NoError(t, backend2.Start())
 
 	assert.NoError(t, err2, "should create server instance")
 	assert.NotNil(t, backend2)
@@ -88,7 +94,16 @@ func TestMultiplexBackendNewServer(t *testing.T) {
 
 	actualNetworks2 := backend2.GetReactor().GetNetworks()
 	assert.Len(t, actualNetworks2, zeroChains)
-	closeAndRemoveAll(t, rootDir2, backend2)
+
+	// shutdownFn
+	func() {
+		testReactor := backend2.GetReactor()
+		if testReactor.IsRunning() {
+			testReactor.Stop()
+		}
+
+		closeAndRemoveAll(t, rootDir2, backend2)
+	}()
 }
 
 func TestMultiplexBackendMustStart(t *testing.T) {
@@ -103,18 +118,30 @@ func TestMultiplexBackendMustStart(t *testing.T) {
 	defer closeAndRemoveAll(t, rootDir, backend)
 
 	// Act
-	backend.Start()
+	startErr := backend.Start()
+	assert.NoError(t, startErr, "should start multiplex backend")
+
+	waitDuration := 2 * time.Second
+	time.Sleep(waitDuration)
 
 	testReactor := backend.GetReactor()
-	require.NotNil(t, testReactor)
+	assert.NotNil(t, testReactor, "should create multiplex reactor")
 
-	testSwitch := testReactor.GetEventSwitchForDiscovery()
-	require.NotNil(t, testSwitch)
+	testDiscoverySwitch := testReactor.GetEventSwitchForDiscovery()
+	assert.NotNil(t, testDiscoverySwitch, "should create discovery switch")
 
 	// Test that the discovery is listening
-	testTransport := testSwitch.Transport()
+	testTransport := testDiscoverySwitch.Transport()
 	assert.NotNil(t, testTransport)
 	assert.Equal(t, true, testTransport.IsListening()) // LISTEN
+
+	testCometBFTSwitch := testReactor.GetEventSwitchForCometBFT()
+	assert.NotNil(t, testCometBFTSwitch, "should create cometbft switch")
+
+	// Test that the CometBFT is listening
+	testTransportC := testCometBFTSwitch.Transport()
+	assert.NotNil(t, testTransportC)
+	assert.Equal(t, true, testTransportC.IsListening()) // LISTEN
 }
 
 func TestMultiplexBackendMustStartEmpty(t *testing.T) {
@@ -129,18 +156,30 @@ func TestMultiplexBackendMustStartEmpty(t *testing.T) {
 	defer closeAndRemoveAll(t, rootDir, backend)
 
 	// Act
-	backend.Start()
+	startErr := backend.Start()
+	assert.NoError(t, startErr, "should start multiplex backend")
+
+	waitDuration := 2 * time.Second
+	time.Sleep(waitDuration)
 
 	testReactor := backend.GetReactor()
-	require.NotNil(t, testReactor)
+	assert.NotNil(t, testReactor, "should create multiplex reactor")
 
-	testSwitch := testReactor.GetEventSwitchForDiscovery()
-	require.NotNil(t, testSwitch)
+	testDiscoverySwitch := testReactor.GetEventSwitchForDiscovery()
+	assert.NotNil(t, testDiscoverySwitch, "should create discovery switch")
 
 	// Test that the discovery is listening
-	testTransport := testSwitch.Transport()
+	testTransport := testDiscoverySwitch.Transport()
 	assert.NotNil(t, testTransport)
 	assert.Equal(t, true, testTransport.IsListening()) // LISTEN
+
+	testCometBFTSwitch := testReactor.GetEventSwitchForCometBFT()
+	assert.NotNil(t, testCometBFTSwitch, "should create cometbft switch")
+
+	// Test that the CometBFT is listening
+	testTransportC := testCometBFTSwitch.Transport()
+	assert.NotNil(t, testTransportC)
+	assert.Equal(t, true, testTransportC.IsListening()) // LISTEN
 }
 
 func TestMultiplexBackendGetLocalNetworkHeights(t *testing.T) {

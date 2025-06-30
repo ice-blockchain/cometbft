@@ -2807,6 +2807,10 @@ func (b *MultiplexBackend) StartPrometheusServer() error {
 		return nil
 	}
 
+	if len(prometheusCfg.PrometheusListenAddr) == 0 {
+		return nil
+	}
+
 	// Prometheus Port is always: `discovery_port+3`
 	monListenAddr := overwriteListenPort(
 		prometheusCfg.PrometheusListenAddr,
