@@ -479,6 +479,8 @@ func createMConnection(
 			if reactor, ok = reactorsByCh[cmtconn.SharedChannelsNamespace][chID]; !ok {
 				return // ignore for now.
 			}
+
+			msgLookupKey = cmtconn.SharedChannelsNamespace
 		} else if chID == mempoolChannel {
 			// MempoolReactor is attached to shared channels due to listed
 			// MempoolChannel in multiplex Reactor.
