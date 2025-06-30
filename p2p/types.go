@@ -18,6 +18,7 @@ type Envelope struct {
 	Src       *PeerImpl     // sender (empty if outbound)
 	Message   proto.Message // message payload
 	ChannelID byte
+	ChainID   string
 }
 
 var (

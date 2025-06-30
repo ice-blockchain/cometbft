@@ -43,11 +43,13 @@ const (
 	replicationChannel  = byte(0x90)
 	ackBroadcastChannel = byte(0x91)
 	runtimeChannel      = byte(0x92)
+	mempoolChannel      = byte(0x30)
 )
 
 var cometMxChannels = []byte{
 	ackBroadcastChannel,
 	runtimeChannel,
+	mempoolChannel,
 }
 
 // MConnConfig returns an MConnConfig with fields updated

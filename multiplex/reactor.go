@@ -15,6 +15,7 @@ import (
 	"time"
 
 	dbm "github.com/cometbft/cometbft-db"
+	protomem "github.com/ice-blockchain/cometbft/api/cometbft/mempool/v1"
 	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/crypto"
@@ -220,6 +221,7 @@ type Reactor struct {
 	// Precalculated max message sizes.
 	broadcastRecvMessageCapacity int
 	runtimeRecvMessageCapacity   int
+	recvMempoolTxMessageCapacity int
 }
 
 type ReactorOption func(*Reactor)
@@ -374,6 +376,16 @@ func NewReactor(
 			},
 		}
 		reactor.runtimeRecvMessageCapacity = runtimeUpdateMsg.Size()
+	}
+
+	{
+		largestTx := make([]byte, nodeCfg.Mempool.MaxTxBytes)
+		batchMsg := protomem.Message{
+			Sum: &protomem.Message_Txs{
+				Txs: &protomem.Txs{Txs: [][]byte{largestTx}},
+			},
+		}
+		reactor.recvMempoolTxMessageCapacity = batchMsg.Size()
 	}
 
 	return reactor
@@ -1329,6 +1341,12 @@ func (mxR *Reactor) GetChannels() []*p2p.ChannelDescriptor {
 			MessageType: &mxp2p.Message{},
 			//RecvMessageCapacity: mxR.runtimeRecvMessageCapacity,
 		},
+		{
+			ID:                  mempl.MempoolChannel,
+			Priority:            5,
+			RecvMessageCapacity: mxR.recvMempoolTxMessageCapacity,
+			MessageType:         &protomem.Message{},
+		},
 	}
 }
 
@@ -1340,7 +1358,60 @@ func (r *Reactor) RemovePeer(peer *p2p.PeerImpl, _ any) {}
 
 // Receive implements p2p.Reactor.
 func (r *Reactor) Receive(e p2p.Envelope) {
-	r.Logger.Debug("Receive", "src", e.Src, "chId", e.ChannelID)
+	r.logger.Debug("Receive", "src", e.Src, "chId", e.ChannelID)
+
+	// CAUTION:
+	//
+	// Due to the MempoolChannel also being added to multiplex Reactor,
+	// we must make sure that those messages are forwarded to running mempool.
+	//
+	// TODO(midas): refactor this with BaseReactor.ForwardMessage("MEMPOOL", e).
+	if e.ChannelID == mempl.MempoolChannel && len(e.ChainID) > 0 {
+		r.chainReadyMtx.RLock()
+		_, hasConfiguredChainID := r.chainReadyChs[e.ChainID]
+		r.chainReadyMtx.RUnlock()
+
+		// In case this ChainID has not been activated yet, we need to do it
+		// here so that we may proceed with forwarding the message to mempool.
+		if !hasConfiguredChainID {
+			// calls AllocateNetwork, InjectNewNetwork, InjectNewRuntime
+			ReactorWithActiveRuntimes([]string{e.ChainID}, map[string][]string{})(
+				r,
+			)
+		}
+
+		// Then, start the consensus reactors.
+		// TODO(midas): We only need MEMPOOL reactor to be started here.
+		if err := r.StartConsensusInstanceReactors(
+			r.Context(),
+			e.ChainID,
+			false,
+		); err != nil {
+			r.logger.Error(
+				"failed to start consensus reactors upon receiving mempool.Tx",
+				"chain_id", e.ChainID,
+				"peer_in", e.Src,
+				"err", err,
+			)
+		}
+
+		// IMPORTANT:
+		//
+		// Forwards this message for processing to mempool.Reactor.
+		servicesProvider := r.GetServicesProvider()
+		mempoolReactor := servicesProvider(ServiceKeyMempoolReactor, e.ChainID)
+		if mempoolReactor != nil && mempoolReactor.IsRunning() {
+			memR := mempoolReactor.(*mempl.Reactor)
+
+			// TODO(midas): remove debug logs
+			r.logger.Debug("Forwarding Tx",
+				"memR", memR,
+				"running", memR.IsRunning(),
+				"msg", e.Message)
+			memR.Receive(e)
+		}
+		return // Forwarded
+	}
 
 	// Determine public source address from secret connection.
 	sourcePeer := e.Src

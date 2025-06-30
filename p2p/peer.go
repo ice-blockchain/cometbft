@@ -465,6 +465,8 @@ func createMConnection(
 		msgTypeByChID := sw.msgTypeByChID
 		sw.reactorsMtx.Unlock()
 
+		msgLookupKey := chainID
+
 		// If we don't have reactors for this chainID, try to find the channel
 		// in shared channels, otherwise ignore message to stop MConnection from
 		// panicking about an unknown channel for a reactor that is not yet ready.
@@ -477,6 +479,11 @@ func createMConnection(
 			if reactor, ok = reactorsByCh[cmtconn.SharedChannelsNamespace][chID]; !ok {
 				return // ignore for now.
 			}
+		} else if chID == mempoolChannel {
+			// MempoolReactor is attached to shared channels due to listed
+			// MempoolChannel in multiplex Reactor.
+			reactor = reactorsByCh[cmtconn.SharedChannelsNamespace][chID]
+			msgLookupKey = cmtconn.SharedChannelsNamespace
 		} else {
 			reactor = reactorsByCh[chainID][chID]
 		}
@@ -486,7 +493,7 @@ func createMConnection(
 			return
 		}
 
-		mt := msgTypeByChID[chainID][chID]
+		mt := msgTypeByChID[msgLookupKey][chID]
 		msg := proto.Clone(mt)
 		err := proto.Unmarshal(msgBytes, msg)
 		if err != nil {
@@ -500,6 +507,7 @@ func createMConnection(
 		}
 		p.pendingMetrics.AddPendingRecvBytes(getMsgType(msg), len(msgBytes))
 		reactor.Receive(Envelope{
+			ChainID:   chainID,
 			ChannelID: chID,
 			Src:       p,
 			Message:   msg,

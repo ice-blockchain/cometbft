@@ -370,32 +370,14 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 		// If we receive a transaction, but are not yet running consensus reactors
 		// for the attached ChainID, we must start the consensus reactors.
 		if multiplexReactor := memR.Switch.GetMultiplexReactor(); multiplexReactor != nil {
-			type inlineConsensusStarter interface {
-				StartConsensusInstanceReactors(
-					ctx context.Context,
-					chainID string,
-					sendStatusToPeers bool,
-				) error
-
+			type inlineRuntimeActivator interface {
 				OnActivateRuntime(chainID string)
 				OnCompleteRuntime(chainID string, protoTxs [][]byte)
 			}
 
 			// Use type assertion to access multiplex reactor methods.
-			if mxR, ok := multiplexReactor.(inlineConsensusStarter); ok {
-				if err := mxR.StartConsensusInstanceReactors(
-					context.Background(),
-					memR.ChainID,
-					true, // enable status updates to peers about replication (ChainReplicationComplete)
-				); err != nil {
-					memR.Logger.Error(
-						"failed to start consensus reactors upon receiving mempool.Tx",
-						"chain_id", memR.ChainID,
-						"peer_in", e.Src,
-						"err", err,
-					)
-				}
-
+			if mxR, ok := multiplexReactor.(inlineRuntimeActivator); ok {
+				// Activate this runtime in idle manager.
 				mxR.OnActivateRuntime(memR.ChainID)
 
 				// CAUTION: This runtime for ChainID *must be long-living* because it
