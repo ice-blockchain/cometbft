@@ -108,6 +108,14 @@ func (reactor *Reactor) InjectGenesisDoc(
 
 	// Retrieve initialGenesisDocSet, then append new doc and reset providers.
 	icsGenesisDocSet := reactor.GetChecksummedGenesisDocSet()
+
+	// If already existing, return here.
+	if _, exists, _ := icsGenesisDocSet.GenesisDocs.SearchGenesisDocByChainID(
+		chainID,
+	); exists {
+		return icsGenesisDocSet, nil
+	}
+
 	icsGenesisDocSet.GenesisDocs = append(icsGenesisDocSet.GenesisDocs, genesisDoc)
 
 	// Get JSON of GenesisDocSet to update SHA256 checksum
