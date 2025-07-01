@@ -207,6 +207,12 @@ type Reactor struct {
 	ackAcceptTxMtx sync.RWMutex
 	ackAcceptTxChs map[string]chan *mxp2p.AckTransactionBroadcast
 
+	// doneAcceptTxHashes contains a map where keys are transaction hashes (hex)
+	// and the value is set to true when a AckTransactionBroadcast process
+	// closes the corresponding ackAcceptTxChs channel.
+	doneAcceptTxMtx    sync.RWMutex
+	doneAcceptTxHashes map[string]bool
+
 	runtimeUpdatesMtx sync.RWMutex
 	runtimeUpdatesChs map[string]chan *mxp2p.ChainReplicationComplete
 
@@ -294,10 +300,11 @@ func NewReactor(
 		replRequestsRcvd:  map[string]*uint64{},
 
 		// Internal channels
-		chainReadyChs:     make(map[string]chan bool),
-		ackReplResChs:     make(map[string]chan *mxp2p.ChainReplicationResponse),
-		ackAcceptTxChs:    make(map[string]chan *mxp2p.AckTransactionBroadcast),
-		runtimeUpdatesChs: make(map[string]chan *mxp2p.ChainReplicationComplete),
+		chainReadyChs:      make(map[string]chan bool),
+		ackReplResChs:      make(map[string]chan *mxp2p.ChainReplicationResponse),
+		ackAcceptTxChs:     make(map[string]chan *mxp2p.AckTransactionBroadcast),
+		doneAcceptTxHashes: make(map[string]bool),
+		runtimeUpdatesChs:  make(map[string]chan *mxp2p.ChainReplicationComplete),
 
 		// Internals
 		logger: logger,
@@ -926,6 +933,10 @@ func (reactor *Reactor) CloseAckTransactionChannel(txHash string) {
 	reactor.ackAcceptTxMtx.Lock()
 	delete(reactor.ackAcceptTxChs, txHash)
 	reactor.ackAcceptTxMtx.Unlock()
+
+	reactor.doneAcceptTxMtx.Lock()
+	reactor.doneAcceptTxHashes[txHash] = true
+	reactor.doneAcceptTxMtx.Unlock()
 }
 
 // ChannelForRuntimeUpdates creates or returns an unbuffered channel that accepts
@@ -1627,7 +1638,16 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			}
 			r.poolRequestsMtx.Unlock()
 
-			if shouldProcessAckTx {
+			// Fixes sending on closed channel when rcving too many ACKs.
+			r.doneAcceptTxMtx.RLock()
+			valIsDone, ok := r.doneAcceptTxHashes[txHash]
+			r.doneAcceptTxMtx.RUnlock()
+			doneProcessingTxHash := false
+			if ok && valIsDone {
+				doneProcessingTxHash = true
+			}
+
+			if shouldProcessAckTx && !doneProcessingTxHash {
 				// TODO(midas): remove debug logs
 				r.logger.Debug("Received AckTransactionBroadcast from remote relay",
 					"relay_id", ackTxBroadcast.NodeId,
@@ -1639,7 +1659,10 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 
 				// Channel is mapped by transaction hash
 				acceptChForTxHash := r.ChannelForAckTransaction(txHash)
+
+				r.ackAcceptTxMtx.Lock()
 				acceptChForTxHash <- ackTxBroadcast
+				r.ackAcceptTxMtx.Unlock()
 			} else {
 				// TODO(midas): remove debug logs
 				r.logger.Debug("Skipping already processed AckTransactionBroadcast",
