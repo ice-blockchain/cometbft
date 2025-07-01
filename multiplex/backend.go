@@ -2392,6 +2392,19 @@ func (b *MultiplexBackend) StartConsensusInstance(
 	ctx := b.Context()
 	clogger := b.logger.With("chain_id", chainID)
 
+	// In case this ChainID has not been activated yet, we need to do it
+	// here so that we may proceed with starting consensus reactors.
+	b.reactor.chainReadyMtx.RLock()
+	_, hasConfiguredChainID := b.reactor.chainReadyChs[chainID]
+	b.reactor.chainReadyMtx.RUnlock()
+
+	if !hasConfiguredChainID {
+		// calls AllocateNetwork, InjectNewNetwork, InjectNewRuntime
+		ReactorWithActiveRuntimes([]string{chainID}, map[string][]string{})(
+			b.reactor,
+		)
+	}
+
 	if err := b.reactor.StartConsensusInstanceReactors(ctx,
 		chainID,
 		false, // disables status updates to peers about replication (ChainReplicationComplete)

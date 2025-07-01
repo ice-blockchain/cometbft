@@ -2628,6 +2628,8 @@ func (reactor *Reactor) sendChainReplicationResponse(
 //
 // Note that the source peer will be dialed to accelerate the activation
 // of the block-sync process with this peer.
+//
+// TODO(midas): Refactoring, should be consistent with ReactorWithActiveRuntimes.
 func (reactor *Reactor) handleChainReplicationRequest(
 	req *mxp2p.ChainReplicationRequest,
 ) error {
