@@ -167,9 +167,9 @@ func (c MultiplexClient) BroadcastTx(
 	// less than 50%+1 of relays being considered healthy.
 	// ------------------------------------------------------------------------
 
-	// Determine necessary ChainIDs and current heights using state machines.
+	// Determine required ChainIDs and unknown ChainIDs.
 	// The second return value is a subset of the first return value.
-	networksLocalHeights,
+	requiredNetworks,
 		mustCreateNetworks := c.GetBackend().GetLocalNetworkHeights(
 		userAddress,
 		transactions...,
@@ -177,15 +177,9 @@ func (c MultiplexClient) BroadcastTx(
 
 	// TODO(midas): remove debug logs
 	c.backend.GetLogger().Debug("Found network heights locally",
-		"num_local", len(networksLocalHeights),
-		"num_unknown", len(mustCreateNetworks),
+		"num_required", len(requiredNetworks),
+		"num_unknowns", len(mustCreateNetworks),
 		"tx_batch", transactionHashes)
-
-	// Build a slice of unique ChainID values.
-	requiredNetworks := []string{}
-	for chainID := range networksLocalHeights {
-		requiredNetworks = append(requiredNetworks, chainID)
-	}
 
 	// TODO(midas): remove debug logs
 	c.backend.GetLogger().Debug("Fetching networks information from relays",
@@ -208,8 +202,7 @@ func (c MultiplexClient) BroadcastTx(
 
 	// Exclude undesired ChainID from chainRelays.
 	maps.DeleteFunc(chainRelays, func(network string, addresses []*server.RelayAddress) bool {
-		_, networkContainedByBroadcast := networksLocalHeights[network]
-		return !networkContainedByBroadcast
+		return !slices.Contains(requiredNetworks, network)
 	})
 
 	// Exclude self for upcoming remote operations (dial + broadcast).

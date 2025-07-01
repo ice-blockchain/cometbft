@@ -134,13 +134,15 @@ type Backend interface {
 		transactions ...client.Transaction,
 	) error
 
-	// GetLocalNetworkHeights should query the last block height and determine
-	// a list of required networks. Iff the last block height is 1, the network
-	// is considered unknown and may need to be explicitely created.
+	// GetLocalNetworkHeights should query the available networks and determine
+	// a list of required networks. Iff the network cannot be found, it will be
+	// considered unknown and may need to be explicitely created.
+	//
+	// Return order: requiredNetworks, mustCreateNetworks.
 	GetLocalNetworkHeights(
 		userAddress string,
 		transactions ...client.Transaction,
-	) (map[string]int64, []string)
+	) ([]string, []string)
 
 	// GetRemoteValidatorsInfo should request a RPCResultInitValidator object
 	// which contains a map of validators public keys by ChainID.

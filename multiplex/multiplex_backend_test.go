@@ -255,11 +255,9 @@ func TestMultiplexBackendGetLocalNetworkHeights(t *testing.T) {
 	assert.NotEmpty(t, actualRequiredNetworks2)
 	assert.Len(t, actualRequiredNetworks2, expectedNumNetworks) // transactions use same fingerprint
 	assert.Contains(t, actualRequiredNetworks2, testChainID)
-	assert.Equal(t, mutatedHeight, actualRequiredNetworks2[testChainID])
 
 	// Creating an unknown network transaction
 	expectedNumNetworks = 2
-	expectedNewNetworkHeight := int64(1)
 	otherScope := makeFingerprint("another one")
 	otherChainID := "mx-chain-" + testAddress + "-" + otherScope
 	transactions = append(transactions, client.Transaction{
@@ -278,8 +276,6 @@ func TestMultiplexBackendGetLocalNetworkHeights(t *testing.T) {
 	assert.Len(t, actualRequiredNetworks3, expectedNumNetworks)
 	assert.Contains(t, actualRequiredNetworks3, testChainID)
 	assert.Contains(t, actualRequiredNetworks3, otherChainID)
-	assert.Equal(t, mutatedHeight, actualRequiredNetworks3[testChainID])
-	assert.Equal(t, expectedNewNetworkHeight, actualRequiredNetworks3[otherChainID])
 
 	// .. and we introduced an unknown network
 	assert.NotEmpty(t, mustCreateNetworks3)

@@ -28,7 +28,6 @@ import (
 	"github.com/ice-blockchain/cometbft/p2p/conn"
 	rpccore "github.com/ice-blockchain/cometbft/rpc/core"
 	rpcserver "github.com/ice-blockchain/cometbft/rpc/jsonrpc/server"
-	sm "github.com/ice-blockchain/cometbft/state"
 	"github.com/ice-blockchain/cometbft/state/txindex"
 	"github.com/ice-blockchain/cometbft/types"
 	cmttime "github.com/ice-blockchain/cometbft/types/time"
@@ -1817,30 +1816,30 @@ func (b *MultiplexBackend) CancelBroadcastOperation(
 func (b *MultiplexBackend) GetLocalNetworkHeights(
 	userAddress string,
 	transactions ...client.Transaction,
-) (map[string]int64, []string) {
-	requiredNetworks := map[string]int64{}
+) (requiredNetworks []string, mustCreateNetworks []string) {
+	requiredNetworks = []string{}
+	mustCreateNetworks = []string{}
+
+	uniqueNetworks := map[string]bool{}
 	unknownNetworks := map[string]bool{}
 	for _, tx := range transactions {
 		chainID := client.GetChainID(userAddress, tx.Fingerprint)
-		stateProvider := b.reactor.GetInstanceProvider(InstanceKeyState)
+		uniqueNetworks[chainID] = true
 
 		// If we don't know this network, we either need a background-sync
 		// or we must create a new network if other relays also don't know it.
-		localBlockHeight := int64(1)
 		if !b.reactor.HasNetwork(chainID) {
 			unknownNetworks[chainID] = true
-		} else {
-			stateMachine := stateProvider(chainID).(sm.State)
-			localBlockHeight = stateMachine.LastBlockHeight
 		}
-
-		requiredNetworks[chainID] = localBlockHeight
 	}
 
 	// Returns as a slice of unique ChainIDs
-	mustCreateNetworks := []string{}
 	for unknownChainID := range unknownNetworks {
 		mustCreateNetworks = append(mustCreateNetworks, unknownChainID)
+	}
+
+	for requiredChainID := range uniqueNetworks {
+		requiredNetworks = append(requiredNetworks, requiredChainID)
 	}
 
 	return requiredNetworks, mustCreateNetworks
