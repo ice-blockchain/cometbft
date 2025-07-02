@@ -36,6 +36,8 @@ import (
 	"github.com/rs/cors"
 
 	"github.com/ice-blockchain/cometbft/multiplex/client"
+	mxrpc "github.com/ice-blockchain/cometbft/multiplex/rpc"
+	"github.com/ice-blockchain/cometbft/multiplex/runtime"
 	"github.com/ice-blockchain/cometbft/multiplex/server"
 )
 
@@ -238,7 +240,7 @@ func WithReplicationTimeout(t time.Duration) func(*MultiplexBackend) {
 
 // WithRuntimeRegistryOptions is an option helper to inject custom options in the
 // reactor's [RuntimeRegistry] just after its instance is created.
-func WithRuntimeRegistryOptions(regOpts ...server.RuntimeRegistryOption) func(*MultiplexBackend) {
+func WithRuntimeRegistryOptions(regOpts ...runtime.RuntimeRegistryOption) func(*MultiplexBackend) {
 	return func(b *MultiplexBackend) {
 		b.reactor.SetRuntimeRegistryOptions(regOpts...)
 	}
@@ -362,7 +364,7 @@ func (b *MultiplexBackend) GetReactor() *Reactor {
 // GetRuntimeRegistry should return the active node runtime manager.
 //
 // GetRuntimeRegistry implements [server.Backend]
-func (b *MultiplexBackend) GetRuntimeRegistry() *server.RuntimeRegistry {
+func (b *MultiplexBackend) GetRuntimeRegistry() *runtime.RuntimeRegistry {
 	b.reactor.runtimesMutex.Lock()
 	defer b.reactor.runtimesMutex.Unlock()
 
@@ -803,7 +805,7 @@ func (b *MultiplexBackend) OnStart(ctx context.Context) error {
 
 	// Start networks that are currently replaying on other relays.
 	// We don't need for this goroutine to complete before we proceed.
-	go func(runtimeRegistry *server.RuntimeRegistry) {
+	go func(runtimeRegistry *runtime.RuntimeRegistry) {
 		replayingBuckets := b.reactor.GetReplayPool().GetBuckets()
 		if b.reactor.Size() == 0 || len(replayingBuckets) == 0 {
 			return
@@ -1025,7 +1027,7 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 		)
 
 		// Wait for the syncing relays to announce a ChainReplicationComplete.
-		go func(withReg *server.RuntimeRegistry, syncingChainIds []string) {
+		go func(withReg *runtime.RuntimeRegistry, syncingChainIds []string) {
 			// Upon completion or error, we may plan to idle the active runtime.
 			defer func() {
 				for _, chainID := range syncingChainIds {
@@ -1145,7 +1147,7 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 		)
 
 		// Wait for the transaction to be announced (indexed locally).
-		go func(withReg *server.RuntimeRegistry, txesWaiting []client.Transaction) {
+		go func(withReg *runtime.RuntimeRegistry, txesWaiting []client.Transaction) {
 			// Upon completion or error, we may plan to idle the active runtime.
 			defer func() {
 				waitingChainIds := chainIdsFromTransactions(userAddress, txesWaiting...)
@@ -2068,7 +2070,7 @@ func (b *MultiplexBackend) GetRemoteValidatorsInfo(
 	clientCtx context.Context,
 	relayAddress *server.RelayAddress,
 	requiredNetworks []string,
-) (*server.RPCResultInitValidators, error) {
+) (*mxrpc.RPCResultInitValidators, error) {
 	valsInfo,
 		httpClient,
 		infoErr := b.reactor.GetRemoteValidatorsInfo(
@@ -2109,7 +2111,7 @@ func (b *MultiplexBackend) GetValidatorsByNetwork(
 
 	validatorsCh := make(chan struct {
 		start  time.Time
-		result *server.RPCResultInitValidators
+		result *mxrpc.RPCResultInitValidators
 		addr   *server.RelayAddress
 	}, len(relayAddresses))
 
@@ -2138,7 +2140,7 @@ func (b *MultiplexBackend) GetValidatorsByNetwork(
 
 			validatorsCh <- struct {
 				start  time.Time
-				result *server.RPCResultInitValidators
+				result *mxrpc.RPCResultInitValidators
 				addr   *server.RelayAddress
 			}{result: result, addr: relayAddr, start: startTz}
 		}(relAddr)
@@ -2183,7 +2185,7 @@ func (b *MultiplexBackend) GetValidatorsByNetwork(
 func (b *MultiplexBackend) GetRemoteRelayInfo(
 	clientCtx context.Context,
 	relayAddress *server.RelayAddress,
-) (*server.RPCResultRelayInfo, error) {
+) (*mxrpc.RPCResultRelayInfo, error) {
 	relayInfo,
 		httpClient,
 		infoErr := b.reactor.GetRemoteRelayInfo(
@@ -2232,7 +2234,7 @@ func (b *MultiplexBackend) GetRelaysByNetwork(
 	// means that the relay did not respond (in time) and is unhealthy.
 	relayInfoCh := make(chan struct {
 		start  time.Time
-		result *server.RPCResultRelayInfo
+		result *mxrpc.RPCResultRelayInfo
 		addr   *server.RelayAddress
 	}, len(relayAddresses))
 
@@ -2255,7 +2257,7 @@ func (b *MultiplexBackend) GetRelaysByNetwork(
 				)
 				relayInfoCh <- struct {
 					start  time.Time
-					result *server.RPCResultRelayInfo
+					result *mxrpc.RPCResultRelayInfo
 					addr   *server.RelayAddress
 				}{result: nil, addr: relayAddr, start: startTz}
 				return
@@ -2263,7 +2265,7 @@ func (b *MultiplexBackend) GetRelaysByNetwork(
 
 			relayInfoCh <- struct {
 				start  time.Time
-				result *server.RPCResultRelayInfo
+				result *mxrpc.RPCResultRelayInfo
 				addr   *server.RelayAddress
 			}{result: result, addr: relayAddr, start: startTz}
 		}(relAddr)
@@ -2734,7 +2736,7 @@ func (b *MultiplexBackend) StartRPCServerDiscovery(
 	// Enabled procedures:
 	// - "info": POST /info to retrieve RelayInfo.
 
-	infoImpl := server.NewRelayInfoServer(b)
+	infoImpl := mxrpc.NewRPCServer(b)
 	rpcserver.RegisterRPCFuncs(mux, map[string]*rpcserver.RPCFunc{
 		"info":       rpcserver.NewRPCFunc(infoImpl.GetRelayInfo, ""),
 		"validators": rpcserver.NewRPCFunc(infoImpl.InitValidators, "networks"),

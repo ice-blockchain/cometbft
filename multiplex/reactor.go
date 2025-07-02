@@ -26,9 +26,6 @@ import (
 	"github.com/ice-blockchain/cometbft/libs/service"
 	cmtlibs "github.com/ice-blockchain/cometbft/libs/service"
 	mempl "github.com/ice-blockchain/cometbft/mempool"
-	"github.com/ice-blockchain/cometbft/multiplex/client"
-	"github.com/ice-blockchain/cometbft/multiplex/server"
-	"github.com/ice-blockchain/cometbft/multiplex/snapsapp"
 	"github.com/ice-blockchain/cometbft/node"
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/privval"
@@ -45,6 +42,13 @@ import (
 	txidxnull "github.com/ice-blockchain/cometbft/state/txindex/null"
 	bs "github.com/ice-blockchain/cometbft/store"
 	"github.com/ice-blockchain/cometbft/types"
+
+	"github.com/ice-blockchain/cometbft/multiplex/client"
+	"github.com/ice-blockchain/cometbft/multiplex/replay"
+	mxrpc "github.com/ice-blockchain/cometbft/multiplex/rpc"
+	"github.com/ice-blockchain/cometbft/multiplex/runtime"
+	"github.com/ice-blockchain/cometbft/multiplex/server"
+	"github.com/ice-blockchain/cometbft/multiplex/snapsapp"
 )
 
 const (
@@ -131,8 +135,8 @@ type Reactor struct {
 	storagePaths  MultiplexFS
 	configsPaths  MultiplexFS
 	// RuntimeRegistry defines a registry of active and inactive runtimes.
-	runtimeRegistry *server.RuntimeRegistry
-	onIdleCallback  server.OnIdleFn
+	runtimeRegistry *runtime.RuntimeRegistry
+	onIdleCallback  runtime.OnIdleFn
 
 	// Networking layer
 	//
@@ -149,7 +153,7 @@ type Reactor struct {
 	// Defines the duration for network requests to timeout.
 	// Used in [Reactor#GetRemoteRelayInfo].
 	relayInfoTimeout time.Duration
-	knownRelayInfo   map[string]*server.RPCResultRelayInfo
+	knownRelayInfo   map[string]*mxrpc.RPCResultRelayInfo
 
 	// Mapping of mempool partners relay IDs by transaction hash.
 	poolRequestsMtx  sync.RWMutex
@@ -227,7 +231,7 @@ type Reactor struct {
 	// ReplayPool defines a pool for concurrent processing of transaction buckets,
 	// which consist of one or many batches of transactions by user address.
 	replayPoolMtx sync.RWMutex
-	replayPool    *server.ReplayPool
+	replayPool    *replay.ReplayPool
 
 	// Internal
 	logger cmtlog.Logger
@@ -291,7 +295,7 @@ func NewReactor(
 		// Provides a default acceptor implementation
 		acceptorImpl: &client.DefaultAcceptor{},
 
-		runtimeRegistry: server.NewRuntimeRegistry(ctx,
+		runtimeRegistry: runtime.NewRuntimeRegistry(ctx,
 			logger.With("module", "idle-manager"),
 		),
 
@@ -303,7 +307,7 @@ func NewReactor(
 		multiplexMetrics:  NamedMultiplexMap[any]{},
 		storagePaths:      MultiplexFS{},
 		configsPaths:      MultiplexFS{},
-		knownRelayInfo:    map[string]*server.RPCResultRelayInfo{},
+		knownRelayInfo:    map[string]*mxrpc.RPCResultRelayInfo{},
 		rpcRoutes:         map[string]bool{},
 		replRequestsRcvd:  map[string]*uint64{},
 
@@ -322,7 +326,7 @@ func NewReactor(
 
 	// Set default OnIdle callback in case none is set through options.
 	reactor.SetRuntimeRegistryOptions(
-		server.RuntimeRegistryOnIdle(DefaultOnIdleCallback(reactor)),
+		runtime.RuntimeRegistryOnIdle(DefaultOnIdleCallback(reactor)),
 	)
 
 	// Enable overwrite of some optional properties.
@@ -348,10 +352,10 @@ func NewReactor(
 
 	// TODO(midas): Write some more tests to determine correct threshold.
 	reactor.replayPoolMtx.Lock()
-	reactor.replayPool = server.NewReplayPool(ctx,
+	reactor.replayPool = replay.NewReplayPool(ctx,
 		reactor.logger.With("module", "replay"),
-		server.ReplayPoolThreshold(10),
-		server.ReplayPoolAcceptor(reactor.acceptorImpl),
+		replay.ReplayPoolThreshold(10),
+		replay.ReplayPoolAcceptor(reactor.acceptorImpl),
 	)
 	reactor.replayPoolMtx.Unlock()
 
@@ -409,7 +413,7 @@ func NewReactor(
 }
 
 // DefaultOnIdleCallback returns a default implementation for the OnIdle
-// callback used by the [server.RuntimeRegistry] when node runtimes are
+// callback used by the [runtime.RuntimeRegistry] when node runtimes are
 // sleeping for a given period of time.
 func DefaultOnIdleCallback(reactor *Reactor) func(chainID string) error {
 	return func(chainID string) error {
@@ -508,7 +512,7 @@ func WithAcceptor(
 
 // WithOnIdleCallback
 func WithOnIdleCallback(
-	onIdle server.OnIdleFn,
+	onIdle runtime.OnIdleFn,
 ) func(*Reactor) {
 	return func(r *Reactor) {
 		r.onIdleCallback = onIdle
@@ -550,7 +554,7 @@ func (reactor *Reactor) SetOptions(options ...ReactorOption) {
 	}
 }
 
-func (reactor *Reactor) SetRuntimeRegistryOptions(options ...server.RuntimeRegistryOption) {
+func (reactor *Reactor) SetRuntimeRegistryOptions(options ...runtime.RuntimeRegistryOption) {
 	for _, option := range options {
 		option(reactor.runtimeRegistry)
 	}
@@ -711,7 +715,7 @@ func (reactor *Reactor) GetChainRegistry() ChainRegistry {
 }
 
 // GetRuntimeRegistry returns the active node runtime manager.
-func (reactor *Reactor) GetRuntimeRegistry() *server.RuntimeRegistry {
+func (reactor *Reactor) GetRuntimeRegistry() *runtime.RuntimeRegistry {
 	reactor.runtimesMutex.Lock()
 	defer reactor.runtimesMutex.Unlock()
 
@@ -719,7 +723,7 @@ func (reactor *Reactor) GetRuntimeRegistry() *server.RuntimeRegistry {
 }
 
 // SetRuntimeRegistry returns the active node runtime manager.
-func (reactor *Reactor) SetRuntimeRegistry(r *server.RuntimeRegistry) {
+func (reactor *Reactor) SetRuntimeRegistry(r *runtime.RuntimeRegistry) {
 	reactor.runtimesMutex.Lock()
 	defer reactor.runtimesMutex.Unlock()
 
@@ -1031,7 +1035,7 @@ func (reactor *Reactor) CloseRuntimeUpdatesChannel(chainID string) {
 
 // SaveRelayInfo stores the RPC call response with information about the
 // relay in a map where keys are CometBFT Node IDs.
-func (reactor *Reactor) SaveRelayInfo(relayInfo *server.RPCResultRelayInfo) {
+func (reactor *Reactor) SaveRelayInfo(relayInfo *mxrpc.RPCResultRelayInfo) {
 	reactor.networkMutex.Lock()
 	defer reactor.networkMutex.Unlock()
 
@@ -1039,7 +1043,7 @@ func (reactor *Reactor) SaveRelayInfo(relayInfo *server.RPCResultRelayInfo) {
 	reactor.knownRelayInfo[relayID] = relayInfo
 }
 
-func (reactor *Reactor) GetRelayInfo(relayID p2p.ID) *server.RPCResultRelayInfo {
+func (reactor *Reactor) GetRelayInfo(relayID p2p.ID) *mxrpc.RPCResultRelayInfo {
 	reactor.networkMutex.Lock()
 	defer reactor.networkMutex.Unlock()
 
@@ -1293,12 +1297,12 @@ func (reactor *Reactor) GetMempool(chainID string) mempl.TxAcceptor {
 	return nil
 }
 
-// GetReplayPool returns a [server.ReplayPool] which contains transactions
+// GetReplayPool returns a [replay.ReplayPool] which contains transactions
 // batches to be replayed. These batches may contain one or many txes
 // that will be forwarded to [Acceptor#ReplayBroadcastTxBatch].
 //
 // GetReplayPool implements [snapsapp.Reactor].
-func (reactor *Reactor) GetReplayPool() *server.ReplayPool {
+func (reactor *Reactor) GetReplayPool() *replay.ReplayPool {
 	reactor.replayPoolMtx.RLock()
 	defer reactor.replayPoolMtx.RUnlock()
 
@@ -1946,7 +1950,7 @@ func (r *Reactor) GetRemoteValidatorsInfo(
 	relayAddress *server.RelayAddress,
 	requiredNetworks []string,
 	requestTimeout time.Duration,
-) (*server.RPCResultInitValidators, *http.Client, error) {
+) (*mxrpc.RPCResultInitValidators, *http.Client, error) {
 	// TODO(midas): should re-use this http client in GetRemoteRelayInfo.
 	c, connectErr := rpcclient.New(relayAddress.AddressForRelayInfo())
 	if connectErr != nil {
@@ -1957,7 +1961,7 @@ func (r *Reactor) GetRemoteValidatorsInfo(
 	timeoutCtx, cancelFn := context.WithDeadline(context.Background(), deadline)
 	defer cancelFn()
 
-	result := &server.RPCResultInitValidators{}
+	result := &mxrpc.RPCResultInitValidators{}
 	params := map[string]any{
 		"networks": requiredNetworks,
 	}
@@ -1996,7 +2000,7 @@ func (r *Reactor) GetRemoteRelayInfo(
 	clientCtx context.Context,
 	relayAddress *server.RelayAddress,
 	requestTimeout time.Duration,
-) (*server.RPCResultRelayInfo, *http.Client, error) {
+) (*mxrpc.RPCResultRelayInfo, *http.Client, error) {
 	// TODO(midas): re-use client from GetRemoteValidatorsInfo.
 	c, connectErr := rpcclient.New(relayAddress.AddressForRelayInfo())
 	if connectErr != nil {
@@ -2007,7 +2011,7 @@ func (r *Reactor) GetRemoteRelayInfo(
 	timeoutCtx, cancelFn := context.WithDeadline(context.Background(), deadline)
 	defer cancelFn()
 
-	result := &server.RPCResultRelayInfo{}
+	result := &mxrpc.RPCResultRelayInfo{}
 	params := map[string]any{}
 	_, callErr := c.Call(timeoutCtx, "info", params, result)
 

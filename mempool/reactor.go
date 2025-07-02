@@ -15,6 +15,7 @@ import (
 	cfg "github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
+	"github.com/ice-blockchain/cometbft/multiplex/runtime"
 	"github.com/ice-blockchain/cometbft/multiplex/server"
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/types"
@@ -46,7 +47,7 @@ type Reactor struct {
 	userAddress     string
 	ChainID         string // Exported.
 	dialerFn        RelayDialerFn
-	runtimeRegistry *server.RuntimeRegistry
+	runtimeRegistry *runtime.RuntimeRegistry
 
 	// Stores messages received during WaitSync() which are processed
 	// in [EnableInOutTxs] and then deleted.
@@ -146,7 +147,7 @@ func WithDialerFn(
 
 // WithRuntimeRegistry is an option helper to inject a custom runtime registry.
 func WithRuntimeRegistry(
-	reg *server.RuntimeRegistry,
+	reg *runtime.RuntimeRegistry,
 ) func(*Reactor) {
 	return func(r *Reactor) {
 		r.runtimeRegistry = reg
@@ -175,7 +176,7 @@ func (memR *Reactor) SetAcceptor(acceptor client.Acceptor) {
 }
 
 // SetRuntimeRegistry sets a cuustom runtime registry.
-func (memR *Reactor) SetRuntimeRegistry(reg *server.RuntimeRegistry) {
+func (memR *Reactor) SetRuntimeRegistry(reg *runtime.RuntimeRegistry) {
 	memR.runtimeRegistry = reg
 }
 

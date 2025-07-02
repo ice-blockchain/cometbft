@@ -1,4 +1,4 @@
-package server_test
+package runtime_test
 
 import (
 	"sync"
@@ -11,7 +11,7 @@ import (
 	"go.uber.org/goleak"
 
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
-	"github.com/ice-blockchain/cometbft/multiplex/server"
+	"github.com/ice-blockchain/cometbft/multiplex/runtime"
 )
 
 // ----------------------------------------------------------------------------
@@ -21,7 +21,7 @@ func TestMultiplexServerRuntimeRegistryNewRuntimeRegistry(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	// Test default instance
-	testReg1 := server.NewRuntimeRegistry(cmtlog.NewNopLogger())
+	testReg1 := runtime.NewRuntimeRegistry(t.Context(), cmtlog.NewNopLogger())
 	assert.NotNil(t, testReg1)
 	assert.NotNil(t, testReg1.Runtimes)
 	assert.NotNil(t, testReg1.Sleeping)
@@ -30,9 +30,9 @@ func TestMultiplexServerRuntimeRegistryNewRuntimeRegistry(t *testing.T) {
 	assert.NotNil(t, testReg1.NumSleeping())
 
 	// Test instance with options
-	testReg2 := server.NewRuntimeRegistry(cmtlog.NewNopLogger(),
-		server.RuntimeRegistryCleanerInterval(1*time.Second),
-		server.RuntimeRegistryOnIdle(func(chainID string) error {
+	testReg2 := runtime.NewRuntimeRegistry(t.Context(), cmtlog.NewNopLogger(),
+		runtime.RuntimeRegistryCleanerInterval(1*time.Second),
+		runtime.RuntimeRegistryOnIdle(func(chainID string) error {
 			return nil
 		}),
 	)
@@ -44,7 +44,7 @@ func TestMultiplexServerRuntimeRegistryNewRuntimeRegistry(t *testing.T) {
 func TestMultiplexServerRuntimeRegistryOnActivate(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	testReg1 := server.NewRuntimeRegistry(cmtlog.NewNopLogger())
+	testReg1 := runtime.NewRuntimeRegistry(t.Context(), cmtlog.NewNopLogger())
 
 	// Act: runtime activation should add to Runtimes
 	err := testReg1.OnActivate("test-chain-1")
@@ -73,7 +73,7 @@ func TestMultiplexServerRuntimeRegistryOnActivate(t *testing.T) {
 	nextActualNumRuntimes := testReg1.NumRuntimes()
 	assert.Equal(t, uint64(3), nextActualNumRuntimes) // 2xtest-chain-1 + test-chain-2
 
-	testReg2 := server.NewRuntimeRegistry(cmtlog.NewNopLogger())
+	testReg2 := runtime.NewRuntimeRegistry(t.Context(), cmtlog.NewNopLogger())
 
 	// Act: concurrent OnActivate calls must succeed
 	waitAll := sync.WaitGroup{}
@@ -104,7 +104,7 @@ func TestMultiplexServerRuntimeRegistryOnActivate(t *testing.T) {
 func TestMultiplexServerRuntimeRegistryOnComplete(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	testReg1 := server.NewRuntimeRegistry(cmtlog.NewNopLogger())
+	testReg1 := runtime.NewRuntimeRegistry(t.Context(), cmtlog.NewNopLogger())
 	activateErr := testReg1.OnActivate("test-chain-1")
 	require.NoError(t, activateErr)
 
@@ -125,7 +125,7 @@ func TestMultiplexServerRuntimeRegistryOnComplete(t *testing.T) {
 func TestMultiplexServerRuntimeRegistryStartStop(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	testReg1 := server.NewRuntimeRegistry(cmtlog.NewNopLogger())
+	testReg1 := runtime.NewRuntimeRegistry(t.Context(), cmtlog.NewNopLogger())
 
 	// Act: Test simple registry start/stop
 	startErr := testReg1.Start()
@@ -136,10 +136,10 @@ func TestMultiplexServerRuntimeRegistryStartStop(t *testing.T) {
 
 	// Act: Test cleaner routine processing
 	var OnIdleCalls atomic.Uint64
-	testReg2 := server.NewRuntimeRegistry(cmtlog.NewNopLogger(),
-		server.RuntimeRegistryCleanerInterval(1*time.Second),   // run cleaner every sec
-		server.RuntimeRegistryIdleDuration(1*time.Millisecond), // 1ms means idle asap
-		server.RuntimeRegistryOnIdle(func(chainID string) error {
+	testReg2 := runtime.NewRuntimeRegistry(t.Context(), cmtlog.NewNopLogger(),
+		runtime.RuntimeRegistryCleanerInterval(1*time.Second),   // run cleaner every sec
+		runtime.RuntimeRegistryIdleDuration(1*time.Millisecond), // 1ms means idle asap
+		runtime.RuntimeRegistryOnIdle(func(chainID string) error {
 			OnIdleCalls.Add(1)
 			return nil
 		}),
@@ -192,7 +192,7 @@ func TestMultiplexServerRuntimeRegistryReset(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	// Test simple registry start/stop
-	reg := server.NewRuntimeRegistry(cmtlog.NewNopLogger())
+	reg := runtime.NewRuntimeRegistry(t.Context(), cmtlog.NewNopLogger())
 
 	startErr := reg.Start()
 	assert.NoError(t, startErr)

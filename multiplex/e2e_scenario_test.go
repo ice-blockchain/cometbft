@@ -20,13 +20,15 @@ import (
 	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
-	mx "github.com/ice-blockchain/cometbft/multiplex"
-	"github.com/ice-blockchain/cometbft/multiplex/client"
-	"github.com/ice-blockchain/cometbft/multiplex/server"
 	"github.com/ice-blockchain/cometbft/node"
 	"github.com/ice-blockchain/cometbft/p2p"
 	sm "github.com/ice-blockchain/cometbft/state"
 	"github.com/ice-blockchain/cometbft/state/txindex"
+
+	mx "github.com/ice-blockchain/cometbft/multiplex"
+	"github.com/ice-blockchain/cometbft/multiplex/client"
+	"github.com/ice-blockchain/cometbft/multiplex/runtime"
+	"github.com/ice-blockchain/cometbft/multiplex/server"
 )
 
 // ----------------------------------------------------------------------------
@@ -2962,9 +2964,9 @@ func TestScenarioClientBroadcastMinimalAfterRuntimeIdling(t *testing.T) {
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
 
-	testRuntimeRegistryOpts := []server.RuntimeRegistryOption{
-		server.RuntimeRegistryCleanerInterval(15 * time.Second), // run cleaner every 15s
-		server.RuntimeRegistryIdleDuration(10 * time.Second),    // idle after 15s inactivity
+	testRuntimeRegistryOpts := []runtime.RuntimeRegistryOption{
+		runtime.RuntimeRegistryCleanerInterval(15 * time.Second), // run cleaner every 15s
+		runtime.RuntimeRegistryIdleDuration(10 * time.Second),    // idle after 15s inactivity
 	}
 
 	// force-overwrite RuntimeRegistry
@@ -4207,13 +4209,13 @@ func requireCompleteClientBroadcastTx(
 	close(notifyCh)
 }
 
-func useCustomRuntimeRegistry(tb testing.TB, testReactor *mx.Reactor, regOpts ...server.RuntimeRegistryOption) {
+func useCustomRuntimeRegistry(tb testing.TB, testReactor *mx.Reactor, regOpts ...runtime.RuntimeRegistryOption) {
 	tb.Helper()
 
 	stopErr := testReactor.GetRuntimeRegistry().Stop()
 	require.NoError(tb, stopErr, "should stop default runtime registry")
 
-	customRuntimeRegistry := server.NewRuntimeRegistry(testReactor.Context(),
+	customRuntimeRegistry := runtime.NewRuntimeRegistry(testReactor.Context(),
 		testReactor.GetLogger().With("module", "idle-manager"),
 		regOpts...,
 	)
@@ -4222,7 +4224,7 @@ func useCustomRuntimeRegistry(tb testing.TB, testReactor *mx.Reactor, regOpts ..
 
 	// Set default OnIdle callback in case none is set through options.
 	testReactor.SetRuntimeRegistryOptions(
-		server.RuntimeRegistryOnIdle(mx.DefaultOnIdleCallback(testReactor)),
+		runtime.RuntimeRegistryOnIdle(mx.DefaultOnIdleCallback(testReactor)),
 	)
 
 	startErr := customRuntimeRegistry.Start()

@@ -1,4 +1,4 @@
-package server_test
+package replay_test
 
 import (
 	"testing"
@@ -10,7 +10,8 @@ import (
 
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
-	"github.com/ice-blockchain/cometbft/multiplex/server"
+	mxutils "github.com/ice-blockchain/cometbft/multiplex/helpers"
+	"github.com/ice-blockchain/cometbft/multiplex/replay"
 )
 
 // ----------------------------------------------------------------------------
@@ -20,7 +21,7 @@ func TestMultiplexServerReplayPoolNewReplayPool(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	// Test default instance
-	testPool1 := server.NewReplayPool(cmtlog.NewNopLogger())
+	testPool1 := replay.NewReplayPool(t.Context(), cmtlog.NewNopLogger())
 	assert.NotNil(t, testPool1)
 	assert.NotNil(t, testPool1.Buckets)
 	assert.NotNil(t, testPool1.UserTxs)
@@ -28,11 +29,11 @@ func TestMultiplexServerReplayPoolNewReplayPool(t *testing.T) {
 	assert.Equal(t, uint64(0), testPool1.Size())
 
 	// Test instance with options
-	testPool2 := server.NewReplayPool(cmtlog.NewNopLogger(),
-		server.ReplayPoolThreshold(10),
-		server.ReplayPoolMaxConcurrent(1), // only for testing
-		server.ReplayPoolAcceptor(client.NewMockAcceptorImpl()),
-		server.ReplayPoolFlushInterval(30*time.Second),
+	testPool2 := replay.NewReplayPool(t.Context(), cmtlog.NewNopLogger(),
+		replay.ReplayPoolThreshold(10),
+		replay.ReplayPoolMaxConcurrent(1), // only for testing
+		replay.ReplayPoolAcceptor(client.NewMockAcceptorImpl()),
+		replay.ReplayPoolFlushInterval(30*time.Second),
 	)
 	assert.NotNil(t, testPool2)
 	assert.Equal(t, 10, testPool2.Threshold())
@@ -44,7 +45,7 @@ func TestMultiplexServerReplayPoolNewReplayPool(t *testing.T) {
 func TestMultiplexServerReplayPoolAddGet(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	pool := server.NewReplayPool(cmtlog.NewNopLogger())
+	pool := replay.NewReplayPool(t.Context(), cmtlog.NewNopLogger())
 
 	numBuckets := 100
 	numTxPerBucket := 10
@@ -53,9 +54,9 @@ func TestMultiplexServerReplayPoolAddGet(t *testing.T) {
 	testBuckets := []string{}
 	testUserTxs := map[string][]client.Transaction{}
 	for i := 1; i <= numBuckets; i++ {
-		testBucket := makeAddress().String()
+		testBucket := mxutils.MakeAddress().String()
 		testBuckets = append(testBuckets, testBucket)
-		testUserTxs[testBucket] = makeClientTransactions(t, "test-fingerprint", numTxPerBucket)
+		testUserTxs[testBucket] = mxutils.MakeClientTransactions(t, "test-fingerprint", numTxPerBucket)
 	}
 
 	for _, testBucket := range testBuckets {
@@ -80,7 +81,7 @@ func TestMultiplexServerReplayPoolAddGet(t *testing.T) {
 		assert.Len(t, actualTxsByBucket, expectedNumTxs)
 	}
 
-	testUnknownBucket := makeAddress().String()
+	testUnknownBucket := mxutils.MakeAddress().String()
 	actualTxs := pool.Get(testUnknownBucket)
 	assert.Empty(t, actualTxs)
 }
@@ -88,7 +89,7 @@ func TestMultiplexServerReplayPoolAddGet(t *testing.T) {
 func TestMultiplexServerReplayPoolFlush(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	pool := server.NewReplayPool(cmtlog.NewNopLogger())
+	pool := replay.NewReplayPool(t.Context(), cmtlog.NewNopLogger())
 
 	numBuckets := 10
 	numTxPerBucket := 100
@@ -96,10 +97,10 @@ func TestMultiplexServerReplayPoolFlush(t *testing.T) {
 
 	testBuckets := []string{}
 	for i := 1; i <= numBuckets; i++ {
-		testBucket := makeAddress().String()
+		testBucket := mxutils.MakeAddress().String()
 		testBuckets = append(testBuckets, testBucket)
 
-		testBucketTxes := makeClientTransactions(t, "test-fingerprint", numTxPerBucket)
+		testBucketTxes := mxutils.MakeClientTransactions(t, "test-fingerprint", numTxPerBucket)
 		err := pool.Add(testBucket, testBucketTxes...)
 		require.NoError(t, err)
 	}
@@ -117,22 +118,22 @@ func TestMultiplexServerReplayPoolFlush(t *testing.T) {
 	assert.Equal(t, uint64(0), flushedPoolLen,
 		"Size() should return empty after flush")
 
-	testErrBucket := makeAddress().String()
+	testErrBucket := mxutils.MakeAddress().String()
 	err := pool.Flush(testErrBucket)
 	assert.Error(t, err, "Flush() should error given unknown bucket")
-	assert.Equal(t, server.ErrBucketNotFound, err)
+	assert.Equal(t, replay.ErrBucketNotFound, err)
 
 	// Test consecutive calls to flush with same buckets
 	for _, testBucket := range testBuckets {
 		err := pool.Flush(testBucket)
 		assert.Error(t, err, "Flush() should error given flushed bucket")
-		assert.Equal(t, server.ErrBucketNotFound, err)
+		assert.Equal(t, replay.ErrBucketNotFound, err)
 	}
 
 	// And test flushing directly after adding
 	for i := 1; i <= numBuckets; i++ {
-		testBucket := makeAddress().String()
-		testBucketTxes := makeClientTransactions(t, "test-fingerprint", numTxPerBucket)
+		testBucket := mxutils.MakeAddress().String()
+		testBucketTxes := mxutils.MakeClientTransactions(t, "test-fingerprint", numTxPerBucket)
 		addErr := pool.Add(testBucket, testBucketTxes...)
 		assert.NoError(t, addErr)
 
@@ -149,7 +150,7 @@ func TestMultiplexServerReplayPoolStartStop(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	// Test simple pool start/stop
-	pool := server.NewReplayPool(cmtlog.NewNopLogger())
+	pool := replay.NewReplayPool(t.Context(), cmtlog.NewNopLogger())
 
 	startErr := pool.Start()
 	assert.NoError(t, startErr)
@@ -159,9 +160,9 @@ func TestMultiplexServerReplayPoolStartStop(t *testing.T) {
 
 	// Test pool start/stop with low threshold and mock acceptor
 	testTxAcceptor := client.NewMockAcceptorImpl()
-	pool2 := server.NewReplayPool(cmtlog.NewNopLogger(),
-		server.ReplayPoolThreshold(2), // process after 2 txes
-		server.ReplayPoolAcceptor(testTxAcceptor),
+	pool2 := replay.NewReplayPool(t.Context(), cmtlog.NewNopLogger(),
+		replay.ReplayPoolThreshold(2), // process after 2 txes
+		replay.ReplayPoolAcceptor(testTxAcceptor),
 	)
 
 	numBuckets := 10
@@ -169,10 +170,10 @@ func TestMultiplexServerReplayPoolStartStop(t *testing.T) {
 
 	testBuckets := []string{}
 	for i := 1; i <= numBuckets; i++ {
-		testBucket := makeAddress().String()
+		testBucket := mxutils.MakeAddress().String()
 		testBuckets = append(testBuckets, testBucket)
 
-		testBucketTxes := makeClientTransactions(t, "test-fingerprint", numTxPerBucket)
+		testBucketTxes := mxutils.MakeClientTransactions(t, "test-fingerprint", numTxPerBucket)
 		err := pool2.Add(testBucket, testBucketTxes...)
 		assert.NoError(t, err)
 	}
@@ -184,18 +185,18 @@ func TestMultiplexServerReplayPoolStartStop(t *testing.T) {
 	stopErr = pool2.StopAfterProcessing()
 	assert.NoError(t, stopErr)
 
-	assert.Equal(t, uint64(numBuckets), testTxAcceptor.TxReplayCalls.Load()) // replayed every bucket
+	assert.Equal(t, uint64(numBuckets*numTxPerBucket), testTxAcceptor.TxReplayCalls.Load()) // replayed every bucket
 
 	// Test pool start/stop using only auto-process (by interval)
 	testTxAcceptor2 := client.NewMockAcceptorImpl()
-	pool3 := server.NewReplayPool(cmtlog.NewNopLogger(),
-		server.ReplayPoolThreshold(-1), // Process only through auto-process
-		server.ReplayPoolAcceptor(testTxAcceptor2),
-		server.ReplayPoolFlushInterval(2*time.Second), // Process after 2sec
+	pool3 := replay.NewReplayPool(t.Context(), cmtlog.NewNopLogger(),
+		replay.ReplayPoolThreshold(-1), // Process only through auto-process
+		replay.ReplayPoolAcceptor(testTxAcceptor2),
+		replay.ReplayPoolFlushInterval(2*time.Second), // Process after 2sec
 	)
 
 	for _, testBucket := range testBuckets {
-		testBucketTxes := makeClientTransactions(t, "test-fingerprint", numTxPerBucket)
+		testBucketTxes := mxutils.MakeClientTransactions(t, "test-fingerprint", numTxPerBucket)
 		err := pool3.Add(testBucket, testBucketTxes...)
 		assert.NoError(t, err)
 	}
@@ -207,7 +208,7 @@ func TestMultiplexServerReplayPoolStartStop(t *testing.T) {
 	stopErr = pool3.StopAfterProcessing()
 	assert.NoError(t, stopErr)
 
-	assert.Equal(t, uint64(numBuckets), testTxAcceptor2.TxReplayCalls.Load()) // replayed every bucket
+	assert.Equal(t, uint64(numBuckets*numTxPerBucket), testTxAcceptor2.TxReplayCalls.Load()) // replayed every bucket
 }
 
 func TestMultiplexServerReplayPoolReplayBroadcastLoop(t *testing.T) {

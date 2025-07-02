@@ -4,9 +4,12 @@ import (
 	"context"
 
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
+	"github.com/ice-blockchain/cometbft/libs/service"
 	"github.com/ice-blockchain/cometbft/p2p"
 
 	"github.com/ice-blockchain/cometbft/multiplex/client"
+	"github.com/ice-blockchain/cometbft/multiplex/rpc"
+	"github.com/ice-blockchain/cometbft/multiplex/runtime"
 )
 
 // Server defines the contract for replication backend implementations.
@@ -14,14 +17,14 @@ import (
 // A server instance must be started before replication can happen and
 // before broadcast operations can be forwarded to the [client.Client].
 type Server interface {
-	//io.Closer
+	service.Service
 
-	// GetAcceptor returns the injected [client.Acceptor] implementation.
 	GetAcceptor() client.Acceptor
 
-	// MustStart executes a replication backend.
+	// Implements [service.Service]
 	Start() error
 	Stop() error
+	Reset(ctx context.Context) error
 }
 
 // ----------------------------------------------------------------------------
@@ -34,8 +37,8 @@ type Server interface {
 // Note that a [Jobs] implementation is required to perform background tasks.
 // This interface also embeds a [Server] interface.
 type Backend interface {
-	// Embeds MustStart() and Close()
 	Server
+	rpc.Backend
 
 	// GetLogger should return a [cmtlog.Logger] instance.
 	GetLogger() cmtlog.Logger
@@ -44,26 +47,7 @@ type Backend interface {
 	GetRoutines() *Jobs
 
 	// GetRuntimeRegistry should return the active node runtime manager.
-	GetRuntimeRegistry() *RuntimeRegistry
-
-	// GetRelayID should return a [p2p.ID] instance that identifies a relay.
-	GetRelayID() p2p.ID
-
-	// GetListenAddress should return the relay's listen address.
-	GetListenAddress() string
-
-	// GetNetworks should return a slice of supported ChainID values.
-	GetNetworks() []string
-
-	// GetDiscoveryPort should return the `DiscoveryPort` config value.
-	GetDiscoveryPort() uint16
-
-	// GetValidatorPubs should return the validator public keys per ChainID.
-	GetValidatorPubs() map[string]string
-
-	// InitValidators should initialize validators for networks and
-	// should return a map of public keys per ChainID.
-	InitValidators(networks []string) (map[string]string, error)
+	GetRuntimeRegistry() *runtime.RuntimeRegistry
 
 	// StartConsensusInstance should start the consensus reactors,
 	// including mempool, blocksync, consensus and evidence reactors.
@@ -151,7 +135,7 @@ type Backend interface {
 		ctx context.Context,
 		relayAddress *RelayAddress,
 		networks []string,
-	) (*RPCResultInitValidators, error)
+	) (*rpc.RPCResultInitValidators, error)
 
 	// GetValidatorsByNetwork should find the supported networks, then map each
 	// of the ChainID to a slice of validator public keys.
@@ -166,7 +150,7 @@ type Backend interface {
 	GetRemoteRelayInfo(
 		ctx context.Context,
 		relayAddress *RelayAddress,
-	) (*RPCResultRelayInfo, error)
+	) (*rpc.RPCResultRelayInfo, error)
 
 	// GetRelaysByNetwork should find the supported networks, then map each
 	// to a slice of relay addresses, and it also returns a slice of relays

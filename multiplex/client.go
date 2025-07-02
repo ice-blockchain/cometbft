@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ice-blockchain/cometbft/multiplex/client"
+	"github.com/ice-blockchain/cometbft/multiplex/runtime"
 	"github.com/ice-blockchain/cometbft/multiplex/server"
 )
 
@@ -60,8 +61,8 @@ func (c *MultiplexClient) SetBackend(a server.Backend) {
 	c.backend = a
 }
 
-// GetRuntimeRegistry returns the reactor's [server.RuntimeRegistry] implementation.
-func (c *MultiplexClient) GetRuntimeRegistry() *server.RuntimeRegistry {
+// GetRuntimeRegistry returns the reactor's [runtime.RuntimeRegistry] implementation.
+func (c *MultiplexClient) GetRuntimeRegistry() *runtime.RuntimeRegistry {
 	return c.backend.GetRuntimeRegistry()
 }
 
@@ -88,7 +89,7 @@ func (c *MultiplexClient) GetRuntimeRegistry() *server.RuntimeRegistry {
 //
 // Also, for every consensus instance, we track active runtimes using the
 // runtime registry and upon completion (or error), we mark the runtimes
-// as completed with [server.RuntimeRegistry#OnComplete].
+// as completed with [runtime.RuntimeRegistry#OnComplete].
 // Note that if there are any chain replications happening on one of the
 // remote relays, we will keep alive the active runtimes for these chains
 // and shall mark them as complete only when the replications are done.

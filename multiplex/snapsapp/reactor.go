@@ -4,7 +4,7 @@ import (
 	"github.com/ice-blockchain/cometbft/mempool"
 	sm "github.com/ice-blockchain/cometbft/state"
 
-	"github.com/ice-blockchain/cometbft/multiplex/server"
+	"github.com/ice-blockchain/cometbft/multiplex/replay"
 )
 
 // Reactor defines the implementation contract for the multiplex reactor
@@ -26,7 +26,7 @@ type Reactor interface {
 	// GetReplayPool returns a [server.ReplayPool] which contains transactions
 	// batches to be replayed. These batches may contain one or many txes
 	// that will be forwarded to [Acceptor#ReplayBroadcastTxBatch].
-	GetReplayPool() *server.ReplayPool
+	GetReplayPool() *replay.ReplayPool
 
 	// Quit returns a channel, which is closed once service is stopped.
 	Quit() <-chan struct{}
