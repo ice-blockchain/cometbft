@@ -50,6 +50,18 @@ const (
 	// Used as a failsafe to stop [WaitForTransactionEvents] from waiting
 	// for transactions forever upon completion of broadcast operations.
 	DefaultTransactionTimeout = 60 * time.Second
+
+	// Remote replication timeout configuration. This duration defines the
+	// maximum waiting time for remote replication to complete.
+	// Used as a failsafe to stop [WaitForRelaysReplicationCompleted] from
+	// waiting for runtime updates forever.
+	//
+	// Using a timeout of 2 hours permits to cover for networks that grow
+	// above of 2 million blocks with a blocksync range of 200-400 blocks.
+	//
+	// NOTE(midas): For a production environment, it is recommended to set
+	// this timeout to 0 using `WithReplicationTimeout(0)`.
+	DefaultReplicationTimeout = 2 * time.Hour
 )
 
 // Assert that our implementation satisfies the [server.Backend] interface.
@@ -137,7 +149,14 @@ type MultiplexBackend struct {
 	// Defines the duration for timeout of transaction completion.
 	// Used in [MultiplexBackend#WaitForTransactionEvents]
 	transactionTimeout time.Duration
-	txSubscribers      map[string]string
+
+	// Defines the duration for timeout of replication completion.
+	// Used in [MultiplexBackend#OnBroadcastComplete]
+	replicationTimeout           time.Duration
+	useDefaultReplicationTimeout bool
+
+	// A map of events subscriber names by ChainID.
+	txSubscribers map[string]string
 
 	// An acceptor implementation to which transactions will be forwarded.
 	acceptor client.Acceptor
@@ -207,6 +226,14 @@ func WithTransactionTimeout(t time.Duration) func(*MultiplexBackend) {
 	}
 }
 
+// WithReplicationTimeout is an option helper to inject a custom timeout duration.
+func WithReplicationTimeout(t time.Duration) func(*MultiplexBackend) {
+	return func(b *MultiplexBackend) {
+		b.replicationTimeout = t
+		b.useDefaultReplicationTimeout = false
+	}
+}
+
 // WithRuntimeRegistryOptions is an option helper to inject custom options in the
 // reactor's [RuntimeRegistry] just after its instance is created.
 func WithRuntimeRegistryOptions(regOpts ...server.RuntimeRegistryOption) func(*MultiplexBackend) {
@@ -267,6 +294,8 @@ func NewServer(
 		httpClients:   []*http.Client{},
 		txSubscribers: map[string]string{},
 
+		useDefaultReplicationTimeout: true,
+
 		logger: nodeLogger,
 	}
 	// Enable overwrite of optional properties
@@ -276,6 +305,11 @@ func NewServer(
 
 	if server.reactor.relayInfoTimeout == 0 {
 		server.reactor.relayInfoTimeout = DefaultRequestTimeout
+	}
+
+	// Don't overwrite the 0 timeout if it was updated with options.
+	if server.replicationTimeout == 0 && server.useDefaultReplicationTimeout {
+		server.replicationTimeout = DefaultReplicationTimeout
 	}
 
 	if server.transactionTimeout == 0 {
@@ -1000,8 +1034,6 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 					b.reactor.OnCompleteRuntime(chainID, rawTxes)
 				}
 			}()
-
-			// TODO(midas): add timeout here to avoid running forever.
 
 			// This goroutine will be locked until relevant relays are done with replication
 			var (
@@ -3224,6 +3256,15 @@ func (b *MultiplexBackend) remoteRuntimeUpdatesConsumer(
 ) {
 	transactionHashes := txHashesToHex(transactions...)
 
+	// Wait a maximum duration of replicationTimeout. With a replicationTimeout
+	// of 0, this method will block until shutdown or parent context expiration.
+	var cancelFn func()
+	clientCtxOrTimeout := ctx
+	if b.replicationTimeout != 0 {
+		clientCtxOrTimeout, cancelFn = context.WithTimeout(ctx, b.replicationTimeout)
+		defer cancelFn()
+	}
+
 	for {
 		select {
 		case res := <-remoteReplFinCh:
@@ -3245,7 +3286,7 @@ func (b *MultiplexBackend) remoteRuntimeUpdatesConsumer(
 
 			localReplFinCh <- res
 
-		case <-ctx.Done():
+		case <-clientCtxOrTimeout.Done():
 			err := fmt.Errorf(
 				"process timed out waiting for runtime status (remote) for: %s", chainID)
 
@@ -3286,6 +3327,15 @@ func (b *MultiplexBackend) localRuntimeUpdatesConsumer(
 	}
 
 	transactionHashes := txHashesToHex(transactions...)
+
+	// Wait a maximum duration of replicationTimeout. With a replicationTimeout
+	// of 0, this method will block until shutdown or parent context expiration.
+	var cancelFn func()
+	clientCtxOrTimeout := ctx
+	if b.replicationTimeout != 0 {
+		clientCtxOrTimeout, cancelFn = context.WithTimeout(ctx, b.replicationTimeout)
+		defer cancelFn()
+	}
 
 	for {
 		select {
@@ -3347,7 +3397,7 @@ func (b *MultiplexBackend) localRuntimeUpdatesConsumer(
 				return
 			}
 
-		case <-ctx.Done():
+		case <-clientCtxOrTimeout.Done():
 			err := fmt.Errorf(
 				"process timed out waiting for runtime status (local) for %s", chainID)
 
