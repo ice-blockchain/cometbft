@@ -1035,7 +1035,7 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 	// All other relays participated in consensus, thus transactions for
 	// these ChainID should have been indexed by now, if they were not
 	// we shall be listening for transaction events, i.e. `EventQueryTx`.
-	indexerProvider := b.reactor.GetServicesProvider()
+	servicesProvider := b.reactor.GetServicesProvider()
 	completedChainIds := map[string]bool{}
 	transactionsNotFound := make([]client.Transaction, 0, len(transactions))
 	for _, chainID := range relevantChainIds {
@@ -1043,7 +1043,17 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 
 		for _, tx := range txesPerChain {
 			txChainID := chainIdsFromTransactions(userAddress, tx)[0]
-			indexerService := indexerProvider(ServiceKeyIndexers, txChainID).(*txindex.IndexerService)
+			indexerService := servicesProvider(ServiceKeyIndexers, txChainID).(*txindex.IndexerService)
+
+			// The indexer Get() method will need the database open.
+			indexDbService := servicesProvider(ServiceKeyDatabaseIndex, txChainID).(*DBService)
+			if !indexDbService.IsRunning() {
+				if indexDbService.IsStopped() {
+					indexDbService.Reset()
+				}
+
+				indexDbService.Start()
+			}
 
 			// First try to find transaction with tx indexer.
 			if idxTx, err := indexerService.GetTxIndexer().Get(
