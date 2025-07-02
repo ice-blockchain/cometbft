@@ -237,6 +237,9 @@ func (conn *multiplexAppConn) startQueryClient(ctx context.Context) error {
 		}
 		conn.sharedClients.query = c
 		shouldStart = true
+	} else if conn.sharedClients.query.IsStopped() {
+		conn.sharedClients.query.Reset()
+		shouldStart = true
 	}
 
 	chainIds := conn.ChainIds()
@@ -267,6 +270,9 @@ func (conn *multiplexAppConn) startSnapshotClient(ctx context.Context) error {
 			return fmt.Errorf("error creating ABCI client (snapshot client): %w", err)
 		}
 		conn.sharedClients.snapshot = c
+		shouldStart = true
+	} else if conn.sharedClients.snapshot.IsStopped() {
+		conn.sharedClients.snapshot.Reset()
 		shouldStart = true
 	}
 
@@ -299,6 +305,9 @@ func (conn *multiplexAppConn) startMempoolClient(ctx context.Context) error {
 		}
 		conn.sharedClients.mempool = c
 		shouldStart = true
+	} else if conn.sharedClients.mempool.IsStopped() {
+		conn.sharedClients.mempool.Reset()
+		shouldStart = true
 	}
 
 	chainIds := conn.ChainIds()
@@ -330,6 +339,9 @@ func (conn *multiplexAppConn) startConsensusClient(ctx context.Context) error {
 			return fmt.Errorf("error creating ABCI client (consensus client): %w", err)
 		}
 		conn.sharedClients.consensus = c
+		shouldStart = true
+	} else if conn.sharedClients.consensus.IsStopped() {
+		conn.sharedClients.consensus.Reset()
 		shouldStart = true
 	}
 

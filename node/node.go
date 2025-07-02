@@ -723,28 +723,29 @@ func (n *Node) OnStop() {
 
 	// first stop the non-reactor services
 	if n.pruner.IsRunning() {
+		n.Logger.Info("Stopping pruner")
 		if err := n.pruner.Stop(); err != nil {
 			n.Logger.Error("Error stopping the pruning service", "err", err)
 		}
 	}
 
-	n.Logger.Info("Stopping eventBus")
 	if n.eventBus.IsRunning() {
+		n.Logger.Info("Stopping eventBus")
 		if err := n.eventBus.Stop(); err != nil {
 			n.Logger.Error("Error closing eventBus", "err", err)
 		}
 	}
 
-	n.Logger.Info("Stopping indexers")
 	if n.indexerService != nil && n.indexerService.IsRunning() {
+		n.Logger.Info("Stopping indexers")
 		if err := n.indexerService.Stop(); err != nil {
 			n.Logger.Error("Error closing indexerService", "err", err)
 		}
 	}
 
-	n.Logger.Info("Stopping p2p", "should", n.shouldStartP2P)
 	// now stop the reactors
 	if n.shouldStartP2P && n.sw.IsRunning() {
+		n.Logger.Info("Stopping p2p")
 		if err := n.sw.Stop(); err != nil {
 			n.Logger.Error("Error closing switch", "err", err)
 		}
@@ -756,17 +757,17 @@ func (n *Node) OnStop() {
 		n.isListening = false
 	}
 
-	n.Logger.Info("Stopping abci")
-	// stop the client gracefully
-	if n.proxyApp != nil && n.proxyApp.IsRunning() {
+	// stop the client gracefully (only if "servers" are stopped)
+	if n.shouldStartRPC && n.proxyApp != nil && n.proxyApp.IsRunning() {
+		n.Logger.Info("Stopping abci")
 		if err := n.proxyApp.Stop(); err != nil {
 			n.Logger.Error("Error stopping the ABCI client", "err", err)
 		}
 	}
 
-	n.Logger.Info("Stopping rpc", "should", n.shouldStartRPC)
 	// finally stop the listeners / external services
 	if n.shouldStartRPC {
+		n.Logger.Info("Stopping rpc")
 		for _, l := range n.rpcListeners {
 			n.Logger.Info("Closing rpc listener", "listener", l)
 			if err := l.Close(); err != nil {

@@ -351,6 +351,19 @@ func (reactor *Reactor) StartConsensusInstanceReactors(
 			chainID, err)
 	}
 
+	reactor.envMutex.Lock()
+	if reactor.abciClient.IsStopped() {
+		reactor.abciClient.Reset()
+	}
+	if !reactor.abciClient.IsRunning() {
+		if err := reactor.abciClient.Start(); err != nil {
+			return fmt.Errorf(
+				"error with consensus reactors; abci unavailable for %s - %w",
+				chainID, err)
+		}
+	}
+	reactor.envMutex.Unlock()
+
 	// Given sendStatusToPeers, we should send completion updates to
 	// all consensus peers, i.e. send a ChainReplicationComplete msg.
 	consensusReactor := cometbftSwitch.Reactor(chainID, "CONSENSUS").(*cs.Reactor)
