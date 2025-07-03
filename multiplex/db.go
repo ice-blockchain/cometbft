@@ -1,10 +1,12 @@
 package multiplex
 
 import (
+	"fmt"
 	"path/filepath"
 
 	dbm "github.com/cometbft/cometbft-db"
 	"github.com/ice-blockchain/cometbft/config"
+	"github.com/ice-blockchain/cometbft/libs/service"
 )
 
 // ----------------------------------------------------------------------------
@@ -72,4 +74,21 @@ func NewMultiplexDB(
 	}
 
 	return multiplex, nil
+}
+
+// EnsureStartDBService asserts the type of s for it being a DBService and
+// makes sure that it will be reset & started if it is necessary.
+func EnsureStartDBService(s service.Service) error {
+	if dbS, ok := s.(*DBService); ok {
+		if !dbS.IsRunning() {
+			if dbS.IsStopped() {
+				dbS.Reset() // reset stopped flag
+			}
+			dbS.Start()
+		}
+
+		return nil
+	}
+
+	return fmt.Errorf("failed to open database: %v", s)
 }

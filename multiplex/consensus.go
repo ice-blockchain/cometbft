@@ -137,7 +137,12 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	stateStoreProvider := reactor.GetInstanceProvider(InstanceKeyStateStore)
 	blockStoreProvider := reactor.GetInstanceProvider(InstanceKeyBlockStore)
 	privvalProvider := reactor.GetInstanceProvider(InstanceKeyPrivValidator)
+
 	evidenceDBService := servicesProvider(ServiceKeyDatabaseEvidence, chainID)
+	if err := EnsureStartDBService(evidenceDBService); err != nil {
+		return fmt.Errorf(
+			"failed to open evidence database for %s: %w", chainID, err)
+	}
 
 	// The node config contains the configuration overwrite.
 	cfgOverwrite := configProvider(chainID).(*config.Config)

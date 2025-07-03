@@ -31,6 +31,10 @@ import (
 
 // ----------------------------------------------------------------------------
 // MultiplexClient Broadcast Test (Using client.BroadcastTx)
+//
+// -run=TestScenarioClientBroadcast
+// -run=TestScenarioClientBroadcastMinimal
+// -run=TestScenarioConcurrent
 
 var randomizer = rand.New(rand.NewSource(time.Now().Unix()))
 
@@ -399,7 +403,7 @@ func waitForClientBroadcastStatus(
 	return resultStatusMsg
 }
 
-func TestScenarioClientBroadcastErrors(t *testing.T) {
+func TestScenarioClientBroadcastMinimalErrors(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 0
@@ -476,7 +480,7 @@ func TestScenarioClientBroadcastErrors(t *testing.T) {
 
 // With a list of healthy relays, we test the ability to intercept replication
 // channel message: ChainReplicationResponse from each of the relays.
-func TestScenarioClientBroadcastWaitForReplicationResponses(t *testing.T) {
+func TestScenarioClientBroadcasMinimalWaitForReplicationResponses(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 0
@@ -544,7 +548,7 @@ func TestScenarioClientBroadcastWaitForReplicationResponses(t *testing.T) {
 // channel message: AckTransactionBroadcast from each of the relays.
 // In a second iteration, we set 2 relays to be unhealthy and make sure that
 // that the Ack process times out gracefully but still intercepts other Acks.
-func TestScenarioClientBroadcastWaitForAckTransactions(t *testing.T) {
+func TestScenarioClientBroadcastMinimalWaitForAckTransactions(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 0
@@ -679,7 +683,7 @@ func TestScenarioClientBroadcastWaitForAckTransactions(t *testing.T) {
 
 // With a list of healthy relays, we test the ability to intercept replication
 // channel message: ChainReplicationComplete from each of the relays.
-func TestScenarioClientBroadcastWaitForReplicationCompleted(t *testing.T) {
+func TestScenarioClientBroadcastMinimalWaitForReplicationCompleted(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 0
@@ -834,7 +838,7 @@ func TestScenarioClientBroadcastWaitForReplicationCompleted(t *testing.T) {
 // and then shared with other relays using a message on mempool channel,
 // to which the relays respond with a AckTransactionBroadcast message
 // before we proceed to accepting the transaction.
-func TestScenarioClientBroadcastHealthyRelays(t *testing.T) {
+func TestScenarioClientBroadcastMinimalHealthyRelays(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 1
@@ -998,7 +1002,7 @@ func TestScenarioClientBroadcastHealthyRelays(t *testing.T) {
 // and a ChainReplicationResponse is expected before sharing transactions
 // using a message on mempool channel, to which the relays respond with a
 // AckTransactionBroadcast message before we proceed to accepting the transaction.
-func TestScenarioClientBroadcastEmptyRelays(t *testing.T) {
+func TestScenarioClientBroadcastMinimalEmptyRelays(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 0
@@ -1090,7 +1094,7 @@ func TestScenarioClientBroadcastEmptyRelays(t *testing.T) {
 // With a list of empty relays, a first block of the network will be created,
 // which includes the broadcast transactions data (using client.BroadcastTx),
 // and the state machine and blocks store are updated with transactions data.
-func TestScenarioClientBroadcastEmptyRelaysProduceBlockWithTx(t *testing.T) {
+func TestScenarioClientBroadcastMinimalEmptyRelaysProduceBlockWithTx(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 0
@@ -1191,7 +1195,7 @@ func TestScenarioClientBroadcastEmptyRelaysProduceBlockWithTx(t *testing.T) {
 // We further test the healthy relays counter process which implies successful
 // calls to GetRemoteRelayInfo, and the exclusion of "self" from relays list
 // if necessary.
-func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
+func TestScenarioClientBroadcastMinimalCountsHealthyRelays(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 0
@@ -1483,7 +1487,7 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 // We further test the healthy relays counter process when relying on relay
 // address that DO NOT contain a relay ID. Namely, calls to GetRemoteRelayInfo
 // should be successful and fill the healthyRemoteRelays slice correctly.
-func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
+func TestScenarioClientBroadcastMinimalCountsRemoteRelays(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 0
@@ -1693,7 +1697,7 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 // locally and then shared with healthy relays using a message on mempool channel,
 // to which the relays respond with a AckTransactionBroadcast message before we
 // proceed to accepting the transaction.
-func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
+func TestScenarioClientBroadcastMinimalEnoughHealthyRelays(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 0
@@ -1910,7 +1914,7 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 // we first sanity check a successful broadcast completion with
 // less minimum healthy relays, and then we test a broadcast failure
 // with five relays failing, i.e. too many, to fail the broadcast.
-func TestScenarioClientBroadcastNotEnoughHealthyRelays(t *testing.T) {
+func TestScenarioClientBroadcastMinimalNotEnoughHealthyRelays(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 0
@@ -2518,7 +2522,7 @@ func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
 // test executes a broadcast operation before shutting down the backend and
 // one after having restarted the backend to ensure that continuation works.
 // Finally, it also broadcasts one more transaction using a different ChainID.
-func TestScenarioClientBroadcastBeforeAndAfterBackendRestart(t *testing.T) {
+func TestScenarioClientBroadcastMinimalBeforeAndAfterBackendRestart(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 0

@@ -1079,13 +1079,14 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 			indexerService := servicesProvider(ServiceKeyIndexers, txChainID).(*txindex.IndexerService)
 
 			// The indexer Get() method will need the database open.
-			indexDbService := servicesProvider(ServiceKeyDatabaseIndex, txChainID).(*DBService)
-			if !indexDbService.IsRunning() {
-				if indexDbService.IsStopped() {
-					indexDbService.Reset()
-				}
-
-				indexDbService.Start()
+			indexDatabase := servicesProvider(ServiceKeyDatabaseIndex, txChainID)
+			if err := EnsureStartDBService(indexDatabase); err != nil {
+				b.logger.Error("Failed to search for indexed transaction",
+					"chain_ids", txChainID,
+					"tx_hash", txHashesToHex(tx)[0],
+					"err", err,
+				)
+				continue
 			}
 
 			// First try to find transaction with tx indexer.

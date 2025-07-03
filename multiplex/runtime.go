@@ -154,6 +154,16 @@ func (reactor *Reactor) InjectStateMachine(
 	stateDatabaseService := servicesProvider(ServiceKeyDatabaseState, chainID)
 	blockDatabaseService := servicesProvider(ServiceKeyDatabaseBlock, chainID)
 
+	if err := EnsureStartDBService(stateDatabaseService); err != nil {
+		return fmt.Errorf(
+			"failed to open state database for %s: %w", chainID, err)
+	}
+
+	if err := EnsureStartDBService(blockDatabaseService); err != nil {
+		return fmt.Errorf(
+			"failed to open block database for %s: %w", chainID, err)
+	}
+
 	// The state machine is created using the genesis doc.
 	genesisDoc, err := icsGenesisDocSet.GenesisDocByChainID(chainID)
 	if err != nil {
