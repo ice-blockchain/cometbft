@@ -612,24 +612,24 @@ func TestScenarioClientBroadcastMinimalWaitForAckTransactions(t *testing.T) {
 	assert.NoError(t, actualAcceptErr, "should complete AckTransaction process")
 	assert.NotEmpty(t, actualRelaysPerTx)
 
-	// TEST 2 - Error
+	// TEST 2 - Success
 	//
-	// Add 2 unhealthy relays to relays including self, and make sure we timeout
-	// correctly for the 2 unhealthy relays
+	// Add 2 unhealthy relays to relays including self, and make sure the ACK
+	// process goes through because we have 2/3 of ACKs (+self) for the tx.
 	// numRelays=7;numHealthy=5;numErrors=2;withSelf=true
 
-	relaysForErrCase := healthyRelays[:len(healthyRelays)-2] // with IDs!
-	numHealthy = len(relaysForErrCase)                       // 5
+	relaysForTestCase = healthyRelays[:len(healthyRelays)-2] // with IDs!
+	numHealthy = len(relaysForTestCase)                      // 5
 	testChainID2 := makeChainID("test-chain-2")
-	numRelaysForErrCase := 7
-	for i := numHealthy; i < numRelaysForErrCase; i++ {
-		relaysForErrCase = append(relaysForErrCase, "1.2.3.4:"+strconv.Itoa(1000+i))
+	numRelaysForTestCase := 7
+	for i := numHealthy; i < numRelaysForTestCase; i++ {
+		relaysForTestCase = append(relaysForTestCase, "1.2.3.4:"+strconv.Itoa(1000+i))
 	}
 
 	// testChainRelays contains 2 unhealthy relays (which don't have ID),
 	// but these will be *filtered* out due to not being healthy.
 	testChainRelays,
-		testCatchupRelays = mockRelayMapsForChainID(t, testRelayOne, relaysForErrCase, testChainID2, false) // false=useCatchup
+		testCatchupRelays = mockRelayMapsForChainID(t, testRelayOne, relaysForTestCase, testChainID2, false) // false=useCatchup
 
 	// Remove 2 healthy relays to force timeout, as we expect them to Ack
 	// but they will not be sending a AckTransactionBroadcast message.
@@ -637,7 +637,7 @@ func TestScenarioClientBroadcastMinimalWaitForAckTransactions(t *testing.T) {
 	testAckingRelays[testChainID2] = testChainRelays[testChainID2][:]
 
 	// Now add back the 2 unhealthy relays so that they are expected to Ack.
-	for i := numHealthy; i < numRelaysForErrCase; i++ {
+	for i := numHealthy; i < numRelaysForTestCase; i++ {
 		// random node key
 		privKey := ed25519.GenPrivKey()
 		nodeKey := &p2p.NodeKey{
@@ -676,8 +676,78 @@ func TestScenarioClientBroadcastMinimalWaitForAckTransactions(t *testing.T) {
 	testTxHash := fmt.Sprintf("%X", testTransactions2[0].Hash())
 	actualAcksReceived := testRelayOne.GetAckResponsePeers(testTxHash)
 
+	// Missing only 2/6 acks should NOT error
 	assert.Len(t, actualAcksReceived, expectedNumReceived)
-	assert.Error(t, actualAcceptErr, "should timeout gracefully")
+	assert.NoError(t, actualAcceptErr, "should not error given 2/3 ACKs")
+
+	// TEST 3 - Error
+	//
+	// Add 3 unhealthy relays to relays including self, and make sure the ACK
+	// process errors because we have less than 2/3 of ACKs (+self) for the tx.
+	// numRelays=7;numHealthy=4;numErrors=3;withSelf=true
+
+	relaysForErrCase := healthyRelays[:len(healthyRelays)-3] // with IDs!
+	numHealthy = len(relaysForErrCase)                       // 4
+	testChainID3 := makeChainID("test-chain-3")
+	numRelaysForErrCase := 7
+	for i := numHealthy; i < numRelaysForErrCase; i++ {
+		relaysForErrCase = append(relaysForErrCase, "1.2.3.4:"+strconv.Itoa(1000+i))
+	}
+
+	// testChainRelays contains 2 unhealthy relays (which don't have ID),
+	// but these will be *filtered* out due to not being healthy.
+	testChainRelays,
+		testCatchupRelays = mockRelayMapsForChainID(t, testRelayOne, relaysForErrCase, testChainID3, false) // false=useCatchup
+
+	// Remove 2 healthy relays to force timeout, as we expect them to Ack
+	// but they will not be sending a AckTransactionBroadcast message.
+	testAckingRelays = make(map[string][]*server.RelayAddress, 1)
+	testAckingRelays[testChainID3] = testChainRelays[testChainID3][:]
+
+	// Now add back the 2 unhealthy relays so that they are expected to Ack.
+	for i := numHealthy; i < numRelaysForErrCase; i++ {
+		// random node key
+		privKey := ed25519.GenPrivKey()
+		nodeKey := &p2p.NodeKey{
+			PrivKey: privKey,
+		}
+
+		fakeRelayAddr, _ := server.NewRelayAddress(string(nodeKey.ID()) + "@1.2.3.4:" + strconv.Itoa(1000+i))
+		testChainRelays[testChainID3] = append(testChainRelays[testChainID3], fakeRelayAddr)
+	}
+
+	// We don't want to stall tests here, fast timeout for failing Acks.
+	thirdTimeoutAfter := 300 * time.Millisecond
+	thirdBroadcastCtx, thirdCancelCtxFn := context.WithTimeout(context.TODO(), thirdTimeoutAfter)
+	defer thirdCancelCtxFn()
+
+	testChainInfo3, err := mx.NewExtendedChainIDFromLegacy(testChainID3)
+	require.NoError(t, err, "should create correctly formatted ChainID")
+	testTransactions3 := makeClientTransactions(t, testChainInfo3, 1)
+
+	// Block main thread to test AckTransaction process
+	_, _, actualExpectedAcks, _, actualAcceptErr = clientAckTransaction(t,
+		thirdBroadcastCtx,
+		testRelayOne,
+		testAckingRelays, // unhealthy removed
+		testCatchupRelays,
+		testChainRelays, // mustAckRelays => 2 are unhealthy
+		testTransactions3,
+	)
+
+	// This error case must count unhealthy relays in "expected to Ack".
+	expectedNumAwaitedAcks = len(testChainRelays[testChainID3]) // -self
+	assert.Equal(t, expectedNumAwaitedAcks, actualExpectedAcks)
+
+	// We won't receive all Acks, but should receive from all healthy relays.
+	// In this test, we do NOT receive enough ACKs to proceed.
+	expectedNumReceived = numHealthy - 1 // -self-unhealthy
+	testTxHash = fmt.Sprintf("%X", testTransactions3[0].Hash())
+	actualAcksReceived = testRelayOne.GetAckResponsePeers(testTxHash)
+
+	// Should error because we have too few ACKs, i.e. less than 2/3
+	assert.Len(t, actualAcksReceived, expectedNumReceived)
+	require.Error(t, actualAcceptErr, "should timeout gracefully given less than 2/3 ACKs")
 	assert.Contains(t, actualAcceptErr.Error(), "process timed out waiting for ack messages")
 }
 

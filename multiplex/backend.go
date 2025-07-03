@@ -1423,8 +1423,7 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 	// Consumed by [remoteAckTransactionConsumer].
 	remoteAckAcceptTxChs := make(map[string]chan *mxp2p.AckTransactionBroadcast, len(transactions))
 
-	// Written on by [remoteAckTransactionConsumer] when it errors, and also
-	// written on by [localAckTransactionConsumer] when it errors and when it
+	// Written on by [localAckTransactionConsumer] when it errors and when it
 	// is done processing (enough) transaction acknowledgments for this batch.
 	// Consumed at the end of this method.
 	asyncResultsCh := make(chan AckTransactionResult, len(transactions))
@@ -1468,7 +1467,6 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 			transaction,                  // ... and for this transaction
 			remoteAckAcceptTxChs[txHash], // Consuming this channel
 			localAckAcceptTxChs[txHash],  // Forwarding to local consumer
-			asyncResultsCh,
 			shutdownWaitChs[txHash],
 		)
 
@@ -1534,34 +1532,20 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 	}
 
 	// Waits until we have all required results (or errors).
-	numErrors := 0
-	maxErrorsPerTx := len(relevantRelays) - (len(relevantRelays)*2/3 + 1)
-	errsPerTxHash := map[string]int{}
-	for (numReceived + numErrors) < numExpected {
+	numResponses := 0
+	for numResponses < numExpected {
 		select {
 		case txResult := <-asyncResultsCh: // Wait for one result (it doesn't matter which)
 			if txResult.Error != nil {
-				// At best, we just account for this error, but don't stop.
-				numErrors++
-				if _, ok := errsPerTxHash[txResult.TxHash]; !ok {
-					errsPerTxHash[txResult.TxHash] = 1
-				} else {
-					errsPerTxHash[txResult.TxHash]++
-				}
-
-				// We stop waiting if we didn't reach 2/3+1 relays to ACK a tx.
 				err = txResult.Error
-				if errsPerTxHash[txResult.TxHash] > maxErrorsPerTx {
-					shutdownForError(transactions, shutdownWaitChs, localAckAcceptTxChs, err)
-					return
-				}
-
-				continue // continue processing results
+				shutdownForError(transactions, shutdownWaitChs, localAckAcceptTxChs, err)
+				return
 			}
 
 			relaysPerTx[txResult.TxHash] = make([]string, 0, len(txResult.Relays))
 			relaysPerTx[txResult.TxHash] = append(relaysPerTx[txResult.TxHash], txResult.Relays...)
 			numReceived += len(txResult.Relays)
+			numResponses += len(relevantRelays) // counts potential unhealthy
 
 			// Shutdown any living goroutine for this txHash
 			shutdownFn(txResult.TxHash, shutdownWaitChs, localAckAcceptTxChs, nil)
@@ -3102,7 +3086,6 @@ func (b *MultiplexBackend) remoteAckTransactionConsumer(
 	transaction client.Transaction,
 	remoteAcceptTxCh chan *mxp2p.AckTransactionBroadcast,
 	localAcceptTxCh chan string,
-	resultsCh chan AckTransactionResult,
 	shutdownCh chan struct{},
 ) {
 	consumerTxHash := fmt.Sprintf("%X", transaction.Hash())
@@ -3138,15 +3121,6 @@ func (b *MultiplexBackend) remoteAckTransactionConsumer(
 			localAcceptTxCh <- acceptMsg
 
 		case <-ctx.Done():
-			err := fmt.Errorf(
-				"process timed out waiting for ack messages (remote) for tx: %s", consumerTxHash)
-
-			resultsCh <- AckTransactionResult{
-				TxHash: consumerTxHash,
-				Error:  err,
-			}
-			return
-
 		case <-b.reactor.Quit():
 		case <-shutdownCh:
 			return
@@ -3172,6 +3146,7 @@ func (b *MultiplexBackend) localAckTransactionConsumer(
 
 	relaysPerTx := make(map[string][]string, 1)
 	numExpected := len(relevantRelays)
+	minExpected := len(relevantRelays) * 2 / 3
 	numReceived := 0
 	if numExpected == 0 {
 		resultsCh <- AckTransactionResult{
@@ -3255,6 +3230,23 @@ func (b *MultiplexBackend) localAckTransactionConsumer(
 			}
 
 		case <-ctx.Done():
+			// We shouldn't error if we received 2/3 relay ACKs for the tx.
+			if numReceived >= minExpected {
+				txHash := consumerTxHash
+
+				b.ackResponsesMtx.RLock()
+				relaysPerTx[txHash] = make([]string, 0, len(b.ackResponsesRcvd[txHash]))
+				relaysPerTx[txHash] = append(relaysPerTx[txHash], b.ackResponsesRcvd[txHash]...)
+				b.ackResponsesMtx.RUnlock()
+
+				resultsCh <- AckTransactionResult{
+					Relays: relaysPerTx[txHash],
+					TxHash: txHash,
+				}
+				return
+			}
+
+			// If we didn't receive at least 2/3 relay ACKs for the tx, forward an error.
 			err := fmt.Errorf(
 				"process timed out waiting for ack messages (local) for tx: %s", consumerTxHash)
 

@@ -486,10 +486,11 @@ func (c MultiplexClient) BroadcastTx(
 
 	for chainID, replRelays := range replRelaysPerChainID {
 		// Make sure to have a minimum of healthy relays to accept.
-		minAcceptReplication := int(math.Min(
-			float64(minHealthyRelays),
+		minHealthyReplicators := int(math.Max(
+			float64(minHealthyRelays-1), // -self
 			float64(len(catchupRelays[chainID])),
 		))
+		minAcceptReplication := minHealthyReplicators * 2 / 3 // no + 1, because self doesn't ACK
 
 		// We must receive replication responses from at least minHealthyRelays.
 		if len(replRelays) < minAcceptReplication {
@@ -687,7 +688,7 @@ func (c MultiplexClient) BroadcastTx(
 
 	// acceptErr will NOT be set for individual ACK errors because we may
 	// be able to reach consensus without ALL relays sending ACK responses.
-	expectedRelaysPerTx, ackedRelaysPerTx,
+	_, ackedRelaysPerTx,
 		numExpectedAcks,
 		totalAckReceived,
 		acceptErr := c.GetBackend().WaitForRelaysAckTransactionBatch(ctx,
@@ -738,11 +739,11 @@ func (c MultiplexClient) BroadcastTx(
 	}
 
 	for txHash, ackedRelays := range ackedRelaysPerTx {
-		// Make sure to have a minimum of minHealthyRelays to ACK.
-		minAcceptTransaction := int(math.Min(
-			float64(minHealthyRelays),
-			float64(len(expectedRelaysPerTx[txHash])),
-		))
+		// Make sure to have a minimum of 2/3 of relays to ACK the tx.
+		minAcceptTransaction := numConsensusRelays * 2 / 3 // no + 1, because self doesn't ACK
+		if numExpectedAcks == 0 {
+			minAcceptTransaction = 0
+		}
 
 		if len(ackedRelays) < minAcceptTransaction {
 			// Not all healthy relays acked this transaction.
