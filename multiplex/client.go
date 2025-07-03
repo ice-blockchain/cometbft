@@ -740,7 +740,7 @@ func (c MultiplexClient) BroadcastTx(
 
 	for txHash, ackedRelays := range ackedRelaysPerTx {
 		// Make sure to have a minimum of 2/3 of relays to ACK the tx.
-		minAcceptTransaction := numConsensusRelays * 2 / 3 // no + 1, because self doesn't ACK
+		minAcceptTransaction := (numConsensusRelays - 1) * 2 / 3 // -1 for self
 		if numExpectedAcks == 0 {
 			minAcceptTransaction = 0
 		}
