@@ -949,6 +949,7 @@ func (b *MultiplexBackend) OnBroadcastError(
 		"err", reason,
 	)
 
+	// Completes the runtimes activated by client.BroadcastTx.
 	for _, chainID := range relevantChainIds {
 		b.GetRuntimeRegistry().OnComplete(chainID)
 	}
@@ -1373,6 +1374,11 @@ func (b *MultiplexBackend) WaitForRelaysAckChainReplications(
 // AckTransactionBroadcast messages from peers, and the `remoteRelayTxCh`
 // channel to process the messages into a relay ID and transaction hash.
 //
+// Note that err will NOT be set for individual ACK errors because we may
+// be able to reach consensus without ALL relays sending ACK responses.
+// The returned err field will only be set given a larger potion of relays
+// do not respond with a transaction ACK, more than 2/3+1 of relays.
+//
 // WaitForRelaysAckTransactionBatch implements [server.Backend].
 func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 	ctx context.Context,
@@ -1527,14 +1533,29 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 	}
 
 	// Waits until we have all required results (or errors).
-	for numReceived < numExpected {
+	numErrors := 0
+	maxErrorsPerTx := len(relevantRelays) - (len(relevantRelays)*2/3 + 1)
+	errsPerTxHash := map[string]int{}
+	for (numReceived + numErrors) < numExpected {
 		select {
 		case txResult := <-asyncResultsCh: // Wait for one result (it doesn't matter which)
 			if txResult.Error != nil {
-				// We stop waiting at first error that occurs.
+				// At best, we just account for this error, but don't stop.
+				numErrors++
+				if _, ok := errsPerTxHash[txResult.TxHash]; !ok {
+					errsPerTxHash[txResult.TxHash] = 1
+				} else {
+					errsPerTxHash[txResult.TxHash]++
+				}
+
+				// We stop waiting if we didn't reach 2/3+1 relays to ACK a tx.
 				err = txResult.Error
-				shutdownForError(transactions, shutdownWaitChs, localAckAcceptTxChs, err)
-				return
+				if errsPerTxHash[txResult.TxHash] > maxErrorsPerTx {
+					shutdownForError(transactions, shutdownWaitChs, localAckAcceptTxChs, err)
+					return
+				}
+
+				continue // continue processing results
 			}
 
 			relaysPerTx[txResult.TxHash] = make([]string, 0, len(txResult.Relays))
@@ -3119,7 +3140,10 @@ func (b *MultiplexBackend) remoteAckTransactionConsumer(
 			err := fmt.Errorf(
 				"process timed out waiting for ack messages (remote) for tx: %s", consumerTxHash)
 
-			resultsCh <- AckTransactionResult{Error: err}
+			resultsCh <- AckTransactionResult{
+				TxHash: consumerTxHash,
+				Error:  err,
+			}
 			return
 
 		case <-b.reactor.Quit():
@@ -3165,7 +3189,10 @@ func (b *MultiplexBackend) localAckTransactionConsumer(
 				err := fmt.Errorf(
 					"could not parse ack transaction message: '%s'", acceptTxMsg)
 
-				resultsCh <- AckTransactionResult{Error: err}
+				resultsCh <- AckTransactionResult{
+					TxHash: consumerTxHash,
+					Error:  err,
+				}
 				return
 			}
 
@@ -3230,7 +3257,10 @@ func (b *MultiplexBackend) localAckTransactionConsumer(
 			err := fmt.Errorf(
 				"process timed out waiting for ack messages (local) for tx: %s", consumerTxHash)
 
-			resultsCh <- AckTransactionResult{Error: err}
+			resultsCh <- AckTransactionResult{
+				TxHash: consumerTxHash,
+				Error:  err,
+			}
 			return
 
 		case <-b.reactor.Quit():

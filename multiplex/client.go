@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"slices"
 	"strconv"
 	"sync"
@@ -136,7 +137,7 @@ func (c MultiplexClient) BroadcastTx(
 	// before evaluating the presence of "self", and we will update
 	// numConsensusRelays later, in case self is not present.
 	numConsensusRelays := len(relayAddresses)
-	minHealthyRelays := (numConsensusRelays / 2) + 1
+	minHealthyRelays := numConsensusRelays*2/3 + 1
 	maxFailingRelays := numConsensusRelays - minHealthyRelays
 
 	// TODO(midas): remove debug logs
@@ -164,7 +165,7 @@ func (c MultiplexClient) BroadcastTx(
 	// relaysWithoutSelf excludes self from healthyRelays if present.
 	//
 	// The broadcast process will be terminated at this step only if we have
-	// less than 50%+1 of relays being considered healthy.
+	// less than 2/3+1 of relays being considered healthy.
 	// ------------------------------------------------------------------------
 
 	// Determine required ChainIDs and unknown ChainIDs.
@@ -222,7 +223,7 @@ func (c MultiplexClient) BroadcastTx(
 		numHealthyRelays = numHealthyRelays + 1     // count self as healthy
 		numConsensusRelays = numConsensusRelays + 1 // add as required relay
 
-		minHealthyRelays = (numConsensusRelays / 2) + 1
+		minHealthyRelays = numConsensusRelays*2/3 + 1
 		maxFailingRelays = numConsensusRelays - minHealthyRelays
 	}
 
@@ -238,7 +239,7 @@ func (c MultiplexClient) BroadcastTx(
 		"tx_batch", transactionHashes,
 	)
 
-	// We must have at least 50%+1 healthy relays, otherwise discard the batch.
+	// We must have at least 2/3+1 healthy relays, otherwise discard the batch.
 	if numHealthyRelays < minHealthyRelays {
 		err := fmt.Errorf(
 			"CLIENT ERROR: not enough healthy relays; expected %d, got %d",
@@ -470,8 +471,6 @@ func (c MultiplexClient) BroadcastTx(
 		return // STOP here
 	}
 
-	// As we use only healthy relays for replication requests, we must receive
-	// replication responses from *all* of them.
 	if numReceivedResponses >= numExpectedResponses {
 		// Inform about the readiness of replication acceptance
 		c.backend.GetLogger().Info("Relays accepted chain replication",
@@ -486,11 +485,18 @@ func (c MultiplexClient) BroadcastTx(
 	}
 
 	for chainID, replRelays := range replRelaysPerChainID {
-		if len(replRelays) < len(catchupRelays[chainID]) {
+		// Make sure to have a minimum of healthy relays to accept.
+		minAcceptReplication := int(math.Min(
+			float64(minHealthyRelays),
+			float64(len(catchupRelays[chainID])),
+		))
+
+		// We must receive replication responses from at least minHealthyRelays.
+		if len(replRelays) < minAcceptReplication {
 			// Not all healthy relays replicated this ChainID.
 			err := fmt.Errorf(
 				"CLIENT ERROR: missing relays replication for %s, expected %d, got %d",
-				chainID, len(catchupRelays[chainID]), len(replRelays))
+				chainID, minAcceptReplication, len(replRelays))
 
 			c.backend.OnBroadcastError(err, userAddress, transactions...)
 			client.Error(notifyCh, err)
@@ -679,6 +685,8 @@ func (c MultiplexClient) BroadcastTx(
 		"tx_batch", transactionHashes,
 	)
 
+	// acceptErr will NOT be set for individual ACK errors because we may
+	// be able to reach consensus without ALL relays sending ACK responses.
 	expectedRelaysPerTx, ackedRelaysPerTx,
 		numExpectedAcks,
 		totalAckReceived,
@@ -730,7 +738,13 @@ func (c MultiplexClient) BroadcastTx(
 	}
 
 	for txHash, ackedRelays := range ackedRelaysPerTx {
-		if len(ackedRelays) < len(expectedRelaysPerTx[txHash]) {
+		// Make sure to have a minimum of minHealthyRelays to ACK.
+		minAcceptTransaction := int(math.Min(
+			float64(minHealthyRelays),
+			float64(len(expectedRelaysPerTx[txHash])),
+		))
+
+		if len(ackedRelays) < minAcceptTransaction {
 			// Not all healthy relays acked this transaction.
 			// Broadcast a rollback operation because some of the healthy relays
 			// may have included (some) transactions in their mempool already.
@@ -742,13 +756,13 @@ func (c MultiplexClient) BroadcastTx(
 			// Just log for now, report will be more precise
 			c.backend.GetLogger().Error("Failed to receive required transactions ACK",
 				"num_received", len(ackedRelays),
-				"num_expected", len(expectedRelaysPerTx[txHash]),
+				"num_expected", minAcceptTransaction,
 				"relay_acks", ackedRelays,
 				"tx_hash", txHash)
 
 			err := fmt.Errorf(
 				"CLIENT ERROR: missing transaction ACK for %s, expected %d, got %d",
-				txHash, len(expectedRelaysPerTx[txHash]), len(ackedRelays))
+				txHash, minAcceptTransaction, len(ackedRelays))
 
 			c.backend.OnBroadcastError(err, userAddress, transactions...)
 			client.Error(notifyCh, err)

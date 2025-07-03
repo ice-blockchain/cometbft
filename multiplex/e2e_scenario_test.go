@@ -464,7 +464,7 @@ func TestScenarioClientBroadcastErrors(t *testing.T) {
 	assert.Contains(t, resultStatusMsg.Error.Error(), "not enough healthy relays")
 	close(notifyCh)
 
-	numExpected := (numRelaysForErrCase / 2) + 1
+	numExpected := numRelaysForErrCase*2/3 + 1
 	expectedMessage := fmt.Sprintf("expected %d, got %d", numExpected, numHealthy)
 	assert.Contains(t, resultStatusMsg.Error.Error(), expectedMessage)
 
@@ -1254,7 +1254,7 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 	assert.Contains(t, resultStatusMsg1.Error.Error(), "not enough healthy relays")
 	close(notifyCh1)
 
-	numExpected := (numRelaysForErrCase / 2) + 1
+	numExpected := numRelaysForErrCase*2/3 + 1
 	expectedMessage := fmt.Sprintf("expected %d, got %d", numExpected, numHealthy)
 	assert.Contains(t, resultStatusMsg1.Error.Error(), expectedMessage)
 
@@ -1297,17 +1297,17 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 	assert.Contains(t, resultStatusMsg2.Error.Error(), "not enough healthy relays")
 	close(notifyCh2)
 
-	numExpected = (numRelaysForErrCase / 2) + 1
+	numExpected = numRelaysForErrCase*2/3 + 1
 	expectedMessage = fmt.Sprintf("expected %d, got %d", numExpected, numHealthy)
 	assert.Contains(t, resultStatusMsg2.Error.Error(), expectedMessage)
 
 	// TEST 3 - Errors
 	//
 	// Add 5 unavailable relay to the list and remove self from relays.
-	// numRelays=8;numHealthy=3;numErrors=4;withSelf=false
+	// numRelays=8;numHealthy=3;numErrors=5;withSelf=false
 	relaysForErrCase = []string{}
 	relaysForErrCase = healthyRelays[1:] // removes self
-	numHealthy = 2
+	numHealthy = len(relaysForErrCase)
 	numRelaysForErrCase = 8
 	for i := numHealthy; i < numRelaysForErrCase-1; i++ {
 		relaysForErrCase = append(relaysForErrCase, "1.2.3.4:"+strconv.Itoa(1000+i))
@@ -1342,7 +1342,7 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 	assert.Contains(t, resultStatusMsg3.Error.Error(), "not enough healthy relays")
 	close(notifyCh3)
 
-	numExpected = (numRelaysForErrCase / 2) + 1
+	numExpected = numRelaysForErrCase*2/3 + 1
 	numHealthy = numHealthy + 1 // "self" is healthy also if not in relays.
 	expectedMessage = fmt.Sprintf("expected %d, got %d", numExpected, numHealthy)
 	assert.Contains(t, resultStatusMsg3.Error.Error(), expectedMessage)
@@ -1474,7 +1474,7 @@ func TestScenarioClientBroadcastCountsHealthyRelays(t *testing.T) {
 	assert.Contains(t, resultStatusMsg6.Error.Error(), "not enough healthy relays")
 	close(notifyCh6)
 
-	numExpected = (numRelaysForErrCase / 2) + 1
+	numExpected = numRelaysForErrCase*2/3 + 1
 	numHealthy = numHealthy + 1 // "self" is healthy also if not in relays.
 	expectedMessage = fmt.Sprintf("expected %d, got %d", numExpected, numHealthy)
 	assert.Contains(t, resultStatusMsg6.Error.Error(), expectedMessage)
@@ -1487,7 +1487,7 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 0
-	numHealthy := 2
+	numHealthy := 3
 
 	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numHealthy) // only healthy here
 	defer shutdownFn(servers)
@@ -1512,10 +1512,10 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 	// Add 1 unavailable relay to the list WITH self, and removed relay IDs,
 	// and should broadcast successfully. Uses a NEW ChainID.
 	//
-	// numRelays=3;numHealthy=2;numErrors=1;withSelf=true
+	// numRelays=4;numHealthy=3;numErrors=1;withSelf=true
 	relaysForTestCase := healthyRelaysWithoutIds[:]
-	numHealthy = len(relaysForTestCase)
-	numRelaysForTestCase := 3
+	numHealthy = len(relaysForTestCase) // 3
+	numRelaysForTestCase := 4           // 4*2/3+1 = 3
 	for i := numHealthy; i < numRelaysForTestCase; i++ {
 		relaysForTestCase = append(relaysForTestCase, "1.2.3.4:"+strconv.Itoa(1000+i))
 	}
@@ -1557,10 +1557,10 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 	// Add 1 unavailable relay to the list, remove self from relays and remove
 	// relay IDs, should broadcast successfully.  Uses a NEW ChainID.
 	//
-	// numRelays=3;numHealthy=2;numErrors=1;withSelf=false
+	// numRelays=4;numHealthy=3;numErrors=1;withSelf=false
 	relaysForTestCase = healthyRelaysWithoutIds[1:]
 	numHealthy = len(relaysForTestCase)
-	numRelaysForTestCase = 3
+	numRelaysForTestCase = 4
 	for i := numHealthy; i < numRelaysForTestCase-1; i++ {
 		relaysForTestCase = append(relaysForTestCase, "1.2.3.4:"+strconv.Itoa(1000+i))
 	}
@@ -1601,8 +1601,8 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 
 	// TEST 3 - Errors
 	//
-	// Add 5 unavailable relays to the list WITH self, and removed relay IDs.
-	// numRelays=7;numHealthy=2;numErrors=5;withSelf=true
+	// Add 4 unavailable relays to the list WITH self, and removed relay IDs.
+	// numRelays=7;numHealthy=3;numErrors=4;withSelf=true
 	relaysForErrCase := healthyRelaysWithoutIds[:]
 	numHealthy = len(relaysForErrCase)
 	numRelaysForErrCase := 7
@@ -1639,15 +1639,15 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 	assert.Contains(t, resultStatusMsg.Error.Error(), "not enough healthy relays")
 	close(notifyCh3)
 
-	numExpected := (numRelaysForErrCase / 2) + 1
+	numExpected := numRelaysForErrCase*2/3 + 1
 	expectedMessage := fmt.Sprintf("expected %d, got %d", numExpected, numHealthy)
 	assert.Contains(t, resultStatusMsg.Error.Error(), expectedMessage)
 
 	// TEST 4 - Errors
 	//
-	// Add 5 unavailable relays to the list and remove self from relays,
+	// Add 4 unavailable relays to the list and remove self from relays,
 	// and removed relay IDs.
-	// numRelays=7;numHealthy=2;numErrors=5;withSelf=false
+	// numRelays=7;numHealthy=3;numErrors=4;withSelf=false
 	relaysForErrCase = healthyRelaysWithoutIds[1:]
 	numHealthy = len(relaysForErrCase)
 	numRelaysForErrCase = 7
@@ -1683,7 +1683,7 @@ func TestScenarioClientBroadcastCountsRemoteRelays(t *testing.T) {
 	assert.Contains(t, resultStatusMsg.Error.Error(), "not enough healthy relays")
 	close(notifyCh4)
 
-	numExpected = (numRelaysForErrCase / 2) + 1
+	numExpected = numRelaysForErrCase*2/3 + 1
 	numHealthy = numHealthy + 1 // "self" is healthy also if not in relays.
 	expectedMessage = fmt.Sprintf("expected %d, got %d", numExpected, numHealthy)
 	assert.Contains(t, resultStatusMsg.Error.Error(), expectedMessage)
@@ -1697,8 +1697,8 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 0
-	numRelays := 3
-	numHealthy := (numRelays / 2) + 1
+	numRelays := 4
+	numHealthy := numRelays*2/3 + 1
 
 	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numHealthy) // only healthy here
 	defer shutdownFn(servers)
@@ -1706,11 +1706,13 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numHealthy)
 
-	// only 2 healthy relays to evaluate callbacks
+	// only 3 healthy relays to evaluate callbacks
 	testAcceptorRelay1 := client.NewMockAcceptorImpl()
 	testAcceptorRelay2 := client.NewMockAcceptorImpl()
+	testAcceptorRelay3 := client.NewMockAcceptorImpl()
 	servers[0].SetAcceptor(testAcceptorRelay1)
 	servers[1].SetAcceptor(testAcceptorRelay2)
+	servers[2].SetAcceptor(testAcceptorRelay3)
 
 	// Note: relays includes self
 	relays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
@@ -1739,7 +1741,7 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 	//
 	// Added 1 unavailable relay to the list with self,
 	// and remove relay IDs, should broadcast successfully.
-	// numRelays=3;numHealthy=2;numErrors=1;withSelf=true
+	// numRelays=4;numHealthy=3;numErrors=1;withSelf=true
 	relaysForTestCase := relays[:] // with self
 
 	// Separate goroutine for client broadcast process
@@ -1780,7 +1782,7 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 	//
 	// Added 1 unavailable relay to the list and remove self,
 	// and remove relay IDs, should broadcast successfully.
-	// numRelays=3;numHealthy=2;numErrors=1;withSelf=false
+	// numRelays=4;numHealthy=3;numErrors=1;withSelf=false
 	relaysForTestCase = relays[1:] // without self
 
 	secondTimeoutAfter := 20 * time.Second // Time for broadcast
@@ -1834,12 +1836,14 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 		"should locally execute CommitBroadcastTx callback for each transaction")
 	assert.Equal(t, uint64(totalExpectedCalls), testAcceptorRelay2.TxCommitCalls.Load(),
 		"should remotely execute CommitBroadcastTx callback for each transaction")
+	assert.Equal(t, uint64(totalExpectedCalls), testAcceptorRelay3.TxCommitCalls.Load(),
+		"should remotely execute CommitBroadcastTx callback for each transaction")
 
 	// TEST 3 - Success
 	//
 	// Added 1 unavailable relay to the list and remove self,
 	// and remove relay IDs, should broadcast successfully.
-	// numRelays=3;numHealthy=2;numErrors=1;withSelf=false
+	// numRelays=4;numHealthy=3;numErrors=1;withSelf=false
 	relaysForTestCase = relays[1:] // without self
 
 	thirdTimeoutAfter := 20 * time.Second // Time for broadcast
@@ -1898,6 +1902,8 @@ func TestScenarioClientBroadcastEnoughHealthyRelays(t *testing.T) {
 		"should locally execute CommitBroadcastTx callback for each transaction")
 	assert.Equal(t, uint64(totalExpectedCalls), testAcceptorRelay2.TxCommitCalls.Load(),
 		"should remotely execute CommitBroadcastTx callback for each transaction")
+	assert.Equal(t, uint64(totalExpectedCalls), testAcceptorRelay3.TxCommitCalls.Load(),
+		"should remotely execute CommitBroadcastTx callback for each transaction")
 }
 
 // With a list of empty relays, and not enough healthy relays,
@@ -1908,7 +1914,7 @@ func TestScenarioClientBroadcastNotEnoughHealthyRelays(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 0
-	numHealthy := 2
+	numHealthy := 3
 
 	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numHealthy) // only healthy here
 	defer shutdownFn(servers)
@@ -1916,11 +1922,13 @@ func TestScenarioClientBroadcastNotEnoughHealthyRelays(t *testing.T) {
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numHealthy)
 
-	// only 2 healthy relays to evaluate callbacks
+	// only 3 healthy relays to evaluate callbacks
 	testAcceptorRelay1 := client.NewMockAcceptorImpl()
 	testAcceptorRelay2 := client.NewMockAcceptorImpl()
+	testAcceptorRelay3 := client.NewMockAcceptorImpl()
 	servers[0].SetAcceptor(testAcceptorRelay1)
 	servers[1].SetAcceptor(testAcceptorRelay2)
+	servers[2].SetAcceptor(testAcceptorRelay3)
 
 	// Note: relays contains self for this test
 	healthyRelays, broadcastCtx, cancelCtxFn := StartTestScenarioRelays(t,
@@ -1942,10 +1950,10 @@ func TestScenarioClientBroadcastNotEnoughHealthyRelays(t *testing.T) {
 	// Add 1 unavailable relay to the list WITH self, and removed relay IDs,
 	// and should broadcast successfully.
 	// Makes sure successful response is possible given less required relays.
-	// numRelays=3;numHealthy=2;numErrors=1;withSelf=true
+	// numRelays=4;numHealthy=3;numErrors=1;withSelf=true
 	relaysForTestCase := healthyRelaysWithoutIds[:]
 	numHealthy = len(relaysForTestCase)
-	numRelaysForTestCase := 3
+	numRelaysForTestCase := 4
 	for i := numHealthy; i < numRelaysForTestCase; i++ {
 		relaysForTestCase = append(relaysForTestCase, "1.2.3.4:"+strconv.Itoa(1000+i))
 	}
@@ -1980,8 +1988,8 @@ func TestScenarioClientBroadcastNotEnoughHealthyRelays(t *testing.T) {
 
 	// TEST 2 - Errors
 	//
-	// Add 5 unavailable relays to the list WITH self, and removed relay IDs.
-	// numRelays=7;numHealthy=2;numErrors=5;withSelf=true
+	// Add 4 unavailable relays to the list WITH self, and removed relay IDs.
+	// numRelays=7;numHealthy=3;numErrors=4;withSelf=true
 	relaysForErrCase := healthyRelaysWithoutIds[:]
 	numHealthy = len(relaysForErrCase)
 	numRelaysForErrCase := 7
@@ -2018,7 +2026,7 @@ func TestScenarioClientBroadcastNotEnoughHealthyRelays(t *testing.T) {
 	assert.Contains(t, resultStatusMsg.Error.Error(), "not enough healthy relays")
 	close(notifyCh2)
 
-	numExpected := (numRelaysForErrCase / 2) + 1
+	numExpected := numRelaysForErrCase*2/3 + 1
 	expectedMessage := fmt.Sprintf("expected %d, got %d", numExpected, numHealthy)
 	assert.Contains(t, resultStatusMsg.Error.Error(), expectedMessage)
 
@@ -2038,6 +2046,8 @@ func TestScenarioClientBroadcastNotEnoughHealthyRelays(t *testing.T) {
 		"should locally execute CommitBroadcastTx callback for each transaction")
 	assert.Equal(t, uint64(totalExpectedCalls), testAcceptorRelay2.TxCommitCalls.Load(),
 		"should remotely execute CommitBroadcastTx callback for each transaction")
+	assert.Equal(t, uint64(totalExpectedCalls), testAcceptorRelay3.TxCommitCalls.Load(),
+		"should remotely execute CommitBroadcastTx callback for each transaction")
 }
 
 // With a list of healthy relays, i.e. just enough, the transactions will be added
@@ -2048,8 +2058,8 @@ func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 0
-	numRelays := 3
-	minHealthy := (numRelays / 2) + 1
+	numRelays := 4
+	minHealthy := numRelays*2/3 + 1
 
 	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numRelays)
 	defer shutdownFn(servers)
@@ -2259,8 +2269,8 @@ func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numChains := 0
-	numRelays := 3
-	numHealthy := (numRelays / 2) + 1 // Keep enough healthy relays
+	numRelays := 4
+	numHealthy := numRelays*2/3 + 1 // Keep enough healthy relays
 
 	servers, shutdownFn := ResetTestScenarioRelaysWithoutLogs(t, numChains, numHealthy) // only healthy here
 	defer shutdownFn(servers)
@@ -2380,6 +2390,7 @@ func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 	totalExpectedCalls := 2
 	testAcceptorRelay1 := servers[0].GetAcceptor().(*client.MockAcceptorImpl)
 	testAcceptorRelay2 := servers[1].GetAcceptor().(*client.MockAcceptorImpl)
+	testAcceptorRelay3 := servers[2].GetAcceptor().(*client.MockAcceptorImpl)
 
 	// Test that client callbacks were executed correctly, every relay should
 	// have executed the CommitBroadcastTx callback when the block is finalized.
@@ -2387,6 +2398,8 @@ func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 	require.Equal(t, uint64(totalExpectedCalls), testAcceptorRelay1.TxCommitCalls.Load(),
 		"should locally execute CommitBroadcastTx callback for each transaction")
 	require.Equal(t, uint64(totalExpectedCalls), testAcceptorRelay2.TxCommitCalls.Load(),
+		"should remotely execute CommitBroadcastTx callback for each transaction")
+	require.Equal(t, uint64(totalExpectedCalls), testAcceptorRelay3.TxCommitCalls.Load(),
 		"should remotely execute CommitBroadcastTx callback for each transaction")
 }
 
