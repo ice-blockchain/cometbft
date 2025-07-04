@@ -1123,6 +1123,7 @@ func newChannel(chainID string, conn *MConnection, desc *ChannelDescriptor) *Cha
 		conn:      conn,
 		desc:      desc,
 		sendQueue: make(chan []byte, desc.SendQueueCapacity),
+		sending:   []byte{},
 		recving:   make([]byte, 0, desc.RecvBufferCapacity),
 		nextPacketMsg: &tmp2p.PacketMsg{
 			ChainID:   chainID,
@@ -1199,7 +1200,7 @@ func (ch *Channel) updateNextPacket() {
 	if len(ch.sending) <= maxSize {
 		ch.nextPacketMsg.Data = ch.sending
 		ch.nextPacketMsg.EOF = true
-		ch.sending = nil
+		ch.sending = []byte{}
 		atomic.AddInt32(&ch.sendQueueSize, -1) // decrement sendQueueSize
 	} else {
 		ch.nextPacketMsg.Data = ch.sending[:maxSize]
