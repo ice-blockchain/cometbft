@@ -1153,6 +1153,8 @@ func (ch *Channel) sendBytes(bytes []byte) bool {
 		return true
 	case <-time.After(defaultSendTimeout):
 		return false
+	case <-ch.conn.Quit():
+		return false
 	}
 }
 

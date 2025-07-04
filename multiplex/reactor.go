@@ -213,6 +213,12 @@ type Reactor struct {
 	doneAcceptTxMtx    sync.RWMutex
 	doneAcceptTxHashes map[string]bool
 
+	doneRuntimeUpdatesMtx sync.RWMutex
+	doneRuntimeUpdates    map[string]bool
+
+	doneAckReplicationMtx sync.RWMutex
+	doneAckReplication    map[string]bool
+
 	runtimeUpdatesMtx sync.RWMutex
 	runtimeUpdatesChs map[string]chan *mxp2p.ChainReplicationComplete
 
@@ -302,9 +308,11 @@ func NewReactor(
 		// Internal channels
 		chainReadyChs:      make(map[string]chan bool),
 		ackReplResChs:      make(map[string]chan *mxp2p.ChainReplicationResponse),
+		doneAckReplication: make(map[string]bool),
 		ackAcceptTxChs:     make(map[string]chan *mxp2p.AckTransactionBroadcast),
 		doneAcceptTxHashes: make(map[string]bool),
 		runtimeUpdatesChs:  make(map[string]chan *mxp2p.ChainReplicationComplete),
+		doneRuntimeUpdates: make(map[string]bool),
 
 		// Internals
 		logger: logger,
@@ -872,6 +880,10 @@ func (reactor *Reactor) ChannelForAckReplication(chainID string) chan *mxp2p.Cha
 		reactor.ackReplResMtx.Unlock()
 	}
 
+	reactor.doneAckReplicationMtx.Lock()
+	reactor.doneAckReplication[chainID] = false
+	reactor.doneAckReplicationMtx.Unlock()
+
 	return replResChForChainID
 }
 
@@ -881,6 +893,13 @@ func (reactor *Reactor) CloseAckReplicationChannel(chainID string) {
 	reactor.ackReplResMtx.RLock()
 	ackReplResCh, hasChannel := reactor.ackReplResChs[chainID]
 	reactor.ackReplResMtx.RUnlock()
+
+	defer func() {
+		reactor.doneAckReplicationMtx.Lock()
+		reactor.doneAckReplication[chainID] = true
+		reactor.doneAckReplicationMtx.Unlock()
+	}()
+
 	if !hasChannel {
 		return
 	}
@@ -892,6 +911,7 @@ func (reactor *Reactor) CloseAckReplicationChannel(chainID string) {
 	reactor.ackReplResMtx.Lock()
 	delete(reactor.ackReplResChs, chainID)
 	reactor.ackReplResMtx.Unlock()
+
 }
 
 // ChannelForAckTransaction creates or returns an unbuffered channel that accepts
@@ -913,6 +933,10 @@ func (reactor *Reactor) ChannelForAckTransaction(txHash string) chan *mxp2p.AckT
 		reactor.ackAcceptTxMtx.Unlock()
 	}
 
+	reactor.doneAcceptTxMtx.Lock()
+	reactor.doneAcceptTxHashes[txHash] = false
+	reactor.doneAcceptTxMtx.Unlock()
+
 	return acceptChForTxHash
 }
 
@@ -922,6 +946,13 @@ func (reactor *Reactor) CloseAckTransactionChannel(txHash string) {
 	reactor.ackAcceptTxMtx.RLock()
 	acceptCh, hasChannel := reactor.ackAcceptTxChs[txHash]
 	reactor.ackAcceptTxMtx.RUnlock()
+
+	defer func() {
+		reactor.doneAcceptTxMtx.Lock()
+		reactor.doneAcceptTxHashes[txHash] = true
+		reactor.doneAcceptTxMtx.Unlock()
+	}()
+
 	if !hasChannel {
 		return
 	}
@@ -934,9 +965,6 @@ func (reactor *Reactor) CloseAckTransactionChannel(txHash string) {
 	delete(reactor.ackAcceptTxChs, txHash)
 	reactor.ackAcceptTxMtx.Unlock()
 
-	reactor.doneAcceptTxMtx.Lock()
-	reactor.doneAcceptTxHashes[txHash] = true
-	reactor.doneAcceptTxMtx.Unlock()
 }
 
 // ChannelForRuntimeUpdates creates or returns an unbuffered channel that accepts
@@ -958,6 +986,10 @@ func (reactor *Reactor) ChannelForRuntimeUpdates(chainID string) chan *mxp2p.Cha
 		reactor.runtimeUpdatesMtx.Unlock()
 	}
 
+	reactor.doneRuntimeUpdatesMtx.Lock()
+	reactor.doneRuntimeUpdates[chainID] = false
+	reactor.doneRuntimeUpdatesMtx.Unlock()
+
 	return runtimeUpdatesChForChainID
 }
 
@@ -967,6 +999,13 @@ func (reactor *Reactor) CloseRuntimeUpdatesChannel(chainID string) {
 	reactor.runtimeUpdatesMtx.RLock()
 	runtimeUpdatesCh, hasChannel := reactor.runtimeUpdatesChs[chainID]
 	reactor.runtimeUpdatesMtx.RUnlock()
+
+	defer func() {
+		reactor.doneRuntimeUpdatesMtx.Lock()
+		reactor.doneRuntimeUpdates[chainID] = true
+		reactor.doneRuntimeUpdatesMtx.Unlock()
+	}()
+
 	if !hasChannel {
 		return
 	}
@@ -1541,6 +1580,19 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			r.logger.Debug("Received ChainReplicationResponse", "msg", msg)
 			replResponse := extMsg.GetChainReplicationResponse()
 
+			// Fixes sending on closed channel when rcving too many ChainReplicationComplete.
+			r.doneAckReplicationMtx.RLock()
+			valIsDone, ok := r.doneAckReplication[replResponse.ChainID]
+			r.doneAckReplicationMtx.RUnlock()
+			doneProcessingChainID := false
+			if ok && valIsDone {
+				doneProcessingChainID = true
+			}
+
+			if doneProcessingChainID {
+				return
+			}
+
 			// Dials the CometBFT relay (OUTBOUND) to permit faster consensus startup.
 			// Due to secret conn wrapping, we may need to call the RelayInfo RPC first.
 			if err := r.DialRelayForCometBFT(discoveryAddr, replResponse.ChainID); err != nil {
@@ -1568,9 +1620,23 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			// NOTE: Don't dial back replication partner here, since we may
 			// approach runtime idling due to completion of the replication.
 
-			// Channel is mapped by transaction hash
-			runtimeUpdatesChForChainID := r.ChannelForRuntimeUpdates(replComplete.ChainID)
-			runtimeUpdatesChForChainID <- replComplete
+			// Fixes sending on closed channel when rcving too many ChainReplicationComplete.
+			r.doneRuntimeUpdatesMtx.RLock()
+			valIsDone, ok := r.doneRuntimeUpdates[replComplete.ChainID]
+			r.doneRuntimeUpdatesMtx.RUnlock()
+			doneProcessingChainID := false
+			if ok && valIsDone {
+				doneProcessingChainID = true
+			}
+
+			if !doneProcessingChainID {
+				// Channel is mapped by transaction hash
+				runtimeUpdatesChForChainID := r.ChannelForRuntimeUpdates(replComplete.ChainID)
+
+				r.runtimeUpdatesMtx.Lock()
+				runtimeUpdatesChForChainID <- replComplete
+				r.runtimeUpdatesMtx.Unlock()
+			}
 
 		default:
 			r.logger.Error(

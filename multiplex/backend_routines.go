@@ -356,7 +356,6 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 		userAddress string,
 		transactions []client.Transaction,
 		waitGroup *sync.WaitGroup,
-		errorsCh chan<- error,
 		logger cmtlog.Logger,
 	) {
 		// If we error, or the broadcast is done for all txes and all relays,
@@ -434,11 +433,14 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 
 					mempoolPartnerPeerID := string(peer.ID())
 					isReplicationPartner := slices.Contains(chainReplPartners, mempoolPartnerPeerID)
+					hasSentToPeerID := slices.Contains(poolRequestPeers, mempoolPartnerPeerID)
 
 					// Expect an ACK from any remote relays which are not
 					// handling a replication request.
-					if !isReplicationPartner && !slices.Contains(poolRequestPeers, mempoolPartnerPeerID) {
+					if !isReplicationPartner && !hasSentToPeerID {
 						poolRequestPeers = append(poolRequestPeers, mempoolPartnerPeerID)
+					} else if hasSentToPeerID || !peer.IsRunning() {
+						return
 					}
 
 					// TODO(midas): remove debug logs
@@ -463,12 +465,6 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 							"is_outbound", peer.IsOutbound(),
 							"is_running", peer.IsRunning(),
 						)
-
-						// Note: we an error on the errorsCh channel but we don't
-						// terminate the process because a failure in sending to
-						// one relay must not prevent the transaction broadcast.
-						errorsCh <- fmt.Errorf(
-							"could not send message on mempool channel for tx %s with ChainID %s", txHash, chainID)
 						return
 					}
 				}(p)

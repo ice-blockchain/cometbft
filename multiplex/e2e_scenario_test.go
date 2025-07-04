@@ -1803,6 +1803,7 @@ func TestScenarioClientBroadcastMinimalEnoughHealthyRelays(t *testing.T) {
 
 	// NOTE: this removes the Relay ID from relays addresses.
 	relays = useRelaysWithoutIds(t, relays)
+	mx.WithReplicationTimeout(10 * time.Second)(servers[0])
 
 	// Note: this test consists in having *just enough* healthy relays actively
 	// accept a client.BroadcastTx call. If enough healthy relays respond to a
@@ -2018,6 +2019,7 @@ func TestScenarioClientBroadcastMinimalNotEnoughHealthyRelays(t *testing.T) {
 
 	// NOTE: this removes the Relay ID from relays addresses.
 	healthyRelaysWithoutIds := useRelaysWithoutIds(t, healthyRelays)
+	mx.WithReplicationTimeout(10 * time.Second)(servers[0])
 
 	// TEST 1 - Success
 	//
@@ -2162,6 +2164,7 @@ func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 
 	// NOTE: this removes the Relay ID from relays addresses.
 	healthyRelaysWithoutIds := useRelaysWithoutIds(t, healthyRelays)
+	mx.WithReplicationTimeout(10 * time.Second)(servers[0])
 
 	// TEST 1 - Success
 	//
@@ -2370,6 +2373,7 @@ func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 
 	// NOTE: this removes the Relay ID from relays addresses.
 	healthyRelaysWithoutIds := useRelaysWithoutIds(t, healthyRelays)
+	mx.WithReplicationTimeout(10 * time.Second)(servers[0])
 
 	// TEST 1 - Success
 	//
@@ -2624,6 +2628,8 @@ func TestScenarioClientBroadcastMinimalBeforeAndAfterBackendRestart(t *testing.T
 	require.NotEmpty(t, relays)
 	require.NotNil(t, broadcastCtx)
 	require.Len(t, relays, numRelays)
+
+	mx.WithReplicationTimeout(10 * time.Second)(servers[0])
 
 	//reuseRootDir := servers[0].GetReactor().GetNodeConfig().RootDir
 

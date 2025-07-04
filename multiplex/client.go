@@ -625,9 +625,6 @@ func (c MultiplexClient) BroadcastTx(
 	broadcastWg := new(sync.WaitGroup)
 	broadcastWg.Add(1) // Wait for the full broadcast operation.
 
-	// Track completion of the broadcast operation
-	errorBroadcastCh := make(chan error, len(relaysWithoutSelf)*len(transactions))
-
 	// Pushes the transaction to other relays mempool to trigger
 	// the call to client.AcceptBroadcastTx by the other relays.
 	// Uses the filtered list of relays (without self).
@@ -638,36 +635,11 @@ func (c MultiplexClient) BroadcastTx(
 		userAddress,
 		transactions,
 		broadcastWg,
-		errorBroadcastCh,
 		c.backend.GetLogger().With("tx_batch", transactionHashes),
 	)
 
 	// Blocks the broadcast thread until we have sent txes to all relays.
 	broadcastWg.Wait()
-	close(errorBroadcastCh) // No more errors expected.
-
-	for broadcastRelayErr := range errorBroadcastCh {
-		// TODO(midas): remove debug logs
-		c.backend.GetLogger().Error("Failed to broadcast transaction to remote mempool",
-			"err", broadcastRelayErr,
-		)
-
-		if err, ok := broadcastRelayErr.(ErrBroadcastCancelled); ok {
-			// Sending to remote mempool ordered us a CANCEL.
-			c.backend.CancelBroadcastOperation(ctx,
-				userAddress,
-				transactions...,
-			)
-
-			cancelErr := fmt.Errorf(
-				"CLIENT ERROR: broadcast cancelled while sending to remote mempools: %w",
-				err)
-
-			c.backend.OnBroadcastError(cancelErr, userAddress, transactions...)
-			client.Error(notifyCh, cancelErr)
-			return // STOP here
-		}
-	}
 
 	// ------------------------------------------------------------------------
 	// Step 10: Wait for remote transaction acceptance (ACK).

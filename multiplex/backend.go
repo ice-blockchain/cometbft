@@ -3281,10 +3281,12 @@ func (b *MultiplexBackend) remoteRuntimeUpdatesConsumer(
 
 	// Wait a maximum duration of replicationTimeout. With a replicationTimeout
 	// of 0, this method will block until shutdown or parent context expiration.
-	var cancelFn func()
-	clientCtxOrTimeout := ctx
+	var (
+		cancelFn   func()
+		timeoutCtx context.Context
+	)
 	if b.replicationTimeout != 0 {
-		clientCtxOrTimeout, cancelFn = context.WithTimeout(ctx, b.replicationTimeout)
+		timeoutCtx, cancelFn = context.WithTimeout(context.TODO(), b.replicationTimeout)
 		defer cancelFn()
 	}
 
@@ -3309,7 +3311,8 @@ func (b *MultiplexBackend) remoteRuntimeUpdatesConsumer(
 
 			localReplFinCh <- res
 
-		case <-clientCtxOrTimeout.Done():
+		case <-timeoutCtx.Done():
+		case <-ctx.Done():
 			err := fmt.Errorf(
 				"process timed out waiting for runtime status (remote) for: %s", chainID)
 
@@ -3353,10 +3356,12 @@ func (b *MultiplexBackend) localRuntimeUpdatesConsumer(
 
 	// Wait a maximum duration of replicationTimeout. With a replicationTimeout
 	// of 0, this method will block until shutdown or parent context expiration.
-	var cancelFn func()
-	clientCtxOrTimeout := ctx
+	var (
+		cancelFn   func()
+		timeoutCtx context.Context
+	)
 	if b.replicationTimeout != 0 {
-		clientCtxOrTimeout, cancelFn = context.WithTimeout(ctx, b.replicationTimeout)
+		timeoutCtx, cancelFn = context.WithTimeout(context.TODO(), b.replicationTimeout)
 		defer cancelFn()
 	}
 
@@ -3420,7 +3425,8 @@ func (b *MultiplexBackend) localRuntimeUpdatesConsumer(
 				return
 			}
 
-		case <-clientCtxOrTimeout.Done():
+		case <-timeoutCtx.Done():
+		case <-ctx.Done():
 			err := fmt.Errorf(
 				"process timed out waiting for runtime status (local) for %s", chainID)
 

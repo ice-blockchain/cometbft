@@ -90,7 +90,6 @@ type RelaysBroadcastFn func(
 	string,
 	[]client.Transaction,
 	*sync.WaitGroup,
-	chan<- error,
 	cmtlog.Logger,
 )
 
