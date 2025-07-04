@@ -359,33 +359,15 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 		errorsCh chan<- error,
 		logger cmtlog.Logger,
 	) {
-		broadcastTxHashes := make([][]byte, len(transactions))
-
-		// (1)
-		// First dial the CometBFT P2P addresses to make sure
-		// communication with this relay is possible using mempool.
-		numExpectedAcksByChain := make(map[string]int, len(relaysByChain))
-		for chainID, relays := range relaysByChain {
-			relaysWithoutSelf := []*server.RelayAddress{}
-			for _, relayAddr := range relays {
-				if relayAddr.ID() != b.reactor.GetNodeKey().ID() {
-					relaysWithoutSelf = append(relaysWithoutSelf, relayAddr)
-				}
-			}
-
-			numExpectedAcksByChain[chainID] = len(relaysWithoutSelf)
-		}
-
 		// If we error, or the broadcast is done for all txes and all relays,
 		// then we may unlock the broadcast process from caller.
 		defer waitGroup.Done()
 
-		// (2)
+		// (1)
 		// Iterate through transaction and broadcast each of them to other relays
-		for i, transaction := range transactions {
+		for _, transaction := range transactions {
 			chainID := client.GetChainID(userAddress, transaction.Fingerprint)
 			poolRequestPeers := []string{}
-			numBroadcastDone := 0
 
 			// Encode and get transaction hash
 			rawTx := client.TransactionToRawTx(transaction)
@@ -398,7 +380,6 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 			}
 			b.reactor.poolRequestsMtx.Unlock()
 
-			// Broadcast must happen only if there is at least one healthy relay.
 			// For NEW networks, we don't need to wait for acknowledgments.
 			if _, ok := relaysByChain[chainID]; !ok {
 				peers := []string{}
@@ -410,14 +391,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 				b.reactor.poolRequestsMtx.Lock()
 				b.reactor.poolRequestsSent[txHash] = peers
 				b.reactor.poolRequestsMtx.Unlock()
-
-				// We count as ACK'd *but* we must broadcast the tx to the relay,
-				// otherwise the relay won't activate "us" (inbound for "them")
-				// in consensus and blocksync reactors.
-				numExpectedAcksByChain[chainID] = 0
 			}
-
-			minNumBroadcastByChain := numExpectedAcksByChain[chainID]
 
 			// Force the execution of mempool broadcast to *all* healthy relays.
 			// chainHealthyRelays is used to filter relevant peer IDs.
@@ -432,37 +406,13 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 			for _, relayAddr := range replReqRelays[chainID] {
 				chainHealthyPeers = append(chainHealthyPeers, string(relayAddr.ID()))
 				chainReplPartners = append(chainReplPartners, string(relayAddr.ID()))
-
-				// If only some of the relays must replicate, we can't wait
-				// for them acknowledge the transaction now - they will get
-				// the transaction by the blocksync process during replication.
-				if minNumBroadcastByChain > 0 {
-					minNumBroadcastByChain--
-				}
 			}
 
 			cometbftSwitch := b.reactor.GetEventSwitchForCometBFT()
 			chainPeerSet := cometbftSwitch.Peers(chainID)
 
 			// Send only to relays we are interested in.
-			peersAvailable := chainPeerSet.Copy()
-			peersForMempool := slices.DeleteFunc(peersAvailable, func(p *p2p.PeerImpl) bool {
-				return !slices.Contains(chainHealthyPeers, string(p.ID())) ||
-					(!p.IsOutbound() && chainPeerSet.HasOutbound(p.ID()))
-			})
-
-			if minNumBroadcastByChain > len(peersForMempool) {
-				logger.Error("Not enough peers to satisfy remote acceptance",
-					"chain_id", chainID,
-					"tx_hash", txHash,
-					"min_accept", minNumBroadcastByChain,
-					"num_peers", len(peersForMempool),
-				)
-
-				errorsCh <- fmt.Errorf(
-					"not enough peers to accept transaction %s", txHash)
-				return // terminates the process
-			}
+			peersForMempool := chainPeerSet.Copy()
 
 			sentWg := sync.WaitGroup{}
 			sentWg.Add(len(peersForMempool))
@@ -471,7 +421,6 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 			logger.Debug("Preparing to send mempool.Tx",
 				"chain_id", chainID,
 				"tx_hash", txHash,
-				"min_accept", minNumBroadcastByChain,
 				"num_broadcast", len(peersForMempool),
 				"num_peers_chain", chainPeerSet.Size(),
 			)
@@ -488,7 +437,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 
 					// Expect an ACK from any remote relays which are not
 					// handling a replication request.
-					if !isReplicationPartner {
+					if !isReplicationPartner && !slices.Contains(poolRequestPeers, mempoolPartnerPeerID) {
 						poolRequestPeers = append(poolRequestPeers, mempoolPartnerPeerID)
 					}
 
@@ -522,11 +471,6 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 							"could not send message on mempool channel for tx %s with ChainID %s", txHash, chainID)
 						return
 					}
-
-					// Counts healthy ACK partners (not replicating).
-					if !isReplicationPartner {
-						numBroadcastDone++
-					}
 				}(p)
 			}
 
@@ -536,41 +480,6 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 			b.reactor.poolRequestsMtx.Lock()
 			b.reactor.poolRequestsSent[txHash] = poolRequestPeers
 			b.reactor.poolRequestsMtx.Unlock()
-
-			// We require healthy relays to accept this broadcast as a whole,
-			// thus fails if any transaction can't get ACK'd by enough relays.
-			if numBroadcastDone >= minNumBroadcastByChain {
-				// TODO(midas): remove debug logs
-				logger.Debug("Done broadcasting to remote mempools",
-					"chain_id", chainID,
-					"tx_hash", txHash,
-					"min_accept", minNumBroadcastByChain,
-					"num_accept", numBroadcastDone,
-					"total_sent", len(peersForMempool),
-				)
-
-				rawTxHashBytes := rawTx.Hash()
-				broadcastTxHashes[i] = make([]byte, len(rawTxHashBytes))
-				copy(broadcastTxHashes[i], rawTxHashBytes)
-				continue
-			} else {
-				// Otherwise broadcast a rollback operation if some of the healthy
-				// relays already added this transaction to their mempool.
-				// The mempool calls [Acceptor#RollbackTx] before removing txes.
-
-				// TODO(midas): remove debug logs
-				logger.Error("Cancelling broadcast request",
-					"chain_id", chainID,
-					"tx_hash", txHash,
-					"min_accept", minNumBroadcastByChain,
-					"num_accept", numBroadcastDone,
-				)
-
-				errorsCh <- ErrBroadcastCancelled{
-					TxHash: txHash,
-				}
-				return // terminates the process
-			}
 		}
 	}
 }
