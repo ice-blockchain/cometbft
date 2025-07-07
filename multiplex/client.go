@@ -699,6 +699,7 @@ func (c MultiplexClient) BroadcastTx(
 		numExpectedAcks,
 		totalAckReceived,
 		acceptErr := c.GetBackend().WaitForRelaysAckTransactionBatch(ctx,
+		userAddress,
 		chainRelays,
 		catchupRelays,
 		transactions...,

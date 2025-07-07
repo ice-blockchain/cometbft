@@ -226,6 +226,7 @@ func clientAckTransaction(
 	tb testing.TB,
 	ctx context.Context,
 	relay *mx.MultiplexBackend,
+	userAddress string,
 	ackingRelays map[string][]*server.RelayAddress,
 	catchupRelays map[string][]*server.RelayAddress,
 	mustAckRelays map[string][]*server.RelayAddress,
@@ -248,6 +249,7 @@ func clientAckTransaction(
 			numExpected,
 			numReceived,
 			err = multiplexClient.GetBackend().WaitForRelaysAckTransactionBatch(ctx,
+			userAddress,
 			mustAckRelays,
 			catchupRelays,
 			testTransactions...,
@@ -598,6 +600,7 @@ func TestScenarioClientBroadcastMinimalWaitForAckTransactions(t *testing.T) {
 		actualAcceptErr := clientAckTransaction(t,
 		broadcastCtx,
 		testRelayOne,
+		testChainInfo1.GetUserAddress(),
 		testChainRelays,
 		testCatchupRelays,
 		testChainRelays, // mustAckRelays => ALL
@@ -661,6 +664,7 @@ func TestScenarioClientBroadcastMinimalWaitForAckTransactions(t *testing.T) {
 	_, _, actualExpectedAcks, _, actualAcceptErr = clientAckTransaction(t,
 		secondBroadcastCtx,
 		testRelayOne,
+		testChainInfo1.GetUserAddress(),
 		testAckingRelays, // unhealthy removed
 		testCatchupRelays,
 		testChainRelays, // mustAckRelays => 2 are unhealthy
@@ -729,6 +733,7 @@ func TestScenarioClientBroadcastMinimalWaitForAckTransactions(t *testing.T) {
 	_, _, actualExpectedAcks, _, actualAcceptErr = clientAckTransaction(t,
 		thirdBroadcastCtx,
 		testRelayOne,
+		testChainInfo1.GetUserAddress(),
 		testAckingRelays, // unhealthy removed
 		testCatchupRelays,
 		testChainRelays, // mustAckRelays => 2 are unhealthy

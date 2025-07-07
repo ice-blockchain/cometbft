@@ -95,6 +95,7 @@ type Backend interface {
 	// Use this method to wait for a transaction batch to be accepted *remotely*.
 	WaitForRelaysAckTransactionBatch(
 		ctx context.Context,
+		userAddress string,
 		chainRelays map[string][]*RelayAddress,
 		catchupRelays map[string][]*RelayAddress,
 		transactions ...client.Transaction,
