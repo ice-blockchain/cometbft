@@ -1554,6 +1554,7 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 		chainID := chainIdsByTxHash[txHash]
 		if ch, ok := shutdownIndexChs[chainID]; ok && ch != nil {
 			close(ch)
+			delete(shutdownIndexChs, chainID)
 		}
 
 		b.reactor.CloseAckTransactionChannel(txHash)
@@ -3406,7 +3407,7 @@ func (b *MultiplexBackend) remoteRuntimeUpdatesConsumer(
 		timeoutCtx context.Context
 	)
 	if b.replicationTimeout != 0 {
-		timeoutCtx, cancelFn = context.WithTimeout(context.TODO(), b.replicationTimeout)
+		timeoutCtx, cancelFn = context.WithTimeout(b.Context(), b.replicationTimeout)
 		defer cancelFn()
 	}
 
@@ -3479,7 +3480,7 @@ func (b *MultiplexBackend) localRuntimeUpdatesConsumer(
 		timeoutCtx context.Context
 	)
 	if b.replicationTimeout != 0 {
-		timeoutCtx, cancelFn = context.WithTimeout(context.TODO(), b.replicationTimeout)
+		timeoutCtx, cancelFn = context.WithTimeout(b.Context(), b.replicationTimeout)
 		defer cancelFn()
 	}
 
