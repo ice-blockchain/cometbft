@@ -3459,6 +3459,7 @@ func (b *MultiplexBackend) localRuntimeUpdatesConsumer(
 ) {
 	relaysPerChain := make(map[string][]string, 1)
 	numExpected := len(relevantRelays)
+	minExpected := len(relevantRelays) * 2 / 3
 	numReceived := 0
 	if numExpected == 0 {
 		resultsCh <- RuntimeUpdateResult{
@@ -3547,6 +3548,21 @@ func (b *MultiplexBackend) localRuntimeUpdatesConsumer(
 
 		case <-timeoutCtx.Done():
 		case <-ctx.Done():
+			// We shouldn't error if we received 2/3 replication completions for the ChainID.
+			if numReceived >= minExpected {
+				// Result should contain only relevant ChainIDs
+				b.replResponsesMtx.RLock()
+				relaysPerChain[chainID] = make([]string, 0, len(b.replCompleteRcvd[chainID]))
+				relaysPerChain[chainID] = append(relaysPerChain[chainID], b.replCompleteRcvd[chainID]...)
+				b.replResponsesMtx.RUnlock()
+
+				resultsCh <- RuntimeUpdateResult{
+					Relays:  relaysPerChain[chainID],
+					ChainID: chainID,
+				}
+				return
+			}
+
 			err := fmt.Errorf(
 				"process timed out waiting for runtime status (local) for %s", chainID)
 

@@ -703,7 +703,7 @@ func TestScenarioClientBroadcastMinimalWaitForAckTransactions(t *testing.T) {
 	testChainRelays,
 		testCatchupRelays = mockRelayMapsForChainID(t, testRelayOne, relaysForErrCase, testChainID3, false) // false=useCatchup
 
-	// Remove 2 healthy relays to force timeout, as we expect them to Ack
+	// Remove 3 healthy relays to force timeout, as we expect them to Ack
 	// but they will not be sending a AckTransactionBroadcast message.
 	testAckingRelays = make(map[string][]*server.RelayAddress, 1)
 	testAckingRelays[testChainID3] = testChainRelays[testChainID3][:]
@@ -833,23 +833,23 @@ func TestScenarioClientBroadcastMinimalWaitForReplicationCompleted(t *testing.T)
 	assert.Equal(t, expectedNumCompleted, actualNumCompleted)
 	assert.NoError(t, actualCompletionError, "should finalize ChainReplicationComplete process")
 
-	// TEST 2 - Error
+	// TEST 2 - Success
 	//
-	// Add 2 unhealthy relays to relays including self, and make sure we timeout
-	// correctly for the 2 unhealthy relays
+	// Add 2 unhealthy relays to relays including self, and make sure the process
+	// goes through because we have 2/3 of completions (+self) for the ChainID.
 	// numRelays=7;numHealthy=5;numErrors=2;withSelf=true
 
-	relaysForErrCase := healthyRelays[:len(healthyRelays)-2] // with IDs!
-	numHealthy = len(relaysForErrCase)                       // 5
+	relaysForTestCase = healthyRelays[:len(healthyRelays)-2] // with IDs!
+	numHealthy = len(relaysForTestCase)                      // 5
 	testChainID2 := makeChainID("test-chain-2")
-	numRelaysForErrCase := 7
-	for i := numHealthy; i < numRelaysForErrCase; i++ {
-		relaysForErrCase = append(relaysForErrCase, "1.2.3.4:"+strconv.Itoa(1000+i))
+	numRelaysForTestCase := 7
+	for i := numHealthy; i < numRelaysForTestCase; i++ {
+		relaysForTestCase = append(relaysForTestCase, "1.2.3.4:"+strconv.Itoa(1000+i))
 	}
 
-	// relaysForErrCase contains 2 unhealthy relays (which don't have ID),
+	// relaysForTestCase contains 2 unhealthy relays (which don't have ID),
 	// but these will be *filtered* out due to not being healthy.
-	_, testCatchupRelays = mockRelayMapsForChainID(t, testRelayOne, relaysForErrCase, testChainID2, true) // trure=useCatchup
+	_, testCatchupRelays = mockRelayMapsForChainID(t, testRelayOne, relaysForTestCase, testChainID2, true) // trure=useCatchup
 
 	testSyncingChainIds2 := []string{}
 	for testSyncingChain, _ := range testCatchupRelays {
@@ -860,7 +860,7 @@ func TestScenarioClientBroadcastMinimalWaitForReplicationCompleted(t *testing.T)
 	testCompletingRelays[testChainID2] = testCatchupRelays[testChainID2][:]
 
 	// Now add back the 2 unhealthy relays so that they are expected to Complete.
-	for i := numHealthy; i < numRelaysForErrCase; i++ {
+	for i := numHealthy; i < numRelaysForTestCase; i++ {
 		// random node key
 		privKey := ed25519.GenPrivKey()
 		nodeKey := &p2p.NodeKey{
@@ -893,7 +893,7 @@ func TestScenarioClientBroadcastMinimalWaitForReplicationCompleted(t *testing.T)
 	require.NoError(t, replErr, "should pre-fill ReplResponsePeers")
 
 	// Block main thread to test ChainReplicationComplete process
-	_, errCaseCompletionError := clientReplicationCompleted(t,
+	_, actualCompletionError2 := clientReplicationCompleted(t,
 		secondBroadcastCtx,
 		testRelayOne,
 		testSyncingChainIds2,
@@ -901,9 +901,86 @@ func TestScenarioClientBroadcastMinimalWaitForReplicationCompleted(t *testing.T)
 		testCompletingRelays, // 2 unhealthy are NOT sending ChainReplicationComplete.
 	)
 
-	errCaseExpectedNumCompleted := numHealthy - 1
-	errCaseActualNumCompleted := testRelayOne.GetReplCompletePeers(testChainID2)
+	expectedNumCompleted = numHealthy - 1
+	actualReplCompletePeers := testRelayOne.GetReplCompletePeers(testChainID2)
+	actualNumCompleted = len(actualReplCompletePeers)
 
+	// Missing only 2/6 runtime updates should NOT error
+	assert.Equal(t, expectedNumCompleted, actualNumCompleted)
+	assert.NoError(t, actualCompletionError2, "should not error given 2/3 runtime updates")
+
+	// TEST 3 - Error
+	//
+	// Add 3 unhealthy relays to relays including self, and make sure the process
+	// errors because we have less than 2/3 of completions (+self) for the ChainID.
+	// numRelays=7;numHealthy=4;numErrors=3;withSelf=true
+
+	relaysForErrCase := healthyRelays[:len(healthyRelays)-3] // with IDs!
+	numHealthy = len(relaysForErrCase)                       // 4
+	testChainID3 := makeChainID("test-chain-3")
+	numRelaysForErrCase := 7
+	for i := numHealthy; i < numRelaysForErrCase; i++ {
+		relaysForErrCase = append(relaysForErrCase, "1.2.3.4:"+strconv.Itoa(1000+i))
+	}
+
+	// relaysForErrCase contains 3 unhealthy relays (which don't have ID),
+	// but these will be *filtered* out due to not being healthy.
+	_, testCatchupRelays = mockRelayMapsForChainID(t, testRelayOne, relaysForErrCase, testChainID3, true) // trure=useCatchup
+
+	testSyncingChainIds3 := []string{}
+	for testSyncingChain, _ := range testCatchupRelays {
+		testSyncingChainIds3 = append(testSyncingChainIds3, testSyncingChain)
+	}
+
+	testCompletingRelays3 := make(map[string][]*server.RelayAddress, 1)
+	testCompletingRelays3[testChainID3] = testCatchupRelays[testChainID3][:]
+
+	// Now add back the 3 unhealthy relays so that they are expected to Complete.
+	for i := numHealthy; i < numRelaysForErrCase; i++ {
+		// random node key
+		privKey := ed25519.GenPrivKey()
+		nodeKey := &p2p.NodeKey{
+			PrivKey: privKey,
+		}
+
+		fakeRelayAddr, _ := server.NewRelayAddress(string(nodeKey.ID()) + "@1.2.3.4:" + strconv.Itoa(1000+i))
+		testCatchupRelays[testChainID3] = append(testCatchupRelays[testChainID3], fakeRelayAddr)
+	}
+
+	// testCatchupRelays DOES contain the unhealthy relays
+	// testCompletingRelays3 does NOT contain the unhealthy relays
+
+	// We don't want to stall tests here, fast timeout for failing peers.
+	thirdTimeoutAfter := 300 * time.Millisecond
+	thirdBroadcastCtx, thirdCancelCtxFn := context.WithTimeout(context.TODO(), thirdTimeoutAfter)
+	defer thirdCancelCtxFn()
+
+	testChainInfo3, err := mx.NewExtendedChainIDFromLegacy(testChainID3)
+	require.NoError(t, err, "should create correctly formatted ChainID")
+	testTransactions3 := makeClientTransactions(t, testChainInfo3, 1)
+
+	// First we feed some ChainReplicationResponse to fill ackResponsesRcvd.
+	// Note that in this test unhealthy peers also send ChainReplicationResponse.
+	_, _, _, replErr = clientAckReplication(t,
+		thirdBroadcastCtx,
+		testRelayOne,
+		testCatchupRelays,
+	)
+	require.NoError(t, replErr, "should pre-fill ReplResponsePeers")
+
+	// Block main thread to test ChainReplicationComplete process
+	_, errCaseCompletionError := clientReplicationCompleted(t,
+		thirdBroadcastCtx,
+		testRelayOne,
+		testSyncingChainIds3,
+		testTransactions3,
+		testCompletingRelays3, // 3 unhealthy are NOT sending ChainReplicationComplete.
+	)
+
+	errCaseExpectedNumCompleted := numHealthy - 1
+	errCaseActualNumCompleted := testRelayOne.GetReplCompletePeers(testChainID3)
+
+	// Missing only 2/6 runtime updates should NOT error
 	assert.Equal(t, errCaseExpectedNumCompleted, len(errCaseActualNumCompleted))
 	assert.Error(t, errCaseCompletionError, "should timeout gracefully")
 	assert.Contains(t, errCaseCompletionError.Error(), "process timed out waiting for runtime status")
