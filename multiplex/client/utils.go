@@ -2,7 +2,9 @@ package client
 
 import (
 	"encoding/hex"
+	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
@@ -45,6 +47,31 @@ func GetChainID(userAddress string, fingerprint string) string {
 		userAddress,
 		fingerprintHash,
 	}, "-")
+}
+
+// GetBroadcastID accepts unsorted transactions hashes and sorts them
+// lexicographically using their hexadecimal representation, then computes
+// a broadcastSum of the flattened bytes slice.
+func GetBroadcastID(transactions ...Transaction) string {
+	// Collect transaction hashes (string uppercase hex)
+	hashes := make([]string, 0, len(transactions))
+	for _, tx := range transactions {
+		hashes = append(hashes, fmt.Sprintf("%X", tx.Hash()))
+	}
+
+	// Sort hashes lexicographically
+	sort.Sort(sort.StringSlice(hashes))
+
+	// Flatten sorted hashes to bytes slice
+	bzHashes := make([]byte, 0, len(transactions)*tmhash.Size)
+	for _, txHash := range hashes {
+		bzHash, _ := hex.DecodeString(txHash)
+		bzHashes = append(bzHashes, bzHash...)
+	}
+
+	// Sum the sorted hashes bytes slice
+	broadcastSum := tmhash.Sum(bzHashes)
+	return strings.ToUpper(hex.EncodeToString(broadcastSum))
 }
 
 // PubKeyToAddress parses a master public key (ed25519) and returns

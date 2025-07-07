@@ -250,8 +250,8 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 		evR := serviceProvider(ServiceKeyEvidenceReactor, chainID)
 		if memR == nil || bsR == nil || conR == nil || evR == nil {
 			p2pLogger.Error("Failed to load consensus reactors - not available",
-				"node_id", nodeKey.ID(),
-				"chain_id", chainID,
+				"nodeId", nodeKey.ID(),
+				"chainId", chainID,
 				"mempool", memR,
 				"blocksync", bsR,
 				"consensus", conR,
@@ -282,7 +282,7 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 	}
 
 	p2pLogger.Info("P2P Node ID",
-		"node_id", nodeKey.ID(),
+		"nodeId", nodeKey.ID(),
 		"file", globalConfig.NodeKeyFile(),
 		"info", nodeInfo,
 	)

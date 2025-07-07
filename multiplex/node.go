@@ -290,7 +290,7 @@ func logNodeStartupInfo(
 ) {
 	// Log the Multiplex info.
 	logger.Info("Multiplex info",
-		"chain_id", state.ChainID,
+		"chainId", state.ChainID,
 		"height", state.LastBlockHeight,
 	)
 

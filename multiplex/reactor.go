@@ -411,7 +411,7 @@ func NewReactor(
 // sleeping for a given period of time.
 func DefaultOnIdleCallback(reactor *Reactor) func(chainID string) error {
 	return func(chainID string) error {
-		reactor.logger.Debug("Now idling inactive node runtime", "chain_id", chainID)
+		reactor.logger.Debug("Now idling inactive node runtime", "chainId", chainID)
 
 		// Stops mempool, consensus, blocksync, evidence.
 		reactor.StopConsensusInstanceReactors(
@@ -1334,8 +1334,8 @@ func (reactor *Reactor) OnCompleteRuntime(chainID string, protoTxs [][]byte) {
 		if len(missingHashes) == 0 {
 			// Transaction is not yet indexed
 			reactor.logger.Debug("Found all indexed transactions",
-				"chain_id", chainID,
-				"tx_hashes", transactionHashes,
+				"chainId", chainID,
+				"txBatch", transactionHashes,
 			)
 			return
 		}
@@ -1348,8 +1348,8 @@ func (reactor *Reactor) OnCompleteRuntime(chainID string, protoTxs [][]byte) {
 		if attempts == maxTries {
 			// Transaction is not yet indexed
 			reactor.logger.Error("Failed to index transactions; exceed max inclusion time",
-				"chain_id", chainID,
-				"tx_hashes", transactionHashes,
+				"chainId", chainID,
+				"txBatch", transactionHashes,
 			)
 			return
 		}
@@ -1358,8 +1358,8 @@ func (reactor *Reactor) OnCompleteRuntime(chainID string, protoTxs [][]byte) {
 		if ok := reactor.waitForInterval(5 * time.Second); !ok {
 			// TODO(midas): remove debug logs
 			reactor.logger.Error("Failed to index transactions; interrupted by shutdown",
-				"chain_id", chainID,
-				"tx_hashes", transactionHashes,
+				"chainId", chainID,
+				"txBatch", transactionHashes,
 			)
 			return
 		}
@@ -1439,8 +1439,8 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 		); err != nil {
 			r.logger.Error(
 				"failed to start consensus reactors upon receiving mempool.Tx",
-				"chain_id", e.ChainID,
-				"peer_in", e.Src,
+				"chainId", e.ChainID,
+				"peerIn", e.Src,
 				"err", err,
 			)
 		}
@@ -1503,7 +1503,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			if err := r.handleChainReplicationRequest(replRequest); err != nil {
 				r.logger.Error(
 					"failed to process ChainReplicationRequest: error handling replication",
-					"chain_id", replRequest.ChainID,
+					"chainId", replRequest.ChainID,
 					"err", err,
 				)
 				return
@@ -1519,7 +1519,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			if err := r.DialRelayForCometBFT(discoveryAddr, replRequest.ChainID); err != nil {
 				r.logger.Error(
 					"failed to process ChainReplicationRequest: error dialing replication partner",
-					"chain_id", replRequest.ChainID,
+					"chainId", replRequest.ChainID,
 					"err", err,
 				)
 				return
@@ -1533,7 +1533,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			); err != nil {
 				r.logger.Error(
 					"failed to process ChainReplicationRequest: error starting consensus reactors",
-					"chain_id", replRequest.ChainID,
+					"chainId", replRequest.ChainID,
 					"err", err,
 				)
 				return
@@ -1553,7 +1553,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			if err := r.DialRelayForDiscovery(discoveryAddr); err != nil {
 				r.logger.Error(
 					"failed to process ChainReplicationRequest: error dialing for response",
-					"chain_id", replRequest.ChainID,
+					"chainId", replRequest.ChainID,
 					"err", err,
 				)
 				return
@@ -1563,7 +1563,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			// This serves as a receipt for a chain replication request.
 			if err = r.sendChainReplicationResponse(e.Src, replRequest.ChainID); err != nil {
 				r.logger.Error("failed to send ChainReplicationResponse",
-					"chain_id", replRequest.ChainID,
+					"chainId", replRequest.ChainID,
 					"from", r.GetNodeKey().ID(),
 					"to", e.Src.ID(),
 					"err", err,
@@ -1571,7 +1571,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			}
 
 			// Done.
-			r.logger.Debug("This relay now replicates a new chain", "chain_id", replRequest.ChainID)
+			r.logger.Debug("This relay now replicates a new chain", "chainId", replRequest.ChainID)
 			return
 
 		// ChainReplicationResponse
@@ -1598,7 +1598,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			if err := r.DialRelayForCometBFT(discoveryAddr, replResponse.ChainID); err != nil {
 				r.logger.Error(
 					"failed to process ChainReplicationResponse: error dialing replication partner",
-					"chain_id", replResponse.ChainID,
+					"chainId", replResponse.ChainID,
 					"err", err,
 				)
 				return
@@ -1696,9 +1696,9 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 				if ok, chainID := cometbftSwitch.HasPeerInOrOut(e.Src.ID()); ok {
 					shouldProcessAckTx = true
 					r.logger.Debug("Accepting ACK from peer not in poolRequestsSent",
-						"relay_id", relayId,
-						"tx_hash", txHash,
-						"other_chain_id", chainID,
+						"relayId", relayId,
+						"txHash", txHash,
+						"otherChainId", chainID,
 						"reason", "peer_connected_chainid")
 				}
 			}
@@ -1716,11 +1716,11 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			if shouldProcessAckTx && !doneProcessingTxHash {
 				// TODO(midas): remove debug logs
 				r.logger.Debug("Received AckTransactionBroadcast from remote relay",
-					"relay_id", ackTxBroadcast.NodeId,
-					"num_txes", len(txHashes),
+					"relayId", ackTxBroadcast.NodeId,
+					"numTxes", len(txHashes),
 					"txes", txHashes,
-					"node_self", r.nodeKey.ID(),
-					"from_peer", sourceAddr,
+					"nodeSelf", r.nodeKey.ID(),
+					"fromPeer", sourceAddr,
 				)
 
 				// Channel is mapped by transaction hash
@@ -1732,8 +1732,8 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			} else {
 				// TODO(midas): remove debug logs
 				r.logger.Debug("Skipping already processed AckTransactionBroadcast",
-					"num_txs", len(txHashes),
-					"relay_id", ackTxBroadcast.NodeId,
+					"numTxs", len(txHashes),
+					"relayId", ackTxBroadcast.NodeId,
 					"txes", txHashes,
 					"node", r.nodeKey.ID(),
 					"from", sourceAddr,
@@ -2095,7 +2095,7 @@ func (reactor *Reactor) OnStart(ctx context.Context) error {
 		// keepAliveDB=false
 		if err = reactor.AllocateNetwork(chainID); err != nil {
 			reactor.logger.Error("failed to start multiplex reactor; allocation error",
-				"chain_id", chainID,
+				"chainId", chainID,
 				"err", err,
 			)
 		}
@@ -2149,7 +2149,7 @@ func (reactor *Reactor) OnStart(ctx context.Context) error {
 		if err := reactor.InjectNewRuntime(reactor.Context(), chainID); err != nil {
 			// Log but don't STOP!
 			reactor.logger.Error("failed to start multiplex reactor; runtime error",
-				"chain_id", chainID,
+				"chainId", chainID,
 				"err", err,
 			)
 		}
@@ -2502,7 +2502,7 @@ func (reactor *Reactor) loadMultiplexState(chainIds []string) (err error) {
 // The caller must make sure about thread-safety of filesystem operations,
 // i.e. caller should always lock runtimesMutex during call.
 func (reactor *Reactor) startNodeListeners(ctx context.Context, chainID string) error {
-	clogger := reactor.logger.With("chain_id", chainID)
+	clogger := reactor.logger.With("chainId", chainID)
 	nodeKey := reactor.GetNodeKey()
 
 	// Retrieve the node's config overwrite object
@@ -2677,9 +2677,9 @@ func (reactor *Reactor) sendChainReplicationResponse(
 
 	// TODO(midas): remove debug logs
 	reactor.logger.Debug("Sending ChainReplicationResponse to peer",
-		"from_id", myPeerID,
-		"to_peer", sourcePeerOut,
-		"chain_id", chainID,
+		"fromId", myPeerID,
+		"toPeer", sourcePeerOut,
+		"chainId", chainID,
 	)
 
 	// We send the response using the discovery switch. Note that dialing

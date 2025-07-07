@@ -28,7 +28,7 @@ func (reactor *Reactor) PrepareConsensusInstanceWithReactor(
 	ctx context.Context,
 	chainID string,
 ) error {
-	clogger := reactor.logger.With("chain_id", chainID)
+	clogger := reactor.logger.With("chainId", chainID)
 
 	// Used for retrieving GenesisDoc instance by chain
 	genesisDocProvider := reactor.GetGenesisProvider()
@@ -128,7 +128,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 			"found incompatible multiplex ChainID %s: %w", chainID, err)
 	}
 
-	clogger := reactor.logger.With("chain_id", chainID)
+	clogger := reactor.logger.With("chainId", chainID)
 
 	// Used to retrieve configuration and state per chain.
 	servicesProvider := reactor.GetServicesProvider()
@@ -410,7 +410,7 @@ func (reactor *Reactor) StopConsensusInstanceReactors(
 	chainID string,
 ) error {
 	// TODO(midas): remove debug logs
-	reactor.logger.Debug("StopConsensusInstanceReactors", "chain_id", chainID)
+	reactor.logger.Debug("StopConsensusInstanceReactors", "chainId", chainID)
 
 	cometbftSwitch := reactor.GetEventSwitchForCometBFT()
 
@@ -421,7 +421,7 @@ func (reactor *Reactor) StopConsensusInstanceReactors(
 	// Remove channels allocated for ChainID, from all existing peers.
 	if err := reactor.RemoveConnectionChannels(cometbftSwitch, []string{chainID}); err != nil {
 		reactor.logger.Error("error removing connection channels",
-			"chain_id", chainID,
+			"chainId", chainID,
 			"err", err)
 	}
 
@@ -433,7 +433,7 @@ func (reactor *Reactor) StopConsensusInstanceReactors(
 
 			if err != nil && err != service.ErrAlreadyStopped {
 				reactor.logger.Error("error stopping reactor",
-					"chain_id", chainID,
+					"chainId", chainID,
 					"reactor", name,
 					"err", err)
 			}
@@ -441,7 +441,7 @@ func (reactor *Reactor) StopConsensusInstanceReactors(
 	}
 
 	// TODO(midas): remove debug logs
-	reactor.logger.Debug("Done with StopConsensusInstanceReactors", "chain_id", chainID)
+	reactor.logger.Debug("Done with StopConsensusInstanceReactors", "chainId", chainID)
 
 	return nil
 }

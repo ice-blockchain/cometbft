@@ -88,7 +88,7 @@ func (app *SnapsApp) Info(
 
 	// Make sure we handle only relevant info requests
 	if !app.reactor.HasNetwork(chainID) {
-		app.logger.Error("received irrelevant snapshot chain identifier (Info)", "chain_id", chainID)
+		app.logger.Error("received irrelevant snapshot chain identifier (Info)", "chainId", chainID)
 		return &abcitypes.InfoResponse{}, nil
 	}
 
@@ -96,7 +96,7 @@ func (app *SnapsApp) Info(
 	stateStore := app.reactor.GetStateStore(chainID)
 	stateMachine, err := stateStore.Load()
 	if err != nil {
-		app.logger.Error("could not load state machine (Info)", "chain_id", chainID)
+		app.logger.Error("could not load state machine (Info)", "chainId", chainID)
 		return &abcitypes.InfoResponse{}, err
 	}
 
@@ -290,14 +290,17 @@ func (app *SnapsApp) FinalizeBlock(
 			}
 		}
 
+		broadcastID := client.GetBroadcastID(batch...)
+
 		// In replay-mode, we must make sure the ReplayBroadcastTxBatch
 		// callback will succeed. The replay pool calls it continuously
 		// until it succeeds (no-error).
 		if isReplayMode {
 			// TODO(midas): remove debug logs
 			app.logger.Debug("Process transaction batch with replay pool",
-				"chain_id", chainID,
-				"tx_batch", txHashes,
+				"requestId", broadcastID,
+				"chainId", chainID,
+				"txBatch", txHashes,
 			)
 
 			// Add the transactions to a transaction replay bucket by ChainID.
@@ -308,8 +311,9 @@ func (app *SnapsApp) FinalizeBlock(
 		} else if hasUncommittedTx {
 			// TODO(midas): remove debug logs
 			app.logger.Debug("Process transaction batch with acceptor: CommitBroadcastTx",
-				"chain_id", chainID,
-				"tx_batch", txHashes,
+				"requestId", broadcastID,
+				"chainId", chainID,
+				"txBatch", txHashes,
 			)
 
 			// In consensus-mode, we should call the CommitBroadcastTx
@@ -321,8 +325,9 @@ func (app *SnapsApp) FinalizeBlock(
 			); err != nil {
 				app.logger.Error(
 					"Acceptor callback CommitBroadcastTx rejected transaction batch",
-					"chain_id", chainID,
-					"tx_batch", txHashes,
+					"requestId", broadcastID,
+					"chainId", chainID,
+					"txBatch", txHashes,
 					"err", err,
 				)
 			} else {
@@ -396,7 +401,7 @@ func (app *SnapsApp) Commit(
 
 	// Make sure we handle only relevant commits
 	if !app.reactor.HasNetwork(chainID) {
-		app.logger.Error("received irrelevant snapshot chain identifier (Commit)", "chain_id", chainID)
+		app.logger.Error("received irrelevant snapshot chain identifier (Commit)", "chainId", chainID)
 		return resp, nil
 	}
 
@@ -406,7 +411,7 @@ func (app *SnapsApp) Commit(
 
 	app.logger.Info("Committed block height",
 		"height", workingHeight,
-		"chain_id", chainID,
+		"chainId", chainID,
 	)
 
 	return resp, nil

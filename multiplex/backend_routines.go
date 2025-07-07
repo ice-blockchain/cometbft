@@ -112,7 +112,7 @@ func (b *MultiplexBackend) DefaultCometBFTDialerRoutine() server.CometBFTDialerF
 				// TODO(midas): remove debug logs
 				logger.Debug("Now dialing relay for CometBFT",
 					"relay", cometbftAddr.String(),
-					"chain_id", relevantChainID,
+					"chainId", relevantChainID,
 				)
 
 				go func(sw *p2p.Switch, addr *server.RelayAddress, chainID string) {
@@ -192,11 +192,11 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 
 		// TODO(midas): remove debug logs
 		logger.Debug("Preparing to send ChainReplicationRequest",
-			"chain_id", chainID,
+			"chainId", chainID,
 			"relays", relays,
-			"num_validators", len(genesisDoc.Validators),
-			"num_requests", len(peersForRequests),
-			"num_peers", discoveryPeers.Size(),
+			"numValidators", len(genesisDoc.Validators),
+			"numRequests", len(peersForRequests),
+			"numPeers", discoveryPeers.Size(),
 		)
 
 		requestsWg := sync.WaitGroup{}
@@ -211,8 +211,8 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 
 				// TODO(midas): remove debug logs
 				b.logger.Debug("Now sending ChainReplicationRequest",
-					"chain_id", chainID,
-					"peer_id", peerID,
+					"chainId", chainID,
+					"peerId", peerID,
 				)
 
 				peer.Send(chainID, p2p.Envelope{
@@ -241,9 +241,9 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 
 		// TODO(midas): remove debug logs
 		logger.Debug("Done sending ChainReplicationRequest to peers",
-			"chain_id", chainID,
-			"num_sent", len(requestSentPeerIds),
-			"relay_ids", requestSentPeerIds,
+			"chainId", chainID,
+			"numSent", len(requestSentPeerIds),
+			"relayIds", requestSentPeerIds,
 		)
 	}
 }
@@ -313,8 +313,8 @@ func (b *MultiplexBackend) DefaultNetworksCreatorRoutine() server.NetworksCreato
 
 				// TODO(midas): remove debug logs
 				logger.Debug("Injecting new ChainID with validators",
-					"chain_id", newChainID,
-					"num_vals", len(otherValPubKeys)+1,
+					"chainId", newChainID,
+					"numVals", len(otherValPubKeys)+1,
 				)
 
 				// AllocateNetwork is NOT part of InjectNewNetwork anymore.
@@ -418,10 +418,10 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 
 			// TODO(midas): remove debug logs
 			logger.Debug("Preparing to send mempool.Tx",
-				"chain_id", chainID,
-				"tx_hash", txHash,
-				"num_broadcast", len(peersForMempool),
-				"num_peers_chain", chainPeerSet.Size(),
+				"chainId", chainID,
+				"txHash", txHash,
+				"numBroadcast", len(peersForMempool),
+				"numPeersChain", chainPeerSet.Size(),
 			)
 
 			// TODO(midas): Send inside goroutine for max concurrency.
@@ -445,11 +445,11 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 
 					// TODO(midas): remove debug logs
 					logger.Debug("Sending transaction to remote mempool",
-						"chain_id", chainID,
-						"tx_hash", txHash,
+						"chainId", chainID,
+						"txHash", txHash,
 						"peer", peer,
-						"is_outbound", peer.IsOutbound(),
-						"is_running", peer.IsRunning(),
+						"isOutbound", peer.IsOutbound(),
+						"isRunning", peer.IsRunning(),
 					)
 
 					// Send transaction to relay mempool, after checks the mempool
@@ -459,11 +459,11 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 						Message:   &memp2p.Txs{Txs: [][]byte{rawTx}},
 					}); !success {
 						logger.Error("failed to send transaction to remote mempool",
-							"chain_id", chainID,
-							"tx_hash", txHash,
+							"chainId", chainID,
+							"txHash", txHash,
 							"peer", peer,
-							"is_outbound", peer.IsOutbound(),
-							"is_running", peer.IsRunning(),
+							"isOutbound", peer.IsOutbound(),
+							"isRunning", peer.IsRunning(),
 						)
 						return
 					}
@@ -513,17 +513,17 @@ func (b *MultiplexBackend) DefaultCancelBroadcastRoutine() server.CancelBroadcas
 			if chainPeerSet.Size() == 0 {
 				// TODO(midas): remove debug logs
 				logger.Error("Failed to send RollbackTxs message for transaction - empty peerset",
-					"chain_id", chainID,
-					"tx_hash", txHash,
+					"chainId", chainID,
+					"txHash", txHash,
 				)
 				continue
 			}
 
 			// TODO(midas): remove debug logs
 			logger.Debug("Sending RollbackTxs message to remote mempools",
-				"chain_id", chainID,
-				"tx_hash", txHash,
-				"num_peers", chainPeerSet.Size(),
+				"chainId", chainID,
+				"txHash", txHash,
+				"numPeers", chainPeerSet.Size(),
 			)
 
 			// Broadcast the rollback message for this transaction to all relays.

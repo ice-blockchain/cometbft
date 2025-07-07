@@ -305,7 +305,7 @@ func (reactor *Reactor) InjectNewRuntime(
 	chainID string,
 	options ...node.Option,
 ) error {
-	clogger := reactor.logger.With("chain_id", chainID)
+	clogger := reactor.logger.With("chainId", chainID)
 
 	// ------------------------------------------------------------------------
 	// Step 1: Create runtime environment
@@ -378,7 +378,7 @@ func (reactor *Reactor) InjectNewRuntime(
 	// Inform about the state machine block height
 	clogger.Info(
 		"State machine loaded",
-		"chain_id", stateMachine.ChainID,
+		"chainId", stateMachine.ChainID,
 		"height", stateMachine.LastBlockHeight,
 	)
 
@@ -450,7 +450,7 @@ func (reactor *Reactor) InjectNewRuntime(
 //
 // TODO(midas): refactor to StartNodeInstance.
 func (reactor *Reactor) InitAndStartNode(ctx context.Context, chainID string) error {
-	clogger := reactor.logger.With("chain_id", chainID)
+	clogger := reactor.logger.With("chainId", chainID)
 
 	var (
 		nodeRuntime     *node.Node
@@ -499,7 +499,7 @@ func (reactor *Reactor) InitAndStartNode(ctx context.Context, chainID string) er
 			n.Reset() // allows restart
 		}
 
-		clogger.Info("Starting new node", "chain_id", network)
+		clogger.Info("Starting new node", "chainId", network)
 		clogger.Info("Using custom listen addresses",
 			"p2p", n.Config().P2P.ListenAddress,
 			"rpc", n.Config().RPC.ListenAddress,
@@ -562,7 +562,7 @@ func (reactor *Reactor) StartAllNodeInstances() error {
 				n.Reset() // allows restart
 			}
 
-			reactor.logger.Info("Starting new node", "chain_id", network)
+			reactor.logger.Info("Starting new node", "chainId", network)
 			reactor.logger.Info("Using custom listen addresses",
 				"p2p", n.Config().P2P.ListenAddress,
 				"rpc", n.Config().RPC.ListenAddress,
@@ -570,13 +570,13 @@ func (reactor *Reactor) StartAllNodeInstances() error {
 
 			if err := n.Start(); err != nil {
 				reactor.logger.Error("failed to start node",
-					"chain_id", network,
+					"chainId", network,
 					"err", err,
 				)
 			}
 
 			reactor.logger.Info("Started node",
-				"chain_id", network,
+				"chainId", network,
 				"nodeInfo", n.Switch().NodeInfo(),
 			)
 		}(chainID, runNode)
@@ -602,14 +602,14 @@ func (reactor *Reactor) StopNodeInstance(chainID string) error {
 
 	// Calls the Stop method on the node.Node instance.
 	go func(network string, n *node.Node, r *Reactor) {
-		r.logger.Info("Stopping node runtime", "chain_id", network)
+		r.logger.Info("Stopping node runtime", "chainId", network)
 
 		defer wg.Done()
 		if n.IsRunning() {
 			if err := n.Stop(); err != nil {
 				if err != service.ErrAlreadyStopped {
 					reactor.logger.Error("failed to stop node",
-						"chain_id", network,
+						"chainId", network,
 						"err", err,
 					)
 				}
@@ -622,7 +622,7 @@ func (reactor *Reactor) StopNodeInstance(chainID string) error {
 		discoverySwitch := r.GetEventSwitchForDiscovery()
 		r.StopPeersByScope(discoverySwitch, network)
 
-		r.logger.Info("Stopped node runtime", "chain_id", network)
+		r.logger.Info("Stopped node runtime", "chainId", network)
 	}(chainID, runNode, reactor)
 
 	wg.Wait()
@@ -645,7 +645,7 @@ func (reactor *Reactor) StopPeersByScope(sw *p2p.Switch, scope string) (size int
 	peersByScope := sw.Peers(scope).Copy()
 	size = len(peersByScope)
 
-	reactor.logger.Info("Stopping connections for scope", "scope", scope, "num_peers", size)
+	reactor.logger.Info("Stopping connections for scope", "scope", scope, "numPeers", size)
 	for _, p := range peersByScope {
 		relevantScopes := map[string]bool{}
 		relevantScopes[scope] = true
@@ -699,21 +699,21 @@ func (reactor *Reactor) StopAllNodeInstances() error {
 
 		// Calls the Stop method on the node.Node instance.
 		go func(network string, n *node.Node) {
-			reactor.logger.Info("Stopping node runtime", "chain_id", network)
+			reactor.logger.Info("Stopping node runtime", "chainId", network)
 
 			defer wg.Done()
 			if n.IsRunning() {
 				if err := n.Stop(); err != nil {
 					if err != service.ErrAlreadyStopped {
 						reactor.logger.Error("failed to stop node",
-							"chain_id", network,
+							"chainId", network,
 							"err", err,
 						)
 					}
 				}
 			}
 
-			reactor.logger.Info("Stopped node runtime", "chain_id", network)
+			reactor.logger.Info("Stopped node runtime", "chainId", network)
 		}(chainID, runNode)
 	}
 
@@ -740,7 +740,7 @@ func (reactor *Reactor) MakeNetworkFilesystem(
 
 	// TODO(midas): remove debug logs
 	reactor.logger.Debug("MakeNetworkFilesystem",
-		"chain_id", chainID.String(),
+		"chainId", chainID.String(),
 		"root", rootDir,
 	)
 
@@ -773,8 +773,8 @@ func (reactor *Reactor) MakeNetworkDatabases(
 
 	// TODO(midas): remove debug logs
 	reactor.logger.Debug("MakeNetworkDatabases",
-		"chain_id", chainID.String(),
-		"db_names", databases,
+		"chainId", chainID.String(),
+		"dbNames", databases,
 	)
 
 	// Prepare database parameters
@@ -835,9 +835,9 @@ func (reactor *Reactor) MakeNetworkValidator(
 
 	// TODO(midas): remove debug logs
 	reactor.logger.Debug("MakeNetworkValidator",
-		"chain_id", chainID.String(),
-		"pv_data", dataDir,
-		"pv_conf", confDir,
+		"chainId", chainID.String(),
+		"pvData", dataDir,
+		"pvConf", confDir,
 	)
 
 	// runtimesMutex shall be locked during filesystem ops.
@@ -875,9 +875,9 @@ func (reactor *Reactor) MakeNetworkGenesis(
 
 	// TODO(midas): remove debug logs
 	reactor.logger.Debug("MakeNetworkGenesis",
-		"chain_id", chainID,
+		"chainId", chainID,
 		"validators", networkValidators,
-		"config_dir", confDir,
+		"configDir", confDir,
 	)
 
 	powerPerValidator := 10
@@ -934,7 +934,7 @@ func (reactor *Reactor) MakeNetworkStateMachine(
 
 	// TODO(midas): remove debug logs
 	reactor.logger.Debug("MakeNetworkStateMachine",
-		"chain_id", genesisDoc.ChainID,
+		"chainId", genesisDoc.ChainID,
 		"stats", stateDB.Stats(),
 	)
 
@@ -978,7 +978,7 @@ func (reactor *Reactor) MakeNetworkConfigOverwrite(
 
 	// TODO(midas): remove debug logs
 	reactor.logger.Debug("MakeNetworkConfigOverwrite",
-		"chain_id", chainID.String(),
+		"chainId", chainID.String(),
 		"dport", int(nodeConfig.DiscoveryPort),
 	)
 

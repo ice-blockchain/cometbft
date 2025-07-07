@@ -362,14 +362,14 @@ func (reg *RuntimeRegistry) cleanerRoutine() {
 				// we execute the OnIdle callback to idle this node runtime.
 				if time.Since(idleSinceTz) >= reg.runIdleDuration {
 					reg.logger.Debug("Runtime has been idle and will now shutdown",
-						"chain_id", idleChainID,
-						"idle_since", strconv.Itoa(int(secondsIdle))+"s",
+						"chainId", idleChainID,
+						"idleSince", strconv.Itoa(int(secondsIdle))+"s",
 					)
 
 					if err := reg.OnIdle(idleChainID); err != nil {
 						reg.logger.Error("Failed to execute OnIdle callback",
-							"chain_id", idleChainID,
-							"idle_since", strconv.Itoa(int(secondsIdle))+"s",
+							"chainId", idleChainID,
+							"idleSince", strconv.Itoa(int(secondsIdle))+"s",
 							"err", err,
 						)
 					}
@@ -377,8 +377,8 @@ func (reg *RuntimeRegistry) cleanerRoutine() {
 					reg.mtx.Lock()
 					if err := reg.removeSleeping(idleChainID); err != nil {
 						reg.logger.Error("Failed to remove inactive runtime",
-							"chain_id", idleChainID,
-							"idle_since", strconv.Itoa(int(secondsIdle))+"s",
+							"chainId", idleChainID,
+							"idleSince", strconv.Itoa(int(secondsIdle))+"s",
 							"err", err,
 						)
 					}

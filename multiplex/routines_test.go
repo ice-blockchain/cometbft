@@ -144,7 +144,7 @@ func TestMultiplexRoutinesNodeReplRequestEmptyRelays(t *testing.T) {
 			testCatchupRelays[useChainID],
 			useChainID,
 			make(chan<- client.BroadcastStatus, 1),
-			loggerRelay1.With("tx_batch", "test-no-txes"),
+			loggerRelay1.With("txBatch", "test-no-txes"),
 		)
 	}()
 
