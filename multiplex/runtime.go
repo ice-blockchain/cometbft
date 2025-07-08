@@ -617,10 +617,10 @@ func (reactor *Reactor) StopNodeInstance(chainID string) error {
 		}
 
 		cometbftSwitch := r.GetEventSwitchForCometBFT()
-		r.StopPeersByScope(cometbftSwitch, network)
+		r.RemovePeersByScope(cometbftSwitch, network)
 
 		discoverySwitch := r.GetEventSwitchForDiscovery()
-		r.StopPeersByScope(discoverySwitch, network)
+		r.RemovePeersByScope(discoverySwitch, network)
 
 		r.logger.Info("Stopped node runtime", "chainId", network)
 	}(chainID, runNode, reactor)
@@ -629,7 +629,7 @@ func (reactor *Reactor) StopNodeInstance(chainID string) error {
 	return nil
 }
 
-func (reactor *Reactor) StopPeersByScope(sw *p2p.Switch, scope string) (size int) {
+func (reactor *Reactor) RemovePeersByScope(sw *p2p.Switch, scope string) (size int) {
 	defer func() {
 		if r := recover(); r != nil {
 			// do not panic when cleaning up peers.
@@ -642,36 +642,17 @@ func (reactor *Reactor) StopPeersByScope(sw *p2p.Switch, scope string) (size int
 		}
 	}()
 
+	peerSet := sw.Peers(scope)
 	peersByScope := sw.Peers(scope).Copy()
 	size = len(peersByScope)
 
 	reactor.logger.Info("Stopping connections for scope", "scope", scope, "numPeers", size)
 	for _, p := range peersByScope {
-		relevantScopes := map[string]bool{}
-		relevantScopes[scope] = true
+		// Cleanup the MConnection channels for this peer and scope
+		sw.CloseChannelsForScopes([]string{scope})(p.MConn())
 
-		activeRuntimes := sw.GetActiveRuntimes()
-		for _, activeChainID := range activeRuntimes {
-			relevantScopes[activeChainID] = true
-		}
-
-		remainingChannelsForPeer := p.MConn().GetChannelsIdx()
-		for chScope, _ := range remainingChannelsForPeer {
-			relevantScopes[chScope] = true
-		}
-
-		// Cleanup the MConnection channels from switch
-		sw.CloseChannelsForScopes(func(scopes map[string]bool) (out []string) {
-			out = make([]string, 0, len(scopes))
-			for scope, _ := range scopes {
-				out = append(out, scope)
-			}
-			return // out
-		}(relevantScopes))(p.MConn())
-
-		// And stop the peer gracefully to remove from reactors.
-		sw.StopPeerGracefully(p)
-		sw.Transport().Cleanup(p)
+		// And remove the peer from scoped peerset
+		peerSet.RemovePeer(p)
 	}
 
 	return // size

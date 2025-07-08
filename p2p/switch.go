@@ -918,7 +918,7 @@ func (sw *Switch) stopPeer(peer *PeerImpl, reason any) error {
 	}
 
 	// TODO(midas): remove debug logs
-	sw.Logger.Debug("Peer removed from reactors", "peer", peer)
+	sw.Logger.Debug("Peer removed from reactors", "peer", peer, "reason", reason)
 	return nil
 }
 
@@ -978,7 +978,7 @@ func (sw *Switch) removePeer(peer *PeerImpl, reason any) error {
 	sw.metrics.Peers.Add(float64(-1))
 
 	// TODO(midas): remove debug logs
-	sw.Logger.Debug("Removed peer", "peer", peer, "scopes", relevantScopes)
+	sw.Logger.Debug("Removed peer", "peer", peer, "scopes", relevantScopes, "reason", reason)
 	return nil
 }
 
