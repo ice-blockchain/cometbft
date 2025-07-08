@@ -96,6 +96,12 @@ type Mempool interface {
 
 	// SizeBytes returns the total size of all txs in the mempool.
 	SizeBytes() int64
+
+	TxAccepted(tx types.Tx) bool
+}
+
+type TxAcceptor interface {
+	TxAccepted(tx types.Tx) bool
 }
 
 // PreCheckFunc is an optional filter executed before CheckTx and rejects

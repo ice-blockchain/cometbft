@@ -268,7 +268,7 @@ func NewServer(
 	options ...MultiplexBackendOption,
 ) (*MultiplexBackend, error) {
 	nodeConfig.Consensus.CreateEmptyBlocks = false // Force to create blocks only if there is transactions.
-	nodeConfig.Consensus.TimeoutCommit = 0         // Make progress as soon as the node has all the precommits.
+	//nodeConfig.Consensus.TimeoutCommit = 0         // Make progress as soon as the node has all the precommits.
 	nodeConfig.P2P.AllowDuplicateIP = true
 
 	initTime := time.Now()
@@ -1612,6 +1612,10 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 			}
 
 			for _, txHashIndexed := range txEventResult.TxHashes {
+				if !slices.Contains(transactionHashes, txHashIndexed) {
+					continue
+				}
+				b.logger.Debug("Indexed transaction", "tx", txHashIndexed)
 				relaysPerTx[txHashIndexed] = make([]string, 0, len(relevantRelays))
 				relaysPerTx[txHashIndexed] = append(relaysPerTx[txHashIndexed], relevantRelays...)
 				numReceived += len(relevantRelays)
@@ -3645,6 +3649,7 @@ func (b *MultiplexBackend) localTransactionEventsConsumer(
 				"numRcvd", numReceived,
 				"numExpect", numExpected,
 				"txBatch", transactionHashes,
+				"tx", foundTx.Hash(),
 			)
 
 			if numReceived >= numExpected {

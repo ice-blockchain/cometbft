@@ -1,6 +1,7 @@
 package snapsapp
 
 import (
+	"github.com/ice-blockchain/cometbft/mempool"
 	sm "github.com/ice-blockchain/cometbft/state"
 
 	"github.com/ice-blockchain/cometbft/multiplex/server"
@@ -20,6 +21,7 @@ type Reactor interface {
 
 	// GetStateStore should return a pointer to a [sm.Store].
 	GetStateStore(chainID string) sm.Store
+	GetMempool(chainID string) mempool.TxAcceptor
 
 	// GetReplayPool returns a [server.ReplayPool] which contains transactions
 	// batches to be replayed. These batches may contain one or many txes

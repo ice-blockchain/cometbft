@@ -3,6 +3,7 @@ package mempool
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/proxy"
 	"github.com/ice-blockchain/cometbft/types"
+	"github.com/puzpuzpuz/xsync/v4"
 )
 
 const noSender = p2p.ID("")
@@ -62,6 +64,8 @@ type CListMempool struct {
 	logger   log.Logger
 	metrics  *Metrics
 	OnUpdate func([]types.Tx) error
+
+	acceptedTxs *xsync.Map[string, struct{}]
 }
 
 var _ Mempool = &CListMempool{}
@@ -85,6 +89,7 @@ func NewCListMempool(
 		recheck:      newRecheck(),
 		logger:       log.NewNopLogger(),
 		metrics:      NopMetrics(),
+		acceptedTxs:  xsync.NewMap[string, struct{}](),
 	}
 	mp.height.Store(height)
 
@@ -270,6 +275,8 @@ func (mem *CListMempool) TxsWaitChan() <-chan struct{} {
 // It blocks if we're waiting on Update() or Reap().
 // Safe for concurrent use by multiple goroutines.
 func (mem *CListMempool) CheckTx(tx types.Tx, sender p2p.ID) (*abcicli.ReqRes, error) {
+	mem.acceptedTxs.Store(hex.EncodeToString(tx.Hash()), struct{}{})
+
 	mem.updateMtx.RLock()
 	// use defer to unlock mutex because application (*local client*) might panic
 	defer mem.updateMtx.RUnlock()
@@ -313,7 +320,6 @@ func (mem *CListMempool) CheckTx(tx types.Tx, sender p2p.ID) (*abcicli.ReqRes, e
 		// but they can spam the same tx with little cost to them atm.
 		return nil, ErrTxInCache
 	}
-
 	reqRes, err := mem.proxyAppConn.CheckTxAsync(context.TODO(), &abci.CheckTxRequest{
 		Tx:   tx,
 		Type: abci.CHECK_TX_TYPE_CHECK,
@@ -653,6 +659,7 @@ func (mem *CListMempool) Update(
 			_ = mem.addToCache(tx)
 		} else {
 			mem.tryRemoveFromCache(tx)
+			mem.acceptedTxs.Delete(hex.EncodeToString(tx.Hash()))
 		}
 
 		// Remove committed tx from the mempool.
@@ -913,4 +920,9 @@ func (iter *CListIterator) WaitNextCh() <-chan Entry {
 		close(ch)
 	}()
 	return ch
+}
+
+func (m *CListMempool) TxAccepted(tx types.Tx) bool {
+	_, has := m.acceptedTxs.Load(hex.EncodeToString(tx.Hash()))
+	return has
 }

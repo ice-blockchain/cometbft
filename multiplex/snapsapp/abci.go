@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/ice-blockchain/cometbft/types"
 	"strconv"
 
 	abcitypes "github.com/ice-blockchain/cometbft/abci/types"
@@ -204,7 +205,15 @@ func (app *SnapsApp) ProcessProposal(
 	app.lbMutex.Lock()
 	app.lastBlockHeights[chainID] = req.Height
 	app.lbMutex.Unlock()
+	accepted := true
+	for _, tx := range req.Txs {
+		accepted = accepted && app.reactor.GetMempool(chainID).TxAccepted(tx)
+		app.logger.Debug("CheckTx", "tx", hex.EncodeToString(types.Tx(tx).Hash()), "accepted", accepted)
+	}
 
+	if !accepted {
+		return &abcitypes.ProcessProposalResponse{Status: abcitypes.PROCESS_PROPOSAL_STATUS_REJECT}, nil
+	}
 	return &abcitypes.ProcessProposalResponse{Status: abcitypes.PROCESS_PROPOSAL_STATUS_ACCEPT}, nil
 }
 

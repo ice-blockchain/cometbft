@@ -49,6 +49,7 @@ require (
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/oasisprotocol/curve25519-voi v0.0.0-20220708102147-0a8a51822cae
 	github.com/pelletier/go-toml/v2 v2.2.2
+	github.com/puzpuzpuz/xsync/v4 v4.1.0
 	github.com/supranational/blst v0.3.13
 	go.uber.org/goleak v1.3.0
 	golang.org/x/exp v0.0.0-20231110203233-9a3e6036ecaa

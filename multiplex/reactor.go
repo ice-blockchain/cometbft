@@ -1272,6 +1272,12 @@ func (reactor *Reactor) GetStateStore(chainID string) sm.Store {
 	return stateStoreProvider(chainID).(sm.Store)
 }
 
+func (reactor *Reactor) GetMempool(chainID string) mempl.TxAcceptor {
+	reactorsProvider := reactor.GetServicesProvider()
+	memplReactor := reactorsProvider(ServiceKeyMempoolReactor, chainID).(*mempl.Reactor)
+	return memplReactor.GetMempoolPtr()
+}
+
 // GetReplayPool returns a [server.ReplayPool] which contains transactions
 // batches to be replayed. These batches may contain one or many txes
 // that will be forwarded to [Acceptor#ReplayBroadcastTxBatch].
