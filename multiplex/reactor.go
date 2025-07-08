@@ -1804,8 +1804,11 @@ func (r *Reactor) DialRelayForScope(
 		"size", scopedPeerSet.Size(),
 	)
 
+	peerIsRunning := peerOutbound != nil && peerOutbound.IsRunning()
+	peerIsStopped := peerOutbound != nil && peerOutbound.IsStopped()
+
 	// If the peer exists but is not running, cleanup before dialing.
-	if peerOutbound != nil && !peerOutbound.IsRunning() {
+	if peerOutbound != nil && !peerIsRunning && !peerIsStopped {
 		dialWithSw.Logger.Debug("Stopping peer - connection expired",
 			"relay", partnerAddr.String(),
 			"scope", partnerScope,
@@ -1813,7 +1816,7 @@ func (r *Reactor) DialRelayForScope(
 		)
 
 		dialWithSw.StopPeerGracefully(peerOutbound)
-	} else if peerOutbound != nil {
+	} else if peerOutbound != nil && peerIsRunning {
 		dialWithSw.Logger.Debug("Peer is already running - adding to reactors",
 			"relay", partnerAddr.String(),
 			"scope", partnerScope,
