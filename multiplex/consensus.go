@@ -12,6 +12,7 @@ import (
 	"github.com/ice-blockchain/cometbft/internal/evidence"
 	"github.com/ice-blockchain/cometbft/libs/service"
 	mempl "github.com/ice-blockchain/cometbft/mempool"
+	"github.com/ice-blockchain/cometbft/p2p"
 	sm "github.com/ice-blockchain/cometbft/state"
 	bs "github.com/ice-blockchain/cometbft/store"
 	"github.com/ice-blockchain/cometbft/types"
@@ -329,18 +330,27 @@ func (reactor *Reactor) StartConsensusInstanceReactors(
 	chainID string,
 	sendStatusToPeers bool,
 ) error {
+	cometbftSwitch := reactor.GetEventSwitchForCometBFT()
+	reactorsAvailable := cometbftSwitch.Reactors(chainID)
+
+	// TODO(midas): remove debug logs
+	reactor.logger.Debug("StartConsensusInstanceReactors",
+		"chainId", chainID,
+		"sendStatus", sendStatusToPeers,
+		"numActiveRuntimes", cometbftSwitch.NumActiveRuntimes(),
+		"reactorsAvailable", reactorsAvailable,
+	)
+
 	// Add channels for the new ChainID to all existing peers
 	// This prevents "unknown channel - missing ChainID" errors when peers
 	// try to send messages for the new ChainID.
-	cometbftSwitch := reactor.GetEventSwitchForCometBFT()
 	if err := reactor.AddConnectionChannels(cometbftSwitch, []string{chainID}); err != nil {
 		return fmt.Errorf(
 			"error with consensus reactors; adding channels for ChainID %s: %w",
 			chainID, err)
 	}
 
-	// Also register this active runtime, so that in sw.addPeer()
-	// we include it in relevantScopes and call reactors.InitPeer().
+	// Add active runtime for remote relays which don't have it yet.
 	cometbftSwitch.AddActiveRuntime(chainID)
 
 	// Make sure database connections are open for this ChainID.
@@ -369,18 +379,23 @@ func (reactor *Reactor) StartConsensusInstanceReactors(
 	}
 	reactor.envMutex.Unlock()
 
+	servicesProvider := reactor.GetServicesProvider()
+
 	// Given sendStatusToPeers, we should send completion updates to
 	// all consensus peers, i.e. send a ChainReplicationComplete msg.
-	consensusReactor := cometbftSwitch.Reactor(chainID, "CONSENSUS").(*cs.Reactor)
+	//	consensusReactor := cometbftSwitch.Reactor(chainID, "CONSENSUS").(*cs.Reactor)
+	consensusReactor := servicesProvider(ServiceKeyConsensusReactor, chainID).(*cs.Reactor)
 	consensusReactor.SetSendStatusToPeers(sendStatusToPeers)
 	consensusReactor.SetRuntimeRegistry(reactor.GetRuntimeRegistry())
 
-	memplReactor := cometbftSwitch.Reactor(chainID, "MEMPOOL").(*mempl.Reactor)
+	//	memplReactor := cometbftSwitch.Reactor(chainID, "MEMPOOL").(*mempl.Reactor)
+	memplReactor := servicesProvider(ServiceKeyMempoolReactor, chainID).(*mempl.Reactor)
 	memplReactor.SetRuntimeRegistry(reactor.GetRuntimeRegistry())
 
-	// Start all the reactors available for this ChainID.
-	reactorsForChain := cometbftSwitch.Reactors(chainID)
-	for name, r := range reactorsForChain {
+	blocksyncReactor := servicesProvider(ServiceKeyBlockSyncReactor, chainID).(*blocksync.Reactor)
+	evidenceReactor := servicesProvider(ServiceKeyEvidenceReactor, chainID).(*evidence.Reactor)
+
+	reactorStarterFn := func(name string, r p2p.Reactor) {
 		// Update the attached switch
 		r.SetSwitch(cometbftSwitch)
 
@@ -395,12 +410,23 @@ func (reactor *Reactor) StartConsensusInstanceReactors(
 					reactor.logger.Error("Error starting reactor",
 						"reactor", name,
 						"err", err)
-					return fmt.Errorf(
-						"error starting %s reactor: %w", name, err)
 				}
 			}
 		}
 	}
+
+	reactorStarterFn("CONSENSUS", consensusReactor)
+	reactorStarterFn("BLOCKSYNC", blocksyncReactor)
+	reactorStarterFn("MEMPOOL", memplReactor)
+	reactorStarterFn("EVIDENCE", evidenceReactor)
+
+	cometbftSwitch.AddReactor(chainID, "CONSENSUS", consensusReactor)
+	cometbftSwitch.AddReactor(chainID, "BLOCKSYNC", blocksyncReactor)
+	cometbftSwitch.AddReactor(chainID, "MEMPOOL", memplReactor)
+	cometbftSwitch.AddReactor(chainID, "EVIDENCE", evidenceReactor)
+
+	// TODO(midas): remove debug logs
+	reactor.logger.Debug("Done with StartConsensusInstanceReactors", "chainId", chainID)
 
 	return nil
 }
@@ -428,7 +454,7 @@ func (reactor *Reactor) StopConsensusInstanceReactors(
 	// Stop all the reactors available for this ChainID.
 	reactorsForChain := cometbftSwitch.Reactors(chainID)
 	for name, r := range reactorsForChain {
-		if r.IsRunning() || !r.IsStopped() {
+		if r.IsRunning() || r.IsStarted() {
 			err := r.Stop()
 
 			if err != nil && err != service.ErrAlreadyStopped {

@@ -222,6 +222,13 @@ func WithMetrics(metrics *Metrics) SwitchOption {
 // ---------------------------------------------------------------------
 // Switch setup
 
+func (sw *Switch) NumActiveRuntimes() int {
+	sw.runtimesMtx.RLock()
+	defer sw.runtimesMtx.RUnlock()
+
+	return len(sw.runtimesChainIds)
+}
+
 // GetActiveRuntimes returns the list of active ChainIDs.
 // thread safe.
 func (sw *Switch) GetActiveRuntimes() []string {
@@ -299,21 +306,12 @@ func (sw *Switch) AddReactor(chainID string, name string, reactor Reactor) React
 	for _, chDesc := range reactor.GetChannels() {
 		chID := chDesc.ID
 
-		// No two reactors can share the same channel.
-		// TODO(midas): removed panic must be evaluated by callers, i.e. (Reactor, err).
-		if _, exists := sw.reactorsByCh[chainID][chID]; exists {
-			sw.Logger.Error("Failed to add reactor: channel has multiple reactors",
-				"chID", fmt.Sprintf("%d (0x%X)", chID, chID),
-				"chain_id", chainID,
-				"reactor_1", sw.reactorsByCh[chainID][chID],
-				"reactor_2", reactor,
-			)
-			return reactor
+		if _, exists := sw.reactorsByCh[chainID][chID]; !exists {
+			sw.chDescs[chainID] = append(sw.chDescs[chainID], chDesc)
+			sw.msgTypeByChID[chainID][chID] = chDesc.MessageType
 		}
 
-		sw.chDescs[chainID] = append(sw.chDescs[chainID], chDesc)
 		sw.reactorsByCh[chainID][chID] = reactor
-		sw.msgTypeByChID[chainID][chID] = chDesc.MessageType
 	}
 	sw.reactors[chainID][name] = reactor
 	reactor.SetSwitch(sw)
@@ -322,8 +320,6 @@ func (sw *Switch) AddReactor(chainID string, name string, reactor Reactor) React
 
 // RemoveReactor removes the given Reactor from the Switch.
 func (sw *Switch) RemoveReactor(chainID string, name string, reactor Reactor) {
-	sw.RemoveActiveRuntime(chainID)
-
 	sw.reactorsMtx.Lock()
 	defer sw.reactorsMtx.Unlock()
 
@@ -338,8 +334,14 @@ func (sw *Switch) RemoveReactor(chainID string, name string, reactor Reactor) {
 		delete(sw.reactorsByCh[chainID], chDesc.ID)
 		delete(sw.msgTypeByChID[chainID], chDesc.ID)
 	}
-	delete(sw.reactors, name)
-	reactor.SetSwitch(nil)
+	delete(sw.reactors, chainID)
+}
+
+func (sw *Switch) RemoveReactors(chainID string) {
+	reactors := sw.Reactors(chainID)
+	for name, r := range reactors {
+		sw.RemoveReactor(chainID, name, r)
+	}
 }
 
 // Reactors returns a map of reactors registered on the switch.
@@ -754,7 +756,8 @@ func (sw *Switch) InitPeerForScope(peer *PeerImpl, scope string) {
 				"scope", scope,
 				"reactor", rname,
 				"peer", peer,
-				"running", peer.IsRunning(),
+				"reactorRunning", reactor.IsRunning(),
+				"peerRunning", peer.IsRunning(),
 			)
 		}
 	}
@@ -802,7 +805,8 @@ func (sw *Switch) AddPeerForScope(peer *PeerImpl, scope string) {
 			"scope", scope,
 			"reactor", rname,
 			"peer", peer,
-			"running", peer.IsRunning(),
+			"reactorRunning", reactor.IsRunning(),
+			"peerRunning", peer.IsRunning(),
 		)
 
 		reactor.AddPeer(peerForReactor)

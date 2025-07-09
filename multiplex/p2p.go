@@ -2,7 +2,6 @@ package multiplex
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -243,30 +242,53 @@ func (reactor *Reactor) CreateTransportSwitchesWithReactors(
 			connFilters = append(connFilters, p2p.ConnDuplicateIPFilter())
 		}
 
-		// We should error if consensus reactors for this ChainID are not ready.
-		memR := serviceProvider(ServiceKeyMempoolReactor, chainID)
-		bsR := serviceProvider(ServiceKeyBlockSyncReactor, chainID)
-		conR := serviceProvider(ServiceKeyConsensusReactor, chainID)
-		evR := serviceProvider(ServiceKeyEvidenceReactor, chainID)
-		if memR == nil || bsR == nil || conR == nil || evR == nil {
-			p2pLogger.Error("Failed to load consensus reactors - not available",
-				"nodeId", nodeKey.ID(),
-				"chainId", chainID,
-				"mempool", memR,
-				"blocksync", bsR,
-				"consensus", conR,
-				"evidence", evR,
-			)
-			return errors.New("failed to load consensus reactors")
+		if sR := eventSwitch.Reactor(chainID, "MEMPOOL"); sR == nil {
+			memR := serviceProvider(ServiceKeyMempoolReactor, chainID)
+			if memR == nil {
+				p2pLogger.Error("Failed to load mempool reactor - not available",
+					"nodeId", nodeKey.ID(),
+					"chainId", chainID,
+				)
+			}
+
+			eventSwitch.AddReactor(chainID, "MEMPOOL", memR.(*mempl.Reactor))
 		}
 
-		// Feed reactors, created in [CreateConsensusInstanceReactors].
-		//
-		// The event switch contains a pointer to internal module reactors.
-		eventSwitch.AddReactor(chainID, "MEMPOOL", memR.(*mempl.Reactor))
-		eventSwitch.AddReactor(chainID, "BLOCKSYNC", bsR.(*blocksync.Reactor))
-		eventSwitch.AddReactor(chainID, "CONSENSUS", conR.(*cs.Reactor))
-		eventSwitch.AddReactor(chainID, "EVIDENCE", evR.(*evidence.Reactor))
+		if sR := eventSwitch.Reactor(chainID, "BLOCKSYNC"); sR == nil {
+			bsR := serviceProvider(ServiceKeyBlockSyncReactor, chainID)
+			if bsR == nil {
+				p2pLogger.Error("Failed to load blocksync reactor - not available",
+					"nodeId", nodeKey.ID(),
+					"chainId", chainID,
+				)
+			}
+
+			eventSwitch.AddReactor(chainID, "BLOCKSYNC", bsR.(*blocksync.Reactor))
+		}
+
+		if sR := eventSwitch.Reactor(chainID, "CONSENSUS"); sR == nil {
+			conR := serviceProvider(ServiceKeyConsensusReactor, chainID)
+			if conR == nil {
+				p2pLogger.Error("Failed to load consensus reactor - not available",
+					"nodeId", nodeKey.ID(),
+					"chainId", chainID,
+				)
+			}
+
+			eventSwitch.AddReactor(chainID, "CONSENSUS", conR.(*cs.Reactor))
+		}
+
+		if sR := eventSwitch.Reactor(chainID, "EVIDENCE"); sR == nil {
+			evR := serviceProvider(ServiceKeyEvidenceReactor, chainID)
+			if evR == nil {
+				p2pLogger.Error("Failed to load evidence reactor - not available",
+					"nodeId", nodeKey.ID(),
+					"chainId", chainID,
+				)
+			}
+
+			eventSwitch.AddReactor(chainID, "EVIDENCE", evR.(*evidence.Reactor))
+		}
 
 		if len(persistentPeers) > 0 {
 			if err := eventSwitch.AddPersistentPeers(persistentPeers); err != nil {
@@ -345,20 +367,22 @@ func (reactor *Reactor) CreateAddressBooks(
 		// 2) Create the PEX reactor
 		//
 		// Here we feed the P2P.Seeds from the config overwrite.
-		pexLogger := reactor.logger.With("module", "pex")
-		pexReactor := pex.NewReactor(ctx, addrBook,
-			&pex.ReactorConfig{
-				Seeds:    chainSeedNodes,
-				SeedMode: cfgOverwrite.P2P.SeedMode,
-				// See consensus/reactor.go: blocksToContributeToBecomeGoodPeer 10000
-				// blocks assuming 10s blocks ~ 28 hours.
-				SeedDisconnectWaitPeriod:     28 * time.Hour,
-				PersistentPeersMaxDialPeriod: cfgOverwrite.P2P.PersistentPeersMaxDialPeriod,
-			}, pex.WithChainID(chainID))
-		pexReactor.SetLogger(pexLogger)
+		if pR := cometbftSwitch.Reactor(chainID, "PEX"); pR == nil {
+			pexLogger := reactor.logger.With("module", "pex")
+			pexReactor := pex.NewReactor(ctx, addrBook,
+				&pex.ReactorConfig{
+					Seeds:    chainSeedNodes,
+					SeedMode: cfgOverwrite.P2P.SeedMode,
+					// See consensus/reactor.go: blocksToContributeToBecomeGoodPeer 10000
+					// blocks assuming 10s blocks ~ 28 hours.
+					SeedDisconnectWaitPeriod:     28 * time.Hour,
+					PersistentPeersMaxDialPeriod: cfgOverwrite.P2P.PersistentPeersMaxDialPeriod,
+				}, pex.WithChainID(chainID))
+			pexReactor.SetLogger(pexLogger)
 
-		// Set address book and PEX reactor on Switch
-		cometbftSwitch.AddReactor(chainID, "PEX", pexReactor)
+			// Set address book and PEX reactor on Switch
+			cometbftSwitch.AddReactor(chainID, "PEX", pexReactor)
+		}
 	}
 
 	cometbftSwitch.SetAddrBook(addrBook)

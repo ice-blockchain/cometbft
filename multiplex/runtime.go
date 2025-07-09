@@ -30,6 +30,11 @@ import (
 func (reactor *Reactor) AllocateNetwork(
 	chainID string,
 ) error {
+	// TODO(midas): remove debug logs
+	reactor.logger.Debug("AllocateNetwork",
+		"chainId", chainID,
+	)
+
 	// Build the ExtendedChainID to retrieve user address from ChainID.
 	extChainID, err := NewExtendedChainIDFromLegacy(chainID)
 	if err != nil {
@@ -214,6 +219,12 @@ func (reactor *Reactor) InjectNewNetwork(
 	chainID string,
 	otherValidators []string,
 ) error {
+	// TODO(midas): remove debug logs
+	reactor.logger.Debug("InjectNewNetwork",
+		"chainId", chainID,
+		"otherVals", otherValidators,
+	)
+
 	// Build the ExtendedChainID to retrieve user address from ChainID.
 	extChainID, err := NewExtendedChainIDFromLegacy(chainID)
 	if err != nil {
@@ -306,6 +317,9 @@ func (reactor *Reactor) InjectNewRuntime(
 	options ...node.Option,
 ) error {
 	clogger := reactor.logger.With("chainId", chainID)
+
+	// TODO(midas): remove debug logs
+	clogger.Debug("InjectNewRuntime")
 
 	// ------------------------------------------------------------------------
 	// Step 1: Create runtime environment
@@ -617,9 +631,13 @@ func (reactor *Reactor) StopNodeInstance(chainID string) error {
 		}
 
 		cometbftSwitch := r.GetEventSwitchForCometBFT()
+		cometbftSwitch.RemoveActiveRuntime(network)
+		cometbftSwitch.RemoveReactors(network)
 		r.RemovePeersByScope(cometbftSwitch, network)
 
 		discoverySwitch := r.GetEventSwitchForDiscovery()
+		discoverySwitch.RemoveActiveRuntime(network)
+		discoverySwitch.RemoveReactors(network)
 		r.RemovePeersByScope(discoverySwitch, network)
 
 		r.logger.Info("Stopped node runtime", "chainId", network)
@@ -642,17 +660,30 @@ func (reactor *Reactor) RemovePeersByScope(sw *p2p.Switch, scope string) (size i
 		}
 	}()
 
-	peerSet := sw.Peers(scope)
 	peersByScope := sw.Peers(scope).Copy()
 	size = len(peersByScope)
 
 	reactor.logger.Info("Stopping connections for scope", "scope", scope, "numPeers", size)
 	for _, p := range peersByScope {
-		// Cleanup the MConnection channels for this peer and scope
+		// relevantScopes := map[string]bool{}
+		// relevantScopes[scope] = true
+
+		// activeRuntimes := sw.GetActiveRuntimes()
+		// for _, activeChainID := range activeRuntimes {
+		// 	relevantScopes[activeChainID] = true
+		// }
+
+		// remainingChannelsForPeer := p.MConn().GetChannelsIdx()
+		// for chScope, _ := range remainingChannelsForPeer {
+		// 	relevantScopes[chScope] = true
+		// }
+
+		// Cleanup the MConnection channels from switch
 		sw.CloseChannelsForScopes([]string{scope})(p.MConn())
 
-		// And remove the peer from scoped peerset
-		peerSet.RemovePeer(p)
+		// And stop the peer gracefully to remove from reactors.
+		sw.StopPeerGracefully(p)
+		sw.Transport().Cleanup(p)
 	}
 
 	return // size
@@ -767,10 +798,17 @@ func (reactor *Reactor) MakeNetworkDatabases(
 	)
 
 	servicesProvider := reactor.GetServicesProvider()
+	serviceKeyByName := map[string]string{
+		"blockstore": ServiceKeyDatabaseBlock,
+		"state":      ServiceKeyDatabaseState,
+		"txindex":    ServiceKeyDatabaseIndex,
+		"evidence":   ServiceKeyDatabaseEvidence,
+	}
 
 	dbs := map[string]*DBService{}
 	for _, dbName := range databases {
-		databaseService := servicesProvider("database/"+dbName, chainID.String())
+		dbServiceKey := serviceKeyByName[dbName]
+		databaseService := servicesProvider(dbServiceKey, chainID.String())
 		databaseLogger := reactor.logger.With("module", "database")
 
 		if dbService, ok := databaseService.(*DBService); ok {
@@ -783,7 +821,7 @@ func (reactor *Reactor) MakeNetworkDatabases(
 				databaseLogger,
 			)
 
-			reactor.RegisterService("database/"+dbName, chainID.String(), dbs[dbName])
+			reactor.RegisterService(dbServiceKey, chainID.String(), dbs[dbName])
 		}
 
 		if startDatabase && dbs[dbName].IsStopped() {
@@ -924,6 +962,9 @@ func (reactor *Reactor) MakeNetworkStateMachine(
 		DBKeyLayout: dbKeyLayoutVersion,
 	})
 
+	stateFromDb, _ := stateStore.Load()
+	mustSaveState := stateFromDb.IsEmpty()
+
 	// Load the state from GenesisDoc
 	stateMachine, err := stateStore.LoadFromDBOrGenesisDoc(genesisDoc)
 	if err != nil {
@@ -931,12 +972,12 @@ func (reactor *Reactor) MakeNetworkStateMachine(
 			"could not load state machine from genesis doc: %w", err)
 	}
 
-	// TODO(midas): Save is necessary only if stateMachine.IsEmpty() before above load.
-
 	// Persist the state machine as created from genesis doc
-	if err := stateStore.Save(stateMachine); err != nil {
-		return sm.State{}, nil, nil, fmt.Errorf(
-			"could not save newly initialized state machine: %w", err)
+	if mustSaveState {
+		if err := stateStore.Save(stateMachine); err != nil {
+			return sm.State{}, nil, nil, fmt.Errorf(
+				"could not save newly initialized state machine: %w", err)
+		}
 	}
 
 	// Also, initialize a [bs.BlockStore] (not snapshottable)

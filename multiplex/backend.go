@@ -267,8 +267,9 @@ func NewServer(
 	nodeLogger cmtlog.Logger,
 	options ...MultiplexBackendOption,
 ) (*MultiplexBackend, error) {
+	nodeConfig.DBBackend = "goleveldb"
 	nodeConfig.Consensus.CreateEmptyBlocks = false // Force to create blocks only if there is transactions.
-	//nodeConfig.Consensus.TimeoutCommit = 0         // Make progress as soon as the node has all the precommits.
+	nodeConfig.Consensus.TimeoutCommit = 0         // Make progress as soon as the node has all the precommits.
 	nodeConfig.P2P.AllowDuplicateIP = true
 
 	initTime := time.Now()
@@ -2556,6 +2557,11 @@ func (b *MultiplexBackend) StartConsensusInstance(
 	b.reactor.chainReadyMtx.RLock()
 	_, hasConfiguredChainID := b.reactor.chainReadyChs[chainID]
 	b.reactor.chainReadyMtx.RUnlock()
+
+	// TODO(midas): remove debug logs
+	clogger.Debug("StartConsensusInstance",
+		"hasChainID", hasConfiguredChainID,
+	)
 
 	if !hasConfiguredChainID {
 		// calls AllocateNetwork, InjectNewNetwork, InjectNewRuntime

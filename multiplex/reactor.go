@@ -415,7 +415,7 @@ func DefaultOnIdleCallback(reactor *Reactor) func(chainID string) error {
 
 		// Stops mempool, consensus, blocksync, evidence.
 		reactor.StopConsensusInstanceReactors(
-			context.Background(),
+			reactor.Context(),
 			chainID,
 		)
 
@@ -439,6 +439,8 @@ func DefaultOnIdleCallback(reactor *Reactor) func(chainID string) error {
 				dbService.Stop()
 			}
 		}
+
+		reactor.removeInternalChannels(chainID)
 
 		return nil
 	}
@@ -1439,7 +1441,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 		// Then, start the consensus reactors.
 		// TODO(midas): We only need MEMPOOL reactor to be started here.
 		if err := r.StartConsensusInstanceReactors(
-			r.Context(),
+			context.Background(),
 			e.ChainID,
 			false,
 		); err != nil {
@@ -2327,6 +2329,36 @@ func (reactor *Reactor) OnStop() {
 	reactor.runtimeUpdatesMtx.RUnlock()
 
 	for chainID, _ := range restRuntimeUpdatesChs {
+		reactor.CloseRuntimeUpdatesChannel(chainID)
+	}
+}
+
+func (reactor *Reactor) removeInternalChannels(chainID string) {
+	reactor.chainReadyMtx.RLock()
+	chainReadyCh, hasChainReady := reactor.chainReadyChs[chainID]
+	reactor.chainReadyMtx.RUnlock()
+
+	if hasChainReady {
+		close(chainReadyCh)
+
+		reactor.chainReadyMtx.Lock()
+		delete(reactor.chainReadyChs, chainID)
+		reactor.chainReadyMtx.Unlock()
+	}
+
+	reactor.ackReplResMtx.RLock()
+	_, hasReplRes := reactor.ackReplResChs[chainID]
+	reactor.ackReplResMtx.RUnlock()
+
+	if hasReplRes {
+		reactor.CloseAckReplicationChannel(chainID)
+	}
+
+	reactor.runtimeUpdatesMtx.RLock()
+	_, hasRuntimeUpdate := reactor.runtimeUpdatesChs[chainID]
+	reactor.runtimeUpdatesMtx.RUnlock()
+
+	if hasRuntimeUpdate {
 		reactor.CloseRuntimeUpdatesChannel(chainID)
 	}
 }

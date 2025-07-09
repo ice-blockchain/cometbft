@@ -91,6 +91,13 @@ func (dbS *DBService) OnStart(ctx context.Context) (err error) {
 
 // OnStop implements [service.Service] by closing the database.
 func (dbS *DBService) OnStop() {
+	// TODO(midas): remove debug logs
+	dbS.logger.Debug("Stopping database",
+		"name", dbS.name,
+		"type", dbS.backend,
+		"path", dbS.storage,
+	)
+
 	dbS.mtx.Lock()
 	defer dbS.mtx.Unlock()
 

@@ -625,7 +625,7 @@ func (c *MConnection) getSharedChannel(chID byte) (*Channel, error) {
 		}
 	}
 
-	return nil, fmt.Errorf("Unknown channel %X", chID)
+	return nil, fmt.Errorf("Unknown channel 0x%X (%d)", chID, chID)
 }
 
 func (c *MConnection) GetChannelsIdx() map[string]map[byte]*Channel {

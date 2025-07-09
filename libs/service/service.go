@@ -159,11 +159,12 @@ func (bs *BaseService) Start() error {
 		go func() {
 			select {
 			case <-bs.ctx.Done():
-			case <-bs.quit:
-			}
-			err = bs.Stop()
-			if bs.Logger != nil && err != nil && err != ErrAlreadyStopped {
-				bs.Logger.Error("Failed to close ", "err", err, "service", bs.name)
+				err = bs.Stop()
+				if bs.Logger != nil && err != nil && err != ErrAlreadyStopped {
+					bs.Logger.Error("Failed to close ", "err", err, "service", bs.name)
+				}
+
+			case <-bs.quit: // OR already stopped
 			}
 		}()
 		return nil
