@@ -160,6 +160,8 @@ func (bs *BaseService) Start() error {
 			return err
 		}
 
+		bs.quit = make(chan struct{})
+
 		// NOTE(midas):
 		// When bs.ctx is cancelled, the start procedure triggers Stop call!
 		go func() {

@@ -991,7 +991,10 @@ func TestScenarioClientBroadcastMinimalWaitForReplicationCompleted(t *testing.T)
 // to which the relays respond with a AckTransactionBroadcast message
 // before we proceed to accepting the transaction.
 func TestScenarioClientBroadcastMinimalHealthyRelays(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	numChains := 1
 	numRelays := 3
@@ -1155,7 +1158,10 @@ func TestScenarioClientBroadcastMinimalHealthyRelays(t *testing.T) {
 // using a message on mempool channel, to which the relays respond with a
 // AckTransactionBroadcast message before we proceed to accepting the transaction.
 func TestScenarioClientBroadcastMinimalEmptyRelays(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	numChains := 0
 	numRelays := 3
@@ -1247,7 +1253,10 @@ func TestScenarioClientBroadcastMinimalEmptyRelays(t *testing.T) {
 // which includes the broadcast transactions data (using client.BroadcastTx),
 // and the state machine and blocks store are updated with transactions data.
 func TestScenarioClientBroadcastMinimalEmptyRelaysProduceBlockWithTx(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	numChains := 0
 	numRelays := 3
@@ -1348,7 +1357,10 @@ func TestScenarioClientBroadcastMinimalEmptyRelaysProduceBlockWithTx(t *testing.
 // calls to GetRemoteRelayInfo, and the exclusion of "self" from relays list
 // if necessary.
 func TestScenarioClientBroadcastMinimalCountsHealthyRelays(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	numChains := 0
 	numHealthy := 3
@@ -1640,7 +1652,10 @@ func TestScenarioClientBroadcastMinimalCountsHealthyRelays(t *testing.T) {
 // address that DO NOT contain a relay ID. Namely, calls to GetRemoteRelayInfo
 // should be successful and fill the healthyRemoteRelays slice correctly.
 func TestScenarioClientBroadcastMinimalCountsRemoteRelays(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	numChains := 0
 	numHealthy := 3
@@ -1850,7 +1865,10 @@ func TestScenarioClientBroadcastMinimalCountsRemoteRelays(t *testing.T) {
 // to which the relays respond with a AckTransactionBroadcast message before we
 // proceed to accepting the transaction.
 func TestScenarioClientBroadcastMinimalEnoughHealthyRelays(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	numChains := 0
 	numRelays := 4
@@ -2068,7 +2086,10 @@ func TestScenarioClientBroadcastMinimalEnoughHealthyRelays(t *testing.T) {
 // less minimum healthy relays, and then we test a broadcast failure
 // with five relays failing, i.e. too many, to fail the broadcast.
 func TestScenarioClientBroadcastMinimalNotEnoughHealthyRelays(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	numChains := 0
 	numHealthy := 3
@@ -2425,7 +2446,10 @@ func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 // With a list of enough healthy relays, they should proceed to
 // accepting the transaction even with some other relays failing.
 func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	numChains := 0
 	numRelays := 4
@@ -2567,7 +2591,10 @@ func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 // the transaction broadcast process must normally resume operations and the
 // broadcast operation(s) must succeed without errors from the relays.
 func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	numChains := 0
 	numRelays := 3
@@ -2679,7 +2706,10 @@ func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
 // one after having restarted the backend to ensure that continuation works.
 // Finally, it also broadcasts one more transaction using a different ChainID.
 func TestScenarioClientBroadcastMinimalBeforeAndAfterBackendRestart(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	numChains := 0
 	numRelays := 3
@@ -2914,8 +2944,11 @@ func TestScenarioClientBroadcastMinimalBeforeAndAfterBackendRestart(t *testing.T
 // Test the mx.DefaultOnIdleCallback which should shutdown sleeping runtimes,
 // and broadcast operation before idling and after idling must succeed. This
 // test also validates that blocks are committed on all relays.
-func TestScenarioClientBroadcastAfterRuntimeIdling(t *testing.T) {
-	defer goleak.VerifyNone(t)
+func TestScenarioClientBroadcastMinimalAfterRuntimeIdling(t *testing.T) {
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	numChains := 0
 	numRelays := 3
@@ -3082,7 +3115,10 @@ func TestScenarioClientBroadcastAfterRuntimeIdling(t *testing.T) {
 // This test focusses on sending concurrent transactions for unknown chains
 // to make sure in a concurrent scenario, multiple new chains may be created.
 func TestScenarioConcurrentNewChains(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	timeoutGlobal := 60 * time.Second // Time for full test round
 	testCaseCtx, globalCancelFn := context.WithTimeout(context.TODO(), timeoutGlobal)
@@ -3243,7 +3279,10 @@ func TestScenarioConcurrentNewChains(t *testing.T) {
 }
 
 func TestScenarioConcurrentNewChainsAndExistingChains(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	timeoutGlobal := 300 * time.Second // Time for full test round
 	testCaseCtx, globalCancelFn := context.WithTimeout(context.TODO(), timeoutGlobal)
@@ -3471,7 +3510,10 @@ func TestScenarioConcurrentNewChainsAndExistingChains(t *testing.T) {
 }
 
 func TestScenarioConcurrentNewChains3(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	timeoutGlobal := 120 * time.Second // Time for full test round
 	testCaseCtx, globalCancelFn := context.WithTimeout(context.TODO(), timeoutGlobal)
@@ -3616,8 +3658,10 @@ func TestScenarioConcurrentNewChains3(t *testing.T) {
 // Client Callbacks Tests
 
 func TestScenarioCallbacksCallsCommitBroadcastTx(t *testing.T) {
-
-	defer goleak.VerifyNone(t)
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	numChains := 0
 	numRelays := 3

@@ -62,7 +62,7 @@ func (is *IndexerService) OnStart(ctx context.Context) error {
 	}
 
 	go func() {
-		for {
+		for ctx.Err() == nil {
 			// NOTE(midas): non-blocking select on shutdown channel makes
 			// sure every time before handling a block, we know to shutdown.
 			select {
@@ -72,6 +72,7 @@ func (is *IndexerService) OnStart(ctx context.Context) error {
 			}
 
 			select {
+			case <-is.Quit():
 			case <-blockSub.Canceled():
 				return
 			case msg := <-blockSub.Out():
