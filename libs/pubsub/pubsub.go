@@ -290,6 +290,12 @@ func (s *Server) PublishWithEvents(ctx context.Context, msg any, events map[stri
 
 // OnStop implements Service.OnStop by shutting down the server.
 func (s *Server) OnStop() {
+	select {
+	case <-s.Quit():
+	case <-s.Context().Done():
+		return
+	default:
+	}
 	s.cmds <- cmd{op: shutdown}
 }
 
