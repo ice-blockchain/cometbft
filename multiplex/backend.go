@@ -1088,7 +1088,7 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 
 			// The indexer Get() method will need the database open.
 			indexDatabase := servicesProvider(ServiceKeyDatabaseIndex, txChainID)
-			if err := EnsureStartDBService(indexDatabase); err != nil {
+			if err := EnsureStartDBService(ctx, indexDatabase); err != nil {
 				b.logger.Error("Failed to search for indexed transaction",
 					"requestId", broadcastID,
 					"chainIds", txChainID,

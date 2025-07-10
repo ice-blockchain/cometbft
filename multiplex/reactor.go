@@ -2625,7 +2625,7 @@ func (reactor *Reactor) startNodeListeners(ctx context.Context, chainID string) 
 		blockIndexer indexer.BlockIndexer
 	)
 	if nodeConfig.TxIndex.Indexer == "kv" {
-		if err := EnsureStartDBService(databaseService); err != nil {
+		if err := EnsureStartDBService(ctx, databaseService); err != nil {
 			return fmt.Errorf(
 				"failed to open indexer database for %s: %w", chainID, err)
 		}

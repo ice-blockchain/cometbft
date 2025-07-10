@@ -140,7 +140,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	privvalProvider := reactor.GetInstanceProvider(InstanceKeyPrivValidator)
 
 	evidenceDBService := servicesProvider(ServiceKeyDatabaseEvidence, chainID)
-	if err := EnsureStartDBService(evidenceDBService); err != nil {
+	if err := EnsureStartDBService(ctx, evidenceDBService); err != nil {
 		return fmt.Errorf(
 			"failed to open evidence database for %s: %w", chainID, err)
 	}

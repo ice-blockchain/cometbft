@@ -55,6 +55,8 @@ type Service interface {
 
 	// SetLogger sets a logger.
 	SetLogger(l log.Logger)
+
+	SetContext(c context.Context)
 }
 
 /*
@@ -131,6 +133,10 @@ func (bs *BaseService) SetLogger(l log.Logger) {
 	bs.Logger = l
 }
 
+func (bs *BaseService) SetContext(c context.Context) {
+	bs.ctx = c
+}
+
 // Start implements Service by calling OnStart (if defined). An error will be returned if the
 // service is already running or stopped. Not to start the stopped service, you need to call Reset.
 func (bs *BaseService) Start() error {
@@ -161,7 +167,7 @@ func (bs *BaseService) Start() error {
 			case <-bs.ctx.Done():
 				err = bs.Stop()
 				if bs.Logger != nil && err != nil && err != ErrAlreadyStopped {
-					bs.Logger.Error("Failed to close ", "err", err, "service", bs.name)
+					bs.Logger.Error("Failed to close", "err", err, "service", bs.name)
 				}
 
 			case <-bs.quit: // OR already stopped

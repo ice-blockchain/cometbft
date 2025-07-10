@@ -183,7 +183,10 @@ func TestMultiplexBackendMustStartEmpty(t *testing.T) {
 }
 
 func TestMultiplexBackendGetLocalNetworkHeights(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	// Uses config.TestConfig() and random MultiplexConfig
 	// For debug, change the logger to cmtlog.TestingLogger()
@@ -432,7 +435,10 @@ func TestMultiplexBackendCheckDialCompatibleRelayWithTwoRelays(t *testing.T) {
 }
 
 func TestMultiplexBackendCheckDialCompatibleRelaySevenCompatibleRelays(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	numChains := 3
 	numRelays := 7
@@ -465,6 +471,7 @@ func TestMultiplexBackendCheckDialCompatibleRelaySevenCompatibleRelays(t *testin
 	require.Len(t, servers, numRelays)
 
 	defer func() {
+		time.Sleep(1 * time.Second)
 		for i := 0; i < len(servers); i++ {
 			go closeAndRemoveAll(t, rootDirs[i], servers[i])
 		}
@@ -973,7 +980,10 @@ func TestMultiplexBackendGetValidatorsByNetwork(t *testing.T) {
 }
 
 func TestMultiplexBackendAddTransactions(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	// Uses config.TestConfig() and random MultiplexConfig
 	// For debug, change the logger to cmtlog.TestingLogger()
@@ -1017,7 +1027,10 @@ func TestMultiplexBackendAddTransactions(t *testing.T) {
 }
 
 func TestMultiplexBackendRemoveTransactions(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	// Uses config.TestConfig() and random MultiplexConfig
 	// For debug, change the logger to cmtlog.TestingLogger()

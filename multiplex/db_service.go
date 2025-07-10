@@ -3,6 +3,7 @@ package multiplex
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"sync"
 
 	dbm "github.com/cometbft/cometbft-db"
@@ -106,6 +107,7 @@ func (dbS *DBService) OnStop() {
 			"name", dbS.name,
 			"path", dbS.storage,
 			"err", err,
+			"stack", string(debug.Stack()),
 		)
 	}
 }

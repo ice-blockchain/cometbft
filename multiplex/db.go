@@ -1,6 +1,7 @@
 package multiplex
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 
@@ -78,8 +79,9 @@ func NewMultiplexDB(
 
 // EnsureStartDBService asserts the type of s for it being a DBService and
 // makes sure that it will be reset & started if it is necessary.
-func EnsureStartDBService(s service.Service) error {
+func EnsureStartDBService(ctx context.Context, s service.Service) error {
 	if dbS, ok := s.(*DBService); ok {
+		dbS.SetContext(ctx)
 		if !dbS.IsRunning() {
 			if dbS.IsStopped() {
 				dbS.Reset() // reset stopped flag

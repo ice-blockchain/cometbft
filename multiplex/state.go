@@ -52,7 +52,7 @@ func (reactor *Reactor) InitMultiplexStates(chainIds []string) error {
 
 		// Retrieve this chain's state database instance
 		databaseService := servicesProvider(ServiceKeyDatabaseState, chainID)
-		if err := EnsureStartDBService(databaseService); err != nil {
+		if err := EnsureStartDBService(reactor.Context(), databaseService); err != nil {
 			return fmt.Errorf(
 				"failed to open state database for %s: %w", chainID, err)
 		}
@@ -127,7 +127,7 @@ func (reactor *Reactor) InitMultiplexBlockStores(chainIds []string) error {
 	for _, chainID := range chainIds {
 		// Retrieve this chain's state database instance
 		databaseService := servicesProvider(ServiceKeyDatabaseBlock, chainID)
-		if err := EnsureStartDBService(databaseService); err != nil {
+		if err := EnsureStartDBService(reactor.Context(), databaseService); err != nil {
 			return fmt.Errorf(
 				"failed to open block database for %s: %w", chainID, err)
 		}

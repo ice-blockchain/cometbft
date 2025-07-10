@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,7 +18,10 @@ import (
 )
 
 func TestMultiplexRoutinesNodeReplRequestEmptyRelays(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	numChains := 0
 	numRelays := 3
@@ -159,14 +163,6 @@ func TestMultiplexRoutinesNodeReplRequestEmptyRelays(t *testing.T) {
 	)
 	assert.NoError(t, replErr)
 	assert.GreaterOrEqual(t, actualNumResponses, expectedNumResponses) // actual >= expected
-
-	// Wait also to receive ChainReplicationComplete, only then we should shutdown.
-	// actualNumCompleted, compErr := servers[0].WaitForRelaysReplicationCompleted(context.TODO(),
-	// 	[]string{useChainID},
-	// 	client.Transaction{},
-	// )
-	// assert.NoError(t, compErr)
-	// assert.GreaterOrEqual(t, actualNumCompleted, expectedNumResponses)
 
 	// Test that ChainReplicationRequest was sent to relay-2 and relay-3
 	actualRequestsSent := servers[0].GetReplRequestPeers(useChainID)

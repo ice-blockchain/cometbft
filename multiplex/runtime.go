@@ -159,12 +159,12 @@ func (reactor *Reactor) InjectStateMachine(
 	stateDatabaseService := servicesProvider(ServiceKeyDatabaseState, chainID)
 	blockDatabaseService := servicesProvider(ServiceKeyDatabaseBlock, chainID)
 
-	if err := EnsureStartDBService(stateDatabaseService); err != nil {
+	if err := EnsureStartDBService(reactor.Context(), stateDatabaseService); err != nil {
 		return fmt.Errorf(
 			"failed to open state database for %s: %w", chainID, err)
 	}
 
-	if err := EnsureStartDBService(blockDatabaseService); err != nil {
+	if err := EnsureStartDBService(reactor.Context(), blockDatabaseService); err != nil {
 		return fmt.Errorf(
 			"failed to open block database for %s: %w", chainID, err)
 	}
