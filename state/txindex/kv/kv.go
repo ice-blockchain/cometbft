@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/syndtr/goleveldb/leveldb"
 	"math"
 	"math/big"
 	"sort"
@@ -222,6 +223,9 @@ func (txi *TxIndex) Get(hash []byte) (*abci.TxResult, error) {
 
 	rawBytes, err := txi.store.Get(hash)
 	if err != nil {
+		if errors.Is(err, leveldb.ErrClosed) {
+			return nil, err
+		}
 		panic(err)
 	}
 	if rawBytes == nil {

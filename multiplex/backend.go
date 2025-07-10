@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/syndtr/goleveldb/leveldb"
 	"net"
 	"net/http"
 	"runtime/debug"
@@ -1102,6 +1103,10 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 			if idxTx, err := indexerService.GetTxIndexer().Get(
 				tx.Hash(),
 			); idxTx == nil || err != nil {
+				if errors.Is(err, leveldb.ErrClosed) {
+					indexerService.Stop()
+					continue
+				}
 				// Transaction is not yet indexed
 				b.logger.Debug("Failed to find indexed transaction (not an error)",
 					"requestId", broadcastID,

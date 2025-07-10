@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/syndtr/goleveldb/leveldb"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -1334,6 +1335,10 @@ func (reactor *Reactor) OnCompleteRuntime(chainID string, protoTxs [][]byte) {
 			if idxTx, err := indexerService.GetTxIndexer().Get(
 				txHash,
 			); idxTx == nil || err != nil {
+				if errors.Is(err, leveldb.ErrClosed) {
+					indexerService.Stop()
+					return
+				}
 				missingHashes = append(missingHashes, string(txHash))
 			}
 		}
