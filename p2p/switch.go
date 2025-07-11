@@ -916,6 +916,8 @@ func (sw *Switch) RemovePeerScope(peer *PeerImpl, chainID string) {
 		"peer", peer,
 		"chainId", chainID,
 		"reactors", chainReactors)
+
+	sw.CloseChannelsForScopes([]string{chainID})(peer.MConn())
 }
 
 func (sw *Switch) StopAllPeersAndCleanup() error {
@@ -1719,7 +1721,7 @@ func (sw *Switch) addPeer(p *PeerImpl) (err error) {
 	if p.IsStopped() {
 		// TODO(midas): remove debug logs
 		sw.Logger.Debug("Resetting peer", "peer", p)
-		p.Reset()
+		p.Reset(sw.Context())
 	}
 
 	// TODO(midas): remove debug logs

@@ -509,7 +509,7 @@ func (reactor *Reactor) InitAndStartNode(ctx context.Context, chainID string) er
 	// Calls the Start method on the node.Node instance.
 	go func(network string, n *node.Node) {
 		if n.IsStopped() {
-			n.Reset() // allows restart
+			n.Reset(ctx) // allows restart
 		}
 
 		clogger.Info("Starting new node", "chainId", network)
@@ -572,7 +572,7 @@ func (reactor *Reactor) StartAllNodeInstances() error {
 			defer reactor.GetRuntimeRegistry().OnActivate(network)
 
 			if n.IsStopped() {
-				n.Reset() // allows restart
+				n.Reset(reactor.Context()) // allows restart
 			}
 
 			reactor.logger.Info("Starting new node", "chainId", network)
@@ -792,7 +792,7 @@ func (reactor *Reactor) MakeNetworkDatabases(
 		}
 
 		if startDatabase && dbs[dbName].IsStopped() {
-			dbs[dbName].Reset()
+			dbs[dbName].Reset(reactor.Context())
 		}
 
 		if startDatabase && !dbs[dbName].IsRunning() {

@@ -236,9 +236,9 @@ func (p *PeerImpl) OnStop() {
 }
 
 // OnReset implements service.Service.
-func (p *PeerImpl) OnReset() error {
+func (p *PeerImpl) OnReset(ctx context.Context) error {
 	p.Logger.Debug("Peer reset")
-	if err := p.mconn.Reset(); err != nil {
+	if err := p.mconn.Reset(ctx); err != nil {
 		p.Logger.Error("Error resetting the mconn", "err", err)
 	}
 	return nil

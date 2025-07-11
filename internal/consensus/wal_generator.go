@@ -3,6 +3,7 @@ package consensus
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -204,7 +205,7 @@ func (*byteBufferWAL) SearchForEndHeight(
 	return nil, false, nil
 }
 
-func (*byteBufferWAL) Start() error { return nil }
-func (*byteBufferWAL) Stop() error  { return nil }
-func (*byteBufferWAL) Reset() error { return nil }
-func (*byteBufferWAL) Wait()        {}
+func (*byteBufferWAL) Start() error                    { return nil }
+func (*byteBufferWAL) Stop() error                     { return nil }
+func (*byteBufferWAL) Reset(ctx context.Context) error { return nil }
+func (*byteBufferWAL) Wait()                           {}

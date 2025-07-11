@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -11,7 +12,7 @@ type testService struct {
 	BaseService
 }
 
-func (testService) OnReset() error {
+func (testService) OnReset(ctx context.Context) error {
 	return nil
 }
 

@@ -16,7 +16,7 @@ const tickTockBufferSize = 10
 type TimeoutTicker interface {
 	Start() error
 	Stop() error
-	Reset() error
+	Reset(ctx context.Context) error
 	Chan() <-chan timeoutInfo       // on which to receive a timeout
 	ScheduleTimeout(ti timeoutInfo) // reset the timer
 

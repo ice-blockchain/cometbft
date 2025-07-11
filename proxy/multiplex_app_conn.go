@@ -238,7 +238,7 @@ func (conn *multiplexAppConn) startQueryClient(ctx context.Context) error {
 		conn.sharedClients.query = c
 		shouldStart = true
 	} else if conn.sharedClients.query.IsStopped() {
-		conn.sharedClients.query.Reset()
+		conn.sharedClients.query.Reset(ctx)
 		shouldStart = true
 	}
 
@@ -272,7 +272,7 @@ func (conn *multiplexAppConn) startSnapshotClient(ctx context.Context) error {
 		conn.sharedClients.snapshot = c
 		shouldStart = true
 	} else if conn.sharedClients.snapshot.IsStopped() {
-		conn.sharedClients.snapshot.Reset()
+		conn.sharedClients.snapshot.Reset(ctx)
 		shouldStart = true
 	}
 
@@ -306,7 +306,7 @@ func (conn *multiplexAppConn) startMempoolClient(ctx context.Context) error {
 		conn.sharedClients.mempool = c
 		shouldStart = true
 	} else if conn.sharedClients.mempool.IsStopped() {
-		conn.sharedClients.mempool.Reset()
+		conn.sharedClients.mempool.Reset(ctx)
 		shouldStart = true
 	}
 
@@ -341,7 +341,7 @@ func (conn *multiplexAppConn) startConsensusClient(ctx context.Context) error {
 		conn.sharedClients.consensus = c
 		shouldStart = true
 	} else if conn.sharedClients.consensus.IsStopped() {
-		conn.sharedClients.consensus.Reset()
+		conn.sharedClients.consensus.Reset(ctx)
 		shouldStart = true
 	}
 

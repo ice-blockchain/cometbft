@@ -126,7 +126,7 @@ func (pool *BlockPool) OnStop() {
 	}
 }
 
-func (pool *BlockPool) OnReset() error {
+func (pool *BlockPool) OnReset(ctx context.Context) error {
 	pool.mtx.Lock()
 	defer pool.mtx.Unlock()
 

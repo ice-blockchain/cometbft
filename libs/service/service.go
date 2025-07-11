@@ -39,8 +39,8 @@ type Service interface {
 
 	// Reset the service.
 	// Panics by default - must be overwritten to enable reset.
-	Reset() error
-	OnReset() error
+	Reset(ctx context.Context) error
+	OnReset(ctx context.Context) error
 
 	// Return true if the service is running
 	IsRunning() bool
@@ -109,6 +109,7 @@ type BaseService struct {
 	quit      chan struct{}
 	ctxCancel context.CancelFunc
 	ctx       context.Context
+	parentCtx context.Context
 	// The "subclass" of BaseService
 	impl Service
 }
@@ -119,10 +120,11 @@ func NewBaseService(ctx context.Context, logger log.Logger, name string, impl Se
 		logger = log.NewNopLogger()
 	}
 	bs := &BaseService{
-		Logger: logger,
-		name:   name,
-		quit:   make(chan struct{}),
-		impl:   impl,
+		Logger:    logger,
+		name:      name,
+		quit:      make(chan struct{}),
+		impl:      impl,
+		parentCtx: ctx,
 	}
 	bs.ctx, bs.ctxCancel = context.WithCancel(ctx)
 	return bs
@@ -211,7 +213,7 @@ func (bs *BaseService) Stop() error {
 
 		// NOTE(midas):
 		// When bs.ctx is cancelled, the start procedure triggers Stop!
-		// bs.ctxCancel()
+		bs.ctxCancel()
 		return nil
 	}
 	bs.Logger.Debug("service stop",
@@ -229,7 +231,7 @@ func (*BaseService) OnStop() {}
 
 // Reset implements Service by calling OnReset callback (if defined). An error
 // will be returned if the service is running.
-func (bs *BaseService) Reset() error {
+func (bs *BaseService) Reset(ctx context.Context) error {
 	if !atomic.CompareAndSwapUint32(&bs.stopped, 1, 0) {
 		if bs.IsStarted() {
 			bs.Logger.Debug("service reset",
@@ -245,11 +247,13 @@ func (bs *BaseService) Reset() error {
 	atomic.CompareAndSwapUint32(&bs.started, 1, 0)
 
 	bs.quit = make(chan struct{})
-	return bs.impl.OnReset()
+	bs.parentCtx = ctx
+	bs.ctx, bs.ctxCancel = context.WithCancel(ctx)
+	return bs.impl.OnReset(bs.ctx)
 }
 
 // OnReset implements Service.
-func (*BaseService) OnReset() error {
+func (*BaseService) OnReset(ctx context.Context) error {
 	return nil
 }
 

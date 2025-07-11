@@ -67,7 +67,7 @@ type WAL interface {
 	// service methods
 	Start() error
 	Stop() error
-	Reset() error
+	Reset(ctx context.Context) error
 	Wait()
 }
 
@@ -445,7 +445,7 @@ func (nilWAL) FlushAndSync() error        { return nil }
 func (nilWAL) SearchForEndHeight(int64, *WALSearchOptions) (rd io.ReadCloser, found bool, err error) {
 	return nil, false, nil
 }
-func (nilWAL) Start() error { return nil }
-func (nilWAL) Stop() error  { return nil }
-func (nilWAL) Reset() error { return nil }
-func (nilWAL) Wait()        {}
+func (nilWAL) Start() error                    { return nil }
+func (nilWAL) Stop() error                     { return nil }
+func (nilWAL) Reset(ctx context.Context) error { return nil }
+func (nilWAL) Wait()                           {}

@@ -828,15 +828,15 @@ func (n *Node) OnStop() {
 }
 
 // OnReset implements service.Service.
-func (n *Node) OnReset() error {
+func (n *Node) OnReset(ctx context.Context) error {
 	n.Logger.Debug("Node runtime reset")
-	if err := n.pruner.Reset(); err != nil {
+	if err := n.pruner.Reset(ctx); err != nil {
 		n.Logger.Error("Error resetting the pruning service", "err", err)
 	}
-	if err := n.eventBus.Reset(); err != nil {
+	if err := n.eventBus.Reset(ctx); err != nil {
 		n.Logger.Error("Error resetting eventBus", "err", err)
 	}
-	if err := n.indexerService.Reset(); err != nil {
+	if err := n.indexerService.Reset(ctx); err != nil {
 		n.Logger.Error("Error resetting indexerService", "err", err)
 	}
 	n.Logger.Debug("Done resetting node runtime")

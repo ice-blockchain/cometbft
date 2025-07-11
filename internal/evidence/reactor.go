@@ -75,7 +75,7 @@ func (evR *Reactor) SetLogger(l log.Logger) {
 // OnReset should not execute any business logic, but instead must be
 // defined as it is called from [Service#Reset], which permits to later
 // start back the service with stopped/started correctly reset.
-func (evR *Reactor) OnReset() error {
+func (evR *Reactor) OnReset(ctx context.Context) error {
 	evR.Logger.Info("Evidence reactor service reset",
 		"chain_id", evR.ChainID,
 	)

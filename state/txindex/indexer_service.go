@@ -73,6 +73,7 @@ func (is *IndexerService) OnStart(ctx context.Context) error {
 
 			select {
 			case <-is.Quit():
+			case <-ctx.Done():
 			case <-blockSub.Canceled():
 				return
 			case msg := <-blockSub.Out():

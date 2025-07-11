@@ -133,7 +133,7 @@ func (conR *Reactor) OnStart(ctx context.Context) error {
 	}
 
 	// start routine that computes peer statistics for evaluating peer quality
-	go conR.peerStatsRoutine()
+	go conR.peerStatsRoutine(ctx)
 
 	conR.subscribeToBroadcastEvents()
 
@@ -169,11 +169,11 @@ func (conR *Reactor) OnStop() {
 // OnReset should not execute any business logic, but instead must be
 // defined as it is called from [Service#Reset], which permits to later
 // start back the service with stopped/started correctly reset.
-func (conR *Reactor) OnReset() error {
+func (conR *Reactor) OnReset(ctx context.Context) error {
 	conR.Logger.Info("Consensus reactor service reset",
 		"chain_id", conR.ChainID,
 	)
-	if err := conR.conS.Reset(); err != nil {
+	if err := conR.conS.Reset(ctx); err != nil {
 		conR.Logger.Error("Error resetting consensus state", "err", err)
 	}
 	return nil
@@ -1364,8 +1364,8 @@ func pickVoteCurrentHeight(
 
 // -----------------------------------------------------------------------------
 
-func (conR *Reactor) peerStatsRoutine() {
-	for {
+func (conR *Reactor) peerStatsRoutine(ctx context.Context) {
+	for ctx.Err() == nil {
 		if !conR.IsRunning() {
 			conR.Logger.Info("Stopping peerStatsRoutine - reactor is stopped")
 			return
@@ -1408,7 +1408,7 @@ func (conR *Reactor) peerStatsRoutine() {
 				}
 			}
 
-		case <-conR.Context().Done():
+		case <-ctx.Done():
 		case <-conR.conS.Quit():
 		case <-conR.Quit():
 			return

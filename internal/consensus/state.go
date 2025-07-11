@@ -457,14 +457,14 @@ func (cs *State) OnStop() {
 	// WAL is stopped in receiveRoutine.
 }
 
-func (cs *State) OnReset() error {
-	if err := cs.evsw.Reset(); err != nil {
+func (cs *State) OnReset(ctx context.Context) error {
+	if err := cs.evsw.Reset(ctx); err != nil {
 		cs.Logger.Error("Error resetting eventSwitch", "error", err)
 	}
-	if err := cs.timeoutTicker.Reset(); err != nil {
+	if err := cs.timeoutTicker.Reset(ctx); err != nil {
 		cs.Logger.Error("Error resetting timeoutTicker", "error", err)
 	}
-	if err := cs.wal.Reset(); err != nil {
+	if err := cs.wal.Reset(ctx); err != nil {
 		cs.Logger.Error("Error resetting WAL", "error", err)
 	}
 	return nil

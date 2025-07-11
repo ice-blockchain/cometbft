@@ -368,7 +368,7 @@ func (reactor *Reactor) StartConsensusInstanceReactors(
 
 	reactor.envMutex.Lock()
 	if reactor.abciClient.IsStopped() {
-		reactor.abciClient.Reset()
+		reactor.abciClient.Reset(ctx)
 	}
 	if !reactor.abciClient.IsRunning() {
 		if err := reactor.abciClient.Start(); err != nil {
@@ -400,7 +400,7 @@ func (reactor *Reactor) StartConsensusInstanceReactors(
 		r.SetSwitch(cometbftSwitch)
 
 		if r.IsStopped() {
-			r.Reset() // allows re-start
+			r.Reset(ctx) // allows re-start
 		}
 
 		if !r.IsRunning() {

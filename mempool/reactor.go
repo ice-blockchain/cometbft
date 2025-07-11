@@ -193,7 +193,7 @@ func (memR *Reactor) OnStart(ctx context.Context) error {
 // OnReset should not execute any business logic, but instead must be
 // defined as it is called from [Service#Reset], which permits to later
 // start back the service with stopped/started correctly reset.
-func (memR *Reactor) OnReset() error {
+func (memR *Reactor) OnReset(ctx context.Context) error {
 	memR.Logger.Info("Mempool reactor service reset",
 		"chain_id", memR.ChainID,
 	)

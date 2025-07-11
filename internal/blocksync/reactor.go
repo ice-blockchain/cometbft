@@ -209,11 +209,11 @@ func (bcR *Reactor) OnStop() {
 // OnReset should not execute any business logic, but instead must be
 // defined as it is called from [Service#Reset], which permits to later
 // start back the service with stopped/started correctly reset.
-func (bcR *Reactor) OnReset() error {
+func (bcR *Reactor) OnReset(ctx context.Context) error {
 	bcR.Logger.Info("Blocksync reactor service reset",
 		"chain_id", bcR.chainID,
 	)
-	if err := bcR.pool.Reset(); err != nil {
+	if err := bcR.pool.Reset(ctx); err != nil {
 		bcR.Logger.Error("Error resetting pool", "err", err)
 	}
 	return nil

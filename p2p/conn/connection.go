@@ -534,7 +534,7 @@ func (c *MConnection) OnStop() {
 	// we close it @ recvRoutine.
 }
 
-func (c *MConnection) OnReset() error {
+func (c *MConnection) OnReset(ctx context.Context) error {
 	c.Logger.Debug("MConnection reset")
 
 	atomic.StoreUint32(&c.startedRoutines, 0)

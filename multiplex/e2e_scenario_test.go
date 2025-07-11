@@ -2836,7 +2836,7 @@ func TestScenarioClientBroadcastMinimalBeforeAndAfterBackendRestart(t *testing.T
 	stopErr := servers[0].Stop()
 	require.NoError(t, stopErr, "should shutdown relay")
 
-	resetErr := servers[0].Reset()
+	resetErr := servers[0].Reset(t.Context())
 	require.NoError(t, resetErr, "should reset relay")
 
 	waitDuration = 2 * time.Second

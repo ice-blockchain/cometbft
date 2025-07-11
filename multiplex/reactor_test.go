@@ -2,14 +2,14 @@ package multiplex_test
 
 import (
 	"errors"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 	"os"
 	"strconv"
 	"sync"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"go.uber.org/goleak"
+	"time"
 
 	dbm "github.com/cometbft/cometbft-db"
 	"github.com/ice-blockchain/cometbft/config"
@@ -320,7 +320,6 @@ func TestMultiplexReactorRegisterInstance(t *testing.T) {
 }
 
 func TestMultiplexReactorRegisterNetwork(t *testing.T) {
-	defer goleak.VerifyNone(t)
 
 	numNetworks := 1
 
@@ -329,10 +328,11 @@ func TestMultiplexReactorRegisterNetwork(t *testing.T) {
 	testExtChainID,
 		testReactor,
 		shutdownFn := ResetTestMultiplexReactorRuntimeWithInjection(t, numNetworks, cmtlog.NewNopLogger())
-
-	// Shutdown routine
-	defer shutdownFn(testReactor)
-
+	defer func() {
+		shutdownFn(testReactor)
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 	testUserAddress := testExtChainID.GetUserAddress()
 	testChainID := testExtChainID.String()
 

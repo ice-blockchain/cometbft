@@ -209,7 +209,7 @@ func (r *Reactor) Stop() error {
 // OnReset should not execute any business logic, but instead must be
 // defined as it is called from [Service#Reset], which permits to later
 // start back the service with stopped/started correctly reset.
-func (r *Reactor) OnReset() error {
+func (r *Reactor) OnReset(ctx context.Context) error {
 	r.Logger.Info("PEX reactor service reset",
 		"chain_id", r.ChainID,
 	)

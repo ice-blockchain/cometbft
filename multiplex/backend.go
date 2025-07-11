@@ -906,10 +906,10 @@ func (b *MultiplexBackend) OnStop() {
 }
 
 // OnReset implements Service.
-func (b *MultiplexBackend) OnReset() error {
+func (b *MultiplexBackend) OnReset(ctx context.Context) error {
 	b.logger.Debug("Reset multiplex backend")
 
-	if err := b.reactor.Reset(); err != nil {
+	if err := b.reactor.Reset(ctx); err != nil {
 		b.logger.Error(
 			"Error resetting the multiplex reactor", "err", err)
 	}

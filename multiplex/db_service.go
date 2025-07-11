@@ -113,7 +113,7 @@ func (dbS *DBService) OnStop() {
 }
 
 // OnReset implements [service.Service] by resetting the service.
-func (dbS *DBService) OnReset() error {
+func (dbS *DBService) OnReset(ctx context.Context) error {
 	dbS.mtx.Lock()
 	dbS.db = nil
 	dbS.mtx.Unlock()

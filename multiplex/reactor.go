@@ -2370,7 +2370,7 @@ func (reactor *Reactor) removeInternalChannels(chainID string) {
 }
 
 // OnReset implements Service.
-func (reactor *Reactor) OnReset() error {
+func (reactor *Reactor) OnReset(ctx context.Context) error {
 	reactor.logger.Debug("Reset multiplex reactor")
 
 	// NOTE:
@@ -2395,7 +2395,7 @@ func (reactor *Reactor) OnReset() error {
 		for _, chainService := range servicesMultiplex {
 			service := chainService.GetInstance().(cmtlibs.Service)
 			if service.IsStopped() {
-				service.Reset()
+				service.Reset(ctx)
 			}
 		}
 	}
@@ -2404,7 +2404,7 @@ func (reactor *Reactor) OnReset() error {
 	// Reset the ABCI client if stopped.
 	reactor.envMutex.Lock()
 	if reactor.abciClient != nil && reactor.abciClient.IsStopped() {
-		if err := reactor.abciClient.Reset(); err != nil {
+		if err := reactor.abciClient.Reset(ctx); err != nil {
 			reactor.logger.Error(
 				"Error resetting the ABCI client", "err", err)
 		}
@@ -2414,7 +2414,7 @@ func (reactor *Reactor) OnReset() error {
 	// Reset the replay pool service.
 	reactor.replayPoolMtx.Lock()
 	if reactor.replayPool != nil && reactor.replayPool.IsStopped() {
-		if err := reactor.replayPool.Reset(); err != nil {
+		if err := reactor.replayPool.Reset(ctx); err != nil {
 			reactor.logger.Error(
 				"Error resetting the replay pool", "err", err)
 		}
@@ -2424,7 +2424,7 @@ func (reactor *Reactor) OnReset() error {
 	// Reset the runtime registry service.
 	reactor.runtimesMutex.Lock()
 	if reactor.runtimeRegistry != nil && reactor.runtimeRegistry.IsStopped() {
-		if err := reactor.runtimeRegistry.Reset(); err != nil {
+		if err := reactor.runtimeRegistry.Reset(ctx); err != nil {
 			reactor.logger.Error(
 				"Error resetting the runtime registry", "err", err)
 		}
@@ -2607,7 +2607,7 @@ func (reactor *Reactor) startNodeListeners(ctx context.Context, chainID string) 
 		eventBus = servicesProvider(ServiceKeyEventBus, chainID).(*types.EventBus)
 		if !eventBus.IsRunning() {
 			if eventBus.IsStopped() {
-				eventBus.Reset() // permit re-start
+				eventBus.Reset(ctx) // permit re-start
 			}
 
 			if err := eventBus.Start(); err != nil {
@@ -2687,7 +2687,7 @@ func (reactor *Reactor) startNodeListeners(ctx context.Context, chainID string) 
 
 		if !indexerService.IsRunning() {
 			if indexerService.IsStopped() {
-				indexerService.Reset() // permit re-start
+				indexerService.Reset(ctx) // permit re-start
 			}
 
 			if err := indexerService.Start(); err != nil {

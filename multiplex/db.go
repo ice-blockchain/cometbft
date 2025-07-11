@@ -84,7 +84,7 @@ func EnsureStartDBService(ctx context.Context, s service.Service) error {
 		dbS.SetContext(ctx)
 		if !dbS.IsRunning() {
 			if dbS.IsStopped() {
-				dbS.Reset() // reset stopped flag
+				dbS.Reset(ctx) // reset stopped flag
 			}
 			dbS.Start()
 		}

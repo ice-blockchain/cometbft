@@ -149,7 +149,7 @@ func (reg *RuntimeRegistry) OnStop() {
 }
 
 // OnReset implements [service.Service] by resetting the registry.
-func (reg *RuntimeRegistry) OnReset() error {
+func (reg *RuntimeRegistry) OnReset(ctx context.Context) error {
 	reg.mtx.Lock()
 	reg.Runtimes = map[string]uint64{}
 	reg.Sleeping = []string{}

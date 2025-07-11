@@ -316,7 +316,7 @@ type queryPlusRefCount struct {
 
 // OnStart implements Service.OnStart by starting the server.
 func (s *Server) OnStart(ctx context.Context) error {
-	go s.loop(state{
+	go s.loop(ctx, state{
 		subscriptions: make(map[string]map[string]*Subscription),
 		queries:       make(map[string]*queryPlusRefCount),
 	})
@@ -324,13 +324,14 @@ func (s *Server) OnStart(ctx context.Context) error {
 }
 
 // OnReset implements Service.OnReset.
-func (*Server) OnReset() error {
+func (*Server) OnReset(ctx context.Context) error {
 	return nil
 }
 
-func (s *Server) loop(state state) {
-	for s.Context().Err() == nil {
+func (s *Server) loop(ctx context.Context, state state) {
+	for ctx.Err() == nil {
 		select {
+		case <-ctx.Done():
 		case <-s.Quit():
 			return
 		case cmd := <-s.cmds:
