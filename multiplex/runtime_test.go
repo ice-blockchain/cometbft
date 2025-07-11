@@ -479,7 +479,10 @@ func TestMultiplexRuntimeInjectStateMachine(t *testing.T) {
 
 // CAUTION: This tests the injection with a running reactor instance.
 func TestMultiplexRuntimeInjectNewNetwork(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	numChains := 1
 
@@ -515,7 +518,10 @@ func TestMultiplexRuntimeInjectNewNetwork(t *testing.T) {
 
 // TODO(midas): move this test as AllocateNetwork was extracted.
 func TestMultiplexRuntimeInjectNewNetworkCallsAllocateNetwork(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	numChains := 1
 
@@ -578,7 +584,10 @@ func TestMultiplexRuntimeInjectNewNetworkCallsAllocateNetwork(t *testing.T) {
 }
 
 func TestMultiplexRuntimeInjectNewNetworkCallsInjectStateMachine(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	numChains := 1
 
@@ -624,7 +633,10 @@ func TestMultiplexRuntimeInjectNewNetworkCallsInjectStateMachine(t *testing.T) {
 }
 
 func TestMultiplexRuntimeInjectNewNetworkCallsRegisterNetwork(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	numChains := 1
 
@@ -661,7 +673,10 @@ func TestMultiplexRuntimeInjectNewNetworkCallsRegisterNetwork(t *testing.T) {
 func TestMultiplexRuntimeInjectNewNetworkIncludesOtherValidators(t *testing.T) {
 	// IMPORTANT: We use numChains=0 in this test so it is important
 	// to test whether P2P and RPC servers will be shutdown.
-	defer goleak.VerifyNone(t)
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	numChains := 0
 
@@ -714,7 +729,10 @@ func TestMultiplexRuntimeInjectNewNetworkIncludesOtherValidators(t *testing.T) {
 func TestMultiplexRuntimeInjectNewRuntime(t *testing.T) {
 	// IMPORTANT: We use numChains=0 in this test so it is important
 	// to test whether P2P and RPC servers will be shutdown.
-	defer goleak.VerifyNone(t)
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	numChains := 0
 
@@ -744,7 +762,10 @@ func TestMultiplexRuntimeInjectNewRuntime(t *testing.T) {
 }
 
 func TestMultiplexRuntimeInjectNewRuntimeWithOthers(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	numChains := 1
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"reflect"
+	"slices"
 	"time"
 
 	"github.com/cosmos/gogoproto/proto"
@@ -467,6 +468,13 @@ func createMConnection(
 
 		msgLookupKey := chainID
 
+		var mxChannels = []byte{
+			replicationChannel,
+			ackBroadcastChannel,
+			runtimeChannel,
+			mempoolChannel,
+		}
+
 		// If we don't have reactors for this chainID, try to find the channel
 		// in shared channels, otherwise ignore message to stop MConnection from
 		// panicking about an unknown channel for a reactor that is not yet ready.
@@ -481,7 +489,7 @@ func createMConnection(
 			}
 
 			msgLookupKey = cmtconn.SharedChannelsNamespace
-		} else if chID == mempoolChannel {
+		} else if slices.Contains(mxChannels, chID) {
 			// MempoolReactor is attached to shared channels due to listed
 			// MempoolChannel in multiplex Reactor.
 			reactor = reactorsByCh[cmtconn.SharedChannelsNamespace][chID]

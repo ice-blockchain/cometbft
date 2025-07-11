@@ -423,6 +423,12 @@ func (reactor *Reactor) AddConnectionChannels(
 	sw *p2p.Switch,
 	scopes []string,
 ) error {
+	// TODO(midas): remove debug logs
+	reactor.logger.Debug("Adding connection channels",
+		"type", sw.Typ,
+		"scopes", scopes,
+	)
+
 	// NOTE(midas): If one of the scopes is a ChainID that is being initialized
 	// concurrently and that we have not yet added to the switch, we do so here
 	// so that we may proceed with handling messages from unknown ChainIDs.

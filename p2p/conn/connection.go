@@ -654,7 +654,7 @@ func (c *MConnection) Send(chainID string, chID byte, msgBytes []byte) bool {
 	}
 
 	// Send message to channel.
-	success := channel.sendBytes(msgBytes)
+	success := channel.sendBytes(chainID, msgBytes)
 	if success {
 		// Wake up sendRoutine if necessary
 		select {
@@ -687,7 +687,7 @@ func (c *MConnection) TrySend(chainID string, chID byte, msgBytes []byte) bool {
 		}
 	}
 
-	ok := channel.trySendBytes(msgBytes)
+	ok := channel.trySendBytes(chainID, msgBytes)
 	if ok {
 		// Wake up sendRoutine if necessary
 		select {
@@ -1096,13 +1096,14 @@ func (chDesc ChannelDescriptor) FillDefaults() (filled *ChannelDescriptor) {
 type Channel struct {
 	ChainID string
 
-	conn          *MConnection
-	desc          *ChannelDescriptor
-	sendQueue     chan []byte
-	sendQueueSize int32 // atomic.
-	recving       []byte
-	sending       []byte
-	recentlySent  int64 // exponential moving average
+	conn             *MConnection
+	desc             *ChannelDescriptor
+	sendQueueChainID string
+	sendQueue        chan []byte
+	sendQueueSize    int32 // atomic.
+	recving          []byte
+	sending          []byte
+	recentlySent     int64 // exponential moving average
 
 	nextPacketMsg           *tmp2p.PacketMsg
 	nextP2pWrapperPacketMsg *tmp2p.Packet_PacketMsg
@@ -1146,7 +1147,8 @@ func (ch *Channel) Desc() *ChannelDescriptor {
 // Queues message to send to this channel.
 // Goroutine-safe
 // Times out (and returns false) after defaultSendTimeout.
-func (ch *Channel) sendBytes(bytes []byte) bool {
+func (ch *Channel) sendBytes(chainID string, bytes []byte) bool {
+	ch.sendQueueChainID = chainID
 	select {
 	case ch.sendQueue <- bytes:
 		atomic.AddInt32(&ch.sendQueueSize, 1)
@@ -1161,7 +1163,8 @@ func (ch *Channel) sendBytes(bytes []byte) bool {
 // Queues message to send to this channel.
 // Nonblocking, returns true if successful.
 // Goroutine-safe.
-func (ch *Channel) trySendBytes(bytes []byte) bool {
+func (ch *Channel) trySendBytes(chainID string, bytes []byte) bool {
+	ch.sendQueueChainID = chainID
 	select {
 	case ch.sendQueue <- bytes:
 		atomic.AddInt32(&ch.sendQueueSize, 1)
@@ -1186,6 +1189,10 @@ func (ch *Channel) canSend() bool {
 // Call before calling updateNextPacket
 // Goroutine-safe.
 func (ch *Channel) isSendPending() bool {
+	if ch.sending == nil {
+		return false
+	}
+
 	if len(ch.sending) == 0 {
 		if len(ch.sendQueue) == 0 {
 			return false
@@ -1200,11 +1207,13 @@ func (ch *Channel) isSendPending() bool {
 func (ch *Channel) updateNextPacket() {
 	maxSize := ch.maxPacketMsgPayloadSize
 	if len(ch.sending) <= maxSize {
+		ch.nextPacketMsg.ChainID = ch.sendQueueChainID
 		ch.nextPacketMsg.Data = ch.sending
 		ch.nextPacketMsg.EOF = true
 		ch.sending = []byte{}
 		atomic.AddInt32(&ch.sendQueueSize, -1) // decrement sendQueueSize
 	} else {
+		ch.nextPacketMsg.ChainID = ch.sendQueueChainID
 		ch.nextPacketMsg.Data = ch.sending[:maxSize]
 		ch.nextPacketMsg.EOF = false
 		ch.sending = ch.sending[maxSize:]

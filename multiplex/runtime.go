@@ -17,7 +17,6 @@ import (
 	cmtjson "github.com/ice-blockchain/cometbft/libs/json"
 	service "github.com/ice-blockchain/cometbft/libs/service"
 	"github.com/ice-blockchain/cometbft/node"
-	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/privval"
 	sm "github.com/ice-blockchain/cometbft/state"
 	bs "github.com/ice-blockchain/cometbft/store"
@@ -633,60 +632,28 @@ func (reactor *Reactor) StopNodeInstance(chainID string) error {
 		cometbftSwitch := r.GetEventSwitchForCometBFT()
 		cometbftSwitch.RemoveActiveRuntime(network)
 		cometbftSwitch.RemoveReactors(network)
-		r.RemovePeersByScope(cometbftSwitch, network)
+
+		cPeerSet := cometbftSwitch.Peers(network)
+		if cPeerSet.Size() > 0 {
+			for _, p := range cPeerSet.Copy() {
+				cometbftSwitch.RemovePeerScope(p, network)
+			}
+		}
 
 		discoverySwitch := r.GetEventSwitchForDiscovery()
 		discoverySwitch.RemoveActiveRuntime(network)
 		discoverySwitch.RemoveReactors(network)
-		r.RemovePeersByScope(discoverySwitch, network)
+
+		dPeerSet := discoverySwitch.Peers(network)
+		for _, p := range dPeerSet.Copy() {
+			discoverySwitch.RemovePeerScope(p, network)
+		}
 
 		r.logger.Info("Stopped node runtime", "chainId", network)
 	}(chainID, runNode, reactor)
 
 	wg.Wait()
 	return nil
-}
-
-func (reactor *Reactor) RemovePeersByScope(sw *p2p.Switch, scope string) (size int) {
-	defer func() {
-		if r := recover(); r != nil {
-			// do not panic when cleaning up peers.
-			reactor.logger.Error(
-				"stopping peers by scope panicked",
-				"scope", scope,
-				"err", r,
-			)
-			return
-		}
-	}()
-
-	peersByScope := sw.Peers(scope).Copy()
-	size = len(peersByScope)
-
-	reactor.logger.Info("Stopping connections for scope", "scope", scope, "numPeers", size)
-	for _, p := range peersByScope {
-		// relevantScopes := map[string]bool{}
-		// relevantScopes[scope] = true
-
-		// activeRuntimes := sw.GetActiveRuntimes()
-		// for _, activeChainID := range activeRuntimes {
-		// 	relevantScopes[activeChainID] = true
-		// }
-
-		// remainingChannelsForPeer := p.MConn().GetChannelsIdx()
-		// for chScope, _ := range remainingChannelsForPeer {
-		// 	relevantScopes[chScope] = true
-		// }
-
-		// Cleanup the MConnection channels from switch
-		sw.CloseChannelsForScopes([]string{scope})(p.MConn())
-
-		// And stop the peer gracefully to remove from reactors.
-		sw.StopPeerGracefully(p)
-		sw.Transport().Cleanup(p)
-	}
-
-	return // size
 }
 
 // StopAllNodeInstances calls the Stop method of [node.Node] instances that

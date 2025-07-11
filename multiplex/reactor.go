@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/syndtr/goleveldb/leveldb"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -14,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/syndtr/goleveldb/leveldb"
 
 	dbm "github.com/cometbft/cometbft-db"
 	protomem "github.com/ice-blockchain/cometbft/api/cometbft/mempool/v1"
@@ -1421,7 +1422,7 @@ func (r *Reactor) RemovePeer(peer *p2p.PeerImpl, _ any) {}
 
 // Receive implements p2p.Reactor.
 func (r *Reactor) Receive(e p2p.Envelope) {
-	r.logger.Debug("Receive", "src", e.Src, "chId", e.ChannelID)
+	r.logger.Debug("Receive", "src", e.Src, "chId", e.ChannelID, "chainID", e.ChainID)
 
 	// CAUTION:
 	//
@@ -1593,7 +1594,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			r.logger.Debug("Received ChainReplicationResponse", "msg", msg)
 			replResponse := extMsg.GetChainReplicationResponse()
 
-			// Fixes sending on closed channel when rcving too many ChainReplicationComplete.
+			// Fixes sending on closed channel when rcving too many ChainReplicationResponse.
 			r.doneAckReplicationMtx.RLock()
 			valIsDone, ok := r.doneAckReplication[replResponse.ChainID]
 			r.doneAckReplicationMtx.RUnlock()

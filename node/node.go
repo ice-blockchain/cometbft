@@ -729,17 +729,17 @@ func (n *Node) OnStop() {
 		}
 	}
 
-	if n.eventBus.IsRunning() {
-		n.Logger.Info("Stopping eventBus")
-		if err := n.eventBus.Stop(); err != nil {
-			n.Logger.Error("Error closing eventBus", "err", err)
-		}
-	}
-
 	if n.indexerService != nil && n.indexerService.IsRunning() {
 		n.Logger.Info("Stopping indexers")
 		if err := n.indexerService.Stop(); err != nil {
 			n.Logger.Error("Error closing indexerService", "err", err)
+		}
+	}
+
+	if n.eventBus.IsRunning() {
+		n.Logger.Info("Stopping eventBus")
+		if err := n.eventBus.Stop(); err != nil {
+			n.Logger.Error("Error closing eventBus", "err", err)
 		}
 	}
 
@@ -798,8 +798,12 @@ func (n *Node) OnStop() {
 		}
 	}
 
+	// NOTE(midas): Databases are now owned by runtime processes through
+	// multiplex.DBService instances. Thus, we deactivate the following
+	// shutdown operations for delegated-runtime instances (common RPC).
+
 	n.Logger.Info("Stopping blockstore")
-	if n.blockStore != nil {
+	if n.shouldStartRPC && n.blockStore != nil {
 		n.Logger.Info("Closing blockstore")
 		if err := n.blockStore.Close(); err != nil {
 			n.Logger.Error("problem closing blockstore", "err", err)
@@ -807,7 +811,7 @@ func (n *Node) OnStop() {
 	}
 
 	n.Logger.Info("Stopping statestore")
-	if n.stateStore != nil {
+	if n.shouldStartRPC && n.stateStore != nil {
 		n.Logger.Info("Closing statestore")
 		if err := n.stateStore.Close(); err != nil {
 			n.Logger.Error("problem closing statestore", "err", err)
@@ -815,7 +819,7 @@ func (n *Node) OnStop() {
 	}
 
 	n.Logger.Info("Stopping evidencestore")
-	if n.evidencePool != nil {
+	if n.shouldStartRPC && n.evidencePool != nil {
 		n.Logger.Info("Closing evidencestore")
 		if err := n.EvidencePool().Close(); err != nil {
 			n.Logger.Error("problem closing evidencestore", "err", err)

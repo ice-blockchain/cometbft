@@ -273,6 +273,8 @@ func (sw *Switch) RemoveActiveRuntime(chainID string) {
 
 // AddReactor adds the given reactor to the switch.
 func (sw *Switch) AddReactor(chainID string, name string, reactor Reactor) Reactor {
+	sw.Logger.Debug("Adding reactor", "chainId", chainID, "name", name, "reactor", reactor)
+
 	// JiT initialize the map of peers by ChainID because when the switch
 	// is created, we may not know about all (or any) ChainID.
 	sw.peersMtx.RLock()
@@ -315,6 +317,8 @@ func (sw *Switch) AddReactor(chainID string, name string, reactor Reactor) React
 	}
 	sw.reactors[chainID][name] = reactor
 	reactor.SetSwitch(sw)
+
+	sw.Logger.Debug("Added reactor", "chainId", chainID, "name", name, "reactor", reactor)
 	return reactor
 }
 
@@ -847,6 +851,52 @@ func (sw *Switch) StopPeerForError(peer *PeerImpl, reason any) {
 func (sw *Switch) StopPeerGracefully(peer *PeerImpl) {
 	sw.Logger.Info("Stopping peer gracefully", "peer", peer)
 	sw.stopAndRemovePeer(peer, nil)
+}
+
+func (sw *Switch) RemovePeerScope(peer *PeerImpl, chainID string) {
+	sw.Logger.Info("Removing peer for scope", "peer", peer, "chainID", chainID)
+
+	sw.reactorsMtx.Lock()
+	chainReactors := sw.reactors[chainID]
+	sw.reactorsMtx.Unlock()
+	for _, reactor := range chainReactors {
+		reactor.RemovePeer(peer, nil) // reason=nil
+	}
+
+	sw.runtimesMtx.RLock()
+	peersInitTimes := sw.reactorPeersInit[chainID]
+	peersForReactors := sw.peersForReactors[chainID]
+	sw.runtimesMtx.RUnlock()
+
+	sw.runtimesMtx.Lock()
+	for lookupKey := range peersInitTimes {
+		peerKey := sw.peerKey(peer)
+		if strings.Contains(lookupKey, peerKey) {
+			delete(sw.reactorPeersInit[chainID], lookupKey)
+		}
+	}
+
+	for lookupKey := range peersForReactors {
+		peerKey := sw.peerKey(peer)
+		if strings.Contains(lookupKey, peerKey) {
+			delete(sw.peersForReactors[chainID], lookupKey)
+		}
+	}
+	sw.runtimesMtx.Unlock()
+
+	sw.peersMtx.RLock()
+	peersByScope := sw.peersByScope[chainID]
+	sw.peersMtx.RUnlock()
+	if !peersByScope.HasPeer(peer) {
+		return
+	}
+
+	_ = peersByScope.RemovePeer(peer)
+
+	sw.Logger.Info("Removed peer for scope",
+		"peer", peer,
+		"chainId", chainID,
+		"reactors", chainReactors)
 }
 
 func (sw *Switch) StopAllPeersAndCleanup() error {

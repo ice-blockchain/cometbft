@@ -455,6 +455,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 					// Send transaction to relay mempool, after checks the mempool
 					// reactor shall send a AckTransactionBroadcast back to us.
 					if success := peer.Send(chainID, p2p.Envelope{
+						ChainID:   chainID,
 						ChannelID: mempl.MempoolChannel,
 						Message:   &memp2p.Txs{Txs: [][]byte{rawTx}},
 					}); !success {
@@ -528,6 +529,7 @@ func (b *MultiplexBackend) DefaultCancelBroadcastRoutine() server.CancelBroadcas
 
 			// Broadcast the rollback message for this transaction to all relays.
 			eventsSwitch.Broadcast(chainID, p2p.Envelope{
+				ChainID:   chainID,
 				ChannelID: mempl.MempoolChannel,
 				Message: &memp2p.Message{
 					Sum: &memp2p.Message_RollbackTxs{

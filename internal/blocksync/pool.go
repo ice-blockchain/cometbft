@@ -126,6 +126,16 @@ func (pool *BlockPool) OnStop() {
 	}
 }
 
+func (pool *BlockPool) OnReset() error {
+	pool.mtx.Lock()
+	defer pool.mtx.Unlock()
+
+	pool.peers = make(map[p2p.ID]*bpPeer)
+	pool.bannedPeers = make(map[p2p.ID]time.Time)
+	pool.requesters = make(map[int64]*bpRequester)
+	return nil
+}
+
 func (pool *BlockPool) makeRequestersRoutine(ctx context.Context) {
 	for ctx.Err() == nil {
 		if !pool.IsRunning() {
@@ -183,7 +193,7 @@ func (pool *BlockPool) makeRequestersRoutine(ctx context.Context) {
 // shutdown process kills the BlockPool instance.
 // This method returns false if a shutdown process is ongoing.
 func (pool *BlockPool) WaitForInterval(duration time.Duration) bool {
-	for {
+	for pool.Context().Err() == nil {
 		// NOTE(midas): instead of time.Sleep, we select the interval to permit
 		// the shutdown routine to stop waiting here as well.
 		select {
@@ -193,6 +203,8 @@ func (pool *BlockPool) WaitForInterval(duration time.Duration) bool {
 			return false
 		}
 	}
+
+	return false
 }
 
 func (pool *BlockPool) removeTimedoutPeers() {
@@ -790,7 +802,7 @@ func (bpr *bpRequester) pickPeerAndSendRequest() {
 
 	var peer *bpPeer
 PICK_PEER_LOOP:
-	for {
+	for bpr.Context().Err() == nil {
 		if !bpr.IsRunning() || !bpr.pool.IsRunning() {
 			return
 		}
@@ -847,7 +859,7 @@ func (bpr *bpRequester) requestRoutine() {
 	gotBlock := false
 
 OUTER_LOOP:
-	for {
+	for bpr.Context().Err() == nil {
 		bpr.pickPeerAndSendRequest()
 
 		poolHeight := bpr.pool.Height()
