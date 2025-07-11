@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/syndtr/goleveldb/leveldb"
 	"net"
 	"net/http"
 	"runtime/debug"
@@ -13,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/syndtr/goleveldb/leveldb"
 
 	"github.com/ice-blockchain/cometbft/libs/service"
 
@@ -1422,7 +1423,7 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 	expectedRelaysPerTx = map[string][]string{}
 	numReceived = 0
 	transactionHashes := txHashesToHex(transactions...)
-	transactionsByChain := mapTransactionsByChainID(userAddress, transactions...)
+	// transactionsByChain := mapTransactionsByChainID(userAddress, transactions...)
 	broadcastID := client.GetBroadcastID(transactions...)
 
 	// Contains only relay IDs for which we must wait
@@ -1516,33 +1517,38 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 	// their AckTransactionBroadcast, we must accept it as an ACK if it
 	// contains one of the relevant transactions, and stop listening.
 
-	serviceProvider := b.reactor.GetServicesProvider()
-	asyncTxResultsCh := make(chan TransactionEventResult, len(transactionsByChain))
-	shutdownIndexChs := make(map[string]chan struct{}, len(transactions))
-	chainIdsByTxHash := make(map[string]string, len(transactions))
-	for chainID, txesForChainID := range transactionsByChain {
-		serviceEventBus := serviceProvider(ServiceKeyEventBus, chainID)
-		if serviceEventBus == nil {
-			break // can't wait for inclusion without event bus service
-		}
-		chainEventBus := serviceEventBus.(*types.EventBus)
-		shutdownIndexChs[chainID] = make(chan struct{}, 1)
+	// serviceProvider := b.reactor.GetServicesProvider()
+	// asyncTxResultsCh := make(chan TransactionEventResult, len(transactionsByChain))
+	// shutdownIndexChs := make(map[string]chan struct{}, len(transactions))
+	// chainIdsByTxHash := make(map[string]string, len(transactions))
+	// for chainID, txesForChainID := range transactionsByChain {
+	// 	serviceEventBus := serviceProvider(ServiceKeyEventBus, chainID)
+	// 	if serviceEventBus == nil {
+	// 		go func() {
+	// 			asyncTxResultsCh <- TransactionEventResult{
+	// 				Error: fmt.Errorf("failed to load event bus for %s", chainID),
+	// 			}
+	// 		}()
+	// 		break // can't wait for inclusion without event bus service
+	// 	}
+	// 	chainEventBus := serviceEventBus.(*types.EventBus)
+	// 	shutdownIndexChs[chainID] = make(chan struct{}, 1)
 
-		for _, txForChain := range txesForChainID {
-			txHash := fmt.Sprintf("%X", txForChain.Hash())
-			chainIdsByTxHash[txHash] = chainID
-		}
+	// 	for _, txForChain := range txesForChainID {
+	// 		txHash := fmt.Sprintf("%X", txForChain.Hash())
+	// 		chainIdsByTxHash[txHash] = chainID
+	// 	}
 
-		// Stopped on shutdownWaitCh.
-		go b.localTransactionEventsConsumer(ctx,
-			"broadcastAck",
-			chainEventBus, // Wait for event using this EventBus
-			chainID,       // ... and for this ChainID
-			asyncTxResultsCh,
-			shutdownIndexChs[chainID],
-			txesForChainID...,
-		)
-	}
+	// 	// Stopped on shutdownWaitCh.
+	// 	go b.localTransactionEventsConsumer(ctx,
+	// 		"broadcastAck",
+	// 		chainEventBus, // Wait for event using this EventBus
+	// 		chainID,       // ... and for this ChainID
+	// 		asyncTxResultsCh,
+	// 		shutdownIndexChs[chainID],
+	// 		txesForChainID...,
+	// 	)
+	// }
 
 	// Gracefully shutdown any living goroutines for a particular
 	// transaction hash txHash. This method is called in deferral
@@ -1557,11 +1563,11 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 			close(ch)
 		}
 
-		chainID := chainIdsByTxHash[txHash]
-		if ch, ok := shutdownIndexChs[chainID]; ok && ch != nil {
-			close(ch)
-			delete(shutdownIndexChs, chainID)
-		}
+		// chainID := chainIdsByTxHash[txHash]
+		// if ch, ok := shutdownIndexChs[chainID]; ok && ch != nil {
+		// 	close(ch)
+		// 	delete(shutdownIndexChs, chainID)
+		// }
 
 		b.reactor.CloseAckTransactionChannel(txHash)
 
@@ -1606,30 +1612,30 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 	numResponses := 0
 	for numResponses < numExpected {
 		select {
-		case txEventResult := <-asyncTxResultsCh: // If a transaction gets indexed, stop ACK process for this tx.
-			if txEventResult.Error != nil {
-				// TODO(midas): remove debug logs
-				b.logger.Error("Error from transaction index consumer",
-					"err", txEventResult.Error,
-				)
-				err = txEventResult.Error
-				shutdownForError(transactions, shutdownWaitChs, localAckAcceptTxChs, err)
-				return
-			}
+		// case txEventResult := <-asyncTxResultsCh: // If a transaction gets indexed, stop ACK process for this tx.
+		// 	if txEventResult.Error != nil {
+		// 		// TODO(midas): remove debug logs
+		// 		b.logger.Error("Error from transaction index consumer",
+		// 			"err", txEventResult.Error,
+		// 		)
+		// 		err = txEventResult.Error
+		// 		shutdownForError(transactions, shutdownWaitChs, localAckAcceptTxChs, err)
+		// 		return
+		// 	}
 
-			for _, txHashIndexed := range txEventResult.TxHashes {
-				if !slices.Contains(transactionHashes, txHashIndexed) {
-					continue
-				}
-				b.logger.Debug("Indexed transaction", "tx", txHashIndexed)
-				relaysPerTx[txHashIndexed] = make([]string, 0, len(relevantRelays))
-				relaysPerTx[txHashIndexed] = append(relaysPerTx[txHashIndexed], relevantRelays...)
-				numReceived += len(relevantRelays)
-				numResponses += len(relevantRelays) // counts potential unhealthy
+		// 	for _, txHashIndexed := range txEventResult.TxHashes {
+		// 		if !slices.Contains(transactionHashes, txHashIndexed) {
+		// 			continue
+		// 		}
+		// 		b.logger.Debug("Indexed transaction", "tx", txHashIndexed)
+		// 		relaysPerTx[txHashIndexed] = make([]string, 0, len(relevantRelays))
+		// 		relaysPerTx[txHashIndexed] = append(relaysPerTx[txHashIndexed], relevantRelays...)
+		// 		numReceived += len(relevantRelays)
+		// 		numResponses += len(relevantRelays) // counts potential unhealthy
 
-				// Shutdown any living goroutine for this txHash
-				shutdownFn(txHashIndexed, shutdownWaitChs, localAckAcceptTxChs, nil)
-			}
+		// 		// Shutdown any living goroutine for this txHash
+		// 		shutdownFn(txHashIndexed, shutdownWaitChs, localAckAcceptTxChs, nil)
+		// 	}
 
 		case txResult := <-asyncResultsCh: // Wait for one ACK process result (it doesn't matter which)
 			if txResult.Error != nil {

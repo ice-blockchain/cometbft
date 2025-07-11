@@ -783,7 +783,7 @@ func (n *Node) OnStop() {
 		}
 	}
 
-	n.Logger.Info("Stopping prometheus", "should", n.shouldStartMon)
+	n.Logger.Info("Stopping prometheus", "closing", n.shouldStartMon)
 	if n.shouldStartMon && n.prometheusSrv != nil {
 		if err := n.prometheusSrv.Shutdown(context.Background()); err != nil {
 			// Error from closing listeners, or context timeout:
@@ -802,7 +802,7 @@ func (n *Node) OnStop() {
 	// multiplex.DBService instances. Thus, we deactivate the following
 	// shutdown operations for delegated-runtime instances (common RPC).
 
-	n.Logger.Info("Stopping blockstore")
+	n.Logger.Info("Stopping blockstore", "closing", n.shouldStartRPC)
 	if n.shouldStartRPC && n.blockStore != nil {
 		n.Logger.Info("Closing blockstore")
 		if err := n.blockStore.Close(); err != nil {
@@ -810,7 +810,7 @@ func (n *Node) OnStop() {
 		}
 	}
 
-	n.Logger.Info("Stopping statestore")
+	n.Logger.Info("Stopping statestore", "closing", n.shouldStartRPC)
 	if n.shouldStartRPC && n.stateStore != nil {
 		n.Logger.Info("Closing statestore")
 		if err := n.stateStore.Close(); err != nil {
@@ -818,7 +818,7 @@ func (n *Node) OnStop() {
 		}
 	}
 
-	n.Logger.Info("Stopping evidencestore")
+	n.Logger.Info("Stopping evidencestore", "closing", n.shouldStartRPC)
 	if n.shouldStartRPC && n.evidencePool != nil {
 		n.Logger.Info("Closing evidencestore")
 		if err := n.EvidencePool().Close(); err != nil {

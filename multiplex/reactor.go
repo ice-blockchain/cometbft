@@ -2557,7 +2557,8 @@ func (reactor *Reactor) startNodeListeners(ctx context.Context, chainID string) 
 	configProvider := reactor.GetInstanceProvider(InstanceKeyConfig)
 	stateStoreProvider := reactor.GetInstanceProvider(InstanceKeyStateStore)
 	blockStoreProvider := reactor.GetInstanceProvider(InstanceKeyBlockStore)
-	databaseService := servicesProvider(ServiceKeyDatabaseIndex, chainID)
+	indexDbService := servicesProvider(ServiceKeyDatabaseIndex, chainID)
+	stateDbService := servicesProvider(ServiceKeyDatabaseState, chainID)
 
 	// Make sure required instances have been initialized,
 	// i.e. verifies that InitMultiplexStates was called.
@@ -2568,7 +2569,7 @@ func (reactor *Reactor) startNodeListeners(ctx context.Context, chainID string) 
 		return errors.New("failed to get state store; missing call to Reactor.InitMultiplexStates()?")
 	case blockStoreProvider(chainID) == nil:
 		return errors.New("failed to get block store; missing call to Reactor.InitMultiplexBlockStores()?")
-	case databaseService == nil:
+	case indexDbService == nil:
 		return errors.New("failed to get database; missing call to MakeNetworkDatabases()?")
 	default:
 	}
@@ -2593,10 +2594,26 @@ func (reactor *Reactor) startNodeListeners(ctx context.Context, chainID string) 
 	}).(*sm.Metrics)
 
 	// 1) Event Bus Service
-	eventBus := types.NewEventBus(ctx)
-	eventBus.SetLogger(clogger.With("module", "events"))
-	if err := eventBus.Start(); err != nil {
-		return fmt.Errorf("error starting event bus: %w", err)
+	var eventBus *types.EventBus
+	if ok := servicesProvider(ServiceKeyEventBus, chainID); ok == nil {
+		eventBus = types.NewEventBus(ctx)
+		eventBus.SetLogger(clogger.With("module", "events"))
+		if err := eventBus.Start(); err != nil {
+			return fmt.Errorf("error starting event bus: %w", err)
+		}
+
+		reactor.RegisterService(ServiceKeyEventBus, chainID, eventBus)
+	} else {
+		eventBus = servicesProvider(ServiceKeyEventBus, chainID).(*types.EventBus)
+		if !eventBus.IsRunning() {
+			if eventBus.IsStopped() {
+				eventBus.Reset() // permit re-start
+			}
+
+			if err := eventBus.Start(); err != nil {
+				return fmt.Errorf("error starting event bus: %w", err)
+			}
+		}
 	}
 
 	// 2) Priv Validator Service
@@ -2620,6 +2637,8 @@ func (reactor *Reactor) startNodeListeners(ctx context.Context, chainID string) 
 		return err
 	}
 
+	reactor.RegisterInstance(InstanceKeyPrivValidator, chainID, privValidator)
+
 	// 3) Blocks and Transactions Indexers
 	//
 	// TODO(midas): Add per-chain postgresql indexer compatibility, currently only support kv.
@@ -2630,27 +2649,57 @@ func (reactor *Reactor) startNodeListeners(ctx context.Context, chainID string) 
 		txIndexer    txindex.TxIndexer
 		blockIndexer indexer.BlockIndexer
 	)
-	if nodeConfig.TxIndex.Indexer == "kv" {
-		if err := EnsureStartDBService(ctx, databaseService); err != nil {
+	if ok := servicesProvider(ServiceKeyIndexers, chainID); ok == nil {
+		if nodeConfig.TxIndex.Indexer == "kv" {
+			if err := EnsureStartDBService(ctx, indexDbService); err != nil {
+				return fmt.Errorf(
+					"failed to open indexer database for %s: %w", chainID, err)
+			}
+
+			indexerDatabase := indexDbService.(*DBService).DB()
+			txIndexer = txidxkv.NewTxIndex(indexerDatabase)
+			blockIndexer = blockidxkv.New(
+				dbm.NewPrefixDB(indexerDatabase, []byte("block_events")),
+				blockidxkv.WithCompaction(nodeConfig.Storage.Compact, nodeConfig.Storage.CompactionInterval),
+			)
+		} else {
+			txIndexer = &txidxnull.TxIndex{}
+			blockIndexer = &blockidxnull.BlockerIndexer{}
+		}
+
+		indexerService := txindex.NewIndexerService(ctx, txIndexer, blockIndexer, eventBus, false) // stopOnError
+		indexerService.SetLogger(clogger.With("module", "txindex"))
+		if err := indexerService.Start(); err != nil {
+			return fmt.Errorf("error starting indexers: %w", err)
+		}
+
+		reactor.RegisterService(ServiceKeyIndexers, chainID, indexerService)
+	} else {
+		// If indexer service already exists, just make sure it's DB is open.
+		if err := EnsureStartDBService(ctx, indexDbService); err != nil {
 			return fmt.Errorf(
 				"failed to open indexer database for %s: %w", chainID, err)
 		}
 
-		indexerDatabase := databaseService.(*DBService).DB()
-		txIndexer = txidxkv.NewTxIndex(indexerDatabase)
-		blockIndexer = blockidxkv.New(
-			dbm.NewPrefixDB(indexerDatabase, []byte("block_events")),
-			blockidxkv.WithCompaction(nodeConfig.Storage.Compact, nodeConfig.Storage.CompactionInterval),
-		)
-	} else {
-		txIndexer = &txidxnull.TxIndex{}
-		blockIndexer = &blockidxnull.BlockerIndexer{}
+		indexerService := servicesProvider(ServiceKeyIndexers, chainID).(*txindex.IndexerService)
+		txIndexer = indexerService.GetTxIndexer()
+		blockIndexer = indexerService.GetBlockIndexer()
+
+		if !indexerService.IsRunning() {
+			if indexerService.IsStopped() {
+				indexerService.Reset() // permit re-start
+			}
+
+			if err := indexerService.Start(); err != nil {
+				return fmt.Errorf("error starting indexers: %w", err)
+			}
+		}
 	}
 
-	indexerService := txindex.NewIndexerService(ctx, txIndexer, blockIndexer, eventBus, false) // stopOnError
-	indexerService.SetLogger(clogger.With("module", "txindex"))
-	if err := indexerService.Start(); err != nil {
-		return fmt.Errorf("error starting indexers: %w", err)
+	// Make sure the stateStore.db is open for next operation.
+	if err := EnsureStartDBService(ctx, stateDbService); err != nil {
+		return fmt.Errorf(
+			"failed to open state database for %s: %w", chainID, err)
 	}
 
 	// 4) Storage pruner
@@ -2664,25 +2713,24 @@ func (reactor *Reactor) startNodeListeners(ctx context.Context, chainID string) 
 		return fmt.Errorf("could not save application retain height: %w", err)
 	}
 
-	prunerOpts := []sm.PrunerOption{
-		sm.WithPrunerInterval(nodeConfig.Storage.Pruning.Interval),
-		sm.WithPrunerMetrics(stateMetricsProvider),
-	}
-	pruner := sm.NewPruner(
-		ctx,
-		stateStore,
-		blockStore,
-		blockIndexer,
-		txIndexer,
-		clogger.With("module", "state"),
-		prunerOpts...,
-	)
+	if ok := servicesProvider(ServiceKeyPruner, chainID); ok == nil {
+		prunerOpts := []sm.PrunerOption{
+			sm.WithPrunerInterval(nodeConfig.Storage.Pruning.Interval),
+			sm.WithPrunerMetrics(stateMetricsProvider),
+		}
+		pruner := sm.NewPruner(
+			ctx,
+			stateStore,
+			blockStore,
+			blockIndexer,
+			txIndexer,
+			clogger.With("module", "state"),
+			prunerOpts...,
+		)
 
-	// Register the services and instances with the Reactor
-	reactor.RegisterInstance(InstanceKeyPrivValidator, chainID, privValidator)
-	reactor.RegisterService(ServiceKeyEventBus, chainID, eventBus)
-	reactor.RegisterService(ServiceKeyIndexers, chainID, indexerService)
-	reactor.RegisterService(ServiceKeyPruner, chainID, pruner)
+		reactor.RegisterService(ServiceKeyPruner, chainID, pruner)
+	}
+
 	return nil
 }
 

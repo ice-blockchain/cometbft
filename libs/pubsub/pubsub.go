@@ -330,8 +330,6 @@ func (*Server) OnReset() error {
 
 func (s *Server) loop(state state) {
 	for s.Context().Err() == nil {
-		// NOTE(midas): non-blocking select channel to permit interruptions
-		// more frequently and generally permit faster shutdown routine.
 		select {
 		case <-s.Quit():
 			return
