@@ -15,7 +15,7 @@ import (
 const (
 	// TODO(midas): NodeInfo grows with everytime new ChainID is added.
 	// TODO(midas): Approximation should be changed for realistic estimation.
-	maxNodeInfoSize = 10 * 10240 // 100KB
+	maxNodeInfoSize = 1024 * 10240 // 100KB
 
 	// TODO(midas): Max number of channels is per-node.
 	maxNumChannels = 16 // plenty of room for upgrades, for now
