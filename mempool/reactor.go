@@ -373,6 +373,11 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 			type inlineRuntimeActivator interface {
 				OnActivateRuntime(chainID string)
 				OnCompleteRuntime(chainID string, protoTxs [][]byte)
+
+				AddConnectionChannels(
+					sw *p2p.Switch,
+					scopes []string,
+				) error
 			}
 
 			// Use type assertion to access multiplex reactor methods.
@@ -388,6 +393,10 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 				defer func() {
 					go mxR.OnCompleteRuntime(memR.ChainID, protoTxs)
 				}()
+
+				// We must add consensus and blocksync connection channels,
+				// we should have a peer in the peerSet per ChainID now.
+				mxR.AddConnectionChannels(memR.Switch, []string{memR.ChainID})
 			}
 		}
 
