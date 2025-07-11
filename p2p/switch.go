@@ -813,6 +813,25 @@ func (sw *Switch) AddPeerForScope(peer *PeerImpl, scope string) {
 			"peerRunning", peer.IsRunning(),
 		)
 
+		if scope != ScopeForDiscovery {
+			for _, chDesc := range reactor.GetChannels() {
+				_, channelAdded := peer.mconn.AddChannel(sw.BaseService.Context(), scope, chDesc)
+				if channelAdded {
+					atomic.AddUint32(&sw.totalOpenChannels, uint32(1))
+				}
+			}
+
+			sw.Logger.Info("Added peer connection channels",
+				"scope", scope,
+				"reactor", rname,
+				"peer", peer,
+				"conn", peer.mconn.SocketAddr().String(),
+				"reactorRunning", reactor.IsRunning(),
+				"peerRunning", peer.IsRunning(),
+				"num_chs", atomic.LoadUint32(&sw.totalOpenChannels),
+			)
+		}
+
 		reactor.AddPeer(peerForReactor)
 	}
 }

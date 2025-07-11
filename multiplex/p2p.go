@@ -429,6 +429,10 @@ func (reactor *Reactor) AddConnectionChannels(
 		"scopes", scopes,
 	)
 
+	// We may be transitioning the switch resources.
+	reactor.networkMutex.Lock()
+	defer reactor.networkMutex.Unlock()
+
 	// NOTE(midas): If one of the scopes is a ChainID that is being initialized
 	// concurrently and that we have not yet added to the switch, we do so here
 	// so that we may proceed with handling messages from unknown ChainIDs.
@@ -459,9 +463,6 @@ func (reactor *Reactor) AddConnectionChannels(
 				serviceProvider(ServiceKeyEvidenceReactor, chainID).(*evidence.Reactor))
 		}
 	}
-
-	reactor.networkMutex.RLock()
-	defer reactor.networkMutex.RUnlock()
 
 	// CAUTION: Updates the MConnection.channelsIdx to contain channels for scopes.
 	connUpdaterFn := sw.OpenChannelsForScopes(scopes)
