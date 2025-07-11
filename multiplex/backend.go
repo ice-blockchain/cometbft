@@ -3424,12 +3424,12 @@ func (b *MultiplexBackend) remoteRuntimeUpdatesConsumer(
 	// Wait a maximum duration of replicationTimeout. With a replicationTimeout
 	// of 0, this method will block until shutdown or parent context expiration.
 	var (
-		cancelFn   func()
+		//cancelFn   func()
 		timeoutCtx context.Context
 	)
 	if b.replicationTimeout != 0 {
-		timeoutCtx, cancelFn = context.WithTimeout(b.Context(), b.replicationTimeout)
-		defer cancelFn()
+		timeoutCtx, _ = context.WithTimeout(b.Context(), b.replicationTimeout)
+		// defer cancelFn()
 	}
 
 	for {

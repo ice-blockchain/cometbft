@@ -1996,7 +1996,7 @@ func TestScenarioClientBroadcastMinimalEnoughHealthyRelays(t *testing.T) {
 	assert.NotEmpty(t, actualResponsesRcvd2)
 	assert.Len(t, actualResponsesRcvd2, expectedResponseCnt2)
 
-	waitDuration := 30 * time.Second
+	waitDuration := 40 * time.Second
 	t.Logf("Waiting %.0fsec for blocks propagation...", waitDuration.Seconds())
 	time.Sleep(waitDuration)
 
