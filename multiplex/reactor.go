@@ -2277,7 +2277,16 @@ func (reactor *Reactor) OnStop() {
 				service.Stop()
 			}
 		}
+
+		delete(reactor.servicesRegistry, serviceName)
 	}
+	reactor.servicesMutex.Unlock()
+
+	// Removes services instances
+	reactor.servicesMutex.Lock()
+	reactor.servicesSequence = []string{}
+	reactor.servicesPriority = map[string]uint32{}
+	reactor.servicesRegistry = NamedMultiplexMap[cmtlibs.Service]{}
 	reactor.servicesMutex.Unlock()
 
 	// Now nothing may perturb shutting down ABCI anymore.
