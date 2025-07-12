@@ -2473,6 +2473,7 @@ func (b *MultiplexBackend) AddTransactions(
 	transactions ...client.Transaction,
 ) error {
 	broadcastID := client.GetBroadcastID(transactions...)
+	reactorsProvider := b.reactor.GetServicesProvider()
 	for _, transaction := range transactions {
 		chainID := client.GetChainID(userAddress, transaction.Fingerprint)
 		clogger := b.logger.With(
@@ -2480,15 +2481,16 @@ func (b *MultiplexBackend) AddTransactions(
 			"chainId", chainID,
 		)
 
-		reactorsProvider := b.reactor.GetServicesProvider()
-		memplReactor, ok := reactorsProvider(ServiceKeyMempoolReactor, chainID).(*mempl.Reactor)
-		if !ok {
+		memR := reactorsProvider(ServiceKeyMempoolReactor, chainID)
+		if memR == nil {
 			return fmt.Errorf(
-				"could not get local mempool reactor instance in AddTransactions with ChainID %s", chainID)
+				"failed to get local mempool; AddTransactions with ChainID %s", chainID)
 		}
 
+		memplReactor := memR.(*mempl.Reactor)
 		chainMempool := memplReactor.GetMempoolPtr()
 
+		// CheckTx locks the mempool update mutex.
 		checkTxRes, err := chainMempool.CheckTx(
 			client.TransactionToRawTx(transaction),
 			b.reactor.GetNodeKey().ID(),
@@ -2523,6 +2525,7 @@ func (b *MultiplexBackend) RemoveTransactions(
 	transactions ...client.Transaction,
 ) error {
 	broadcastID := client.GetBroadcastID(transactions...)
+	reactorsProvider := b.reactor.GetServicesProvider()
 	for _, transaction := range transactions {
 		chainID := client.GetChainID(userAddress, transaction.Fingerprint)
 		clogger := b.logger.With(
@@ -2530,13 +2533,13 @@ func (b *MultiplexBackend) RemoveTransactions(
 			"chainId", chainID,
 		)
 
-		reactorsProvider := b.reactor.GetServicesProvider()
-		memplReactor, ok := reactorsProvider(ServiceKeyMempoolReactor, chainID).(*mempl.Reactor)
-		if !ok {
+		memR := reactorsProvider(ServiceKeyMempoolReactor, chainID)
+		if memR == nil {
 			return fmt.Errorf(
-				"could not get local mempool reactor instance in RemoveTransactions with ChainID %s", chainID)
+				"failed to get local mempool; RemoveTransactions with ChainID %s", chainID)
 		}
 
+		memplReactor := memR.(*mempl.Reactor)
 		chainMempool := memplReactor.GetMempoolPtr()
 
 		memTx := client.TransactionToRawTx(transaction)

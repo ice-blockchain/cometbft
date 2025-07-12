@@ -447,20 +447,24 @@ func (reactor *Reactor) AddConnectionChannels(
 
 		// Add reactors for the new ChainID if they don't exist
 		if sw.Reactor(chainID, "MEMPOOL") == nil {
-			sw.AddReactor(chainID, "MEMPOOL",
-				serviceProvider(ServiceKeyMempoolReactor, chainID).(*mempl.Reactor))
+			if memR := serviceProvider(ServiceKeyMempoolReactor, chainID); memR != nil {
+				sw.AddReactor(chainID, "MEMPOOL", memR.(*mempl.Reactor))
+			}
 		}
 		if sw.Reactor(chainID, "BLOCKSYNC") == nil {
-			sw.AddReactor(chainID, "BLOCKSYNC",
-				serviceProvider(ServiceKeyBlockSyncReactor, chainID).(*blocksync.Reactor))
+			if bsR := serviceProvider(ServiceKeyBlockSyncReactor, chainID); bsR != nil {
+				sw.AddReactor(chainID, "BLOCKSYNC", bsR.(*blocksync.Reactor))
+			}
 		}
 		if sw.Reactor(chainID, "CONSENSUS") == nil {
-			sw.AddReactor(chainID, "CONSENSUS",
-				serviceProvider(ServiceKeyConsensusReactor, chainID).(*cs.Reactor))
+			if conR := serviceProvider(ServiceKeyConsensusReactor, chainID); conR != nil {
+				sw.AddReactor(chainID, "CONSENSUS", conR.(*cs.Reactor))
+			}
 		}
 		if sw.Reactor(chainID, "EVIDENCE") == nil {
-			sw.AddReactor(chainID, "EVIDENCE",
-				serviceProvider(ServiceKeyEvidenceReactor, chainID).(*evidence.Reactor))
+			if evR := serviceProvider(ServiceKeyEvidenceReactor, chainID); evR != nil {
+				sw.AddReactor(chainID, "EVIDENCE", evR.(*evidence.Reactor))
+			}
 		}
 	}
 
@@ -468,6 +472,14 @@ func (reactor *Reactor) AddConnectionChannels(
 	connUpdaterFn := sw.OpenChannelsForScopes(scopes)
 	for _, chainOrScope := range scopes {
 		peers := sw.Peers(chainOrScope).Copy()
+
+		// TODO(midas): remove debug logs
+		reactor.logger.Debug("Opening connection channels",
+			"numPeers", len(peers),
+			"scope", chainOrScope,
+		)
+
+		// TODO(midas): Augment max-concurrency here, update in goroutines.
 		for _, peer := range peers {
 			connUpdaterFn(peer.MConn())
 		}

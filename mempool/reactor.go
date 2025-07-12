@@ -312,6 +312,15 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 			return
 		}
 
+		// We must locally activate this ChainID for consensus routines.
+		if err := memR.ensureActiveRuntime(memR.ChainID, protoTxs); err != nil {
+			memR.Logger.Error("failed to activate runtime for RollbackTxs",
+				"chainId", memR.ChainID,
+				"numTxes", len(protoTxs),
+				"err", err)
+			return // must not ignore!
+		}
+
 		// Mark INBOUND peer active in CONSENSUS and BLOCKSYNC
 		memR.Switch.InitPeerForScope(e.Src, memR.ChainID)
 		memR.Switch.AddPeerForScope(e.Src, memR.ChainID)
@@ -324,13 +333,16 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 
 		// Forward the transaction rollbacks to an Acceptor.
 		err := memR.txAcceptor.RollbackTx(
-			context.TODO(),
+			memR.Context(),
 			batch...,
 		)
 		if err != nil {
 			// TODO(midas): remove debug logs
 			memR.Logger.Debug("Acceptor rejected batch rollback",
+				"chainId", memR.ChainID,
+				"numTxes", len(protoTxs),
 				"address", memR.userAddress,
+				"err", err,
 			)
 			return // Nothing to do
 		}
@@ -351,53 +363,24 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 			return
 		}
 
-		// We must pre-dial the source peer to permit
-		// sending AckTransactionBroadcast.
-		if memR.dialerFn != nil {
-			// dialerFn is an extension that permits to run [Reactor#GetRemoteDiscoveryAddress]
-			// which returns a public discovery address which can be used to find CometBFT addr.
-			_, err := memR.dialerFn(memR.Switch, e.Src, memR.ChainID)
-			if err != nil {
-				memR.Logger.Error(
-					"failed to dial peer from transaction message",
-					"chain_id", memR.ChainID,
-					"peer_in", e.Src,
-					"err", err,
-				)
-			}
+		// We must dial back the source to send AckTransactionBroadcast.
+		// Creates a OUTBOUND peer from the INBOUND (dialing back).
+		if err := memR.ensureConnectionToPeer(e.Src); err != nil {
+			memR.Logger.Error("failed to dial back broadcast partner",
+				"chainId", memR.ChainID,
+				"numTxes", len(protoTxs),
+				"peer", e.Src,
+				"err", err)
+			// error MAY be ignored
 		}
 
-		// If we receive a transaction, but are not yet running consensus reactors
-		// for the attached ChainID, we must start the consensus reactors.
-		if multiplexReactor := memR.Switch.GetMultiplexReactor(); multiplexReactor != nil {
-			type inlineRuntimeActivator interface {
-				OnActivateRuntime(chainID string)
-				OnCompleteRuntime(chainID string, protoTxs [][]byte)
-
-				AddConnectionChannels(
-					sw *p2p.Switch,
-					scopes []string,
-				) error
-			}
-
-			// Use type assertion to access multiplex reactor methods.
-			if mxR, ok := multiplexReactor.(inlineRuntimeActivator); ok {
-				// Activate this runtime in idle manager.
-				mxR.OnActivateRuntime(memR.ChainID)
-
-				// CAUTION: This runtime for ChainID *must be long-living* because it
-				// is used to execute cometbft consensus (blocks proposal). Thus we shall
-				// wait for transactions to be **indexed** before the runtime is completed.
-				//
-				// Completes the runtime activated here.
-				defer func() {
-					go mxR.OnCompleteRuntime(memR.ChainID, protoTxs)
-				}()
-
-				// We must add consensus and blocksync connection channels,
-				// we should have a peer in the peerSet per ChainID now.
-				mxR.AddConnectionChannels(memR.Switch, []string{memR.ChainID})
-			}
+		// We must locally activate this ChainID for consensus routines.
+		if err := memR.ensureActiveRuntime(memR.ChainID, protoTxs); err != nil {
+			memR.Logger.Error("failed to activate runtime for Tx",
+				"chainId", memR.ChainID,
+				"numTxes", len(protoTxs),
+				"err", err)
+			return // must not ignore!
 		}
 
 		// Mark INBOUND peer active in CONSENSUS and BLOCKSYNC
@@ -405,8 +388,6 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 		memR.Switch.AddPeerForScope(e.Src, memR.ChainID)
 
 		if memR.WaitSync() {
-			memR.Logger.Debug("Ignored message received while syncing", "msg", msg)
-
 			// TODO(midas): fix bottleneck here, should not use only first tx,
 			// but instead it should use a hash of the envelope or batch.
 			memR.pendingMsgsMtx.Lock()
@@ -431,6 +412,67 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 	}
 
 	// broadcasting happens from go routines per peer
+}
+
+// ensureConnectionToPeer dials back p to permit sending AckTransactionBroadcast
+// messages. Creates a OUTBOUND peer.
+// See also: [multiplex.Reactor#GetRelayDialerForCometBFT].
+func (memR *Reactor) ensureConnectionToPeer(p *p2p.PeerImpl) error {
+	if memR.dialerFn == nil {
+		return nil
+	}
+
+	// dialerFn is an extension that permits to run a custom dialer.
+	if _, err := memR.dialerFn(memR.Switch, p, memR.ChainID); err != nil {
+		memR.Logger.Error("failed to dial peer with dialer extension",
+			"chain_id", memR.ChainID,
+			"peer_in", p,
+			"err", err,
+		)
+
+		return err
+	}
+
+	return nil
+}
+
+// ensureActiveRuntime activates chainID using the multiplex reactor and
+// ensures that connection channels are opened for chainID.
+func (memR *Reactor) ensureActiveRuntime(chainID string, protoTxs [][]byte) error {
+	// If we receive a transaction, but are not yet running consensus reactors
+	// for the attached ChainID, we must start the consensus reactors.
+	if multiplexReactor := memR.Switch.GetMultiplexReactor(); multiplexReactor != nil {
+		type inlineRuntimeActivator interface {
+			OnActivateRuntime(chainID string)
+			OnCompleteRuntime(chainID string, protoTxs [][]byte)
+
+			AddConnectionChannels(
+				sw *p2p.Switch,
+				scopes []string,
+			) error
+		}
+
+		// Use type assertion to access multiplex reactor methods.
+		if mxR, ok := multiplexReactor.(inlineRuntimeActivator); ok {
+			// Activate this runtime in idle manager.
+			mxR.OnActivateRuntime(memR.ChainID)
+
+			// CAUTION: This runtime for ChainID *must be long-living* because it
+			// is used to execute cometbft consensus (blocks proposal). Thus we shall
+			// wait for transactions to be **indexed** before the runtime is completed.
+			//
+			// Completes the runtime activated here.
+			defer func() {
+				go mxR.OnCompleteRuntime(memR.ChainID, protoTxs)
+			}()
+
+			// We must add consensus and blocksync connection channels,
+			// we should have a peer in the peerSet per ChainID now.
+			mxR.AddConnectionChannels(memR.Switch, []string{memR.ChainID})
+		}
+	}
+
+	return nil
 }
 
 // processTxs forwards transaction to the internal Acceptor to verify their

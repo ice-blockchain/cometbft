@@ -651,13 +651,8 @@ func (reactor *Reactor) SetAcceptor(acceptor client.Acceptor) {
 
 	relevantChainIds := reactor.GetNetworks()
 	for _, chainID := range relevantChainIds {
-		memplReactorForChain := serviceProvider(ServiceKeyMempoolReactor, chainID)
-		if memplReactorForChain == nil {
-			continue
-		}
-
-		if memplReactor, ok := memplReactorForChain.(*mempl.Reactor); ok {
-			memplReactor.SetAcceptor(acceptor)
+		if memR := serviceProvider(ServiceKeyMempoolReactor, chainID); memR != nil {
+			memR.(*mempl.Reactor).SetAcceptor(acceptor)
 		}
 	}
 }
@@ -1276,10 +1271,15 @@ func (reactor *Reactor) GetStateStore(chainID string) sm.Store {
 	return stateStoreProvider(chainID).(sm.Store)
 }
 
+// GetMempool returns the [mempl.Reactor] instance by chainID or nil.
 func (reactor *Reactor) GetMempool(chainID string) mempl.TxAcceptor {
 	reactorsProvider := reactor.GetServicesProvider()
-	memplReactor := reactorsProvider(ServiceKeyMempoolReactor, chainID).(*mempl.Reactor)
-	return memplReactor.GetMempoolPtr()
+	if memR := reactorsProvider(ServiceKeyMempoolReactor, chainID); memR != nil {
+		memplReactor := memR.(*mempl.Reactor)
+		return memplReactor.GetMempoolPtr()
+	}
+
+	return nil
 }
 
 // GetReplayPool returns a [server.ReplayPool] which contains transactions

@@ -115,7 +115,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	chainID string,
 	blockSync bool,
 	waitSync bool,
-) error {
+) (err error) {
 	// First make sure the ABCI is setup correctly
 	abciClient := reactor.GetABCIClient()
 	if abciClient == nil {
@@ -151,8 +151,9 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	privValidator := privvalProvider(chainID).(types.PrivValidator)
 	eventBus, ok := servicesProvider(ServiceKeyEventBus, chainID).(*types.EventBus)
 	if !ok {
-		return fmt.Errorf(
+		err = fmt.Errorf(
 			"could not get event bus in CreateConsensusInstanceReactors with ChainID %s", chainID)
+		return // err
 	}
 
 	// Prometheus does not allow hyphens in metrics names, it must match
@@ -186,138 +187,171 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 	// 1) Create the mempool / mempool reactor
 	//
 	// BREAKING: We do not permit using the NopMempool.
-	memplLogger := clogger.With("module", "mempool")
-	mempool := mempl.NewCListMempool(
-		cfgOverwrite.Mempool,
-		abciClient.Mempool(chainID),
-		stateMachine.LastBlockHeight,
-		mempl.WithMetrics(memplMetricsProvider),
-		mempl.WithPreCheck(sm.TxPreCheck(stateMachine.Copy())),
-		mempl.WithPostCheck(sm.TxPostCheck(stateMachine.Copy())),
+	var (
+		mempool        *mempl.CListMempool
+		mempoolReactor *mempl.Reactor
 	)
-	mempool.SetLogger(memplLogger)
-	mempoolReactor := mempl.NewReactor(
-		ctx,
-		cfgOverwrite.Mempool,
-		mempool,
-		waitSync, // "waitSync"
-		mempl.WithAcceptor(
-			extChainID.GetUserAddress(),
-			reactor.GetAcceptor(),
-		),
-		mempl.WithChainID(chainID),
-		mempl.WithNodeKey(reactor.GetNodeKey()),
-		mempl.WithDialerFn(reactor.GetRelayDialerForCometBFT()),
-		mempl.WithRuntimeRegistry(reactor.GetRuntimeRegistry()),
-	)
-	if cfgOverwrite.Consensus.WaitForTxs() {
-		mempool.EnableTxsAvailable()
-	}
-	mempoolReactor.SetLogger(memplLogger)
+	mempoolService := servicesProvider(ServiceKeyMempoolReactor, chainID)
+	if mempoolService == nil {
+		memplLogger := clogger.With("module", "mempool")
+		mempool = mempl.NewCListMempool(
+			cfgOverwrite.Mempool,
+			abciClient.Mempool(chainID),
+			stateMachine.LastBlockHeight,
+			mempl.WithMetrics(memplMetricsProvider),
+			mempl.WithPreCheck(sm.TxPreCheck(stateMachine.Copy())),
+			mempl.WithPostCheck(sm.TxPostCheck(stateMachine.Copy())),
+		)
+		mempool.SetLogger(memplLogger)
+		mempoolReactor = mempl.NewReactor(
+			ctx,
+			cfgOverwrite.Mempool,
+			mempool,
+			waitSync, // "waitSync"
+			mempl.WithAcceptor(
+				extChainID.GetUserAddress(),
+				reactor.GetAcceptor(),
+			),
+			mempl.WithChainID(chainID),
+			mempl.WithNodeKey(reactor.GetNodeKey()),
+			mempl.WithDialerFn(reactor.GetRelayDialerForCometBFT()),
+			mempl.WithRuntimeRegistry(reactor.GetRuntimeRegistry()),
+		)
+		if cfgOverwrite.Consensus.WaitForTxs() {
+			mempool.EnableTxsAvailable()
+		}
+		mempoolReactor.SetLogger(memplLogger)
 
-	// NOTE(midas): Set the switch instance early on so that the mempool
-	// can start messaging right at Start and not wait for other reactors.
-	mempoolReactor.SetSwitch(reactor.GetEventSwitchForCometBFT())
+		// NOTE(midas): Set the switch instance early on so that the mempool
+		// can start messaging right at Start and not wait for other reactors.
+		mempoolReactor.SetSwitch(reactor.GetEventSwitchForCometBFT())
+
+		reactor.RegisterService(ServiceKeyMempoolReactor, chainID, mempoolReactor)
+	} else {
+		mempoolReactor = mempoolService.(*mempl.Reactor)
+		mempool = mempoolReactor.GetMempoolPtr()
+	}
 
 	// 2) Create the evidence pool / evidence reactor
 	evidenceDB := evidenceDBService.(*DBService).DB()
 	stateStore := stateStoreProvider(chainID).(sm.Store)
 	blockStore := blockStoreProvider(chainID).(*bs.BlockStore)
 
-	evidenceLogger := clogger.With("module", "evidence")
-	evidencePool, err := evidence.NewPool(
-		evidenceDB,
-		stateStore,
-		blockStore,
-		evidence.WithDBKeyLayout(cfgOverwrite.Storage.ExperimentalKeyLayout),
+	var (
+		evidencePool    *evidence.Pool
+		evidenceReactor *evidence.Reactor
 	)
-	if err != nil {
-		return fmt.Errorf("error creating the evidence pool: %w", err)
-	}
-	evidenceReactor := evidence.NewReactor(ctx, evidencePool, evidence.WithChainID(chainID))
-	evidenceReactor.SetLogger(evidenceLogger)
+	evidenceService := servicesProvider(ServiceKeyEvidenceReactor, chainID)
+	if evidenceService == nil {
+		evidenceLogger := clogger.With("module", "evidence")
+		evidencePool, err = evidence.NewPool(
+			evidenceDB,
+			stateStore,
+			blockStore,
+			evidence.WithDBKeyLayout(cfgOverwrite.Storage.ExperimentalKeyLayout),
+		)
+		if err != nil {
+			err = fmt.Errorf("error creating the evidence pool: %w", err)
+			return // err
+		}
+		evidenceReactor = evidence.NewReactor(ctx, evidencePool, evidence.WithChainID(chainID))
+		evidenceReactor.SetLogger(evidenceLogger)
 
-	// 3) Create the block executor
-	//
-	// Make a block executor for consensus and blocksync reactors to execute
-	// blocks - the block execute logs on the state module.
-	blockExecutor := sm.NewBlockExecutor(
-		stateStore,
-		clogger.With("module", "state"),
-		abciClient.Consensus(chainID),
-		mempool,
-		evidencePool,
-		blockStore,
-		sm.BlockExecutorWithMetrics(stateMetricsProvider),
-	)
+		reactor.RegisterService(ServiceKeyEvidenceReactor, chainID, evidenceReactor)
+	} else {
+		evidenceReactor = evidenceService.(*evidence.Reactor)
+		evidencePool = evidenceReactor.GetPoolPtr()
+	}
 
 	// state-sync is disabled, so stays at 0!
 	offlineStateSyncHeight := int64(0)
 
-	// 4) Create block-sync reactor
+	// 3) Create the block sync reactor
 	//
-	// Don't start block sync if we're doing a state sync first or if
-	// we are the only validator on the network (caller sets blockSync).
-	blockSyncReactor := blocksync.NewReactor(
-		ctx,
-		stateMachine.Copy(),
-		blockExecutor,
-		blockStore,
-		blockSync,
-		privValPubKey.Address(),
-		bsyncMetricsProvider,
-		offlineStateSyncHeight,
-		blocksync.WithChainID(chainID),
+	// Make a block executor for consensus and blocksync reactors to execute
+	// blocks - the block executor logs on the state module.
+	var (
+		blockExecutor    *sm.BlockExecutor
+		blockSyncReactor *blocksync.Reactor
 	)
-	blockSyncReactor.SetLogger(clogger.With("module", "blocksync"))
+	blocksyncService := servicesProvider(ServiceKeyBlockSyncReactor, chainID)
+	if blocksyncService == nil {
+		blockExecutor = sm.NewBlockExecutor(
+			stateStore,
+			clogger.With("module", "state"),
+			abciClient.Consensus(chainID),
+			mempool,
+			evidencePool,
+			blockStore,
+			sm.BlockExecutorWithMetrics(stateMetricsProvider),
+		)
 
-	// NOTE(midas): Set the switch instance early on so that the blocksync
-	// can start messaging right at Start and not wait for other reactors.
-	blockSyncReactor.SetSwitch(reactor.GetEventSwitchForCometBFT())
+		blockSyncReactor = blocksync.NewReactor(
+			ctx,
+			stateMachine.Copy(),
+			blockExecutor,
+			blockStore,
+			blockSync,
+			privValPubKey.Address(),
+			bsyncMetricsProvider,
+			offlineStateSyncHeight,
+			blocksync.WithChainID(chainID),
+		)
+		blockSyncReactor.SetLogger(clogger.With("module", "blocksync"))
 
-	// 5) Create consensus state / reactor
+		// NOTE(midas): Set the switch instance early on so that the blocksync
+		// can start messaging right at Start and not wait for other reactors.
+		blockSyncReactor.SetSwitch(reactor.GetEventSwitchForCometBFT())
+
+		reactor.RegisterService(ServiceKeyBlockSyncReactor, chainID, blockSyncReactor)
+		reactor.RegisterInstance(InstanceKeyFlagBlockSync, chainID, blockSync)
+	} else {
+		blockSyncReactor = blocksyncService.(*blocksync.Reactor)
+		blockExecutor = blockSyncReactor.BlockExecutor()
+	}
+
+	// 4) Create consensus state / reactor
 	//
 	// Note that using the config overwrite, we use a separate WAL-file
 	// for every replicated chain.
-	consensusLogger := clogger.With("module", "consensus")
-	consensusState := cs.NewState(
-		ctx,
-		cfgOverwrite.Consensus, // contains overwrite of WAL
-		stateMachine.Copy(),
-		blockExecutor,
-		blockStore,
-		mempool,
-		evidencePool,
-		cs.StateMetrics(consensusMetricsProvider),
-		cs.OfflineStateSyncHeight(offlineStateSyncHeight),
-	)
-	consensusState.SetLogger(consensusLogger)
-	if privValidator != nil {
-		consensusState.SetPrivValidator(privValidator)
+	consensusService := servicesProvider(ServiceKeyConsensusReactor, chainID)
+	if consensusService == nil {
+		consensusLogger := clogger.With("module", "consensus")
+		consensusState := cs.NewState(
+			ctx,
+			cfgOverwrite.Consensus, // contains overwrite of WAL
+			stateMachine.Copy(),
+			blockExecutor,
+			blockStore,
+			mempool,
+			evidencePool,
+			cs.StateMetrics(consensusMetricsProvider),
+			cs.OfflineStateSyncHeight(offlineStateSyncHeight),
+		)
+		consensusState.SetLogger(consensusLogger)
+		if privValidator != nil {
+			consensusState.SetPrivValidator(privValidator)
+		}
+		consensusReactor := cs.NewReactor(
+			ctx,
+			consensusState,
+			waitSync, // "waitSync"
+			cs.ReactorMetrics(consensusMetricsProvider),
+			cs.WithNodeKey(reactor.GetNodeKey()),
+			cs.WithRuntimeRegistry(reactor.GetRuntimeRegistry()),
+		)
+		consensusReactor.SetLogger(consensusLogger)
+		// services which will be publishing and/or subscribing for messages (events)
+		// consensusReactor will set it on consensusState and blockExecutor
+		consensusReactor.SetEventBus(eventBus)
+
+		// NOTE(midas): Set the switch instance early on so that the consensus
+		// reactor can respond with ChainReplicationComplete when necessary.
+		consensusReactor.SetSwitch(reactor.GetEventSwitchForCometBFT())
+
+		// Prepare registerable instances mapped to ChainID
+		reactor.RegisterService(ServiceKeyConsensusReactor, chainID, consensusReactor)
 	}
-	consensusReactor := cs.NewReactor(
-		ctx,
-		consensusState,
-		waitSync, // "waitSync"
-		cs.ReactorMetrics(consensusMetricsProvider),
-		cs.WithNodeKey(reactor.GetNodeKey()),
-		cs.WithRuntimeRegistry(reactor.GetRuntimeRegistry()),
-	)
-	consensusReactor.SetLogger(consensusLogger)
-	// services which will be publishing and/or subscribing for messages (events)
-	// consensusReactor will set it on consensusState and blockExecutor
-	consensusReactor.SetEventBus(eventBus)
-
-	// NOTE(midas): Set the switch instance early on so that the consensus
-	// reactor can respond with ChainReplicationComplete when necessary.
-	consensusReactor.SetSwitch(reactor.GetEventSwitchForCometBFT())
-
-	// Prepare registerable instances mapped to ChainID
-	reactor.RegisterService(ServiceKeyMempoolReactor, chainID, mempoolReactor)
-	reactor.RegisterService(ServiceKeyEvidenceReactor, chainID, evidenceReactor)
-	reactor.RegisterService(ServiceKeyBlockSyncReactor, chainID, blockSyncReactor)
-	reactor.RegisterService(ServiceKeyConsensusReactor, chainID, consensusReactor)
-	reactor.RegisterInstance(InstanceKeyFlagBlockSync, chainID, blockSync)
 
 	return nil
 }

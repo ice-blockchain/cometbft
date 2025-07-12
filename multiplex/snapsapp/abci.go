@@ -5,8 +5,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/ice-blockchain/cometbft/types"
 	"strconv"
+
+	"github.com/ice-blockchain/cometbft/types"
 
 	abcitypes "github.com/ice-blockchain/cometbft/abci/types"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
@@ -205,15 +206,41 @@ func (app *SnapsApp) ProcessProposal(
 	app.lbMutex.Lock()
 	app.lastBlockHeights[chainID] = req.Height
 	app.lbMutex.Unlock()
-	accepted := true
-	for _, tx := range req.Txs {
-		accepted = accepted && app.reactor.GetMempool(chainID).TxAccepted(tx)
-		app.logger.Debug("CheckTx", "tx", hex.EncodeToString(types.Tx(tx).Hash()), "accepted", accepted)
-	}
 
-	if !accepted {
+	// Note that if the mempool for this ChainID is not yet available, we can't
+	// ensure that the transaction(s) have passed CheckTx, so we must drop here.
+	if app.reactor.GetMempool(chainID) == nil {
+		app.logger.Error("ProcessProposal failed to get mempool; rejecting proposal",
+			"chainId", chainID,
+			"height", req.Height,
+			"numTxes", len(req.Txs),
+		)
+
 		return &abcitypes.ProcessProposalResponse{Status: abcitypes.PROCESS_PROPOSAL_STATUS_REJECT}, nil
 	}
+
+	// IMPORTANT:
+	//
+	// Verifies that all txs of the batch have passed the CheckTx() call.
+	// This permits to make sure that relays do not accept blocks proposal
+	// that contain transactions which have not yet passed the ACK process.
+	txAccepted := true
+	for _, tx := range req.Txs {
+		// The GetMempool() call is checked for non-nil return in above block.
+		txAccepted = txAccepted && app.reactor.GetMempool(chainID).TxAccepted(tx)
+
+		// TODO(midas): remove debug logs
+		app.logger.Debug("TxAccepted",
+			"chainId", chainID,
+			"tx", hex.EncodeToString(types.Tx(tx).Hash()),
+			"txAccepted", txAccepted)
+	}
+
+	if !txAccepted {
+		return &abcitypes.ProcessProposalResponse{Status: abcitypes.PROCESS_PROPOSAL_STATUS_REJECT}, nil
+	}
+
+	// All the txes of this batch have passed CheckTx calls, i.e. added to mempool.
 	return &abcitypes.ProcessProposalResponse{Status: abcitypes.PROCESS_PROPOSAL_STATUS_ACCEPT}, nil
 }
 

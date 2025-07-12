@@ -160,6 +160,10 @@ func (bcR *Reactor) SetLogger(l log.Logger) {
 	bcR.pool.Logger = l
 }
 
+func (bcR *Reactor) BlockExecutor() *sm.BlockExecutor {
+	return bcR.blockExec
+}
+
 // OnStart implements service.Service.
 func (bcR *Reactor) OnStart(ctx context.Context) error {
 	if bcR.blockSync {
