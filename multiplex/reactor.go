@@ -513,6 +513,7 @@ func WithRelayInfoTimeout(t time.Duration) func(*Reactor) {
 }
 
 func ReactorWithActiveRuntimes(
+	ctx context.Context,
 	chainIds []string,
 	otherValidatorsPerChainID map[string][]string,
 ) func(*Reactor) {
@@ -526,7 +527,7 @@ func ReactorWithActiveRuntimes(
 
 			r.AllocateNetwork(chainID)                   // db, fs, privval
 			r.InjectNewNetwork(chainID, otherValidators) // config, genesis, state
-			r.InjectNewRuntime(r.Context(), chainID)     // event bus, indexer, p2p
+			r.InjectNewRuntime(ctx, chainID)             // event bus, indexer, p2p
 		}
 	}
 }
@@ -1447,7 +1448,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 		// here so that we may proceed with forwarding the message to mempool.
 		if !hasConfiguredChainID {
 			// calls AllocateNetwork, InjectNewNetwork, InjectNewRuntime
-			ReactorWithActiveRuntimes([]string{e.ChainID}, map[string][]string{})(
+			ReactorWithActiveRuntimes(r.Context(), []string{e.ChainID}, map[string][]string{})(
 				r,
 			)
 		}

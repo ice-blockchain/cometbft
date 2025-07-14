@@ -1032,9 +1032,9 @@ func TestScenarioClientBroadcastMinimalHealthyRelays(t *testing.T) {
 	otherValidators := ResetTestBackendValidators(t, servers, testChainIds)
 
 	// CAUTION: This activates runtimes for pre-configured networks.
-	mx.ReactorWithActiveRuntimes(testChainIds, otherValidators[0])(testReactorRelay1)
-	mx.ReactorWithActiveRuntimes(testChainIds, otherValidators[1])(testReactorRelay2)
-	mx.ReactorWithActiveRuntimes(testChainIds, otherValidators[2])(testReactorRelay3)
+	mx.ReactorWithActiveRuntimes(t.Context(), testChainIds, otherValidators[0])(testReactorRelay1)
+	mx.ReactorWithActiveRuntimes(t.Context(), testChainIds, otherValidators[1])(testReactorRelay2)
+	mx.ReactorWithActiveRuntimes(t.Context(), testChainIds, otherValidators[2])(testReactorRelay3)
 
 	// TEST 1 - Success
 	//

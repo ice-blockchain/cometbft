@@ -2579,7 +2579,7 @@ func (b *MultiplexBackend) StartConsensusInstance(
 
 	if !hasConfiguredChainID {
 		// calls AllocateNetwork, InjectNewNetwork, InjectNewRuntime
-		ReactorWithActiveRuntimes([]string{chainID}, map[string][]string{})(
+		ReactorWithActiveRuntimes(ctx, []string{chainID}, map[string][]string{})(
 			b.reactor,
 		)
 	}

@@ -240,7 +240,7 @@ func TestMultiplexNodeNewNodesMultiplex(t *testing.T) {
 	testChainIds := testReactor.GetNetworks()
 
 	// CAUTION: This activates runtimes for pre-configured networks.
-	mx.ReactorWithActiveRuntimes(testChainIds, map[string][]string{})(testReactor)
+	mx.ReactorWithActiveRuntimes(t.Context(), testChainIds, map[string][]string{})(testReactor)
 
 	// Reset wait group for every iteration
 	wg := sync.WaitGroup{}
@@ -586,7 +586,7 @@ func assertStartNodesMultiplex(tb testing.TB, numChains int, customLogger cmtlog
 	require.Len(tb, testChainIds, numChains)
 
 	// CAUTION: This activates runtimes for pre-configured networks.
-	mx.ReactorWithActiveRuntimes(testChainIds, map[string][]string{})(testReactor)
+	mx.ReactorWithActiveRuntimes(tb.Context(), testChainIds, map[string][]string{})(testReactor)
 	servicesProvider := testReactor.GetServicesProvider()
 
 	if startServers && numChains > 0 {

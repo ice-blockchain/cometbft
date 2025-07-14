@@ -154,7 +154,7 @@ func ResetTestMultiplexP2P(tb testing.TB, numChains int) (string, *config.Config
 	reactor.SetABCIClient(abciClient)
 
 	// CAUTION: This activates runtimes for pre-configured networks.
-	mx.ReactorWithActiveRuntimes(testChainIds, map[string][]string{})(reactor)
+	mx.ReactorWithActiveRuntimes(tb.Context(), testChainIds, map[string][]string{})(reactor)
 
 	// Should now be able to do consensus handshake and load state machines
 	for _, chainID := range testChainIds {

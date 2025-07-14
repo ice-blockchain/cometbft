@@ -419,7 +419,7 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 // See also: [multiplex.Reactor#GetRelayDialerForCometBFT].
 func (memR *Reactor) ensureConnectionToPeer(p *p2p.PeerImpl) error {
 	if memR.dialerFn == nil {
-		return nil
+		return fmt.Errorf("custom dialer function is not set for %s", memR.ChainID)
 	}
 
 	// dialerFn is an extension that permits to run a custom dialer.
@@ -455,7 +455,7 @@ func (memR *Reactor) ensureActiveRuntime(chainID string, protoTxs [][]byte) erro
 		// Use type assertion to access multiplex reactor methods.
 		if mxR, ok := multiplexReactor.(inlineRuntimeActivator); ok {
 			// Activate this runtime in idle manager.
-			mxR.OnActivateRuntime(memR.ChainID)
+			mxR.OnActivateRuntime(chainID)
 
 			// CAUTION: This runtime for ChainID *must be long-living* because it
 			// is used to execute cometbft consensus (blocks proposal). Thus we shall
@@ -463,13 +463,15 @@ func (memR *Reactor) ensureActiveRuntime(chainID string, protoTxs [][]byte) erro
 			//
 			// Completes the runtime activated here.
 			defer func() {
-				go mxR.OnCompleteRuntime(memR.ChainID, protoTxs)
+				go mxR.OnCompleteRuntime(chainID, protoTxs)
 			}()
 
 			// We must add consensus and blocksync connection channels,
 			// we should have a peer in the peerSet per ChainID now.
-			mxR.AddConnectionChannels(memR.Switch, []string{memR.ChainID})
+			mxR.AddConnectionChannels(memR.Switch, []string{chainID})
 		}
+	} else {
+		return fmt.Errorf("multiplex reactor is not available for %s", chainID)
 	}
 
 	return nil
