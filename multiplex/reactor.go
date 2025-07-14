@@ -75,7 +75,7 @@ const (
 	ServiceKeyNodeRuntime      = "runtime/node"
 
 	// Network requests timeout configuration, e.g. [GetRemoteRelayInfo].
-	DefaultRequestTimeout = 2 * time.Second
+	DefaultRequestTimeout = 5 * time.Second
 )
 
 // serviceProviderFn provides a [cmtlibs.Service] instance by name and ChainID.
