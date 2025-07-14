@@ -3101,6 +3101,8 @@ func (b *MultiplexBackend) remoteAckReplicationConsumer(
 			return
 
 		case <-b.reactor.Quit():
+			return
+
 		case <-shutdownCh:
 			return
 		}
@@ -3206,6 +3208,8 @@ func (b *MultiplexBackend) localAckReplicationConsumer(
 			return
 
 		case <-b.reactor.Quit():
+			return
+
 		case <-shutdownCh:
 			return
 		}
@@ -3262,7 +3266,11 @@ func (b *MultiplexBackend) remoteAckTransactionConsumer(
 			localAcceptTxCh <- acceptMsg
 
 		case <-ctx.Done():
+			return
+
 		case <-b.reactor.Quit():
+			return
+
 		case <-shutdownCh:
 			return
 		}
@@ -3402,6 +3410,8 @@ func (b *MultiplexBackend) localAckTransactionConsumer(
 			return
 
 		case <-b.reactor.Quit():
+			return
+
 		case <-shutdownCh:
 			return
 		}
@@ -3427,12 +3437,12 @@ func (b *MultiplexBackend) remoteRuntimeUpdatesConsumer(
 	// Wait a maximum duration of replicationTimeout. With a replicationTimeout
 	// of 0, this method will block until shutdown or parent context expiration.
 	var (
-		//cancelFn   func()
+		cancelFn   func()
 		timeoutCtx context.Context
 	)
 	if b.replicationTimeout != 0 {
-		timeoutCtx, _ = context.WithTimeout(b.Context(), b.replicationTimeout)
-		// defer cancelFn()
+		timeoutCtx, cancelFn = context.WithTimeout(b.Context(), b.replicationTimeout)
+		defer cancelFn()
 	}
 
 	for {
@@ -3459,8 +3469,14 @@ func (b *MultiplexBackend) remoteRuntimeUpdatesConsumer(
 			localReplFinCh <- res
 
 		case <-timeoutCtx.Done():
+			return
+
 		case <-ctx.Done():
+			return
+
 		case <-b.reactor.Quit():
+			return
+
 		case <-shutdownCh:
 			return
 		}
@@ -3595,6 +3611,8 @@ func (b *MultiplexBackend) localRuntimeUpdatesConsumer(
 			return
 
 		case <-b.reactor.Quit():
+			return
+
 		case <-shutdownCh:
 			return
 		}
@@ -3702,6 +3720,8 @@ func (b *MultiplexBackend) localTransactionEventsConsumer(
 			return
 
 		case <-b.reactor.Quit():
+			return
+
 		case <-shutdownCh:
 			return
 		}

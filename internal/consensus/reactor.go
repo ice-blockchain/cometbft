@@ -923,7 +923,7 @@ func (conR *Reactor) gossipDataRoutine(peer *p2p.PeerImpl, ps *PeerState) {
 	rng := cmtrand.NewStdlibRand()
 
 OUTER_LOOP:
-	for {
+	for conR.Context().Err() == nil {
 		// Manage disconnects from self or peer.
 		if !peer.IsRunning() || !conR.IsRunning() {
 			return
@@ -987,7 +987,7 @@ func (conR *Reactor) gossipVotesRoutine(peer *p2p.PeerImpl, ps *PeerState) {
 	sleeping := 0
 
 OUTER_LOOP:
-	for {
+	for conR.Context().Err() == nil {
 		// Manage disconnects from self or peer.
 		if !peer.IsRunning() || !conR.IsRunning() {
 			return
@@ -1048,7 +1048,7 @@ OUTER_LOOP:
 // into play for liveness when there's a signature DDoS attack happening.
 func (conR *Reactor) queryMaj23Routine(peer *p2p.PeerImpl, ps *PeerState) {
 OUTER_LOOP:
-	for {
+	for conR.Context().Err() == nil {
 		// Manage disconnects from self or peer.
 		if !peer.IsRunning() || !conR.IsRunning() {
 			return
@@ -1159,6 +1159,10 @@ func (conR *Reactor) sleepOrQuit(duration time.Duration) bool {
 	select {
 	case <-time.After(duration):
 		return true
+
+	case <-conR.Context().Done():
+		return false
+
 	case <-conR.Quit():
 		return false
 	}

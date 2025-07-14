@@ -331,7 +331,6 @@ func (*Server) OnReset(ctx context.Context) error {
 func (s *Server) loop(ctx context.Context, state state) {
 	for ctx.Err() == nil {
 		select {
-		case <-ctx.Done():
 		case <-s.Quit():
 			return
 		case cmd := <-s.cmds:

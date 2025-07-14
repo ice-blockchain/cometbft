@@ -164,8 +164,6 @@ func (bs *BaseService) Start() error {
 
 		bs.quit = make(chan struct{})
 
-		// NOTE(midas):
-		// When bs.ctx is cancelled, the start procedure triggers Stop call!
 		go func() {
 			select {
 			case <-bs.ctx.Done():
@@ -210,9 +208,6 @@ func (bs *BaseService) Stop() error {
 			bs.impl)
 		bs.impl.OnStop()
 		close(bs.quit)
-
-		// NOTE(midas):
-		// When bs.ctx is cancelled, the start procedure triggers Stop!
 		bs.ctxCancel()
 		return nil
 	}
