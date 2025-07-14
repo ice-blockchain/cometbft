@@ -1759,9 +1759,9 @@ func (b *MultiplexBackend) WaitForRelaysReplicationCompleted(
 
 		b.reactor.CloseRuntimeUpdatesChannel(chainID)
 
-		if ch, ok := localFinChs[chainID]; ok && ch != nil {
-			close(ch)
-		}
+		// if ch, ok := localFinChs[chainID]; ok && ch != nil {
+		// 	close(ch)
+		// }
 
 		msgStatus := ""
 		if processErr == nil {
