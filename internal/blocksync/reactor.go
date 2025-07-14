@@ -164,6 +164,15 @@ func (bcR *Reactor) BlockExecutor() *sm.BlockExecutor {
 	return bcR.blockExec
 }
 
+func (bcR *Reactor) SetStateStore(stateStore sm.Store) {
+	bcR.blockExec.SetStateStore(stateStore)
+}
+
+func (bcR *Reactor) SetBlockStore(store *store.BlockStore) {
+	bcR.store = store
+	bcR.blockExec.SetBlockStore(store)
+}
+
 // OnStart implements service.Service.
 func (bcR *Reactor) OnStart(ctx context.Context) error {
 	if bcR.blockSync {

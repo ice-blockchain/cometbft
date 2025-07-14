@@ -431,7 +431,16 @@ func (reactor *Reactor) StartConsensusInstanceReactors(
 	}
 
 	if bsR := servicesProvider(ServiceKeyBlockSyncReactor, chainID); bsR != nil {
+		blockStoreProvider := reactor.GetInstanceProvider(InstanceKeyBlockStore)
+		stateStoreProvider := reactor.GetInstanceProvider(InstanceKeyStateStore)
+
+		stateStore := stateStoreProvider(chainID).(sm.Store)
+		blockStore := blockStoreProvider(chainID).(*bs.BlockStore)
+
+		// Update block executor state and blocks store.
 		blocksyncReactor = bsR.(*blocksync.Reactor)
+		blocksyncReactor.SetStateStore(stateStore)
+		blocksyncReactor.SetBlockStore(blockStore)
 	}
 	if conR := servicesProvider(ServiceKeyConsensusReactor, chainID); conR != nil {
 		consensusReactor = conR.(*cs.Reactor)

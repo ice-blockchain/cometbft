@@ -94,6 +94,14 @@ func (blockExec *BlockExecutor) Store() Store {
 	return blockExec.store
 }
 
+func (blockExec *BlockExecutor) SetStateStore(stateStore Store) {
+	blockExec.store = stateStore
+}
+
+func (blockExec *BlockExecutor) SetBlockStore(blockStore BlockStore) {
+	blockExec.blockStore = blockStore
+}
+
 // SetEventBus - sets the event bus for publishing block related events.
 // If not called, it defaults to types.NopEventBus.
 func (blockExec *BlockExecutor) SetEventBus(eventBus types.BlockEventPublisher) {
