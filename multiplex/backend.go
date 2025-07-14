@@ -1325,12 +1325,14 @@ func (b *MultiplexBackend) WaitForRelaysAckChainReplications(
 	) {
 		if ch, ok := shutdownChs[chainID]; ok && ch != nil {
 			close(ch)
+			delete(shutdownChs, chainID)
 		}
 
 		b.reactor.CloseAckReplicationChannel(chainID)
 
 		if ch, ok := localResChs[chainID]; ok && ch != nil {
 			close(ch)
+			delete(localResChs, chainID)
 		}
 
 		msgStatus := ""
@@ -1556,11 +1558,12 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 	shutdownFn := func(
 		txHash string,
 		shutdownChs map[string]chan struct{},
-		remoteTxChs map[string]chan string,
+		localTxChs map[string]chan string,
 		processErr error,
 	) {
 		if ch, ok := shutdownChs[txHash]; ok && ch != nil {
 			close(ch)
+			delete(shutdownChs, txHash)
 		}
 
 		// chainID := chainIdsByTxHash[txHash]
@@ -1571,8 +1574,9 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 
 		b.reactor.CloseAckTransactionChannel(txHash)
 
-		if ch, ok := remoteTxChs[txHash]; ok && ch != nil {
+		if ch, ok := localTxChs[txHash]; ok && ch != nil {
 			close(ch)
+			delete(localTxChs, txHash)
 		}
 
 		msgStatus := ""
@@ -1592,12 +1596,12 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 	shutdownForError := func(
 		transactions []client.Transaction,
 		shutdownChs map[string]chan struct{},
-		remoteTxChs map[string]chan string,
+		localTxChs map[string]chan string,
 		reasonErr error,
 	) {
 		for _, tx := range transactions {
 			txHash := fmt.Sprintf("%X", tx.Hash())
-			shutdownFn(txHash, shutdownChs, remoteTxChs, reasonErr)
+			shutdownFn(txHash, shutdownChs, localTxChs, reasonErr)
 		}
 
 		// TODO(midas): remove debug logs
@@ -1755,6 +1759,7 @@ func (b *MultiplexBackend) WaitForRelaysReplicationCompleted(
 	) {
 		if ch, ok := shutdownChs[chainID]; ok && ch != nil {
 			close(ch)
+			delete(shutdownChs, chainID)
 		}
 
 		b.reactor.CloseRuntimeUpdatesChannel(chainID)
@@ -1888,6 +1893,7 @@ func (b *MultiplexBackend) WaitForTransactionsEvents(
 	) {
 		if ch, ok := shutdownChs[chainID]; ok && ch != nil {
 			close(ch)
+			delete(shutdownChs, chainID)
 		}
 
 		msgStatus := ""
