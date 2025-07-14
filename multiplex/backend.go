@@ -364,7 +364,7 @@ func (b *MultiplexBackend) GetReactor() *Reactor {
 // GetRuntimeRegistry should return the active node runtime manager.
 //
 // GetRuntimeRegistry implements [server.Backend]
-func (b *MultiplexBackend) GetRuntimeRegistry() *runtime.RuntimeRegistry {
+func (b *MultiplexBackend) GetRuntimeRegistry() runtime.RuntimeManager {
 	b.reactor.runtimesMutex.Lock()
 	defer b.reactor.runtimesMutex.Unlock()
 
@@ -550,59 +550,6 @@ func (b *MultiplexBackend) CreateOrLoadDiscoveryEventSwitch(ctx context.Context)
 	sw.AddReactor(conn.SharedChannelsNamespace, "MULTIPLEX", b.reactor)
 	b.reactor.SetEventSwitchForDiscovery(sw)
 	return sw
-}
-
-// OpenChannels updates the NodeInfo pointer and event switch
-// to permit communications related to a given list of ChainIDs.
-func (b *MultiplexBackend) UpdateMultiNetworkNodeInfo(
-	requiredNetworks []string,
-) error {
-	// Lock and read currently known ChainIDs.
-	b.relayMtx.Lock()
-	availableNetworks := b.multiNodeInfo.Networks
-	availableVersions := b.multiNodeInfo.ProtocolVersions
-	b.relayMtx.Unlock()
-
-	// Keep only missing ChainIDs.
-	missingChainIds := slices.DeleteFunc(requiredNetworks, func(chainID string) bool {
-		return slices.Contains(availableNetworks, chainID)
-	})
-	if len(missingChainIds) == 0 {
-		return nil
-	}
-
-	b.logger.Debug("Updating available networks",
-		"num_networks", len(availableNetworks),
-		"num_missing", len(missingChainIds))
-
-	for _, chainID := range missingChainIds {
-		availableNetworks = append(availableNetworks, chainID)
-		availableVersions = append(availableVersions,
-			NewChainProtocolVersion(
-				chainID,
-				DefaultProtocolVersion,
-			),
-		)
-	}
-
-	// Updates the MultiNetworkNodeInfo instance
-	b.relayMtx.Lock()
-	b.multiNodeInfo.SetNetworks(availableNetworks)
-	b.multiNodeInfo.SetProtocolVersions(availableVersions)
-	updatedNodeInfo := b.multiNodeInfo
-	b.relayMtx.Unlock()
-
-	// Update DISCOVERY switch if available
-	if sw := b.reactor.GetEventSwitchForDiscovery(); sw != nil {
-		sw.SetNodeInfo(updatedNodeInfo)
-	}
-
-	// Update COMETBFT switch if available
-	if sw := b.reactor.GetEventSwitchForCometBFT(); sw != nil {
-		sw.SetNodeInfo(updatedNodeInfo)
-	}
-
-	return nil
 }
 
 // shutdownOnPanic tries to close the backend after a panic.
@@ -805,7 +752,7 @@ func (b *MultiplexBackend) OnStart(ctx context.Context) error {
 
 	// Start networks that are currently replaying on other relays.
 	// We don't need for this goroutine to complete before we proceed.
-	go func(runtimeRegistry *runtime.RuntimeRegistry) {
+	go func(runtimeRegistry runtime.RuntimeManager) {
 		replayingBuckets := b.reactor.GetReplayPool().GetBuckets()
 		if b.reactor.Size() == 0 || len(replayingBuckets) == 0 {
 			return
@@ -1027,7 +974,7 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 		)
 
 		// Wait for the syncing relays to announce a ChainReplicationComplete.
-		go func(withReg *runtime.RuntimeRegistry, syncingChainIds []string) {
+		go func(withReg runtime.RuntimeManager, syncingChainIds []string) {
 			// Upon completion or error, we may plan to idle the active runtime.
 			defer func() {
 				for _, chainID := range syncingChainIds {
@@ -1147,7 +1094,7 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 		)
 
 		// Wait for the transaction to be announced (indexed locally).
-		go func(withReg *runtime.RuntimeRegistry, txesWaiting []client.Transaction) {
+		go func(withReg runtime.RuntimeManager, txesWaiting []client.Transaction) {
 			// Upon completion or error, we may plan to idle the active runtime.
 			defer func() {
 				waitingChainIds := chainIdsFromTransactions(userAddress, txesWaiting...)

@@ -2213,7 +2213,7 @@ func (reactor *Reactor) OnStop() {
 	if reactor.runtimeRegistry != nil && reactor.runtimeRegistry.IsRunning() {
 		// Try to shutdown gracefully (each ChainID individually).
 		restNodeRuntimes := reactor.runtimeRegistry.ActiveRuntimes()
-		if len(restNodeRuntimes) > 0 && reactor.runtimeRegistry.OnIdle != nil {
+		if len(restNodeRuntimes) > 0 && reactor.runtimeRegistry.HasIdler() {
 			// TODO(midas): remove debug logs
 			reactor.logger.Debug("Shutting down remaining node runtimes",
 				"networks", restNodeRuntimes,

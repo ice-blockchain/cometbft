@@ -24,10 +24,6 @@ const (
 
 type OnIdleFn func(chainID string) error
 
-type Idleable interface {
-	OnIdle(chainID string) error
-}
-
 // RuntimeRegistry defines a registry for parallel node runtimes.
 type RuntimeRegistry struct {
 	service.BaseService
@@ -48,7 +44,7 @@ type RuntimeRegistry struct {
 	Scheduler map[string]time.Time
 
 	// Options
-	OnIdle          OnIdleFn
+	cbOnIdle        OnIdleFn
 	cleanerInterval time.Duration
 	runIdleDuration time.Duration
 	logger          cmtlog.Logger
@@ -57,6 +53,9 @@ type RuntimeRegistry struct {
 	// this channel is consumed alongside the [Quit] channel.
 	goShutdownCh chan bool
 }
+
+// Ensure that our implementation satisfies interface.
+var _ RuntimeManager = (*RuntimeRegistry)(nil)
 
 type RuntimeRegistryOption func(*RuntimeRegistry)
 
@@ -114,7 +113,7 @@ func RuntimeRegistryLogger(logger cmtlog.Logger) RuntimeRegistryOption {
 // RuntimeRegistryOnIdle injects a custom OnIdle callback.
 func RuntimeRegistryOnIdle(onIdle OnIdleFn) RuntimeRegistryOption {
 	return func(rr *RuntimeRegistry) {
-		rr.OnIdle = onIdle
+		rr.cbOnIdle = onIdle
 	}
 }
 
@@ -283,6 +282,15 @@ func (reg *RuntimeRegistry) OnComplete(chainID string) error {
 	return nil
 }
 
+// OnIdle executes the callback cbOnIdle to idle a sleeping runtime by chainID.
+func (reg *RuntimeRegistry) OnIdle(chainID string) error {
+	if reg.cbOnIdle == nil {
+		return nil
+	}
+
+	return reg.cbOnIdle(chainID)
+}
+
 // ----------------------------------------------------------------------------
 
 // removeSleeping removes an inactive runtime from the list.
@@ -317,6 +325,11 @@ func (reg *RuntimeRegistry) removeSleeping(chainID string) error {
 	return nil
 }
 
+// HasIdler returns true given an injected idler callback.
+func (reg *RuntimeRegistry) HasIdler() bool {
+	return reg.cbOnIdle != nil
+}
+
 // ----------------------------------------------------------------------------
 // Routines
 
@@ -325,7 +338,7 @@ func (reg *RuntimeRegistry) removeSleeping(chainID string) error {
 //
 // Setting a nil OnIdle disables the cleaner routine.
 func (reg *RuntimeRegistry) cleanerRoutine() {
-	if reg.OnIdle == nil {
+	if reg.cbOnIdle == nil {
 		reg.logger.Debug("Disabled sleeping runtime cleaner routine")
 		return
 	}

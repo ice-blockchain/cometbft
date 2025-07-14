@@ -3,8 +3,10 @@ package server
 import (
 	"context"
 
+	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/libs/service"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
+	"github.com/ice-blockchain/cometbft/multiplex/runtime"
 )
 
 type (
@@ -18,6 +20,16 @@ var (
 // GetAcceptor returns the injected [client.Acceptor] implementation.
 func (DefaultServer) GetAcceptor() client.Acceptor {
 	return &client.DefaultAcceptor{}
+}
+
+// GetLogger returns the injected [cmtlog.Logger] instance.
+func (DefaultServer) GetLogger() cmtlog.Logger {
+	return cmtlog.NewNopLogger()
+}
+
+// GetRuntimeRegistry returns the injected node runtime manager.
+func (DefaultServer) GetRuntimeRegistry() runtime.RuntimeManager {
+	return nil
 }
 
 // OnStart implements [service.BaseService]

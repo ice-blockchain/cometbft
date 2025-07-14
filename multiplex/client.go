@@ -63,7 +63,7 @@ func (c *MultiplexClient) SetBackend(a server.Backend) {
 
 // GetRuntimeRegistry returns the reactor's [runtime.RuntimeRegistry] implementation.
 func (c *MultiplexClient) GetRuntimeRegistry() *runtime.RuntimeRegistry {
-	return c.backend.GetRuntimeRegistry()
+	return c.backend.GetRuntimeRegistry().(*runtime.RuntimeRegistry)
 }
 
 // BroadcastTx sends an error to a notifier if any of the transactions
