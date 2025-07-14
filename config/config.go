@@ -838,9 +838,9 @@ func DefaultP2PConfig() *P2PConfig {
 		MaxNumOutboundPeers:          10,
 		PersistentPeersMaxDialPeriod: 0 * time.Second,
 		FlushThrottleTimeout:         10 * time.Millisecond,
-		MaxPacketMsgPayloadSize:      1024,    // 1 kB
-		SendRate:                     5120000, // 5 mB/s
-		RecvRate:                     5120000, // 5 mB/s
+		MaxPacketMsgPayloadSize:      1024,       // 1 kB
+		SendRate:                     5120000000, // 5 GB/s
+		RecvRate:                     5120000000, // 5 GB/s
 		PexReactor:                   true,
 		SeedMode:                     false,
 		AllowDuplicateIP:             false,
