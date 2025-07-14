@@ -222,15 +222,15 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 		}
 		mempoolReactor.SetLogger(memplLogger)
 
-		// NOTE(midas): Set the switch instance early on so that the mempool
-		// can start messaging right at Start and not wait for other reactors.
-		mempoolReactor.SetSwitch(reactor.GetEventSwitchForCometBFT())
-
 		reactor.RegisterService(ServiceKeyMempoolReactor, chainID, mempoolReactor)
 	} else {
 		mempoolReactor = mempoolService.(*mempl.Reactor)
 		mempool = mempoolReactor.GetMempoolPtr()
 	}
+
+	// NOTE(midas): Set the switch instance early on so that the mempool
+	// can start messaging right at Start and not wait for other reactors.
+	mempoolReactor.SetSwitch(reactor.GetEventSwitchForCometBFT())
 
 	// 2) Create the evidence pool / evidence reactor
 	evidenceDB := evidenceDBService.(*DBService).DB()
@@ -299,10 +299,6 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 		)
 		blockSyncReactor.SetLogger(clogger.With("module", "blocksync"))
 
-		// NOTE(midas): Set the switch instance early on so that the blocksync
-		// can start messaging right at Start and not wait for other reactors.
-		blockSyncReactor.SetSwitch(reactor.GetEventSwitchForCometBFT())
-
 		reactor.RegisterService(ServiceKeyBlockSyncReactor, chainID, blockSyncReactor)
 		reactor.RegisterInstance(InstanceKeyFlagBlockSync, chainID, blockSync)
 	} else {
@@ -310,10 +306,13 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 		blockExecutor = blockSyncReactor.BlockExecutor()
 	}
 
+	blockSyncReactor.SetSwitch(reactor.GetEventSwitchForCometBFT())
+
 	// 4) Create consensus state / reactor
 	//
 	// Note that using the config overwrite, we use a separate WAL-file
 	// for every replicated chain.
+	var consensusReactor *cs.Reactor
 	consensusService := servicesProvider(ServiceKeyConsensusReactor, chainID)
 	if consensusService == nil {
 		consensusLogger := clogger.With("module", "consensus")
@@ -332,7 +331,7 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 		if privValidator != nil {
 			consensusState.SetPrivValidator(privValidator)
 		}
-		consensusReactor := cs.NewReactor(
+		consensusReactor = cs.NewReactor(
 			ctx,
 			consensusState,
 			waitSync, // "waitSync"
@@ -345,13 +344,15 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 		// consensusReactor will set it on consensusState and blockExecutor
 		consensusReactor.SetEventBus(eventBus)
 
-		// NOTE(midas): Set the switch instance early on so that the consensus
-		// reactor can respond with ChainReplicationComplete when necessary.
-		consensusReactor.SetSwitch(reactor.GetEventSwitchForCometBFT())
-
 		// Prepare registerable instances mapped to ChainID
 		reactor.RegisterService(ServiceKeyConsensusReactor, chainID, consensusReactor)
+	} else {
+		consensusReactor = consensusService.(*cs.Reactor)
 	}
+
+	// NOTE(midas): Set the switch instance early on so that the consensus
+	// reactor can respond with ChainReplicationComplete when necessary.
+	consensusReactor.SetSwitch(reactor.GetEventSwitchForCometBFT())
 
 	return nil
 }
@@ -413,22 +414,55 @@ func (reactor *Reactor) StartConsensusInstanceReactors(
 	}
 	reactor.envMutex.Unlock()
 
+	// Retrieve the consensus reactors instances and errors if any of
+	// the require consensus reactors is not available.
 	servicesProvider := reactor.GetServicesProvider()
+	var (
+		blocksyncReactor *blocksync.Reactor
+		consensusReactor *cs.Reactor
+		evidenceReactor  *evidence.Reactor
+		mempoolReactor   *mempl.Reactor
+	)
 
-	// Given sendStatusToPeers, we should send completion updates to
-	// all consensus peers, i.e. send a ChainReplicationComplete msg.
-	//	consensusReactor := cometbftSwitch.Reactor(chainID, "CONSENSUS").(*cs.Reactor)
-	consensusReactor := servicesProvider(ServiceKeyConsensusReactor, chainID).(*cs.Reactor)
-	consensusReactor.SetSendStatusToPeers(sendStatusToPeers)
-	consensusReactor.SetRuntimeRegistry(reactor.GetRuntimeRegistry())
+	// Starts (and resets) [node.Node] instance.
+	nR := servicesProvider(ServiceKeyNodeRuntime, chainID)
+	if nR == nil || !nR.IsRunning() {
+		reactor.InitAndStartNode(ctx, chainID)
+	}
 
-	//	memplReactor := cometbftSwitch.Reactor(chainID, "MEMPOOL").(*mempl.Reactor)
-	memplReactor := servicesProvider(ServiceKeyMempoolReactor, chainID).(*mempl.Reactor)
-	memplReactor.SetRuntimeRegistry(reactor.GetRuntimeRegistry())
+	if bsR := servicesProvider(ServiceKeyBlockSyncReactor, chainID); bsR != nil {
+		blocksyncReactor = bsR.(*blocksync.Reactor)
+	}
+	if conR := servicesProvider(ServiceKeyConsensusReactor, chainID); conR != nil {
+		consensusReactor = conR.(*cs.Reactor)
+		consensusReactor.SetSendStatusToPeers(sendStatusToPeers)
+		consensusReactor.SetRuntimeRegistry(reactor.GetRuntimeRegistry())
+	}
+	if evR := servicesProvider(ServiceKeyEvidenceReactor, chainID); evR != nil {
+		evidenceReactor = evR.(*evidence.Reactor)
+	}
+	if memR := servicesProvider(ServiceKeyMempoolReactor, chainID); memR != nil {
+		mempoolReactor = memR.(*mempl.Reactor)
+		mempoolReactor.SetRuntimeRegistry(reactor.GetRuntimeRegistry())
+	}
 
-	blocksyncReactor := servicesProvider(ServiceKeyBlockSyncReactor, chainID).(*blocksync.Reactor)
-	evidenceReactor := servicesProvider(ServiceKeyEvidenceReactor, chainID).(*evidence.Reactor)
+	// STOP if we don't have all require consensus reactors.
+	if blocksyncReactor == nil || consensusReactor == nil || mempoolReactor == nil {
+		err := fmt.Errorf(
+			"error with consensus reactors; failed to retrieve reactors for %s", chainID)
+		reactor.logger.Error("failed to start consensus reactors",
+			"chainId", chainID,
+			"sendStatus", sendStatusToPeers,
+			"bsR", blocksyncReactor,
+			"conR", consensusReactor,
+			"evR", evidenceReactor,
+			"memR", mempoolReactor,
+		)
 
+		return err
+	}
+
+	// Helper function to ensure reactors are reset if necessary before start.
 	reactorStarterFn := func(name string, r p2p.Reactor) {
 		// Update the attached switch
 		r.SetSwitch(cometbftSwitch)
@@ -449,14 +483,16 @@ func (reactor *Reactor) StartConsensusInstanceReactors(
 		}
 	}
 
+	// Start consensus reactors.
 	reactorStarterFn("CONSENSUS", consensusReactor)
 	reactorStarterFn("BLOCKSYNC", blocksyncReactor)
-	reactorStarterFn("MEMPOOL", memplReactor)
+	reactorStarterFn("MEMPOOL", mempoolReactor)
 	reactorStarterFn("EVIDENCE", evidenceReactor)
 
+	// Update reactors instances in switch.
 	cometbftSwitch.AddReactor(chainID, "CONSENSUS", consensusReactor)
 	cometbftSwitch.AddReactor(chainID, "BLOCKSYNC", blocksyncReactor)
-	cometbftSwitch.AddReactor(chainID, "MEMPOOL", memplReactor)
+	cometbftSwitch.AddReactor(chainID, "MEMPOOL", mempoolReactor)
 	cometbftSwitch.AddReactor(chainID, "EVIDENCE", evidenceReactor)
 
 	// TODO(midas): remove debug logs

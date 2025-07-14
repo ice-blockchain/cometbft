@@ -480,6 +480,11 @@ func (reactor *Reactor) InitAndStartNode(ctx context.Context, chainID string) er
 	}
 	reactor.servicesMutex.RUnlock()
 
+	// TODO(midas): remove debug logs
+	clogger.Debug("InitAndStartNode",
+		"hasChainRuntime", hasChainRuntime,
+	)
+
 	// We may need to init the [node.Node] instance first.
 	if !hasChainRuntime {
 		// Create a MultiplexMap[*node.Node] with this new network.
@@ -929,21 +934,27 @@ func (reactor *Reactor) MakeNetworkStateMachine(
 		DBKeyLayout: dbKeyLayoutVersion,
 	})
 
-	stateFromDb, _ := stateStore.Load()
-	mustSaveState := stateFromDb.IsEmpty()
-
-	// Load the state from GenesisDoc
-	stateMachine, err := stateStore.LoadFromDBOrGenesisDoc(genesisDoc)
+	// Try to load state machine from database.
+	stateMachine, err := stateStore.Load()
 	if err != nil {
 		return sm.State{}, nil, nil, fmt.Errorf(
-			"could not load state machine from genesis doc: %w", err)
+			"error loading state machine for ChainID %s: %w", genesisDoc.ChainID, err)
 	}
 
-	// Persist the state machine as created from genesis doc
-	if mustSaveState {
-		if err := stateStore.Save(stateMachine); err != nil {
+	// .. or fill it from genesis doc.
+	if stateMachine.IsEmpty() {
+		var createErr error
+
+		// Load the state from database or GenesisDoc
+		stateMachine, createErr = stateStore.LoadFromDBOrGenesisDoc(genesisDoc)
+		if createErr != nil {
+			return sm.State{}, nil, nil, createErr
+		}
+
+		// State machine was empty, update now
+		if createErr = stateStore.Save(stateMachine); createErr != nil {
 			return sm.State{}, nil, nil, fmt.Errorf(
-				"could not save newly initialized state machine: %w", err)
+				"could not save newly initialized state machine: %w", createErr)
 		}
 	}
 
