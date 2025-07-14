@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -444,6 +443,16 @@ func DefaultOnIdleCallback(reactor *Reactor) func(chainID string) error {
 		}
 
 		reactor.removeInternalChannels(chainID)
+
+		reactor.servicesMutex.Lock()
+		for serviceName, multiplex := range reactor.servicesRegistry {
+			if _, ok := multiplex[chainID]; !ok {
+				continue
+			}
+
+			delete(reactor.servicesRegistry[serviceName], chainID)
+		}
+		reactor.servicesMutex.Unlock()
 
 		return nil
 	}
@@ -2271,10 +2280,6 @@ func (reactor *Reactor) OnStop() {
 	// Uses LIFO strategy to shutdown registered services
 	// This includes stopping database services as well.
 	servicesLIFO := reactor.servicesSequence[:]
-	sort.Sort(sort.Reverse(sort.StringSlice(
-		servicesLIFO,
-	)))
-
 	for _, serviceName := range servicesLIFO {
 		// Services multiplex contains one instance per ChainID
 		servicesMultiplex := reactor.servicesRegistry[serviceName]
@@ -2401,10 +2406,6 @@ func (reactor *Reactor) OnReset(ctx context.Context) error {
 	// Uses FIFO strategy to reset registered services
 	// This includes database services.
 	servicesFIFO := reactor.servicesSequence[:]
-	sort.Sort(sort.StringSlice(
-		servicesFIFO,
-	))
-
 	for _, serviceName := range servicesFIFO {
 		// Services multiplex contains one instance per ChainID
 		servicesMultiplex := reactor.servicesRegistry[serviceName]
