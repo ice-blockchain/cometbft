@@ -24,6 +24,7 @@ import (
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	"github.com/ice-blockchain/cometbft/crypto/tmhash"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
+	"github.com/ice-blockchain/cometbft/libs/service"
 	cmtlibs "github.com/ice-blockchain/cometbft/libs/service"
 	mempl "github.com/ice-blockchain/cometbft/mempool"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
@@ -1308,10 +1309,6 @@ func (reactor *Reactor) OnActivateRuntime(chainID string) {
 // CAUTION: We use a fallback completer after too many attempts (12) (+- 1min).
 // TODO(midas): Instead of using a fallback completer, use the service context.
 func (reactor *Reactor) OnCompleteRuntime(chainID string, protoTxs [][]byte) {
-	// Retrieve the tx indexer for this ChainID.
-	indexerProvider := reactor.GetServicesProvider()
-	indexerService := indexerProvider(ServiceKeyIndexers, chainID).(*txindex.IndexerService)
-
 	transactionHashes := []string{}
 	for _, bzTx := range protoTxs {
 		transactionHashes = append(transactionHashes, fmt.Sprintf("%X", types.Tx(bzTx).Hash()))
@@ -1323,6 +1320,17 @@ func (reactor *Reactor) OnCompleteRuntime(chainID string, protoTxs [][]byte) {
 		idleManager := reactor.GetRuntimeRegistry()
 		idleManager.OnComplete(chainID)
 	}()
+
+	// Retrieve the tx indexer for this ChainID.
+	indexerProvider := reactor.GetServicesProvider()
+	if idxS := indexerProvider(ServiceKeyIndexers, chainID); idxS == nil {
+		reactor.logger.Error("Failed to index transactions; indexer is not available",
+			"chainId", chainID,
+			"txBatch", transactionHashes,
+		)
+	}
+
+	indexerService := indexerProvider(ServiceKeyIndexers, chainID).(*txindex.IndexerService)
 
 	// Every iteration, we read from indexer service to find all transaction
 	// hashes, then we wait 5 seconds for next evaluation (or shutdown).
@@ -1361,7 +1369,7 @@ func (reactor *Reactor) OnCompleteRuntime(chainID string, protoTxs [][]byte) {
 		// Fallback completer after too many attempts (+- 1min).
 		if attempts == maxTries {
 			// Transaction is not yet indexed
-			reactor.logger.Error("Failed to index transactions; exceed max inclusion time",
+			reactor.logger.Error("Failed to index transactions; exceeded max inclusion time",
 				"chainId", chainID,
 				"txBatch", transactionHashes,
 			)
@@ -2561,6 +2569,11 @@ func (reactor *Reactor) startNodeListeners(ctx context.Context, chainID string) 
 	clogger := reactor.logger.With("chainId", chainID)
 	nodeKey := reactor.GetNodeKey()
 
+	// TODO(midas): remove debug logs
+	clogger.Debug("startNodeListeners",
+		"nodeId", string(nodeKey.ID()),
+	)
+
 	// Retrieve the node's config overwrite object
 	servicesProvider := reactor.GetServicesProvider()
 	configProvider := reactor.GetInstanceProvider(InstanceKeyConfig)
@@ -2619,7 +2632,7 @@ func (reactor *Reactor) startNodeListeners(ctx context.Context, chainID string) 
 				eventBus.Reset(ctx) // permit re-start
 			}
 
-			if err := eventBus.Start(); err != nil {
+			if err := eventBus.Start(); err != nil && err != service.ErrAlreadyStarted {
 				return fmt.Errorf("error starting event bus: %w", err)
 			}
 		}
@@ -2699,7 +2712,7 @@ func (reactor *Reactor) startNodeListeners(ctx context.Context, chainID string) 
 				indexerService.Reset(ctx) // permit re-start
 			}
 
-			if err := indexerService.Start(); err != nil {
+			if err := indexerService.Start(); err != nil && err != service.ErrAlreadyStarted {
 				return fmt.Errorf("error starting indexers: %w", err)
 			}
 		}

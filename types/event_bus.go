@@ -65,6 +65,15 @@ func (b *EventBus) OnStop() {
 	}
 }
 
+func (b *EventBus) OnReset(ctx context.Context) error {
+	if err := b.pubsub.Reset(ctx); err != nil {
+		b.Logger.Error("Error resetting pubsub server", "err", err)
+	}
+
+	b.Logger.Info("EventBus service reset")
+	return nil
+}
+
 func (b *EventBus) NumClients() int {
 	return b.pubsub.NumClients()
 }

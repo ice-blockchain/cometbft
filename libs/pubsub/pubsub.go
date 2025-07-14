@@ -324,7 +324,12 @@ func (s *Server) OnStart(ctx context.Context) error {
 }
 
 // OnReset implements Service.OnReset.
-func (*Server) OnReset(ctx context.Context) error {
+func (s *Server) OnReset(ctx context.Context) error {
+	s.subscriptions = make(map[string]map[string]struct{})
+	// if BufferCapacity option was not set, the channel is unbuffered
+	s.cmds = make(chan cmd, s.cmdsCap)
+
+	s.Logger.Info("PubSub service reset")
 	return nil
 }
 

@@ -708,8 +708,10 @@ func (n *Node) OnStart(ctx context.Context) error {
 	}
 
 	// Start background pruning
-	if err := n.pruner.Start(); err != nil {
-		n.Logger.Error(fmt.Errorf("failed to start background pruning routine: %w", err).Error())
+	if !n.pruner.IsRunning() {
+		if err := n.pruner.Start(); err != nil {
+			n.Logger.Error(fmt.Errorf("failed to start background pruning routine: %w", err).Error())
+		}
 	}
 
 	return nil
@@ -833,12 +835,12 @@ func (n *Node) OnReset(ctx context.Context) error {
 	if err := n.pruner.Reset(ctx); err != nil {
 		n.Logger.Error("Error resetting the pruning service", "err", err)
 	}
-	if err := n.eventBus.Reset(ctx); err != nil {
-		n.Logger.Error("Error resetting eventBus", "err", err)
-	}
-	if err := n.indexerService.Reset(ctx); err != nil {
-		n.Logger.Error("Error resetting indexerService", "err", err)
-	}
+
+	// NOTE(midas): EventBus and IndexerService are managed by runtime
+	// processes and must not be reset (again) when a node is reset.
+	//
+	// The reset is done if necessary in [multiplex.Reactor#startNodeListeners].
+
 	n.Logger.Debug("Done resetting node runtime")
 	return nil
 }

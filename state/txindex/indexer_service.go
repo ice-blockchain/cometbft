@@ -140,6 +140,11 @@ func (is *IndexerService) OnStop() {
 	}
 }
 
+func (is *IndexerService) OnReset(ctx context.Context) error {
+	is.Logger.Info("TxIndex service reset")
+	return nil
+}
+
 // GetTxIndexer returns the injected tx.TxIndexer instance.
 func (is *IndexerService) GetTxIndexer() TxIndexer {
 	return is.txIdxr
