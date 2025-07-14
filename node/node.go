@@ -708,7 +708,7 @@ func (n *Node) OnStart(ctx context.Context) error {
 	}
 
 	// Start background pruning
-	if !n.pruner.IsRunning() {
+	if n.shouldStartRPC && !n.pruner.IsRunning() {
 		if err := n.pruner.Start(); err != nil {
 			n.Logger.Error(fmt.Errorf("failed to start background pruning routine: %w", err).Error())
 		}
@@ -724,7 +724,7 @@ func (n *Node) OnStop() {
 	n.Logger.Info("Stopping Node")
 
 	// first stop the non-reactor services
-	if n.pruner.IsRunning() {
+	if n.shouldStartRPC && n.pruner.IsRunning() {
 		n.Logger.Info("Stopping pruner")
 		if err := n.pruner.Stop(); err != nil {
 			n.Logger.Error("Error stopping the pruning service", "err", err)
