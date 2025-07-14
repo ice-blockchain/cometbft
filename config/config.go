@@ -834,8 +834,8 @@ func DefaultP2PConfig() *P2PConfig {
 		ExternalAddress:              "",
 		AddrBook:                     defaultAddrBookPath,
 		AddrBookStrict:               true,
-		MaxNumInboundPeers:           40,
-		MaxNumOutboundPeers:          10,
+		MaxNumInboundPeers:           400,
+		MaxNumOutboundPeers:          100,
 		PersistentPeersMaxDialPeriod: 0 * time.Second,
 		FlushThrottleTimeout:         10 * time.Millisecond,
 		MaxPacketMsgPayloadSize:      1024,       // 1 kB
