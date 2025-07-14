@@ -254,12 +254,18 @@ func (mt *MultiplexTransport) Dial(
 	if err := mt.filterConn(c, true); err != nil {
 		return nil, err
 	}
-
+	hsStart := time.Now()
 	secretConn, nodeInfo, err := mt.upgrade(c, &addr)
 	if err != nil {
 		return nil, err
 	}
-
+	if mt.Logger != nil {
+		mt.Logger.Debug("Handshake with peer took (outbound)",
+			"remote", addr,
+			"peerID", nodeInfo.ID(),
+			"duration", time.Since(hsStart),
+		)
+	}
 	cfg.outbound = true
 
 	p := mt.wrapPeer(ctx, secretConn, nodeInfo, cfg, &addr, mt.sw)
@@ -386,11 +392,19 @@ func (mt *MultiplexTransport) acceptPeers() {
 
 			err := mt.filterConn(c, false)
 			if err == nil {
+				hsStart := time.Now()
 				secretConn, nodeInfo, err = mt.upgrade(c, nil)
 				if err == nil {
 					addr := c.RemoteAddr()
 					id := PubKeyToID(secretConn.RemotePubKey())
 					netAddr = NewNetAddress(id, addr)
+					if mt.Logger != nil {
+						mt.Logger.Debug("Handshake with peer took (inbound)",
+							"remote", addr,
+							"peerID", nodeInfo.ID(),
+							"duration", time.Since(hsStart),
+						)
+					}
 				}
 			}
 
