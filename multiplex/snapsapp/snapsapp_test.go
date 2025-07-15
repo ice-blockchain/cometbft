@@ -113,7 +113,7 @@ func prepareMultiplexReactor(t *testing.T) (
 	require.NoError(t, err, "should create chain registry instance")
 
 	// Test Reactor implementation in multiplex package
-	testReactor := mx.NewReactor(
+	testReactor := mx.NewReactor(t.Context(),
 		nodeKey,
 		conf,
 		cmtlog.NewNopLogger(),

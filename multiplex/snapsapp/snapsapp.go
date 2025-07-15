@@ -40,6 +40,7 @@ type SnapsApp struct {
 
 	// Inject custom transaction verification with an acceptor implementation.
 	txAcceptor client.Acceptor
+	useMempool bool
 
 	// The initial heights as used for state-sync of replicated chains.
 	ihMutex        *sync.RWMutex
@@ -72,13 +73,14 @@ func NewSnapsApplication(
 	options ...func(*SnapsApp),
 ) *SnapsApp {
 	app := &SnapsApp{
-		reactor: reactor,
-		logger:  logger,
-		lbMutex: new(sync.RWMutex),
-		whMutex: new(sync.RWMutex),
-		ihMutex: new(sync.RWMutex),
-		fbMutex: new(sync.RWMutex),
-		txMutex: new(sync.RWMutex),
+		reactor:    reactor,
+		logger:     logger,
+		lbMutex:    new(sync.RWMutex),
+		whMutex:    new(sync.RWMutex),
+		ihMutex:    new(sync.RWMutex),
+		fbMutex:    new(sync.RWMutex),
+		txMutex:    new(sync.RWMutex),
+		useMempool: true,
 	}
 
 	// Apply all options before anything else
@@ -124,6 +126,14 @@ func WithAcceptor(
 ) func(*SnapsApp) {
 	return func(a *SnapsApp) {
 		a.txAcceptor = acceptor
+	}
+}
+
+func WithUseMempool(
+	useMempool bool,
+) func(*SnapsApp) {
+	return func(a *SnapsApp) {
+		a.useMempool = useMempool
 	}
 }
 

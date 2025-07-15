@@ -12,6 +12,9 @@ import (
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 )
 
+// ----------------------------------------------------------------------------
+// TestMultiplexClient
+
 func TestMultiplexClientNewClient(t *testing.T) {
 	defer goleak.VerifyNone(t)
 

@@ -221,7 +221,7 @@ func TestMultiplexServerRuntimeRegistryReset(t *testing.T) {
 	require.NoError(t, stopErr)
 
 	// Act: reset should empty the runtimes storage
-	resetErr := reg.Reset()
+	resetErr := reg.Reset(t.Context())
 	assert.NoError(t, resetErr)
 
 	defer func() {

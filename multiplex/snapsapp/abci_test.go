@@ -20,7 +20,7 @@ import (
 // ----------------------------------------------------------------------------
 // Unit tests
 
-func TestABCI_Info(t *testing.T) {
+func TestMultiplexABCI_Info(t *testing.T) {
 	suite := NewSnapsAppSuite(t)
 	defer func() {
 		defer os.RemoveAll(suite.rootDir)
@@ -58,7 +58,7 @@ func TestABCI_Info(t *testing.T) {
 	assert.Equal(t, expectHeight, infoRes.GetLastBlockHeight())
 }
 
-func TestABCI_InitChain(t *testing.T) {
+func TestMultiplexABCI_InitChain(t *testing.T) {
 	suite := NewSnapsAppSuite(t)
 	defer func() {
 		defer os.RemoveAll(suite.rootDir)
@@ -115,7 +115,7 @@ func TestABCI_InitChain(t *testing.T) {
 	assert.Equal(t, fakeAppHash, initChainRes.AppHash)
 }
 
-func TestABCI_InitChain_WithInitialHeight(t *testing.T) {
+func TestMultiplexABCI_InitChain_WithInitialHeight(t *testing.T) {
 	suite := NewSnapsAppSuite(t)
 	defer func() {
 		defer os.RemoveAll(suite.rootDir)
@@ -139,7 +139,7 @@ func TestABCI_InitChain_WithInitialHeight(t *testing.T) {
 	assert.Equal(t, int64(3), suite.snapsApp.LastBlockHeight(testChainID))
 }
 
-func TestABCI_PrepareProposal(t *testing.T) {
+func TestMultiplexABCI_PrepareProposal(t *testing.T) {
 	suite := NewSnapsAppSuite(t)
 	defer func() {
 		defer os.RemoveAll(suite.rootDir)
@@ -171,8 +171,8 @@ func TestABCI_PrepareProposal(t *testing.T) {
 	assert.Equal(t, 2, len(resPrepareProposal.Txs))
 }
 
-func TestABCI_ProcessProposal(t *testing.T) {
-	suite := NewSnapsAppSuite(t)
+func TestMultiplexABCI_ProcessProposal(t *testing.T) {
+	suite := NewSnapsAppSuite(t, snapsapp.WithUseMempool(false))
 	defer func() {
 		defer os.RemoveAll(suite.rootDir)
 		suite.reactor.Stop() //nolint:errcheck
@@ -203,7 +203,7 @@ func TestABCI_ProcessProposal(t *testing.T) {
 	assert.Equal(t, abci.PROCESS_PROPOSAL_STATUS_ACCEPT, resProcessProposal.Status)
 }
 
-func TestABCI_FinalizeBlock(t *testing.T) {
+func TestMultiplexABCI_FinalizeBlock(t *testing.T) {
 	suite := NewSnapsAppSuite(t)
 	defer func() {
 		defer os.RemoveAll(suite.rootDir)
@@ -231,7 +231,7 @@ func TestABCI_FinalizeBlock(t *testing.T) {
 	assert.NotNil(t, resFinalizeBlock)
 }
 
-func TestABCI_FinalizeBlock_WithInitialHeight(t *testing.T) {
+func TestMultiplexABCI_FinalizeBlock_WithInitialHeight(t *testing.T) {
 	suite := NewSnapsAppSuite(t)
 	defer func() {
 		defer os.RemoveAll(suite.rootDir)
@@ -262,7 +262,7 @@ func TestABCI_FinalizeBlock_WithInitialHeight(t *testing.T) {
 	assert.NotNil(t, res)
 }
 
-func TestABCI_FinalizeBlock_WithAcceptor(t *testing.T) {
+func TestMultiplexABCI_FinalizeBlock_WithAcceptor(t *testing.T) {
 	suite := NewSnapsAppSuite(t, snapsapp.WithAcceptor(
 		client.NewMockAcceptorImpl(),
 	))
@@ -316,12 +316,12 @@ func TestABCI_FinalizeBlock_WithAcceptor(t *testing.T) {
 	assert.NotNil(t, actualAcceptor)
 	testAcceptor := actualAcceptor.(*client.MockAcceptorImpl)
 
-	expectedNumCalls := uint64(1)
+	expectedNumCalls := uint64(2) // InitChain + FinalizeBlock
 	assert.Equal(t, expectedNumCalls, testAcceptor.TxCommitCalls.Load())
 }
 
-func TestABCI_Proposal_HappyPath(t *testing.T) {
-	suite := NewSnapsAppSuite(t)
+func TestMultiplexABCI_Proposal_HappyPath(t *testing.T) {
+	suite := NewSnapsAppSuite(t, snapsapp.WithUseMempool(false))
 	defer func() {
 		defer os.RemoveAll(suite.rootDir)
 		suite.reactor.Stop() //nolint:errcheck
@@ -379,7 +379,7 @@ func TestABCI_Proposal_HappyPath(t *testing.T) {
 	assert.Len(t, resFinalizeBlock.TxResults, 2)
 }
 
-func TestABCI_CheckTx(t *testing.T) {
+func TestMultiplexABCI_CheckTx(t *testing.T) {
 	suite := NewSnapsAppSuite(t)
 	defer func() {
 		defer os.RemoveAll(suite.rootDir)
@@ -408,7 +408,7 @@ func TestABCI_CheckTx(t *testing.T) {
 	assert.Equal(t, abci.CodeTypeOK, resCheckTx.Code)
 }
 
-func TestABCI_Commit(t *testing.T) {
+func TestMultiplexABCI_Commit(t *testing.T) {
 	suite := NewSnapsAppSuite(t)
 	defer func() {
 		defer os.RemoveAll(suite.rootDir)

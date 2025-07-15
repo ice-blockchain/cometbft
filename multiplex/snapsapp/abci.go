@@ -209,7 +209,7 @@ func (app *SnapsApp) ProcessProposal(
 
 	// Note that if the mempool for this ChainID is not yet available, we can't
 	// ensure that the transaction(s) have passed CheckTx, so we must drop here.
-	if app.reactor.GetMempool(chainID) == nil {
+	if app.useMempool && app.reactor.GetMempool(chainID) == nil {
 		app.logger.Error("ProcessProposal failed to get mempool; rejecting proposal",
 			"chainId", chainID,
 			"height", req.Height,
@@ -224,20 +224,22 @@ func (app *SnapsApp) ProcessProposal(
 	// Verifies that all txs of the batch have passed the CheckTx() call.
 	// This permits to make sure that relays do not accept blocks proposal
 	// that contain transactions which have not yet passed the ACK process.
-	txAccepted := true
-	for _, tx := range req.Txs {
-		// The GetMempool() call is checked for non-nil return in above block.
-		txAccepted = txAccepted && app.reactor.GetMempool(chainID).TxAccepted(tx)
+	if app.useMempool {
+		txAccepted := true
+		for _, tx := range req.Txs {
+			// The GetMempool() call is checked for non-nil return in above block.
+			txAccepted = txAccepted && app.reactor.GetMempool(chainID).TxAccepted(tx)
 
-		// TODO(midas): remove debug logs
-		app.logger.Debug("TxAccepted",
-			"chainId", chainID,
-			"tx", hex.EncodeToString(types.Tx(tx).Hash()),
-			"txAccepted", txAccepted)
-	}
+			// TODO(midas): remove debug logs
+			app.logger.Debug("TxAccepted",
+				"chainId", chainID,
+				"tx", hex.EncodeToString(types.Tx(tx).Hash()),
+				"txAccepted", txAccepted)
+		}
 
-	if !txAccepted {
-		return &abcitypes.ProcessProposalResponse{Status: abcitypes.PROCESS_PROPOSAL_STATUS_REJECT}, nil
+		if !txAccepted {
+			return &abcitypes.ProcessProposalResponse{Status: abcitypes.PROCESS_PROPOSAL_STATUS_REJECT}, nil
+		}
 	}
 
 	// All the txes of this batch have passed CheckTx calls, i.e. added to mempool.

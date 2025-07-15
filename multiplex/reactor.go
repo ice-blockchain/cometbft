@@ -1280,6 +1280,15 @@ func (reactor *Reactor) GetStateStore(chainID string) sm.Store {
 	// Retrieves the "stateStore" instance map
 	stateStoreProvider := reactor.GetInstanceProvider(InstanceKeyStateStore)
 
+	// Try to inject if we don't have this state store yet.
+	if s := stateStoreProvider(chainID); s == nil {
+		ReactorWithActiveRuntimes(
+			reactor.Context(),
+			[]string{chainID},
+			map[string][]string{}, // otherValidators
+		)(reactor)
+	}
+
 	// Returns the instance mapped by ChainID
 	return stateStoreProvider(chainID).(sm.Store)
 }

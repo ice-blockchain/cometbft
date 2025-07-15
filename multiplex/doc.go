@@ -13,9 +13,9 @@ The `snapsapp` package implements a multi-network ABCI application
 that enables consensus events mapping for the client implementation with
 extension interfaces for several stages of a consensus instance.
 
-The `client` package implements a *default* client integration for multiplex
-features that may be used to *inject custom configuration* and to mutate
-or otherwise use state machines as they are replicated on the networks.
+The `client` package implements a default client integration and defines
+the rules for further implementation of multiplex clients. A full-featured
+integration is provided with `MultiplexClient` to satisfy this contract.
 
 The `server` package defines a server contract for the multiplex library and
 may be used to interface with a multiplex node backend, e.g. to communicate
@@ -51,7 +51,7 @@ standardized implementation.
 - Naming convention `ChainAbc` for structures with a ChainID, e.g. `ChainDB`.
 - Naming convention `MultiplexAbc` for ChainID mappings, e.g. `MultiplexDB`.`
 - Naming convention `NewMultiplexAbc()` must return `(MultiplexAbc, error)`.
-- Naming convention `NewChainAbc()` must return `(ChainAbc, error)`.
+- Naming convention `NewChainAbc()` must return `(*ChainAbc, error)`.
 - Naming convention for imports with `mx` prefix for multiplex features.
 - Naming convention for imports with `cmt` prefix for cometbft features.
 
@@ -146,6 +146,8 @@ interface with `singletonChainRegistry` which is the implementation used
 under-the-hood by [NewChainRegistry].
 
 ## Reactor
+
+TODO(midas): DEPRECATED doc
 
 The [multiplex.Reactor] implementation takes care of configuring node instances for the
 correct replicated blockchain networks. The reactor starts multiple listeners
@@ -246,9 +248,9 @@ extend the broadcast process, e.g. to call RollbackTx.
 
 ## Methods
 
-  - `NewServer()`: Creates a MultiplexBackend instance.
-  - `MustStart()`: Spawns one or many node runtimes, i.e. one per network.
-  - `Close()`: Closes the adapter and stops all node runtimes.
+  - [multiplex.NewServer]: Creates a MultiplexBackend instance.
+  - [multiplex.MultiplexBackend#OnStart]: Spawns node runtimes on-demand.
+  - [multiplex.MultiplexBackend#OnStop]: Closes the adapter and stops any node runtimes.
 
 # Protobuf
 
@@ -301,22 +303,20 @@ Alternatively, you can also run individual unit tests or unit test suites
 using one of the following commands:
 
 	# running individual unit test suites
-	go test github.com/ice-blockchain/cometbft/multiplex -run TestMultiplexGenesis.* -test.v
-	go test github.com/ice-blockchain/cometbft/multiplex -run TestMultiplexDB.* -test.v
-	go test github.com/ice-blockchain/cometbft/multiplex -run TestMultiplexFS.* -test.v
-	go test github.com/ice-blockchain/cometbft/multiplex -run TestMultiplexExtendedChainID.* -test.v
-	go test github.com/ice-blockchain/cometbft/multiplex -run TestMultiplexChainState.* -test.v
-	go test github.com/ice-blockchain/cometbft/multiplex -run TestMultiplexReactor.* -test.v
-	go test github.com/ice-blockchain/cometbft/multiplex -run TestMultiplexP2P.* -test.v
-	go test github.com/ice-blockchain/cometbft/multiplex/client -run TestMultiplexClient.* -test.v
-	go test github.com/ice-blockchain/cometbft/multiplex/server -run TestMultiplexServer.* -test.v
-	go test github.com/ice-blockchain/cometbft/multiplex/snapsapp -run TestABCI.* -test.v
+	go test github.com/ice-blockchain/cometbft/multiplex -run TestMultiplexGenesis -test.v
+	go test github.com/ice-blockchain/cometbft/multiplex -run TestMultiplexDB -test.v
+	go test github.com/ice-blockchain/cometbft/multiplex -run TestMultiplexFS -test.v
+	go test github.com/ice-blockchain/cometbft/multiplex -run TestMultiplexReactor -test.v
+	go test github.com/ice-blockchain/cometbft/multiplex -run TestMultiplexBackend -test.v
+	go test github.com/ice-blockchain/cometbft/multiplex/client -run TestMultiplex -test.v
+	go test github.com/ice-blockchain/cometbft/multiplex/server -run TestMultiplex -test.v
+	go test github.com/ice-blockchain/cometbft/multiplex/snapsapp -run TestMultiplex -test.v
 
 	# running integration and e2e test suites
 	go test github.com/ice-blockchain/cometbft/multiplex -run TestMultiplex -test.v
-	go test github.com/ice-blockchain/cometbft/multiplex -run TestScenarioClient -test.v
-	go test github.com/ice-blockchain/cometbft/multiplex -run TestScenarioCallbacks -test.v
-	go test github.com/ice-blockchain/cometbft/multiplex -run TestScenarioConcurrent -test.v
+	go test github.com/ice-blockchain/cometbft/multiplex -run TestScenario -test.v
+	go test github.com/ice-blockchain/cometbft/multiplex -run TestConcurrent -test.v
+	go test github.com/ice-blockchain/cometbft/multiplex -bench BenchmarkMultiplex
 
 # Linter
 
@@ -329,17 +329,43 @@ which can also be run manually with the following command:
 	# running the linter manually
 	golangci-lint run -c .golangci.yml --fix --disable revive,iface,recvcheck
 
-# Runtime
+# Monitoring
 
-A more comprehensive *node setup guide* should be provided in a separate
-document. This section merely lists the *commands* that have been modified
-or added as part of this implementation.
+A *prometheus exporter* is run as a HTTP server that delivers metrics. To visualize
+this data, you will need a `grafana` installation and a prometheus server.
 
-	# configuring a nodes multiplex (requires users.json)
-	go run ./cmd/cometbft/main.go init --home /tmp/cometbftmx --multiplex
+- Edit the `prometheus.yml` of your server and update its `scrape_config` so
+that it collects metrics from the built-in prometheus exporter:
 
-	# starting the nodes multiplex (requires genesis.json)
-	go run ./cmd/cometbft/main.go multiplex --home /tmp/cometbftmx
+```yaml
+scrape_configs:
+  - job_name: "prometheus"
+    metrics_path: "/"
+    static_configs:
+  - targets: ["localhost:30004"]
+
+```
+
+- Run the *prometheus server*, by default it runs at `http://localhost:9090`.
+- Run the grafana server and access it using `http://localhost:3000`.
+- Add a *data source* in grafana server and connect it to the *prometheus server*.
+
+# Example relays orchestration
+
+```bash
+# RELAY 1:
+# ----------
+
+# Configure a first nodes multiplex.
+go run cmd/multiplex/main.go init --home /tmp/cmtmx-relay1/ --relay-port 10101
+
+# CAUTION: Starts the nodes multiplex (not the blockchains, these are on-demand).
+go run cmd/multiplex/main.go start --home /tmp/cmtmx-relay1/ --moniker "mxrelay-1" --relay-port 10101
+
+# NOTES:
+# ----------
+# The first relay will be listening at 127.0.0.1:10102.
+```
 
 # References
 
