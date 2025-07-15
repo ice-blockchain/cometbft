@@ -400,6 +400,8 @@ func (reg *RuntimeRegistry) cleanerRoutine() {
 			}
 
 		case <-reg.Quit():
+			return
+
 		case <-reg.goShutdownCh:
 			return
 		}

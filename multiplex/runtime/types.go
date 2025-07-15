@@ -4,6 +4,7 @@ import (
 	"github.com/ice-blockchain/cometbft/libs/service"
 )
 
+// RuntimeManager defines the contract for chain runtime managers.
 type RuntimeManager interface {
 	service.Service
 

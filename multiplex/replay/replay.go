@@ -243,6 +243,8 @@ func (pool *ReplayPool) StopAfterProcessing() error {
 		// sure every time before verifying size, we know to shutdown.
 		select {
 		case <-pool.Quit():
+			return nil
+
 		case <-pool.goShutdownCh:
 			return nil
 		default: // Proceed to size check
@@ -501,6 +503,8 @@ func (pool *ReplayPool) ReplayBroadcastLoop(userAddress string) {
 		// sure every time before we try to replay, we know to shutdown.
 		select {
 		case <-pool.Quit():
+			return
+
 		case <-pool.goShutdownCh:
 			// TODO(midas): Add tests to make sure that buckets which have not
 			// been completely replayed yet, are *always* restarted after a shutdown.
@@ -556,6 +560,8 @@ func (pool *ReplayPool) WaitForBroadcastLoop(userAddress string) {
 			return
 
 		case <-pool.Quit():
+			return
+
 		case <-pool.goShutdownCh:
 			// Flush could not execute gracefully, not an error.
 			return
@@ -597,6 +603,8 @@ func (pool *ReplayPool) ThrottleBroadcastLoop(userAddress string) {
 			return
 
 		case <-pool.Quit():
+			return
+
 		case <-pool.goShutdownCh:
 			// TODO(midas): Add tests to make sure that buckets in waiting state
 			// are *always* restarted after a shutdown.
@@ -664,6 +672,7 @@ func (pool *ReplayPool) thresholdProcessorRoutine() {
 		// sure every time before processing buckets, we know to shutdown.
 		select {
 		case <-pool.Quit():
+			return
 		case <-pool.goShutdownCh:
 			return
 		default: // Proceed to wait or handle
@@ -753,6 +762,7 @@ func (pool *ReplayPool) timerProcessorRoutine() {
 			}
 
 		case <-pool.Quit():
+			return
 		case <-pool.goShutdownCh:
 			return
 		}
@@ -771,6 +781,7 @@ func (pool *ReplayPool) waitForInterval(i time.Duration) (waited bool) {
 		case <-time.After(i):
 			return true
 		case <-pool.Quit():
+			return false
 		case <-pool.goShutdownCh:
 			return false
 		}
