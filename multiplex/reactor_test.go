@@ -2,25 +2,28 @@ package multiplex_test
 
 import (
 	"errors"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"go.uber.org/goleak"
 	"os"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
+
 	dbm "github.com/cometbft/cometbft-db"
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
-	mx "github.com/ice-blockchain/cometbft/multiplex"
 	"github.com/ice-blockchain/cometbft/node"
 	cmtnode "github.com/ice-blockchain/cometbft/node"
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/types"
 	cmttime "github.com/ice-blockchain/cometbft/types/time"
+
+	mx "github.com/ice-blockchain/cometbft/multiplex"
+	"github.com/ice-blockchain/cometbft/multiplex/helpers"
 )
 
 func makeRandomNodeKey() *p2p.NodeKey {
@@ -397,7 +400,7 @@ func ResetTestMultiplexReactorRuntimeWithInjection(
 	tb testing.TB,
 	numChains int,
 	customLogger cmtlog.Logger,
-) (mx.ExtendedChainID, *mx.Reactor, func(*mx.Reactor)) {
+) (helpers.ExtendedChainID, *mx.Reactor, func(*mx.Reactor)) {
 	tb.Helper()
 
 	// Initialize and START the nodes multiplex
@@ -407,10 +410,10 @@ func ResetTestMultiplexReactorRuntimeWithInjection(
 	// Generate new random network ChainID
 	newUserPubKey := ed25519.GenPrivKey().PubKey()
 	newUserAddress := newUserPubKey.Address().String()
-	fingerprint := makeFingerprint("Posts") // This is the "scope"
+	fingerprint := helpers.MakeFingerprint("Posts") // This is the "scope"
 
-	testInjectChainID, err := mx.NewExtendedChainID(newUserAddress, fingerprint)
-	require.NoError(tb, err)
+	testInjectChainID := helpers.NewExtendedChainID(newUserAddress, fingerprint)
+	require.NotNil(tb, testInjectChainID)
 
 	injectChainID := testInjectChainID.String()
 

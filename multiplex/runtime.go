@@ -22,6 +22,8 @@ import (
 	bs "github.com/ice-blockchain/cometbft/store"
 	"github.com/ice-blockchain/cometbft/types"
 	cmttime "github.com/ice-blockchain/cometbft/types/time"
+
+	"github.com/ice-blockchain/cometbft/multiplex/helpers"
 )
 
 // AllocateNetwork allocates the necessary resources including the filesystem
@@ -35,10 +37,10 @@ func (reactor *Reactor) AllocateNetwork(
 	)
 
 	// Build the ExtendedChainID to retrieve user address from ChainID.
-	extChainID, err := NewExtendedChainIDFromLegacy(chainID)
-	if err != nil {
+	extChainID := helpers.NewExtendedChainIDFromString(chainID)
+	if extChainID == nil {
 		return fmt.Errorf(
-			"could not parse ChainID value %s: %w", chainID, err)
+			"could not parse ChainID value %s", chainID)
 	}
 
 	// ------------------------------------------------------------------------
@@ -225,10 +227,10 @@ func (reactor *Reactor) InjectNewNetwork(
 	)
 
 	// Build the ExtendedChainID to retrieve user address from ChainID.
-	extChainID, err := NewExtendedChainIDFromLegacy(chainID)
-	if err != nil {
+	extChainID := helpers.NewExtendedChainIDFromString(chainID)
+	if extChainID == nil {
 		return fmt.Errorf(
-			"could not parse ChainID value %s: %w", chainID, err)
+			"could not parse ChainID value %s", chainID)
 	}
 	userAddress := extChainID.GetUserAddress()
 
@@ -715,7 +717,7 @@ func (reactor *Reactor) StopAllNodeInstances() error {
 //
 // Return order is: config folder, data folder, error.
 func (reactor *Reactor) MakeNetworkFilesystem(
-	chainID ExtendedChainID,
+	chainID helpers.ExtendedChainID,
 ) (string, string, error) {
 	// Uses the global node config
 	reactor.envMutex.RLock()
@@ -749,7 +751,7 @@ func (reactor *Reactor) MakeNetworkFilesystem(
 // MakeNetworkDatabases creates and opens database instances for a network
 // chainID and for one or many database names.
 func (reactor *Reactor) MakeNetworkDatabases(
-	chainID ExtendedChainID,
+	chainID helpers.ExtendedChainID,
 	databases []string,
 	startDatabase bool,
 ) (err error) {
@@ -814,7 +816,7 @@ func (reactor *Reactor) MakeNetworkDatabases(
 // MakeNetworkValidator creates the priv validator for a new network
 // chainID which will also be added to the new GenesisDoc.
 func (reactor *Reactor) MakeNetworkValidator(
-	chainID ExtendedChainID,
+	chainID helpers.ExtendedChainID,
 	confDir string,
 	dataDir string,
 ) (types.PrivValidator, error) {
@@ -848,7 +850,7 @@ func (reactor *Reactor) MakeNetworkValidator(
 // MakeNetworkGenesis creates the [types.GenesisDoc] for a new network
 // chainID which contains a privValidator public key.
 func (reactor *Reactor) MakeNetworkGenesis(
-	chainID ExtendedChainID,
+	chainID helpers.ExtendedChainID,
 	confDir string,
 	privValidator types.PrivValidator,
 	otherValidators []string,
@@ -972,7 +974,7 @@ func (reactor *Reactor) MakeNetworkStateMachine(
 // new network chainID and overwrites the services listen addresses such that
 // a node may be run using the current runtime.
 func (reactor *Reactor) MakeNetworkConfigOverwrite(
-	chainID ExtendedChainID,
+	chainID helpers.ExtendedChainID,
 ) (*config.Config, error) {
 	nodeConfig := reactor.GetNodeConfig()
 

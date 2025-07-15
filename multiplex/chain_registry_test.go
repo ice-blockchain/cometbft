@@ -10,8 +10,10 @@ import (
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	cmtos "github.com/ice-blockchain/cometbft/internal/os"
-	mx "github.com/ice-blockchain/cometbft/multiplex"
 	"github.com/ice-blockchain/cometbft/p2p"
+
+	mx "github.com/ice-blockchain/cometbft/multiplex"
+	"github.com/ice-blockchain/cometbft/multiplex/helpers"
 )
 
 func TestMultiplexChainRegistryLoadSeedsFromFile(t *testing.T) {
@@ -397,10 +399,10 @@ func makeRandomMultiplexConfig(tb testing.TB, numChains int, discoveryPort int) 
 	for i := 0; i < numChains; i++ {
 		userPubKey := ed25519.GenPrivKey().PubKey()
 		userAddress := userPubKey.Address().String()
-		fingerprint := makeFingerprint("Posts") // This is the "scope"
+		fingerprint := helpers.MakeFingerprint("Posts") // This is the "scope"
 
-		chainID, err := mx.NewExtendedChainID(userAddress, fingerprint)
-		require.NoError(tb, err, "should create random ChainID")
+		chainID := helpers.NewExtendedChainID(userAddress, fingerprint)
+		require.NotNil(tb, chainID, "should create random ChainID")
 
 		randUserChains[userAddress] = make([]string, 1)
 		randUserChains[userAddress][0] = chainID.String()

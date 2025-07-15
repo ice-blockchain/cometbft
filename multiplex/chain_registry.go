@@ -10,6 +10,8 @@ import (
 
 	"github.com/ice-blockchain/cometbft/config"
 	cmtos "github.com/ice-blockchain/cometbft/internal/os"
+
+	"github.com/ice-blockchain/cometbft/multiplex/helpers"
 )
 
 // -----------------------------------------------------------------------------
@@ -210,7 +212,7 @@ func (r *singletonChainRegistry) FindChain(chainID string) (int, error) {
 type ChainRegistryProvider func(*config.MultiplexConfig) (ChainRegistry, error)
 
 // NewChainRegistry creates a chain registry using a [config.MultiplexConfig]
-// configuration. It uses the UserChains field to create an [ExtendedChainID]
+// configuration. It uses the UserChains field to create an [helpers.ExtendedChainID]
 // per each pair of user address and ChainID.
 //
 // Note that [GetSyncConfigExtension] and [GetSeedConfigExtension] may be
@@ -365,9 +367,9 @@ func LoadChainsFromGenesisFile(genFile string) (map[string][]string, error) {
 	// Read the replicated chains genesis docs to find a list of ChainID by user address.
 	userChains := make(map[string][]string, numReplicatedChains)
 	for _, userGenDoc := range genesisDocSet {
-		extChainID, err := NewExtendedChainIDFromLegacy(userGenDoc.ChainID)
-		if err != nil {
-			return returnEmptyMap{}, fmt.Errorf("error parsing ChainID fields: %s", err.Error())
+		extChainID := helpers.NewExtendedChainIDFromString(userGenDoc.ChainID)
+		if extChainID == nil {
+			return returnEmptyMap{}, fmt.Errorf("error parsing ChainID fields")
 		}
 
 		// Extracts user address from ChainID

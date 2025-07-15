@@ -2,12 +2,14 @@ package multiplex
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 
 	dbm "github.com/cometbft/cometbft-db"
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/libs/service"
+	"github.com/ice-blockchain/cometbft/multiplex/helpers"
 )
 
 // ----------------------------------------------------------------------------
@@ -50,9 +52,9 @@ func NewMultiplexDB(
 
 	// Storage is located in ChainID subfolders per each user
 	for _, chainID := range chainIds {
-		extChainID, err := NewExtendedChainIDFromLegacy(chainID)
-		if err != nil {
-			return nil, err
+		extChainID := helpers.NewExtendedChainIDFromString(chainID)
+		if extChainID == nil {
+			return nil, errors.New("invalid ChainID")
 		}
 
 		// Uses one subfolder by user

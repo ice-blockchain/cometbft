@@ -16,6 +16,8 @@ import (
 	sm "github.com/ice-blockchain/cometbft/state"
 	bs "github.com/ice-blockchain/cometbft/store"
 	"github.com/ice-blockchain/cometbft/types"
+
+	"github.com/ice-blockchain/cometbft/multiplex/helpers"
 )
 
 // PrepareConsensusInstanceWithReactor initializes a consensus handshake.
@@ -123,8 +125,8 @@ func (reactor *Reactor) CreateConsensusInstanceReactors(
 			"missing ABCI client (proxyApp) for consensus execution")
 	}
 
-	extChainID, err := NewExtendedChainIDFromLegacy(chainID)
-	if err != nil {
+	extChainID := helpers.NewExtendedChainIDFromString(chainID)
+	if extChainID == nil {
 		return fmt.Errorf(
 			"found incompatible multiplex ChainID %s: %w", chainID, err)
 	}
@@ -389,7 +391,7 @@ func (reactor *Reactor) StartConsensusInstanceReactors(
 	cometbftSwitch.AddActiveRuntime(chainID)
 
 	// Make sure database connections are open for this ChainID.
-	extChainID, _ := NewExtendedChainIDFromLegacy(chainID)
+	extChainID := helpers.NewExtendedChainIDFromString(chainID)
 	if err := reactor.MakeNetworkDatabases(extChainID, []string{
 		"blockstore",
 		"state",

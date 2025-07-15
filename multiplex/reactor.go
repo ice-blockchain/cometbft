@@ -44,6 +44,7 @@ import (
 	"github.com/ice-blockchain/cometbft/types"
 
 	"github.com/ice-blockchain/cometbft/multiplex/client"
+	"github.com/ice-blockchain/cometbft/multiplex/helpers"
 	"github.com/ice-blockchain/cometbft/multiplex/replay"
 	mxrpc "github.com/ice-blockchain/cometbft/multiplex/rpc"
 	"github.com/ice-blockchain/cometbft/multiplex/runtime"
@@ -359,14 +360,16 @@ func NewReactor(
 	)
 	reactor.replayPoolMtx.Unlock()
 
+	allocNodeId := make([]byte, p2p.IDByteLength)
+	allocChainID := strings.Join([]string{
+		helpers.DefaultMultiplexPrefix,
+		helpers.MakeAddress().String(),
+		helpers.MakeFingerprint(""),
+	}, "-")
+
 	// Pre-allocate an example AckTransactionBroadcast message to realistically
 	// estimate the message capacity needed for AckBroadcastChannel.
 	{
-		allocChainID := strings.Join([]string{GetMultiplexPrefix(),
-			RandomUserAddress().String(),
-			MakeFingerprint(""),
-		}, "-")
-		allocNodeId := make([]byte, p2p.IDByteLength)
 		allocTxHash := [][]byte{make([]byte, tmhash.Size)}
 		ackTxMsg := mxp2p.Receipt{
 			Sum: &mxp2p.Receipt_AckTransactionBroadcast{
@@ -383,11 +386,6 @@ func NewReactor(
 	// Pre-allocate an example ChainReplicationComplete message to realistically
 	// estimate the message capacity needed for RuntimeChannel.
 	{
-		allocChainID := strings.Join([]string{GetMultiplexPrefix(),
-			RandomUserAddress().String(),
-			MakeFingerprint(""),
-		}, "-")
-		allocNodeId := make([]byte, p2p.IDByteLength)
 		runtimeUpdateMsg := mxp2p.Message{
 			Sum: &mxp2p.Message_ChainReplicationComplete{
 				ChainReplicationComplete: &mxp2p.ChainReplicationComplete{
@@ -2828,10 +2826,10 @@ func (reactor *Reactor) handleChainReplicationRequest(
 	req *mxp2p.ChainReplicationRequest,
 ) error {
 	// Build the ExtendedChainID to retrieve user address from ChainID.
-	extChainID, err := NewExtendedChainIDFromLegacy(req.ChainID)
-	if err != nil {
+	extChainID := helpers.NewExtendedChainIDFromString(req.ChainID)
+	if extChainID == nil {
 		return fmt.Errorf(
-			"invalid ChainID %s: %w", req.ChainID, err)
+			"invalid ChainID %s", req.ChainID)
 	}
 	userAddress := extChainID.GetUserAddress()
 

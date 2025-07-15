@@ -12,9 +12,11 @@ import (
 	"go.uber.org/goleak"
 
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
-	"github.com/ice-blockchain/cometbft/multiplex/client"
-	"github.com/ice-blockchain/cometbft/multiplex/server"
 	"github.com/ice-blockchain/cometbft/p2p"
+
+	"github.com/ice-blockchain/cometbft/multiplex/client"
+	"github.com/ice-blockchain/cometbft/multiplex/helpers"
+	"github.com/ice-blockchain/cometbft/multiplex/server"
 )
 
 func TestMultiplexRoutinesNodeReplRequestEmptyRelays(t *testing.T) {
@@ -82,7 +84,7 @@ func TestMultiplexRoutinesNodeReplRequestEmptyRelays(t *testing.T) {
 	// testChainIds := servers[0].GetReactor().GetNetworks()
 	// useChainID := testChainIds[0]
 	// require.Contains(t, testChainRelays, useChainID)
-	useChainID := makeChainID("test-chain-1")
+	useChainID := helpers.MakeChainID("test-chain-1")
 	testReactorRelayOne := servers[0].GetReactor()
 	testReactorRelayTwo := servers[1].GetReactor()
 	testReactorRelayThree := servers[2].GetReactor()

@@ -27,6 +27,7 @@ import (
 
 	mx "github.com/ice-blockchain/cometbft/multiplex"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
+	"github.com/ice-blockchain/cometbft/multiplex/helpers"
 	"github.com/ice-blockchain/cometbft/multiplex/runtime"
 	"github.com/ice-blockchain/cometbft/multiplex/server"
 )
@@ -56,7 +57,7 @@ func useRelaysWithoutIds(tb testing.TB, relays []string) []string {
 
 func makeClientTransactions(
 	tb testing.TB,
-	chainInfo mx.ExtendedChainID,
+	chainInfo helpers.ExtendedChainID,
 	numTransactions int,
 ) []client.Transaction {
 	tb.Helper()
@@ -347,8 +348,8 @@ func clientBroadcastTx(
 ) {
 	tb.Helper()
 
-	chainInfo, err := mx.NewExtendedChainIDFromLegacy(testChainID)
-	require.NoError(tb, err, "should create correctly formatted ChainID")
+	chainInfo := helpers.NewExtendedChainIDFromString(testChainID)
+	require.NotNil(tb, chainInfo, "should create correctly formatted ChainID")
 
 	testTransactions := makeClientTransactions(tb, chainInfo, numTransactions)
 	multiplexClient := mx.NewClient(
@@ -447,7 +448,7 @@ func TestScenarioClientBroadcastMinimalErrors(t *testing.T) {
 	}
 
 	numTransactions := 1
-	testChainID := makeChainID("test-chain-1")
+	testChainID := helpers.MakeChainID("test-chain-1")
 	notifyCh := make(chan client.BroadcastStatus)
 
 	// Separate goroutine for client broadcast process
@@ -516,7 +517,7 @@ func TestScenarioClientBroadcasMinimalWaitForReplicationResponses(t *testing.T) 
 
 	relaysForTestCase := healthyRelays[:] // with IDs!
 	numHealthy := len(relaysForTestCase)
-	testChainID1 := makeChainID("test-chain-1")
+	testChainID1 := helpers.MakeChainID("test-chain-1")
 	testRelayOne := servers[0]
 
 	// Fill chainRelays such that all HEALTHY relays are expected to respond.
@@ -584,15 +585,15 @@ func TestScenarioClientBroadcastMinimalWaitForAckTransactions(t *testing.T) {
 
 	relaysForTestCase := healthyRelays[:] // with IDs!
 	numHealthy := len(relaysForTestCase)
-	testChainID1 := makeChainID("test-chain-1")
+	testChainID1 := helpers.MakeChainID("test-chain-1")
 	testRelayOne := servers[0]
 
 	// Fill chainRelays such that all HEALTHY relays are expected to respond.
 	testChainRelays,
 		testCatchupRelays := mockRelayMapsForChainID(t, testRelayOne, relaysForTestCase, testChainID1, false) // false=useCatchup
 
-	testChainInfo1, err := mx.NewExtendedChainIDFromLegacy(testChainID1)
-	require.NoError(t, err, "should create correctly formatted ChainID")
+	testChainInfo1 := helpers.NewExtendedChainIDFromString(testChainID1)
+	require.NotNil(t, testChainInfo1, "should create correctly formatted ChainID")
 	testTransactions1 := makeClientTransactions(t, testChainInfo1, 1)
 
 	// Block main thread to test AckTransaction process
@@ -625,7 +626,7 @@ func TestScenarioClientBroadcastMinimalWaitForAckTransactions(t *testing.T) {
 
 	relaysForTestCase = healthyRelays[:len(healthyRelays)-2] // with IDs!
 	numHealthy = len(relaysForTestCase)                      // 5
-	testChainID2 := makeChainID("test-chain-2")
+	testChainID2 := helpers.MakeChainID("test-chain-2")
 	numRelaysForTestCase := 7
 	for i := numHealthy; i < numRelaysForTestCase; i++ {
 		relaysForTestCase = append(relaysForTestCase, "1.2.3.4:"+strconv.Itoa(1000+i))
@@ -658,8 +659,8 @@ func TestScenarioClientBroadcastMinimalWaitForAckTransactions(t *testing.T) {
 	secondBroadcastCtx, secondCancelCtxFn := context.WithTimeout(context.TODO(), secondTimeoutAfter)
 	defer secondCancelCtxFn()
 
-	testChainInfo2, err := mx.NewExtendedChainIDFromLegacy(testChainID2)
-	require.NoError(t, err, "should create correctly formatted ChainID")
+	testChainInfo2 := helpers.NewExtendedChainIDFromString(testChainID2)
+	require.NotNil(t, testChainInfo2, "should create correctly formatted ChainID")
 	testTransactions2 := makeClientTransactions(t, testChainInfo2, 1)
 
 	// Block main thread to test AckTransaction process
@@ -694,7 +695,7 @@ func TestScenarioClientBroadcastMinimalWaitForAckTransactions(t *testing.T) {
 
 	relaysForErrCase := healthyRelays[:len(healthyRelays)-3] // with IDs!
 	numHealthy = len(relaysForErrCase)                       // 4
-	testChainID3 := makeChainID("test-chain-3")
+	testChainID3 := helpers.MakeChainID("test-chain-3")
 	numRelaysForErrCase := 7
 	for i := numHealthy; i < numRelaysForErrCase; i++ {
 		relaysForErrCase = append(relaysForErrCase, "1.2.3.4:"+strconv.Itoa(1000+i))
@@ -727,8 +728,8 @@ func TestScenarioClientBroadcastMinimalWaitForAckTransactions(t *testing.T) {
 	thirdBroadcastCtx, thirdCancelCtxFn := context.WithTimeout(context.TODO(), thirdTimeoutAfter)
 	defer thirdCancelCtxFn()
 
-	testChainInfo3, err := mx.NewExtendedChainIDFromLegacy(testChainID3)
-	require.NoError(t, err, "should create correctly formatted ChainID")
+	testChainInfo3 := helpers.NewExtendedChainIDFromString(testChainID3)
+	require.NotNil(t, testChainInfo3, "should create correctly formatted ChainID")
 	testTransactions3 := makeClientTransactions(t, testChainInfo3, 1)
 
 	// Block main thread to test AckTransaction process
@@ -792,7 +793,7 @@ func TestScenarioClientBroadcastMinimalWaitForReplicationCompleted(t *testing.T)
 
 	relaysForTestCase := healthyRelays[:] // with IDs!
 	numHealthy := len(relaysForTestCase)
-	testChainID1 := makeChainID("test-chain-1")
+	testChainID1 := helpers.MakeChainID("test-chain-1")
 	testRelayOne := servers[0]
 
 	// Fill chainRelays such that all HEALTHY relays are expected to respond.
@@ -808,8 +809,8 @@ func TestScenarioClientBroadcastMinimalWaitForReplicationCompleted(t *testing.T)
 		testSyncingChainIds = append(testSyncingChainIds, testSyncingChain)
 	}
 
-	testChainInfo1, err := mx.NewExtendedChainIDFromLegacy(testChainID1)
-	require.NoError(t, err, "should create correctly formatted ChainID")
+	testChainInfo1 := helpers.NewExtendedChainIDFromString(testChainID1)
+	require.NotNil(t, testChainInfo1, "should create correctly formatted ChainID")
 	testTransactions1 := makeClientTransactions(t, testChainInfo1, 1)
 
 	// First we feed some ChainReplicationResponse to fill ackResponsesRcvd.
@@ -843,7 +844,7 @@ func TestScenarioClientBroadcastMinimalWaitForReplicationCompleted(t *testing.T)
 
 	relaysForTestCase = healthyRelays[:len(healthyRelays)-2] // with IDs!
 	numHealthy = len(relaysForTestCase)                      // 5
-	testChainID2 := makeChainID("test-chain-2")
+	testChainID2 := helpers.MakeChainID("test-chain-2")
 	numRelaysForTestCase := 7
 	for i := numHealthy; i < numRelaysForTestCase; i++ {
 		relaysForTestCase = append(relaysForTestCase, "1.2.3.4:"+strconv.Itoa(1000+i))
@@ -881,8 +882,8 @@ func TestScenarioClientBroadcastMinimalWaitForReplicationCompleted(t *testing.T)
 	secondBroadcastCtx, secondCancelCtxFn := context.WithTimeout(context.TODO(), secondTimeoutAfter)
 	defer secondCancelCtxFn()
 
-	testChainInfo2, err := mx.NewExtendedChainIDFromLegacy(testChainID2)
-	require.NoError(t, err, "should create correctly formatted ChainID")
+	testChainInfo2 := helpers.NewExtendedChainIDFromString(testChainID2)
+	require.NotNil(t, testChainInfo2, "should create correctly formatted ChainID")
 	testTransactions2 := makeClientTransactions(t, testChainInfo2, 1)
 
 	// First we feed some ChainReplicationResponse to fill ackResponsesRcvd.
@@ -919,7 +920,7 @@ func TestScenarioClientBroadcastMinimalWaitForReplicationCompleted(t *testing.T)
 
 	relaysForErrCase := healthyRelays[:len(healthyRelays)-3] // with IDs!
 	numHealthy = len(relaysForErrCase)                       // 4
-	testChainID3 := makeChainID("test-chain-3")
+	testChainID3 := helpers.MakeChainID("test-chain-3")
 	numRelaysForErrCase := 7
 	for i := numHealthy; i < numRelaysForErrCase; i++ {
 		relaysForErrCase = append(relaysForErrCase, "1.2.3.4:"+strconv.Itoa(1000+i))
@@ -957,8 +958,8 @@ func TestScenarioClientBroadcastMinimalWaitForReplicationCompleted(t *testing.T)
 	thirdBroadcastCtx, thirdCancelCtxFn := context.WithTimeout(context.TODO(), thirdTimeoutAfter)
 	defer thirdCancelCtxFn()
 
-	testChainInfo3, err := mx.NewExtendedChainIDFromLegacy(testChainID3)
-	require.NoError(t, err, "should create correctly formatted ChainID")
+	testChainInfo3 := helpers.NewExtendedChainIDFromString(testChainID3)
+	require.NotNil(t, testChainInfo3, "should create correctly formatted ChainID")
 	testTransactions3 := makeClientTransactions(t, testChainInfo3, 1)
 
 	// First we feed some ChainReplicationResponse to fill ackResponsesRcvd.
@@ -1109,7 +1110,7 @@ func TestScenarioClientBroadcastMinimalHealthyRelays(t *testing.T) {
 	defer secondCancelCtxFn()
 
 	// Separate goroutine for client broadcast process
-	testWithChainID2 := makeChainID("test-chain-1")
+	testWithChainID2 := helpers.MakeChainID("test-chain-1")
 	notifyCh2 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		secondBroadcastCtx,
@@ -1192,7 +1193,7 @@ func TestScenarioClientBroadcastMinimalEmptyRelays(t *testing.T) {
 
 	// Separate goroutine for client broadcast process
 	numTransactions := 1
-	testWithChainID := makeChainID("test chain")
+	testWithChainID := helpers.MakeChainID("test chain")
 	notifyCh := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
@@ -1287,7 +1288,7 @@ func TestScenarioClientBroadcastMinimalEmptyRelaysProduceBlockWithTx(t *testing.
 
 	// Separate goroutine for client broadcast process
 	numTransactions := 1
-	withChainID := makeChainID("test-chain-1")
+	withChainID := helpers.MakeChainID("test-chain-1")
 	notifyCh := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
@@ -1399,7 +1400,7 @@ func TestScenarioClientBroadcastMinimalCountsHealthyRelays(t *testing.T) {
 
 	// Separate goroutine for client broadcast process
 	numTransactions := 1
-	errCaseChainID := makeChainID("test-chain-err-1")
+	errCaseChainID := helpers.MakeChainID("test-chain-err-1")
 	notifyCh1 := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
@@ -1533,7 +1534,7 @@ func TestScenarioClientBroadcastMinimalCountsHealthyRelays(t *testing.T) {
 	defer fourthCancelCtxFn()
 
 	// Separate goroutine for client broadcast process
-	testWithChainID1 := makeChainID("test-chain-1")
+	testWithChainID1 := helpers.MakeChainID("test-chain-1")
 	notifyCh4 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		fourthBroadcastCtx,
@@ -1574,7 +1575,7 @@ func TestScenarioClientBroadcastMinimalCountsHealthyRelays(t *testing.T) {
 	defer fifthCancelCtxFn()
 
 	// Separate goroutine for client broadcast process
-	testWithChainID2 := makeChainID("test-chain-2")
+	testWithChainID2 := helpers.MakeChainID("test-chain-2")
 	notifyCh5 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		fifthBroadcastCtx,
@@ -1699,7 +1700,7 @@ func TestScenarioClientBroadcastMinimalCountsRemoteRelays(t *testing.T) {
 
 	// Separate goroutine for client broadcast process
 	numTransactions := 1
-	testWithChainID1 := makeChainID("test-chain-1")
+	testWithChainID1 := helpers.MakeChainID("test-chain-1")
 	notifyCh1 := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
@@ -1743,7 +1744,7 @@ func TestScenarioClientBroadcastMinimalCountsRemoteRelays(t *testing.T) {
 	defer secondCancelCtxFn()
 
 	// Separate goroutine for client broadcast process
-	testWithChainID2 := makeChainID("test-chain-2")
+	testWithChainID2 := helpers.MakeChainID("test-chain-2")
 	notifyCh2 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		secondBroadcastCtx,
@@ -1788,7 +1789,7 @@ func TestScenarioClientBroadcastMinimalCountsRemoteRelays(t *testing.T) {
 	defer thirdCancelCtxFn()
 
 	// Separate goroutine for client broadcast process
-	errCaseChainID := makeChainID("test-chain-err-1")
+	errCaseChainID := helpers.MakeChainID("test-chain-err-1")
 	notifyCh3 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		thirdBroadcastCtx,
@@ -1923,7 +1924,7 @@ func TestScenarioClientBroadcastMinimalEnoughHealthyRelays(t *testing.T) {
 
 	// Separate goroutine for client broadcast process
 	numTransactions := 1
-	testWithChainID1 := makeChainID("test-chain-1")
+	testWithChainID1 := helpers.MakeChainID("test-chain-1")
 	notifyCh1 := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
@@ -1967,7 +1968,7 @@ func TestScenarioClientBroadcastMinimalEnoughHealthyRelays(t *testing.T) {
 	defer secondCancelCtxFn()
 
 	// Separate goroutine for client broadcast process
-	testWithChainID2 := makeChainID("test-chain-2")
+	testWithChainID2 := helpers.MakeChainID("test-chain-2")
 	notifyCh2 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		secondBroadcastCtx,
@@ -2141,7 +2142,7 @@ func TestScenarioClientBroadcastMinimalNotEnoughHealthyRelays(t *testing.T) {
 
 	// Separate goroutine for client broadcast process
 	numTransactions := 1
-	testChainID := makeChainID("test chain")
+	testChainID := helpers.MakeChainID("test chain")
 	notifyCh1 := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
@@ -2280,7 +2281,7 @@ func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 
 	// Separate goroutine for client broadcast process
 	numTransactions := 1
-	testChainID1 := makeChainID("test-chain-1")
+	testChainID1 := helpers.MakeChainID("test-chain-1")
 	notifyCh1 := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
@@ -2336,7 +2337,7 @@ func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 
 	// Separate goroutine for client broadcast process
 	numTransactions = 1
-	testChainID2 := makeChainID("test-chain-2")
+	testChainID2 := helpers.MakeChainID("test-chain-2")
 	notifyCh2 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		secondBroadcastCtx,
@@ -2399,7 +2400,7 @@ func TestScenarioClientBroadcastWithAndWithoutSelfRelayAddress(t *testing.T) {
 
 	// Separate goroutine for client broadcast process
 	numTransactions = 1
-	testChainID3 := makeChainID("test-chain-3")
+	testChainID3 := helpers.MakeChainID("test-chain-3")
 	notifyCh3 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		thirdBroadcastCtx,
@@ -2496,7 +2497,7 @@ func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 
 	// Separate goroutine for client broadcast process
 	numTransactions := 1
-	testWithChainID1 := makeChainID("test-chain-1")
+	testWithChainID1 := helpers.MakeChainID("test-chain-1")
 	notifyCh1 := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
@@ -2540,7 +2541,7 @@ func TestScenarioClientBroadcastAcceptableRelaysFailure(t *testing.T) {
 
 	// Separate goroutine for client broadcast process
 	numTransactions = 1
-	testWithChainID2 := makeChainID("test-chain-2")
+	testWithChainID2 := helpers.MakeChainID("test-chain-2")
 	notifyCh2 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		secondBroadcastCtx,
@@ -2653,7 +2654,7 @@ func TestScenarioClientBroadcastAfterBackendRestart(t *testing.T) {
 
 	// Separate goroutine for client broadcast process
 	numTransactions := 1
-	testWithChainID1 := makeChainID("test chain")
+	testWithChainID1 := helpers.MakeChainID("test chain")
 	notifyCh1 := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
@@ -2752,7 +2753,7 @@ func TestScenarioClientBroadcastMinimalBeforeAndAfterBackendRestart(t *testing.T
 
 	// Separate goroutine for client broadcast process
 	numTransactions := 1
-	testChainID1 := makeChainID("test chain")
+	testChainID1 := helpers.MakeChainID("test chain")
 	notifyCh1 := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
@@ -2897,7 +2898,7 @@ func TestScenarioClientBroadcastMinimalBeforeAndAfterBackendRestart(t *testing.T
 
 	// Separate goroutine for client broadcast process
 	numTransactions = 1
-	testChainID2 := makeChainID("test-chain-2")
+	testChainID2 := helpers.MakeChainID("test-chain-2")
 	notifyCh4 := make(chan client.BroadcastStatus)
 	go clientBroadcastTx(t,
 		fourthBroadcastCtx,
@@ -2999,7 +3000,7 @@ func TestScenarioClientBroadcastMinimalAfterRuntimeIdling(t *testing.T) {
 
 	// Separate goroutine for client broadcast process
 	numTransactions := 1
-	testChainID1 := makeChainID("test-chain-1")
+	testChainID1 := helpers.MakeChainID("test-chain-1")
 	notifyCh1 := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
@@ -3159,7 +3160,7 @@ func TestScenarioConcurrentNewChains(t *testing.T) {
 	defer firstCancelCtxFn()
 
 	numTransactions1 := 1
-	testChainID1 := makeChainID("test-chain-1")
+	testChainID1 := helpers.MakeChainID("test-chain-1")
 	notifyCh1 := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
@@ -3178,7 +3179,7 @@ func TestScenarioConcurrentNewChains(t *testing.T) {
 	defer secondCancelCtxFn()
 
 	numTransactions2 := 1
-	testChainID2 := makeChainID("test-chain-2")
+	testChainID2 := helpers.MakeChainID("test-chain-2")
 	notifyCh2 := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
@@ -3328,7 +3329,7 @@ func TestScenarioConcurrentNewChainsAndExistingChains(t *testing.T) {
 	defer firstCancelCtxFn()
 
 	numTransactions1 := 1
-	testChainID1 := makeChainID("test-chain-1")
+	testChainID1 := helpers.MakeChainID("test-chain-1")
 	notifyCh1 := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
@@ -3362,7 +3363,7 @@ func TestScenarioConcurrentNewChainsAndExistingChains(t *testing.T) {
 	defer secondCancelCtxFn()
 
 	numTransactions2 := 1
-	testChainID2 := makeChainID("test-chain-2")
+	testChainID2 := helpers.MakeChainID("test-chain-2")
 	notifyCh2 := make(chan client.BroadcastStatus)
 
 	go clientBroadcastTx(t,
@@ -3415,7 +3416,7 @@ func TestScenarioConcurrentNewChainsAndExistingChains(t *testing.T) {
 		defer cancelCtxFn()
 
 		testChainName := "test-chain-" + strconv.Itoa(i)
-		iTestChainID := makeChainID(testChainName)
+		iTestChainID := helpers.MakeChainID(testChainName)
 		if i == 1 {
 			iTestChainID = testChainID1 // EXISTING ChainID!
 		} else if i == 2 {
@@ -3559,7 +3560,7 @@ func TestScenarioConcurrentNewChains3(t *testing.T) {
 
 		numTransactions := 1
 		testChainName := "test-chain-" + strconv.Itoa(i)
-		testChainID := makeChainID(testChainName)
+		testChainID := helpers.MakeChainID(testChainName)
 		notifyCh := make(chan client.BroadcastStatus)
 
 		// Note we broadcast using the main thread to make sure broadcasting
@@ -3696,7 +3697,7 @@ func TestScenarioCallbacksCallsCommitBroadcastTx(t *testing.T) {
 	// and relay-2,relay-3 to call AcceptBroadcastTx callbacks.
 
 	numTransactions1 := 1
-	testWithChainID := makeChainID("test-chain-1")
+	testWithChainID := helpers.MakeChainID("test-chain-1")
 
 	requireCompleteClientBroadcastTx(t,
 		broadcastCtx,

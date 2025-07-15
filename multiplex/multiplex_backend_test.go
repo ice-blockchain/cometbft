@@ -14,10 +14,12 @@ import (
 
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
+	sm "github.com/ice-blockchain/cometbft/state"
+
 	mx "github.com/ice-blockchain/cometbft/multiplex"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
+	"github.com/ice-blockchain/cometbft/multiplex/helpers"
 	"github.com/ice-blockchain/cometbft/multiplex/server"
-	sm "github.com/ice-blockchain/cometbft/state"
 )
 
 func makeEmptyBackendOptions(numRelays int) [][]mx.MultiplexBackendOption {
@@ -208,8 +210,8 @@ func TestMultiplexBackendGetLocalNetworkHeights(t *testing.T) {
 
 	// Read some testables
 	testChainID := testChainIds[0]
-	extdChainID, err := mx.NewExtendedChainIDFromLegacy(testChainID)
-	require.NoError(t, err)
+	extdChainID := helpers.NewExtendedChainIDFromString(testChainID)
+	require.NotNil(t, extdChainID)
 
 	// Allocate + inject node runtime ("Start node listeners")
 	allocErr := testReactor.AllocateNetwork(testChainID)
@@ -261,7 +263,7 @@ func TestMultiplexBackendGetLocalNetworkHeights(t *testing.T) {
 
 	// Creating an unknown network transaction
 	expectedNumNetworks = 2
-	otherScope := makeFingerprint("another one")
+	otherScope := helpers.MakeFingerprint("another one")
 	otherChainID := "mx-chain-" + testAddress + "-" + otherScope
 	transactions = append(transactions, client.Transaction{
 		Fingerprint: otherScope,
@@ -308,9 +310,9 @@ func TestMultiplexBackendGetLocalNetworkHeightsEmpty(t *testing.T) {
 	require.Len(t, testChainIds, numChains)
 
 	// Read some testables
-	testChainID := makeChainID("random")
-	extdChainID, err := mx.NewExtendedChainIDFromLegacy(testChainID)
-	require.NoError(t, err)
+	testChainID := helpers.MakeChainID("random")
+	extdChainID := helpers.NewExtendedChainIDFromString(testChainID)
+	require.NotNil(t, extdChainID)
 
 	testAddress := extdChainID.GetUserAddress()
 	testScope := extdChainID.GetFingerprint()
@@ -879,7 +881,7 @@ func TestMultiplexBackendGetRemoteValidatorsInfo(t *testing.T) {
 	testRelayAddr, err := server.NewRelayAddress("tcp://127.0.0.1:" + testBroadcastPort) // NO ID!
 	require.NoError(t, err)
 
-	testWithChainID := makeChainID("test-chain-1")
+	testWithChainID := helpers.MakeChainID("test-chain-1")
 
 	actualValidatorsResult,
 		actualError := servers[0].GetRemoteValidatorsInfo(context.TODO(), testRelayAddr, []string{testWithChainID})
@@ -951,7 +953,7 @@ func TestMultiplexBackendGetValidatorsByNetwork(t *testing.T) {
 		testRelayAddresses = append(testRelayAddresses, testRelayAddr)
 	}
 
-	testWithChainID := makeChainID("test-chain-1")
+	testWithChainID := helpers.MakeChainID("test-chain-1")
 
 	actualValidatorsByChain,
 		actualValidatorsErr := servers[0].GetValidatorsByNetwork(
@@ -1004,8 +1006,8 @@ func TestMultiplexBackendAddTransactions(t *testing.T) {
 	require.Len(t, testChainIds, numChains)
 
 	testChainID := testChainIds[0]
-	testExtChainID, err := mx.NewExtendedChainIDFromLegacy(testChainID)
-	require.NoError(t, err)
+	testExtChainID := helpers.NewExtendedChainIDFromString(testChainID)
+	require.NotNil(t, testExtChainID)
 
 	// Allocate + inject node runtime ("Start node listeners")
 	allocErr := testReactor.AllocateNetwork(testChainID)
@@ -1051,8 +1053,8 @@ func TestMultiplexBackendRemoveTransactions(t *testing.T) {
 	require.Len(t, testChainIds, numChains)
 
 	testChainID := testChainIds[0]
-	testExtChainID, err := mx.NewExtendedChainIDFromLegacy(testChainID)
-	require.NoError(t, err)
+	testExtChainID := helpers.NewExtendedChainIDFromString(testChainID)
+	require.NotNil(t, testExtChainID)
 
 	// Allocate + inject node runtime ("Start node listeners")
 	allocErr := testReactor.AllocateNetwork(testChainID)
@@ -1062,7 +1064,7 @@ func TestMultiplexBackendRemoveTransactions(t *testing.T) {
 	injectErr := testReactor.InjectNewRuntime(t.Context(), testChainID)
 	require.NoError(t, injectErr, "should inject runtime")
 
-	err = server.AddTransactions(
+	err := server.AddTransactions(
 		testExtChainID.GetUserAddress(),
 		client.Transaction{
 			Data:        []byte{1, 2, 3},

@@ -1,25 +1,23 @@
-package multiplex
+package helpers
 
 import (
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 
-	"github.com/ice-blockchain/cometbft/crypto"
-	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	"github.com/ice-blockchain/cometbft/crypto/tmhash"
 )
 
-var (
-	fieldSeparator  = "-"
-	fingerprintSize = 8
+const (
+	// Defines the prefix used for ChainID, e.g. `mx-chain...`
+	DefaultMultiplexPrefix = "mx-chain"
 
-	// CAUTION: Changing this prefix value will generate different ChainID
-	// values ; because of this constraint, it is not possible to interconnect
-	// node multiplexes that use *different* multiplexPrefix values.
-	multiplexPrefix = "mx-chain"
+	// Defines the fields separator for ChainID.
+	DefaultFieldSeparator = "-"
+
+	// Defines the size of fingerprints in bytes.
+	DefaultFingerprintSize = 8
 )
 
 // -----------------------------------------------------------------------------
@@ -67,7 +65,7 @@ type extendedChainID struct {
 // GetSeparator returns the fields separator constant.
 // GetSeparator implements ExtendedChainID.
 func (c *extendedChainID) GetSeparator() string {
-	return fieldSeparator
+	return DefaultFieldSeparator
 }
 
 // GetUserAddress returns the 20 bytes user address in hexadecimal format.
@@ -118,37 +116,37 @@ func (c *extendedChainID) String() string {
 // This method expects the userAddress and fingerprint parameters to contain
 // hexadecimal payloads. It will check for correct size match for both the
 // user address (20 bytes) and the arbitrary fingerprint (8 bytes).
-func NewExtendedChainID(userAddress, fingerprint string) (ExtendedChainID, error) {
+func NewExtendedChainID(userAddress, fingerprint string) ExtendedChainID {
 	if len(userAddress) == 0 || len(fingerprint) == 0 {
-		return nil, errors.New("missing obligatory user address and fingerprint")
+		return nil
 	}
 
 	// Validate the size and format
 	fp, err := hex.DecodeString(fingerprint)
-	if err != nil || len(fp) != fingerprintSize {
-		return nil, fmt.Errorf("expected fingerprint size of %d, got %d bytes", fingerprintSize, len(fp))
+	if err != nil || len(fp) != DefaultFingerprintSize {
+		return nil
 	}
 
 	// Validate the size and format
 	address, err := hex.DecodeString(userAddress)
 	if err != nil || len(address) != tmhash.TruncatedSize {
-		return nil, fmt.Errorf("expected user address size of %d, got %d bytes", tmhash.TruncatedSize, len(address))
+		return nil
 	}
 
 	return &extendedChainID{
-		Prefix:      multiplexPrefix,
+		Prefix:      DefaultMultiplexPrefix,
 		UserAddress: userAddress,
 		Fingerprint: fingerprint,
-	}, nil
+	}
 }
 
-// NewExtendedChainIDFromLegacy extracts fields of a chain identifier, notably
+// NewExtendedChainIDFromString extracts fields of a chain identifier, notably
 // the user address and fingerprints which must both be present.
 //
 // The prefix is ignored to prevent using different prefixes than `mx-chain`.
-func NewExtendedChainIDFromLegacy(chainID string) (ExtendedChainID, error) {
+func NewExtendedChainIDFromString(chainID string) ExtendedChainID {
 	if len(chainID) == 0 {
-		return nil, errors.New("chain identifier may not be empty")
+		return nil
 	}
 
 	// Extract using regexp
@@ -156,25 +154,9 @@ func NewExtendedChainIDFromLegacy(chainID string) (ExtendedChainID, error) {
 	matches := extractor.FindStringSubmatch(chainID)
 
 	if len(matches) == 0 || len(matches) < 4 {
-		return nil, errors.New("chain identifier must contain address and fingerprint")
+		return nil
 	}
 
+	// address, fingerprint
 	return NewExtendedChainID(matches[2], matches[3])
-}
-
-// GetMultitplexPrefix returns the value for constant multiplexPrefix.
-func GetMultiplexPrefix() string {
-	return multiplexPrefix
-}
-
-// MakeFingerprint creates a fingerprint from input.
-func MakeFingerprint(input string) string {
-	return strings.ToUpper(hex.EncodeToString(
-		tmhash.Sum([]byte(input))[:fingerprintSize], // 8 bytes only
-	))
-}
-
-// RandomUserAddress generate a random user address.
-func RandomUserAddress() crypto.Address {
-	return ed25519.GenPrivKey().PubKey().Address()
 }

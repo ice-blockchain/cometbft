@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/ice-blockchain/cometbft/config"
+	"github.com/ice-blockchain/cometbft/multiplex/helpers"
 )
 
 // -----------------------------------------------------------------------------
@@ -128,10 +129,10 @@ func NewConfigOverwriteWithParameters(
 	discoveryPort int,
 ) (*config.Config, error) {
 	// Validate the provided ChainID
-	extChainID, err := NewExtendedChainIDFromLegacy(withChainID)
-	if err != nil {
+	extChainID := helpers.NewExtendedChainIDFromString(withChainID)
+	if extChainID == nil {
 		return nil, fmt.Errorf(
-			"found incompatible ChainID %s: %w", withChainID, err)
+			"found incompatible ChainID %s", withChainID)
 	}
 
 	// Errors would have been handled in above statement

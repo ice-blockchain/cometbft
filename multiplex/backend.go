@@ -36,6 +36,7 @@ import (
 	"github.com/rs/cors"
 
 	"github.com/ice-blockchain/cometbft/multiplex/client"
+	"github.com/ice-blockchain/cometbft/multiplex/helpers"
 	mxrpc "github.com/ice-blockchain/cometbft/multiplex/rpc"
 	"github.com/ice-blockchain/cometbft/multiplex/runtime"
 	"github.com/ice-blockchain/cometbft/multiplex/server"
@@ -761,7 +762,7 @@ func (b *MultiplexBackend) OnStart(ctx context.Context) error {
 		// Start only nodes that are currently replaying on some other relays.
 		availableChainIds := b.reactor.GetNetworks()
 		replayingChainIds := slices.DeleteFunc(availableChainIds, func(replayingChainID string) bool {
-			chainAddr, _ := NewExtendedChainIDFromLegacy(replayingChainID)
+			chainAddr := helpers.NewExtendedChainIDFromString(replayingChainID)
 			return !slices.Contains(replayingBuckets, chainAddr.GetUserAddress())
 		})
 		if len(replayingChainIds) == 0 {

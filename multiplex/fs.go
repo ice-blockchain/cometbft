@@ -1,11 +1,14 @@
 package multiplex
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 
 	"github.com/ice-blockchain/cometbft/config"
 	cmtos "github.com/ice-blockchain/cometbft/internal/os"
+
+	"github.com/ice-blockchain/cometbft/multiplex/helpers"
 )
 
 // MultiplexFS maps ChainIDs to filesystem paths (data/...)
@@ -47,9 +50,9 @@ func NewMultiplexFS(
 	for _, chainID := range chainIds {
 		// Uses one subfolder by user in data/ and one in config/
 		// .. and one subfolder by ChainID in the user subfolders
-		extChainID, err := NewExtendedChainIDFromLegacy(chainID)
-		if err != nil {
-			return multiplex, err
+		extChainID := helpers.NewExtendedChainIDFromString(chainID)
+		if extChainID == nil {
+			return nil, errors.New("invalid ChainID")
 		}
 
 		_, chainDataFolder, err := EnsureNetworkFS(extChainID, baseConfDir, baseDataDir)
@@ -69,7 +72,7 @@ func NewMultiplexFS(
 //
 // Return order is: config folder, data folder, error.
 func EnsureNetworkFS(
-	chainID ExtendedChainID,
+	chainID helpers.ExtendedChainID,
 	baseConfDir string,
 	baseDataDir string,
 ) (string, string, error) {

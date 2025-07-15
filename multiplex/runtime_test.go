@@ -15,11 +15,13 @@ import (
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	cmtos "github.com/ice-blockchain/cometbft/internal/os"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
-	mx "github.com/ice-blockchain/cometbft/multiplex"
 	sm "github.com/ice-blockchain/cometbft/state"
 	bs "github.com/ice-blockchain/cometbft/store"
 	"github.com/ice-blockchain/cometbft/types"
 	cmttime "github.com/ice-blockchain/cometbft/types/time"
+
+	mx "github.com/ice-blockchain/cometbft/multiplex"
+	"github.com/ice-blockchain/cometbft/multiplex/helpers"
 )
 
 const (
@@ -44,8 +46,8 @@ func TestMultiplexRuntimeMakeNetworkFilesystem(t *testing.T) {
 
 	// Create a test reactor
 	testReactor := makeTestReactor(t, nodeCfg)
-	testExtChainID, err := mx.NewExtendedChainIDFromLegacy(testChainID)
-	require.NoError(t, err)
+	testExtChainID := helpers.NewExtendedChainIDFromString(testChainID)
+	require.NotNil(t, testExtChainID)
 
 	perUserFolder := "/" + testAddress + "/"
 
@@ -70,11 +72,11 @@ func TestMultiplexRuntimeMakeNetworkDatabases(t *testing.T) {
 		testReactor := ResetTestMultiplexRuntime(t, 3)
 	defer os.RemoveAll(rootDir)
 
-	testExtChainID, err := mx.NewExtendedChainIDFromLegacy(testChainID)
-	require.NoError(t, err)
+	testExtChainID := helpers.NewExtendedChainIDFromString(testChainID)
+	require.NotNil(t, testExtChainID)
 
 	// Act
-	err = testReactor.MakeNetworkDatabases(testExtChainID, []string{
+	err := testReactor.MakeNetworkDatabases(testExtChainID, []string{
 		"state",
 		"blockstore",
 		"txindex",
@@ -116,8 +118,8 @@ func TestMultiplexRuntimeMakeNetworkValidator(t *testing.T) {
 		testReactor := ResetTestMultiplexRuntime(t, 5)
 	defer os.RemoveAll(rootDir)
 
-	testExtChainID, err := mx.NewExtendedChainIDFromLegacy(testChainID)
-	require.NoError(t, err)
+	testExtChainID := helpers.NewExtendedChainIDFromString(testChainID)
+	require.NotNil(t, testExtChainID)
 
 	testConfDir,
 		testDataDir,
@@ -158,8 +160,8 @@ func TestMultiplexRuntimeMakeNetworkGenesis(t *testing.T) {
 		testReactor := ResetTestMultiplexRuntime(t, 3)
 	defer os.RemoveAll(rootDir)
 
-	testExtChainID, err := mx.NewExtendedChainIDFromLegacy(testChainID)
-	require.NoError(t, err)
+	testExtChainID := helpers.NewExtendedChainIDFromString(testChainID)
+	require.NotNil(t, testExtChainID)
 
 	testConfDir,
 		testDataDir,
@@ -228,10 +230,10 @@ func TestMultiplexRuntimeMakeNetworkStateMachine(t *testing.T) {
 
 	require.Equal(t, rootDir, testConfig.RootDir)
 
-	testExtChainID, err := mx.NewExtendedChainIDFromLegacy(testChainID)
-	require.NoError(t, err)
+	testExtChainID := helpers.NewExtendedChainIDFromString(testChainID)
+	require.NotNil(t, testExtChainID)
 
-	err = testReactor.MakeNetworkDatabases(testExtChainID, []string{
+	err := testReactor.MakeNetworkDatabases(testExtChainID, []string{
 		"state",
 		"blockstore",
 	}, true)
@@ -288,8 +290,8 @@ func TestMultiplexRuntimeMakeNetworkConfigOverwrite(t *testing.T) {
 
 	require.Equal(t, rootDir, testConfig.RootDir)
 
-	testExtChainID, err := mx.NewExtendedChainIDFromLegacy(testChainID)
-	require.NoError(t, err)
+	testExtChainID := helpers.NewExtendedChainIDFromString(testChainID)
+	require.NotNil(t, testExtChainID)
 
 	// Act
 	actualCfgOverwrite, err := testReactor.MakeNetworkConfigOverwrite(testExtChainID)
@@ -434,8 +436,8 @@ func TestMultiplexRuntimeInjectStateMachine(t *testing.T) {
 
 	testIcsGenDocSet := testReactor.GetChecksummedGenesisDocSet()
 
-	testExtChainID, cidErr := mx.NewExtendedChainIDFromLegacy(testChainID)
-	require.NoError(t, cidErr)
+	testExtChainID := helpers.NewExtendedChainIDFromString(testChainID)
+	require.NotNil(t, testExtChainID)
 
 	testDbNames := []string{
 		"state",
@@ -695,7 +697,7 @@ func TestMultiplexRuntimeInjectNewNetworkIncludesOtherValidators(t *testing.T) {
 		testOtherValidators = append(testOtherValidators, testOtherValPubKeyHex)
 	}
 
-	testWithChainID := makeChainID("test-chain-1")
+	testWithChainID := helpers.MakeChainID("test-chain-1")
 
 	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
 	// executed earlier, i.e. see MultiplexBackend.InitValidators.
@@ -742,7 +744,7 @@ func TestMultiplexRuntimeInjectNewRuntime(t *testing.T) {
 
 	defer shutdownFn(testReactor)
 
-	injectChainID := makeChainID("test-inject-1")
+	injectChainID := helpers.MakeChainID("test-inject-1")
 
 	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
 	// executed earlier, i.e. see MultiplexBackend.InitValidators.
@@ -779,7 +781,7 @@ func TestMultiplexRuntimeInjectNewRuntimeWithOthers(t *testing.T) {
 	waitDuration := 2 * time.Second
 	time.Sleep(waitDuration)
 
-	injectChainID := makeChainID("test-inject-1")
+	injectChainID := helpers.MakeChainID("test-inject-1")
 
 	// AllocateNetwork is NOT part of InjectNewNetwork anymore, due to it being
 	// executed earlier, i.e. see MultiplexBackend.InitValidators.
@@ -831,8 +833,8 @@ func ResetTestMultiplexRuntimeMock(tb testing.TB, numChains int) (
 		testConfig,
 		testReactor := ResetTestMultiplexRuntime(tb, numChains)
 
-	testExtChainID, err := mx.NewExtendedChainIDFromLegacy(testChainID)
-	require.NoError(tb, err)
+	testExtChainID := helpers.NewExtendedChainIDFromString(testChainID)
+	require.NotNil(tb, testExtChainID)
 
 	testConfDir,
 		testDataDir,

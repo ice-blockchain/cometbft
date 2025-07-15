@@ -168,10 +168,7 @@ func collectSampleCometBFT(
 		ms.Errors.Add(totalErrs)
 
 		// Some metrics are grouped by user address
-		// extdChainID, err := NewExtendedChainIDFromLegacy(chainID)
-		// if err != nil {
-		// 	return
-		// }
+		// extdChainID := helpers.NewExtendedChainIDFromString(chainID)
 		// userAddress := extdChainID.GetUserAddress()
 
 		// Populate user-grouped metrics
