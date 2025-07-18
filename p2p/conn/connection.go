@@ -727,7 +727,7 @@ func (c *MConnection) sendRoutine() {
 	protoWriter := protoio.NewDelimitedWriter(c.bufConnWriter)
 
 FOR_LOOP:
-	for {
+	for c.Context().Err() == nil {
 		var _n int
 		var err error
 	SELECTION:
@@ -894,7 +894,7 @@ func (c *MConnection) recvRoutine() {
 	protoReader := protoio.NewDelimitedReader(c.bufConnReader, c._maxPacketMsgSize)
 
 FOR_LOOP:
-	for {
+	for c.Context().Err() == nil {
 		// Block until .recvMonitor says we can read.
 		c.recvMonitor.Limit(c._maxPacketMsgSize, atomic.LoadInt64(&c.config.RecvRate), true)
 
