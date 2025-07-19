@@ -4,8 +4,8 @@ import (
 	"github.com/ice-blockchain/cometbft/libs/service"
 )
 
-// RuntimeManager defines the contract for chain runtime managers.
-type RuntimeManager interface {
+// Manager defines the contract for chain runtime managers.
+type Manager interface {
 	service.Service
 
 	NumRuntimes() uint64
@@ -16,7 +16,5 @@ type RuntimeManager interface {
 
 	OnActivate(chainID string) error
 	OnComplete(chainID string) error
-
 	OnIdle(chainID string) error
-	HasIdler() bool
 }

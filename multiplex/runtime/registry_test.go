@@ -2,7 +2,6 @@ package runtime_test
 
 import (
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,11 +16,11 @@ import (
 // ----------------------------------------------------------------------------
 // Unit Tests
 
-func TestMultiplexServerRuntimeRegistryNewRuntimeRegistry(t *testing.T) {
+func TestMultiplexServerRegistryNewRegistry(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	// Test default instance
-	testReg1 := runtime.NewRuntimeRegistry(t.Context(), cmtlog.NewNopLogger())
+	testReg1 := runtime.NewRegistry(t.Context(), cmtlog.NewNopLogger())
 	assert.NotNil(t, testReg1)
 	assert.NotNil(t, testReg1.Runtimes)
 	assert.NotNil(t, testReg1.Sleeping)
@@ -30,21 +29,17 @@ func TestMultiplexServerRuntimeRegistryNewRuntimeRegistry(t *testing.T) {
 	assert.NotNil(t, testReg1.NumSleeping())
 
 	// Test instance with options
-	testReg2 := runtime.NewRuntimeRegistry(t.Context(), cmtlog.NewNopLogger(),
-		runtime.RuntimeRegistryCleanerInterval(1*time.Second),
-		runtime.RuntimeRegistryOnIdle(func(chainID string) error {
-			return nil
-		}),
+	testReg2 := runtime.NewRegistry(t.Context(), cmtlog.NewNopLogger(),
+		runtime.RegistryCleanerInterval(1*time.Second),
 	)
 	assert.NotNil(t, testReg2)
 	assert.Equal(t, 1*time.Second, testReg2.CleanerInterval())
-	assert.NotNil(t, testReg2.OnIdle)
 }
 
-func TestMultiplexServerRuntimeRegistryOnActivate(t *testing.T) {
+func TestMultiplexServerRegistryOnActivate(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	testReg1 := runtime.NewRuntimeRegistry(t.Context(), cmtlog.NewNopLogger())
+	testReg1 := runtime.NewRegistry(t.Context(), cmtlog.NewNopLogger())
 
 	// Act: runtime activation should add to Runtimes
 	err := testReg1.OnActivate("test-chain-1")
@@ -73,7 +68,7 @@ func TestMultiplexServerRuntimeRegistryOnActivate(t *testing.T) {
 	nextActualNumRuntimes := testReg1.NumRuntimes()
 	assert.Equal(t, uint64(3), nextActualNumRuntimes) // 2xtest-chain-1 + test-chain-2
 
-	testReg2 := runtime.NewRuntimeRegistry(t.Context(), cmtlog.NewNopLogger())
+	testReg2 := runtime.NewRegistry(t.Context(), cmtlog.NewNopLogger())
 
 	// Act: concurrent OnActivate calls must succeed
 	waitAll := sync.WaitGroup{}
@@ -101,10 +96,10 @@ func TestMultiplexServerRuntimeRegistryOnActivate(t *testing.T) {
 	assert.Equal(t, uint64(50), actualRuntimes["test-chain-2"])
 }
 
-func TestMultiplexServerRuntimeRegistryOnComplete(t *testing.T) {
+func TestMultiplexServerRegistryOnComplete(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	testReg1 := runtime.NewRuntimeRegistry(t.Context(), cmtlog.NewNopLogger())
+	testReg1 := runtime.NewRegistry(t.Context(), cmtlog.NewNopLogger())
 	activateErr := testReg1.OnActivate("test-chain-1")
 	require.NoError(t, activateErr)
 
@@ -122,10 +117,10 @@ func TestMultiplexServerRuntimeRegistryOnComplete(t *testing.T) {
 	assert.Equal(t, uint64(1), actualNumSleeping)
 }
 
-func TestMultiplexServerRuntimeRegistryStartStop(t *testing.T) {
+func TestMultiplexServerRegistryStartStop(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	testReg1 := runtime.NewRuntimeRegistry(t.Context(), cmtlog.NewNopLogger())
+	testReg1 := runtime.NewRegistry(t.Context(), cmtlog.NewNopLogger())
 
 	// Act: Test simple registry start/stop
 	startErr := testReg1.Start()
@@ -135,14 +130,9 @@ func TestMultiplexServerRuntimeRegistryStartStop(t *testing.T) {
 	assert.NoError(t, stopErr)
 
 	// Act: Test cleaner routine processing
-	var OnIdleCalls atomic.Uint64
-	testReg2 := runtime.NewRuntimeRegistry(t.Context(), cmtlog.NewNopLogger(),
-		runtime.RuntimeRegistryCleanerInterval(1*time.Second),   // run cleaner every sec
-		runtime.RuntimeRegistryIdleDuration(1*time.Millisecond), // 1ms means idle asap
-		runtime.RuntimeRegistryOnIdle(func(chainID string) error {
-			OnIdleCalls.Add(1)
-			return nil
-		}),
+	testReg2 := runtime.NewRegistry(t.Context(), cmtlog.NewNopLogger(),
+		runtime.RegistryCleanerInterval(1*time.Second),   // run cleaner every sec
+		runtime.RegistryIdleDuration(1*time.Millisecond), // 1ms means idle asap
 	)
 
 	newStartErr := testReg2.Start()
@@ -168,31 +158,33 @@ func TestMultiplexServerRuntimeRegistryStartStop(t *testing.T) {
 	}
 	waitAll.Wait()
 
+	// Test that we have some runtimes sleeping (will be idled)
+	actualNumSleeping := testReg2.NumSleeping()
+	assert.Equal(t, uint64(2), actualNumSleeping)
+
 	// 3 seconds should be plenty to wait for full cleaner processing.
 	time.Sleep(3 * time.Second)
 
 	newStopErr := testReg2.Stop()
 	assert.NoError(t, newStopErr)
 
-	actualRuntimes := testReg1.ActiveRuntimes()
-	actualSleeping := testReg1.SleepingRuntimes()
-	actualNumRuntimes := testReg1.NumRuntimes()
-	actualNumSleeping := testReg1.NumSleeping()
+	actualRuntimes := testReg2.ActiveRuntimes()
+	actualSleeping := testReg2.SleepingRuntimes()
+	actualNumRuntimes := testReg2.NumRuntimes()
+	actualNumSleeping = testReg2.NumSleeping()
 
+	// Test that NumSleeping is now 0, i.e. sleeping runtimes were idled.
 	assert.Empty(t, actualSleeping)
 	assert.Empty(t, actualRuntimes)
 	assert.Equal(t, uint64(0), actualNumRuntimes)
 	assert.Equal(t, uint64(0), actualNumSleeping)
-
-	expectedNumIdleCalls := uint64(2) // test-chain-1 & test-chain-2
-	assert.Equal(t, expectedNumIdleCalls, OnIdleCalls.Load())
 }
 
-func TestMultiplexServerRuntimeRegistryReset(t *testing.T) {
+func TestMultiplexServerRegistryReset(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	// Test simple registry start/stop
-	reg := runtime.NewRuntimeRegistry(t.Context(), cmtlog.NewNopLogger())
+	reg := runtime.NewRegistry(t.Context(), cmtlog.NewNopLogger())
 
 	startErr := reg.Start()
 	assert.NoError(t, startErr)

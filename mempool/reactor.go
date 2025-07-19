@@ -47,7 +47,7 @@ type Reactor struct {
 	userAddress     string
 	ChainID         string // Exported.
 	dialerFn        RelayDialerFn
-	runtimeRegistry *runtime.RuntimeRegistry
+	runtimeRegistry *runtime.Registry
 
 	// Stores messages received during WaitSync() which are processed
 	// in [EnableInOutTxs] and then deleted.
@@ -147,7 +147,7 @@ func WithDialerFn(
 
 // WithRuntimeRegistry is an option helper to inject a custom runtime registry.
 func WithRuntimeRegistry(
-	reg *runtime.RuntimeRegistry,
+	reg *runtime.Registry,
 ) func(*Reactor) {
 	return func(r *Reactor) {
 		r.runtimeRegistry = reg
@@ -176,7 +176,7 @@ func (memR *Reactor) SetAcceptor(acceptor client.Acceptor) {
 }
 
 // SetRuntimeRegistry sets a cuustom runtime registry.
-func (memR *Reactor) SetRuntimeRegistry(reg *runtime.RuntimeRegistry) {
+func (memR *Reactor) SetRuntimeRegistry(reg *runtime.Registry) {
 	memR.runtimeRegistry = reg
 }
 

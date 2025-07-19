@@ -22,10 +22,8 @@ const (
 	DefaultRuntimeIdleDuration = 300 * time.Second
 )
 
-type OnIdleFn func(chainID string) error
-
-// RuntimeRegistry defines a registry for parallel node runtimes.
-type RuntimeRegistry struct {
+// Registry defines a registry for parallel node runtimes.
+type Registry struct {
 	service.BaseService
 	mtx *sync.Mutex
 
@@ -44,7 +42,6 @@ type RuntimeRegistry struct {
 	Scheduler map[string]time.Time
 
 	// Options
-	cbOnIdle        OnIdleFn
 	cleanerInterval time.Duration
 	runIdleDuration time.Duration
 	logger          cmtlog.Logger
@@ -55,13 +52,13 @@ type RuntimeRegistry struct {
 }
 
 // Ensure that our implementation satisfies interface.
-var _ RuntimeManager = (*RuntimeRegistry)(nil)
+var _ Manager = (*Registry)(nil)
 
-type RuntimeRegistryOption func(*RuntimeRegistry)
+type RegistryOption func(*Registry)
 
-// NewRuntimeRegistry creates a new nodes runtime registry.
-func NewRuntimeRegistry(ctx context.Context, logger cmtlog.Logger, options ...RuntimeRegistryOption) *RuntimeRegistry {
-	reg := &RuntimeRegistry{
+// NewRegistry creates a new nodes runtime registry.
+func NewRegistry(ctx context.Context, logger cmtlog.Logger, options ...RegistryOption) *Registry {
+	reg := &Registry{
 		mtx: new(sync.Mutex),
 
 		// Options
@@ -81,49 +78,40 @@ func NewRuntimeRegistry(ctx context.Context, logger cmtlog.Logger, options ...Ru
 	// Use option helpers
 	reg.SetOptions(options...)
 
-	reg.BaseService = *service.NewBaseService(ctx, nil, "RuntimeRegistry", reg)
+	reg.BaseService = *service.NewBaseService(ctx, nil, "Registry", reg)
 
 	return reg
 }
 
-// RuntimeRegistryCleanerInterval sets a custom cleaner interval. This interval
+// RegistryCleanerInterval sets a custom cleaner interval. This interval
 // is used to determine when the cleaner procedure should find idle runtimes.
-func RuntimeRegistryCleanerInterval(si time.Duration) RuntimeRegistryOption {
-	return func(rr *RuntimeRegistry) {
+func RegistryCleanerInterval(si time.Duration) RegistryOption {
+	return func(rr *Registry) {
 		rr.cleanerInterval = si
 	}
 }
 
-// RuntimeRegistryIdleDuration sets a custom idle duration. This period of time
+// RegistryIdleDuration sets a custom idle duration. This period of time
 // is used to determine how much time has to pass before a node runtime must be
 // considered idle, given it has no more active workers.
-func RuntimeRegistryIdleDuration(dur time.Duration) RuntimeRegistryOption {
-	return func(rr *RuntimeRegistry) {
+func RegistryIdleDuration(dur time.Duration) RegistryOption {
+	return func(rr *Registry) {
 		rr.runIdleDuration = dur
 	}
 }
 
-// RuntimeRegistryLogger injects a custom logger instance.
-func RuntimeRegistryLogger(logger cmtlog.Logger) RuntimeRegistryOption {
-	return func(rr *RuntimeRegistry) {
+// RegistryLogger injects a custom logger instance.
+func RegistryLogger(logger cmtlog.Logger) RegistryOption {
+	return func(rr *Registry) {
 		rr.logger = logger
 	}
 }
 
-// RuntimeRegistryOnIdle injects a custom OnIdle callback.
-func RuntimeRegistryOnIdle(onIdle OnIdleFn) RuntimeRegistryOption {
-	return func(rr *RuntimeRegistry) {
-		rr.cbOnIdle = onIdle
-	}
-}
-
 // ----------------------------------------------------------------------------
-// RuntimeRegistry implements [service.Service]
+// Registry implements [service.Service]
 
 // OnStart implements [service.Service] by spawning the sleeper routine.
-//
-// Setting a nil OnIdle disables the cleaner routine.
-func (reg *RuntimeRegistry) OnStart(ctx context.Context) error {
+func (reg *Registry) OnStart(ctx context.Context) error {
 	reg.logger.Debug("Starting runtime registry",
 		"num_active", reg.NumRuntimes(),
 		"num_sleeping", reg.NumSleeping(),
@@ -139,7 +127,7 @@ func (reg *RuntimeRegistry) OnStart(ctx context.Context) error {
 
 // OnStop implements [service.Service] by closing all open channels and
 // freeing memory resources allocated for all runtimes.
-func (reg *RuntimeRegistry) OnStop() {
+func (reg *Registry) OnStop() {
 	reg.mtx.Lock()
 	defer reg.mtx.Unlock()
 
@@ -148,7 +136,7 @@ func (reg *RuntimeRegistry) OnStop() {
 }
 
 // OnReset implements [service.Service] by resetting the registry.
-func (reg *RuntimeRegistry) OnReset(ctx context.Context) error {
+func (reg *Registry) OnReset(ctx context.Context) error {
 	reg.mtx.Lock()
 	reg.Runtimes = map[string]uint64{}
 	reg.Sleeping = []string{}
@@ -165,31 +153,31 @@ func (reg *RuntimeRegistry) OnReset(ctx context.Context) error {
 // ----------------------------------------------------------------------------
 
 // SetOptions uses custom option helpers to configure a ReplayPool instance.
-func (reg *RuntimeRegistry) SetOptions(options ...RuntimeRegistryOption) {
+func (reg *Registry) SetOptions(options ...RegistryOption) {
 	for _, option := range options {
 		option(reg)
 	}
 }
 
 // Logger returns the logger instance.
-func (reg *RuntimeRegistry) Logger() cmtlog.Logger {
+func (reg *Registry) Logger() cmtlog.Logger {
 	return reg.logger
 }
 
 // NumRuntimes returns the number of active runtimes across all ChainID values.
 // i.e. if more than one runtime is active for a given ChainID, it will be
 // counted as many time as there are active runtimes.
-func (reg *RuntimeRegistry) NumRuntimes() uint64 {
+func (reg *Registry) NumRuntimes() uint64 {
 	return atomic.LoadUint64(&reg.numr)
 }
 
 // NumSleeping returns the number of sleeping runtimes.
-func (reg *RuntimeRegistry) NumSleeping() uint64 {
+func (reg *Registry) NumSleeping() uint64 {
 	return atomic.LoadUint64(&reg.nums)
 }
 
 // ActiveRuntimes returns the active node runtimes counters by ChainID.
-func (reg *RuntimeRegistry) ActiveRuntimes() map[string]uint64 {
+func (reg *Registry) ActiveRuntimes() map[string]uint64 {
 	reg.mtx.Lock()
 	defer reg.mtx.Unlock()
 
@@ -197,7 +185,7 @@ func (reg *RuntimeRegistry) ActiveRuntimes() map[string]uint64 {
 }
 
 // SleepingRuntimes returns the sleeping node runtimes.
-func (reg *RuntimeRegistry) SleepingRuntimes() []string {
+func (reg *Registry) SleepingRuntimes() []string {
 	reg.mtx.Lock()
 	defer reg.mtx.Unlock()
 
@@ -205,7 +193,7 @@ func (reg *RuntimeRegistry) SleepingRuntimes() []string {
 }
 
 // IdleScheduler returns the map of sleep start by ChainID.
-func (reg *RuntimeRegistry) IdleScheduler() map[string]time.Time {
+func (reg *Registry) IdleScheduler() map[string]time.Time {
 	reg.mtx.Lock()
 	defer reg.mtx.Unlock()
 
@@ -213,17 +201,17 @@ func (reg *RuntimeRegistry) IdleScheduler() map[string]time.Time {
 }
 
 // CleanerInterval returns the interval for the execution of the cleaner.
-func (reg *RuntimeRegistry) CleanerInterval() time.Duration {
+func (reg *Registry) CleanerInterval() time.Duration {
 	return reg.cleanerInterval
 }
 
 // IdleDuration returns the period of inactivity to consider a runtime idle.
-func (reg *RuntimeRegistry) IdleDuration() time.Duration {
+func (reg *Registry) IdleDuration() time.Duration {
 	return reg.runIdleDuration
 }
 
 // ----------------------------------------------------------------------------
-// RuntimeRegistry API implementation
+// Registry API implementation
 //
 // The mutex is locked during the execution time of the methods listed below.
 
@@ -231,7 +219,7 @@ func (reg *RuntimeRegistry) IdleDuration() time.Duration {
 // method increments the internal counter of active runtimes for chainID.
 // If the runtime is found sleeping, we re-activate it and remove its'
 // scheduler entry so that a re-activation delays its idling to completion.
-func (reg *RuntimeRegistry) OnActivate(chainID string) error {
+func (reg *Registry) OnActivate(chainID string) error {
 	reg.mtx.Lock()
 	defer reg.mtx.Unlock()
 
@@ -256,7 +244,7 @@ func (reg *RuntimeRegistry) OnActivate(chainID string) error {
 // method decrements the internal counter of active runtimes for chainID.
 // If after decrementing the counter, we find no more active runtimes for
 // chainID, we shall put it asleep so that it gets idled after runIdleDuration.
-func (reg *RuntimeRegistry) OnComplete(chainID string) error {
+func (reg *Registry) OnComplete(chainID string) error {
 	reg.mtx.Lock()
 	defer reg.mtx.Unlock()
 
@@ -283,19 +271,17 @@ func (reg *RuntimeRegistry) OnComplete(chainID string) error {
 }
 
 // OnIdle executes the callback cbOnIdle to idle a sleeping runtime by chainID.
-func (reg *RuntimeRegistry) OnIdle(chainID string) error {
-	if reg.cbOnIdle == nil {
-		return nil
-	}
+func (reg *Registry) OnIdle(chainID string) error {
+	// TODO(midas): implement runtime idling.
 
-	return reg.cbOnIdle(chainID)
+	return nil
 }
 
 // ----------------------------------------------------------------------------
 
 // removeSleeping removes an inactive runtime from the list.
 // CAUTION: The caller is responsible for locking the mutex.
-func (reg *RuntimeRegistry) removeSleeping(chainID string) error {
+func (reg *Registry) removeSleeping(chainID string) error {
 	if _, ok := reg.Scheduler[chainID]; ok {
 		delete(reg.Scheduler, chainID)
 	}
@@ -325,24 +311,12 @@ func (reg *RuntimeRegistry) removeSleeping(chainID string) error {
 	return nil
 }
 
-// HasIdler returns true given an injected idler callback.
-func (reg *RuntimeRegistry) HasIdler() bool {
-	return reg.cbOnIdle != nil
-}
-
 // ----------------------------------------------------------------------------
 // Routines
 
 // cleanerRoutine waits for cleanerInterval, then finds node runtimes that have
-// been idle for at least runIdleDuration and executes the OnIdle() extension.
-//
-// Setting a nil OnIdle disables the cleaner routine.
-func (reg *RuntimeRegistry) cleanerRoutine() {
-	if reg.cbOnIdle == nil {
-		reg.logger.Debug("Disabled sleeping runtime cleaner routine")
-		return
-	}
-
+// been idle for at least runIdleDuration and executes the OnIdle() method.
+func (reg *Registry) cleanerRoutine() {
 	// Loops and garbage collects runtimes when timer ticks.
 	for reg.Context().Err() == nil {
 		cleanerInterval := reg.CleanerInterval()

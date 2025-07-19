@@ -241,9 +241,9 @@ func WithReplicationTimeout(t time.Duration) func(*MultiplexBackend) {
 
 // WithRuntimeRegistryOptions is an option helper to inject custom options in the
 // reactor's [RuntimeRegistry] just after its instance is created.
-func WithRuntimeRegistryOptions(regOpts ...runtime.RuntimeRegistryOption) func(*MultiplexBackend) {
+func WithRuntimeRegistryOptions(regOpts ...runtime.RegistryOption) func(*MultiplexBackend) {
 	return func(b *MultiplexBackend) {
-		b.reactor.SetRuntimeRegistryOptions(regOpts...)
+		b.reactor.SetRegistryOptions(regOpts...)
 	}
 }
 
@@ -365,7 +365,7 @@ func (b *MultiplexBackend) GetReactor() *Reactor {
 // GetRuntimeRegistry should return the active node runtime manager.
 //
 // GetRuntimeRegistry implements [server.Backend]
-func (b *MultiplexBackend) GetRuntimeRegistry() runtime.RuntimeManager {
+func (b *MultiplexBackend) GetRuntimeRegistry() runtime.Manager {
 	b.reactor.runtimesMutex.Lock()
 	defer b.reactor.runtimesMutex.Unlock()
 
@@ -753,7 +753,7 @@ func (b *MultiplexBackend) OnStart(ctx context.Context) error {
 
 	// Start networks that are currently replaying on other relays.
 	// We don't need for this goroutine to complete before we proceed.
-	go func(runtimeRegistry runtime.RuntimeManager) {
+	go func(runtimeRegistry runtime.Manager) {
 		replayingBuckets := b.reactor.GetReplayPool().GetBuckets()
 		if b.reactor.Size() == 0 || len(replayingBuckets) == 0 {
 			return
@@ -975,7 +975,7 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 		)
 
 		// Wait for the syncing relays to announce a ChainReplicationComplete.
-		go func(withReg runtime.RuntimeManager, syncingChainIds []string) {
+		go func(withReg runtime.Manager, syncingChainIds []string) {
 			// Upon completion or error, we may plan to idle the active runtime.
 			defer func() {
 				for _, chainID := range syncingChainIds {
@@ -1095,7 +1095,7 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 		)
 
 		// Wait for the transaction to be announced (indexed locally).
-		go func(withReg runtime.RuntimeManager, txesWaiting []client.Transaction) {
+		go func(withReg runtime.Manager, txesWaiting []client.Transaction) {
 			// Upon completion or error, we may plan to idle the active runtime.
 			defer func() {
 				waitingChainIds := chainIdsFromTransactions(userAddress, txesWaiting...)

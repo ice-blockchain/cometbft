@@ -28,7 +28,7 @@ func (DefaultServer) GetLogger() cmtlog.Logger {
 }
 
 // GetRuntimeRegistry returns the injected node runtime manager.
-func (DefaultServer) GetRuntimeRegistry() runtime.RuntimeManager {
+func (DefaultServer) GetRuntimeRegistry() runtime.Manager {
 	return nil
 }
 

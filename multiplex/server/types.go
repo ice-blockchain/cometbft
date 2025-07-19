@@ -38,7 +38,7 @@ type Server interface {
 	service.Service
 
 	// GetRuntimeRegistry should return the node runtime manager.
-	GetRuntimeRegistry() runtime.RuntimeManager
+	GetRuntimeRegistry() runtime.Manager
 
 	// GetAcceptor should return a [client.Acceptor] instance.
 	GetAcceptor() client.Acceptor
@@ -103,7 +103,7 @@ type Backend interface {
 	// It accepts a batch of transactions and a list of remoteRelays
 	// that it should wait for until they have completed replication.
 	//
-	// This method should call [server.RuntimeRegistry#OnComplete].
+	// This method should call [server.Registry#OnComplete].
 	OnBroadcastComplete(
 		ctx context.Context,
 		userAddress string,
@@ -114,7 +114,7 @@ type Backend interface {
 	// OnBroadcastError should update a runtime completion status
 	// and attach and log an error about the broadcast completion.
 	//
-	// This method should call [server.RuntimeRegistry#OnComplete].
+	// This method should call [server.Registry#OnComplete].
 	OnBroadcastError(
 		reason error,
 		userAddress string,

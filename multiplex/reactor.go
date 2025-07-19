@@ -135,9 +135,8 @@ type Reactor struct {
 	chainRegistry ChainRegistry
 	storagePaths  MultiplexFS
 	configsPaths  MultiplexFS
-	// RuntimeRegistry defines a registry of active and inactive runtimes.
-	runtimeRegistry *runtime.RuntimeRegistry
-	onIdleCallback  runtime.OnIdleFn
+	// Registry defines a registry of active and inactive runtimes.
+	runtimeRegistry *runtime.Registry
 
 	// Networking layer
 	//
@@ -296,7 +295,7 @@ func NewReactor(
 		// Provides a default acceptor implementation
 		acceptorImpl: &client.DefaultAcceptor{},
 
-		runtimeRegistry: runtime.NewRuntimeRegistry(ctx,
+		runtimeRegistry: runtime.NewRegistry(ctx,
 			logger.With("module", "idle-manager"),
 		),
 
@@ -324,11 +323,6 @@ func NewReactor(
 		// Internals
 		logger: logger,
 	}
-
-	// Set default OnIdle callback in case none is set through options.
-	reactor.SetRuntimeRegistryOptions(
-		runtime.RuntimeRegistryOnIdle(DefaultOnIdleCallback(reactor)),
-	)
 
 	// Enable overwrite of some optional properties.
 	for _, option := range options {
@@ -410,56 +404,6 @@ func NewReactor(
 	return reactor
 }
 
-// DefaultOnIdleCallback returns a default implementation for the OnIdle
-// callback used by the [runtime.RuntimeRegistry] when node runtimes are
-// sleeping for a given period of time.
-func DefaultOnIdleCallback(reactor *Reactor) func(chainID string) error {
-	return func(chainID string) error {
-		reactor.logger.Debug("Now idling inactive node runtime", "chainId", chainID)
-
-		// Stops mempool, consensus, blocksync, evidence.
-		reactor.StopConsensusInstanceReactors(
-			reactor.Context(),
-			chainID,
-		)
-
-		// Stops eventbus, index, privvalidator.
-		if err := reactor.StopNodeInstance(chainID); err != nil {
-			reactor.logger.Error("failed to stop node instance (idle-manager)",
-				"err", err)
-		}
-
-		// Close all databases conns for this ChainID.
-		dbKeys := []string{
-			ServiceKeyDatabaseBlock,
-			ServiceKeyDatabaseState,
-			ServiceKeyDatabaseIndex,
-			ServiceKeyDatabaseEvidence,
-		}
-		servicesProvider := reactor.GetServicesProvider()
-		for _, dbKey := range dbKeys {
-			dbService := servicesProvider(dbKey, chainID)
-			if dbService != nil {
-				dbService.Stop()
-			}
-		}
-
-		reactor.removeInternalChannels(chainID)
-
-		reactor.servicesMutex.Lock()
-		for serviceName, multiplex := range reactor.servicesRegistry {
-			if _, ok := multiplex[chainID]; !ok {
-				continue
-			}
-
-			delete(reactor.servicesRegistry[serviceName], chainID)
-		}
-		reactor.servicesMutex.Unlock()
-
-		return nil
-	}
-}
-
 func (reactor *Reactor) GetRelayDialerForCometBFT() mempl.RelayDialerFn {
 	return func(
 		sw *p2p.Switch,
@@ -508,15 +452,6 @@ func WithAcceptor(
 	}
 }
 
-// WithOnIdleCallback
-func WithOnIdleCallback(
-	onIdle runtime.OnIdleFn,
-) func(*Reactor) {
-	return func(r *Reactor) {
-		r.onIdleCallback = onIdle
-	}
-}
-
 func WithRelayInfoTimeout(t time.Duration) func(*Reactor) {
 	return func(r *Reactor) {
 		r.relayInfoTimeout = t
@@ -552,7 +487,7 @@ func (reactor *Reactor) SetOptions(options ...ReactorOption) {
 	}
 }
 
-func (reactor *Reactor) SetRuntimeRegistryOptions(options ...runtime.RuntimeRegistryOption) {
+func (reactor *Reactor) SetRegistryOptions(options ...runtime.RegistryOption) {
 	for _, option := range options {
 		option(reactor.runtimeRegistry)
 	}
@@ -713,7 +648,7 @@ func (reactor *Reactor) GetChainRegistry() ChainRegistry {
 }
 
 // GetRuntimeRegistry returns the active node runtime manager.
-func (reactor *Reactor) GetRuntimeRegistry() *runtime.RuntimeRegistry {
+func (reactor *Reactor) GetRuntimeRegistry() *runtime.Registry {
 	reactor.runtimesMutex.Lock()
 	defer reactor.runtimesMutex.Unlock()
 
@@ -721,7 +656,7 @@ func (reactor *Reactor) GetRuntimeRegistry() *runtime.RuntimeRegistry {
 }
 
 // SetRuntimeRegistry returns the active node runtime manager.
-func (reactor *Reactor) SetRuntimeRegistry(r *runtime.RuntimeRegistry) {
+func (reactor *Reactor) SetRuntimeRegistry(r *runtime.Registry) {
 	reactor.runtimesMutex.Lock()
 	defer reactor.runtimesMutex.Unlock()
 
@@ -2162,7 +2097,7 @@ func (reactor *Reactor) OnStart(ctx context.Context) error {
 	// We should initialize a state machine and inject a node runtime
 	// only for currently ACTIVE runtimes.
 	//
-	// TODO(midas): RuntimeRegistry to persist active runtimes on shutdown.
+	// TODO(midas): Registry to persist active runtimes on shutdown.
 
 	activeRuntimes := reactor.runtimeRegistry.ActiveRuntimes()
 	activeChainIds := []string{}
@@ -2220,7 +2155,7 @@ func (reactor *Reactor) OnStop() {
 	if reactor.runtimeRegistry != nil && reactor.runtimeRegistry.IsRunning() {
 		// Try to shutdown gracefully (each ChainID individually).
 		restNodeRuntimes := reactor.runtimeRegistry.ActiveRuntimes()
-		if len(restNodeRuntimes) > 0 && reactor.runtimeRegistry.HasIdler() {
+		if len(restNodeRuntimes) > 0 {
 			// TODO(midas): remove debug logs
 			reactor.logger.Debug("Shutting down remaining node runtimes",
 				"networks", restNodeRuntimes,

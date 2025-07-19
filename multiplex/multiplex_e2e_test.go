@@ -986,7 +986,7 @@ func TestScenarioMultiplexBeforeAndAfterBackendRestart(t *testing.T) {
 	)
 }
 
-// Test the mx.DefaultOnIdleCallback which should shutdown sleeping runtimes,
+// Test the runtime.Registry#OnIdle which should shutdown sleeping runtimes,
 // and broadcast operation before idling and after idling must succeed. This
 // test also validates that blocks are committed on all relays.
 func TestScenarioMultiplexAfterRuntimeIdling(t *testing.T) {
@@ -1007,9 +1007,9 @@ func TestScenarioMultiplexAfterRuntimeIdling(t *testing.T) {
 	require.NotEmpty(t, servers)
 	require.Len(t, servers, numRelays)
 
-	testRuntimeRegistryOpts := []runtime.RuntimeRegistryOption{
-		runtime.RuntimeRegistryCleanerInterval(10 * time.Second), // run cleaner every 10s
-		runtime.RuntimeRegistryIdleDuration(5 * time.Second),     // idle after 5s inactivity
+	testRuntimeRegistryOpts := []runtime.RegistryOption{
+		runtime.RegistryCleanerInterval(10 * time.Second), // run cleaner every 10s
+		runtime.RegistryIdleDuration(5 * time.Second),     // idle after 5s inactivity
 	}
 
 	// force-overwrite RuntimeRegistry
@@ -2031,23 +2031,18 @@ func requireCompleteClientBroadcastTx(
 	close(notifyCh)
 }
 
-func useCustomRuntimeRegistry(tb testing.TB, testReactor *mx.Reactor, regOpts ...runtime.RuntimeRegistryOption) {
+func useCustomRuntimeRegistry(tb testing.TB, testReactor *mx.Reactor, regOpts ...runtime.RegistryOption) {
 	tb.Helper()
 
 	stopErr := testReactor.GetRuntimeRegistry().Stop()
 	require.NoError(tb, stopErr, "should stop default runtime registry")
 
-	customRuntimeRegistry := runtime.NewRuntimeRegistry(testReactor.Context(),
+	customRuntimeRegistry := runtime.NewRegistry(testReactor.Context(),
 		testReactor.GetLogger().With("module", "idle-manager"),
 		regOpts...,
 	)
 
 	testReactor.SetRuntimeRegistry(customRuntimeRegistry)
-
-	// Set default OnIdle callback in case none is set through options.
-	testReactor.SetRuntimeRegistryOptions(
-		runtime.RuntimeRegistryOnIdle(mx.DefaultOnIdleCallback(testReactor)),
-	)
 
 	startErr := customRuntimeRegistry.Start()
 	require.NoError(tb, startErr, "should start custom runtime registry")

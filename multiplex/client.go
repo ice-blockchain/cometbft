@@ -61,9 +61,9 @@ func (c *MultiplexClient) SetBackend(a server.Backend) {
 	c.backend = a
 }
 
-// GetRuntimeRegistry returns the reactor's [runtime.RuntimeRegistry] implementation.
-func (c *MultiplexClient) GetRuntimeRegistry() *runtime.RuntimeRegistry {
-	return c.backend.GetRuntimeRegistry().(*runtime.RuntimeRegistry)
+// GetRuntimeRegistry returns the reactor's [runtime.Registry] implementation.
+func (c *MultiplexClient) GetRuntimeRegistry() *runtime.Registry {
+	return c.backend.GetRuntimeRegistry().(*runtime.Registry)
 }
 
 // BroadcastTx sends an error to a notifier if any of the transactions
@@ -89,7 +89,7 @@ func (c *MultiplexClient) GetRuntimeRegistry() *runtime.RuntimeRegistry {
 //
 // Also, for every consensus instance, we track active runtimes using the
 // runtime registry and upon completion (or error), we mark the runtimes
-// as completed with [runtime.RuntimeRegistry#OnComplete].
+// as completed with [runtime.Registry#OnComplete].
 // Note that if there are any chain replications happening on one of the
 // remote relays, we will keep alive the active runtimes for these chains
 // and shall mark them as complete only when the replications are done.

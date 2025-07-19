@@ -51,7 +51,7 @@ type Reactor struct {
 	nodeKey *p2p.NodeKey
 
 	msgStatusToPeers atomic.Bool
-	runtimeRegistry  *runtime.RuntimeRegistry
+	runtimeRegistry  *runtime.Registry
 
 	waitSync atomic.Bool
 	eventBus *types.EventBus
@@ -104,7 +104,7 @@ func WithNodeKey(
 
 // WithRuntimeRegistry is an option helper to inject a custom runtime registry.
 func WithRuntimeRegistry(
-	reg *runtime.RuntimeRegistry,
+	reg *runtime.Registry,
 ) func(*Reactor) {
 	return func(r *Reactor) {
 		r.runtimeRegistry = reg
@@ -122,7 +122,7 @@ func (conR *Reactor) GetState() *State {
 }
 
 // SetRuntimeRegistry sets a cuustom runtime registry.
-func (conR *Reactor) SetRuntimeRegistry(reg *runtime.RuntimeRegistry) {
+func (conR *Reactor) SetRuntimeRegistry(reg *runtime.Registry) {
 	conR.runtimeRegistry = reg
 }
 
