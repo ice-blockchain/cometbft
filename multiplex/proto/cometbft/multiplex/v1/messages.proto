@@ -8,6 +8,14 @@ import "google/protobuf/timestamp.proto";
 import "cometbft/types/v1/validator.proto";
 import "cometbft/types/v1/params.proto";
 
+// ChainReplicationStatus requests the status of replication of a ChainID.
+message ChainReplicationStatus {
+  string                    chain_id   = 1 [(gogoproto.customname) = "ChainID"];
+  string                    state      = 2;
+  int64                     height     = 3;
+  google.protobuf.Timestamp start_time = 4 [(gogoproto.nullable) = false, (gogoproto.stdtime) = true];
+}
+
 // ChainParams contains the parameters needed to connect to one chain.
 message ChainParams {
   google.protobuf.Timestamp         genesis_time     = 1 [(gogoproto.nullable) = false, (gogoproto.stdtime)  = true];
@@ -41,8 +49,9 @@ message ChainReplicationComplete {
 message Message {
   // Sum of all possible messages.
   oneof sum {
-    ChainReplicationRequest   chain_replication_request   = 1;
-    ChainReplicationResponse  chain_replication_response  = 2;
-    ChainReplicationComplete  chain_replication_complete  = 3;
+    ChainReplicationStatus    chain_replication_status    = 1;
+    ChainReplicationRequest   chain_replication_request   = 2;
+    ChainReplicationResponse  chain_replication_response  = 3;
+    ChainReplicationComplete  chain_replication_complete  = 4;
   }
 }

@@ -28,6 +28,75 @@ var _ = time.Kitchen
 // proto package needs to be updated.
 const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 
+// ChainReplicationStatus requests the status of replication of a ChainID.
+type ChainReplicationStatus struct {
+	ChainID   string    `protobuf:"bytes,1,opt,name=chain_id,json=chainId,proto3" json:"chain_id,omitempty"`
+	State     string    `protobuf:"bytes,2,opt,name=state,proto3" json:"state,omitempty"`
+	Height    int64     `protobuf:"varint,3,opt,name=height,proto3" json:"height,omitempty"`
+	StartTime time.Time `protobuf:"bytes,4,opt,name=start_time,json=startTime,proto3,stdtime" json:"start_time"`
+}
+
+func (m *ChainReplicationStatus) Reset()         { *m = ChainReplicationStatus{} }
+func (m *ChainReplicationStatus) String() string { return proto.CompactTextString(m) }
+func (*ChainReplicationStatus) ProtoMessage()    {}
+func (*ChainReplicationStatus) Descriptor() ([]byte, []int) {
+	return fileDescriptor_4667fdf2be658734, []int{0}
+}
+func (m *ChainReplicationStatus) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *ChainReplicationStatus) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_ChainReplicationStatus.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *ChainReplicationStatus) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_ChainReplicationStatus.Merge(m, src)
+}
+func (m *ChainReplicationStatus) XXX_Size() int {
+	return m.Size()
+}
+func (m *ChainReplicationStatus) XXX_DiscardUnknown() {
+	xxx_messageInfo_ChainReplicationStatus.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_ChainReplicationStatus proto.InternalMessageInfo
+
+func (m *ChainReplicationStatus) GetChainID() string {
+	if m != nil {
+		return m.ChainID
+	}
+	return ""
+}
+
+func (m *ChainReplicationStatus) GetState() string {
+	if m != nil {
+		return m.State
+	}
+	return ""
+}
+
+func (m *ChainReplicationStatus) GetHeight() int64 {
+	if m != nil {
+		return m.Height
+	}
+	return 0
+}
+
+func (m *ChainReplicationStatus) GetStartTime() time.Time {
+	if m != nil {
+		return m.StartTime
+	}
+	return time.Time{}
+}
+
 // ChainParams contains the parameters needed to connect to one chain.
 type ChainParams struct {
 	GenesisTime     time.Time           `protobuf:"bytes,1,opt,name=genesis_time,json=genesisTime,proto3,stdtime" json:"genesis_time"`
@@ -43,7 +112,7 @@ func (m *ChainParams) Reset()         { *m = ChainParams{} }
 func (m *ChainParams) String() string { return proto.CompactTextString(m) }
 func (*ChainParams) ProtoMessage()    {}
 func (*ChainParams) Descriptor() ([]byte, []int) {
-	return fileDescriptor_4667fdf2be658734, []int{0}
+	return fileDescriptor_4667fdf2be658734, []int{1}
 }
 func (m *ChainParams) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -131,7 +200,7 @@ func (m *ChainReplicationRequest) Reset()         { *m = ChainReplicationRequest
 func (m *ChainReplicationRequest) String() string { return proto.CompactTextString(m) }
 func (*ChainReplicationRequest) ProtoMessage()    {}
 func (*ChainReplicationRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_4667fdf2be658734, []int{1}
+	return fileDescriptor_4667fdf2be658734, []int{2}
 }
 func (m *ChainReplicationRequest) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -184,7 +253,7 @@ func (m *ChainReplicationResponse) Reset()         { *m = ChainReplicationRespon
 func (m *ChainReplicationResponse) String() string { return proto.CompactTextString(m) }
 func (*ChainReplicationResponse) ProtoMessage()    {}
 func (*ChainReplicationResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_4667fdf2be658734, []int{2}
+	return fileDescriptor_4667fdf2be658734, []int{3}
 }
 func (m *ChainReplicationResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -237,7 +306,7 @@ func (m *ChainReplicationComplete) Reset()         { *m = ChainReplicationComple
 func (m *ChainReplicationComplete) String() string { return proto.CompactTextString(m) }
 func (*ChainReplicationComplete) ProtoMessage()    {}
 func (*ChainReplicationComplete) Descriptor() ([]byte, []int) {
-	return fileDescriptor_4667fdf2be658734, []int{3}
+	return fileDescriptor_4667fdf2be658734, []int{4}
 }
 func (m *ChainReplicationComplete) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -286,6 +355,7 @@ type Message struct {
 	//
 	// Types that are valid to be assigned to Sum:
 	//
+	//	*Message_ChainReplicationStatus
 	//	*Message_ChainReplicationRequest
 	//	*Message_ChainReplicationResponse
 	//	*Message_ChainReplicationComplete
@@ -296,7 +366,7 @@ func (m *Message) Reset()         { *m = Message{} }
 func (m *Message) String() string { return proto.CompactTextString(m) }
 func (*Message) ProtoMessage()    {}
 func (*Message) Descriptor() ([]byte, []int) {
-	return fileDescriptor_4667fdf2be658734, []int{4}
+	return fileDescriptor_4667fdf2be658734, []int{5}
 }
 func (m *Message) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -331,16 +401,20 @@ type isMessage_Sum interface {
 	Size() int
 }
 
+type Message_ChainReplicationStatus struct {
+	ChainReplicationStatus *ChainReplicationStatus `protobuf:"bytes,1,opt,name=chain_replication_status,json=chainReplicationStatus,proto3,oneof" json:"chain_replication_status,omitempty"`
+}
 type Message_ChainReplicationRequest struct {
-	ChainReplicationRequest *ChainReplicationRequest `protobuf:"bytes,1,opt,name=chain_replication_request,json=chainReplicationRequest,proto3,oneof" json:"chain_replication_request,omitempty"`
+	ChainReplicationRequest *ChainReplicationRequest `protobuf:"bytes,2,opt,name=chain_replication_request,json=chainReplicationRequest,proto3,oneof" json:"chain_replication_request,omitempty"`
 }
 type Message_ChainReplicationResponse struct {
-	ChainReplicationResponse *ChainReplicationResponse `protobuf:"bytes,2,opt,name=chain_replication_response,json=chainReplicationResponse,proto3,oneof" json:"chain_replication_response,omitempty"`
+	ChainReplicationResponse *ChainReplicationResponse `protobuf:"bytes,3,opt,name=chain_replication_response,json=chainReplicationResponse,proto3,oneof" json:"chain_replication_response,omitempty"`
 }
 type Message_ChainReplicationComplete struct {
-	ChainReplicationComplete *ChainReplicationComplete `protobuf:"bytes,3,opt,name=chain_replication_complete,json=chainReplicationComplete,proto3,oneof" json:"chain_replication_complete,omitempty"`
+	ChainReplicationComplete *ChainReplicationComplete `protobuf:"bytes,4,opt,name=chain_replication_complete,json=chainReplicationComplete,proto3,oneof" json:"chain_replication_complete,omitempty"`
 }
 
+func (*Message_ChainReplicationStatus) isMessage_Sum()   {}
 func (*Message_ChainReplicationRequest) isMessage_Sum()  {}
 func (*Message_ChainReplicationResponse) isMessage_Sum() {}
 func (*Message_ChainReplicationComplete) isMessage_Sum() {}
@@ -348,6 +422,13 @@ func (*Message_ChainReplicationComplete) isMessage_Sum() {}
 func (m *Message) GetSum() isMessage_Sum {
 	if m != nil {
 		return m.Sum
+	}
+	return nil
+}
+
+func (m *Message) GetChainReplicationStatus() *ChainReplicationStatus {
+	if x, ok := m.GetSum().(*Message_ChainReplicationStatus); ok {
+		return x.ChainReplicationStatus
 	}
 	return nil
 }
@@ -376,6 +457,7 @@ func (m *Message) GetChainReplicationComplete() *ChainReplicationComplete {
 // XXX_OneofWrappers is for the internal use of the proto package.
 func (*Message) XXX_OneofWrappers() []interface{} {
 	return []interface{}{
+		(*Message_ChainReplicationStatus)(nil),
 		(*Message_ChainReplicationRequest)(nil),
 		(*Message_ChainReplicationResponse)(nil),
 		(*Message_ChainReplicationComplete)(nil),
@@ -383,6 +465,7 @@ func (*Message) XXX_OneofWrappers() []interface{} {
 }
 
 func init() {
+	proto.RegisterType((*ChainReplicationStatus)(nil), "cometbft.multiplex.v1.ChainReplicationStatus")
 	proto.RegisterType((*ChainParams)(nil), "cometbft.multiplex.v1.ChainParams")
 	proto.RegisterType((*ChainReplicationRequest)(nil), "cometbft.multiplex.v1.ChainReplicationRequest")
 	proto.RegisterType((*ChainReplicationResponse)(nil), "cometbft.multiplex.v1.ChainReplicationResponse")
@@ -395,45 +478,99 @@ func init() {
 }
 
 var fileDescriptor_4667fdf2be658734 = []byte{
-	// 593 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xac, 0x54, 0x4f, 0x6f, 0xd3, 0x30,
-	0x1c, 0x4d, 0xba, 0x3f, 0x19, 0xee, 0xc6, 0x50, 0x04, 0x5a, 0xd6, 0x43, 0x5a, 0x2a, 0x98, 0x7a,
-	0x21, 0xd1, 0xe0, 0xca, 0x29, 0x63, 0xa2, 0x3d, 0x4c, 0x42, 0x1e, 0xda, 0x01, 0x0e, 0x91, 0x93,
-	0x7a, 0x89, 0x45, 0x12, 0x9b, 0xda, 0xa9, 0xd8, 0x37, 0xe0, 0xb8, 0x8f, 0xb5, 0xe3, 0x8e, 0x9c,
-	0xc6, 0xd4, 0x7e, 0x0f, 0x84, 0xec, 0xfc, 0x59, 0x47, 0xb3, 0xa9, 0x07, 0x6e, 0xf1, 0xef, 0xf7,
-	0xfc, 0x7b, 0x2f, 0xef, 0xd9, 0x06, 0xaf, 0x42, 0x9a, 0x62, 0x11, 0x9c, 0x0b, 0x37, 0xcd, 0x13,
-	0x41, 0x58, 0x82, 0x7f, 0xb8, 0xd3, 0x43, 0x37, 0xc5, 0x9c, 0xa3, 0x08, 0x73, 0x87, 0x4d, 0xa8,
-	0xa0, 0xe6, 0x8b, 0x0a, 0xe5, 0xd4, 0x28, 0x67, 0x7a, 0xd8, 0x79, 0x1e, 0xd1, 0x88, 0x2a, 0x84,
-	0x2b, 0xbf, 0x0a, 0x70, 0xa7, 0x1b, 0x51, 0x1a, 0x25, 0xd8, 0x55, 0xab, 0x20, 0x3f, 0x77, 0x05,
-	0x49, 0x31, 0x17, 0x28, 0x65, 0x25, 0xe0, 0x65, 0xcd, 0x29, 0x2e, 0x18, 0xe6, 0x92, 0x6f, 0x8a,
-	0x12, 0x32, 0x46, 0x82, 0x4e, 0x4a, 0x88, 0xbd, 0x0c, 0x61, 0x68, 0x82, 0xd2, 0x52, 0x50, 0xff,
-	0x4f, 0x0b, 0xb4, 0x8f, 0x62, 0x44, 0xb2, 0x4f, 0xaa, 0x6a, 0x7e, 0x04, 0xdb, 0x11, 0xce, 0x30,
-	0x27, 0xdc, 0x97, 0x6c, 0x96, 0xde, 0xd3, 0x07, 0xed, 0xb7, 0x1d, 0xa7, 0x90, 0xe2, 0x54, 0x52,
-	0x9c, 0xcf, 0x95, 0x14, 0x6f, 0xeb, 0xea, 0xa6, 0xab, 0x5d, 0xfe, 0xee, 0xea, 0xb0, 0x5d, 0xee,
-	0x94, 0x3d, 0xf3, 0x00, 0x6c, 0x85, 0x72, 0xae, 0x4f, 0xc6, 0x56, 0xab, 0xa7, 0x0f, 0x9e, 0x78,
-	0xed, 0xd9, 0x4d, 0xd7, 0x50, 0x5c, 0xa3, 0x0f, 0xd0, 0x50, 0xcd, 0xd1, 0xd8, 0x3c, 0x01, 0xcf,
-	0x42, 0x9a, 0x71, 0x9c, 0xf1, 0x9c, 0xfb, 0x85, 0x34, 0x6b, 0x4d, 0x91, 0xf6, 0x9d, 0xda, 0x2c,
-	0xa5, 0xdd, 0x99, 0x1e, 0x3a, 0x47, 0x15, 0xb4, 0x90, 0x0b, 0x77, 0xc3, 0xfb, 0x05, 0xf3, 0x18,
-	0x80, 0xda, 0x02, 0x6e, 0xad, 0xab, 0x41, 0xdd, 0x86, 0x41, 0x67, 0x15, 0xe8, 0x14, 0x0b, 0x6f,
-	0x5d, 0xfe, 0x02, 0x5c, 0xd8, 0x68, 0xee, 0x83, 0x2d, 0xc4, 0x98, 0x1f, 0x23, 0x1e, 0x5b, 0x1b,
-	0x3d, 0x7d, 0xb0, 0x0d, 0x0d, 0xc4, 0xd8, 0x10, 0xf1, 0xd8, 0x3c, 0x00, 0xbb, 0xb2, 0xc5, 0x05,
-	0x12, 0xd8, 0x0f, 0x2e, 0x04, 0xe6, 0xd6, 0xa6, 0x42, 0xec, 0x20, 0xc6, 0x4e, 0x65, 0xd5, 0x93,
-	0x45, 0xf3, 0x35, 0x78, 0x4a, 0x32, 0x22, 0x08, 0x4a, 0xfc, 0x18, 0x93, 0x28, 0x16, 0x96, 0xd1,
-	0xd3, 0x07, 0x6b, 0x70, 0xa7, 0xac, 0x0e, 0x55, 0xb1, 0xff, 0x53, 0x07, 0x7b, 0xca, 0x14, 0x88,
-	0x59, 0x42, 0x42, 0x24, 0x08, 0xcd, 0x20, 0xfe, 0x9e, 0x63, 0x2e, 0xee, 0x79, 0xa8, 0x3f, 0xe2,
-	0xe1, 0x31, 0xd8, 0x2e, 0x70, 0xa5, 0x7f, 0xad, 0x7f, 0xfd, 0x5b, 0x3c, 0x6c, 0xce, 0x42, 0xdc,
-	0xb0, 0x1d, 0xde, 0x2d, 0xfa, 0x5f, 0x81, 0xb5, 0xac, 0x84, 0x33, 0xe9, 0xf0, 0xca, 0x52, 0xf6,
-	0x80, 0x91, 0xd1, 0x31, 0xae, 0x53, 0x87, 0x9b, 0x72, 0x39, 0x1a, 0x37, 0x0d, 0x3f, 0xa2, 0x29,
-	0x4b, 0xb0, 0xf8, 0x0f, 0xc3, 0x6f, 0x5b, 0xc0, 0x38, 0x29, 0x6e, 0x9a, 0x99, 0x80, 0xfd, 0x62,
-	0xd8, 0xe4, 0x8e, 0xc9, 0x9f, 0x14, 0x8e, 0x96, 0xc7, 0xd9, 0x79, 0xcc, 0x99, 0xe5, 0x1c, 0x86,
-	0x1a, 0xdc, 0x0b, 0x1f, 0x88, 0x88, 0x82, 0x4e, 0x13, 0x5b, 0xe1, 0x5a, 0x19, 0x84, 0xbb, 0x32,
-	0x5d, 0xb1, 0x6d, 0xa8, 0x41, 0x2b, 0x7c, 0x28, 0x88, 0x46, 0xc2, 0xb0, 0x74, 0xb2, 0xbc, 0x39,
-	0xab, 0x12, 0x56, 0x01, 0x34, 0x11, 0x56, 0x3d, 0x6f, 0x03, 0xac, 0xf1, 0x3c, 0xf5, 0xce, 0xae,
-	0x66, 0xb6, 0x7e, 0x3d, 0xb3, 0xf5, 0xdb, 0x99, 0xad, 0x5f, 0xce, 0x6d, 0xed, 0x7a, 0x6e, 0x6b,
-	0xbf, 0xe6, 0xb6, 0xf6, 0xe5, 0x7d, 0x44, 0x44, 0x9c, 0x07, 0x92, 0xd3, 0x25, 0x21, 0x7e, 0x13,
-	0x24, 0x34, 0xfc, 0xa6, 0xc6, 0xb9, 0xf5, 0xe3, 0x83, 0x18, 0x71, 0x1b, 0x1f, 0xc8, 0x60, 0x53,
-	0x3d, 0x29, 0xef, 0xfe, 0x06, 0x00, 0x00, 0xff, 0xff, 0x74, 0x8a, 0x1e, 0x1b, 0x40, 0x05, 0x00,
-	0x00,
+	// 671 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xac, 0x55, 0xcd, 0x4e, 0xdb, 0x4c,
+	0x14, 0xb5, 0x13, 0x48, 0x60, 0x02, 0x1f, 0x9f, 0x2c, 0x0a, 0x26, 0x0b, 0x27, 0x8d, 0x5a, 0x94,
+	0x0d, 0xb6, 0xa0, 0xdb, 0xae, 0x92, 0xa2, 0x86, 0x05, 0x52, 0x35, 0x54, 0x2c, 0xda, 0x45, 0x34,
+	0x71, 0x06, 0x7b, 0x54, 0xdb, 0x33, 0xcd, 0x8c, 0xa3, 0xf2, 0x06, 0x5d, 0xf2, 0x2e, 0x7d, 0x09,
+	0xa4, 0x6e, 0x58, 0x76, 0x45, 0xab, 0xf0, 0x1e, 0x55, 0x35, 0xe3, 0xb1, 0xf9, 0x89, 0x41, 0xa9,
+	0xd4, 0x5d, 0xee, 0xdc, 0x33, 0xf7, 0xdc, 0x73, 0xcf, 0x5c, 0x07, 0xbc, 0xf0, 0x69, 0x8c, 0xc5,
+	0xe8, 0x4c, 0x78, 0x71, 0x1a, 0x09, 0xc2, 0x22, 0xfc, 0xc5, 0x9b, 0xee, 0x7b, 0x31, 0xe6, 0x1c,
+	0x05, 0x98, 0xbb, 0x6c, 0x42, 0x05, 0xb5, 0x9e, 0xe5, 0x28, 0xb7, 0x40, 0xb9, 0xd3, 0xfd, 0xe6,
+	0x66, 0x40, 0x03, 0xaa, 0x10, 0x9e, 0xfc, 0x95, 0x81, 0x9b, 0xad, 0x80, 0xd2, 0x20, 0xc2, 0x9e,
+	0x8a, 0x46, 0xe9, 0x99, 0x27, 0x48, 0x8c, 0xb9, 0x40, 0x31, 0xd3, 0x80, 0xe7, 0x05, 0xa7, 0x38,
+	0x67, 0x98, 0x4b, 0xbe, 0x29, 0x8a, 0xc8, 0x18, 0x09, 0x3a, 0xd1, 0x10, 0x67, 0x1e, 0xc2, 0xd0,
+	0x04, 0xc5, 0xba, 0xa1, 0xce, 0x37, 0x13, 0x6c, 0xf5, 0x43, 0x44, 0x12, 0x88, 0x59, 0x44, 0x7c,
+	0x24, 0x08, 0x4d, 0x4e, 0x04, 0x12, 0x29, 0xb7, 0x76, 0xc1, 0x8a, 0x2f, 0x33, 0x43, 0x32, 0xb6,
+	0xcd, 0xb6, 0xd9, 0x5d, 0xed, 0x35, 0x66, 0xd7, 0xad, 0xba, 0x42, 0x1f, 0xbd, 0x81, 0x75, 0x95,
+	0x3c, 0x1a, 0x5b, 0x9b, 0x60, 0x99, 0x0b, 0x24, 0xb0, 0x5d, 0x91, 0x20, 0x98, 0x05, 0xd6, 0x16,
+	0xa8, 0x85, 0x98, 0x04, 0xa1, 0xb0, 0xab, 0x6d, 0xb3, 0x5b, 0x85, 0x3a, 0xb2, 0xfa, 0x00, 0x70,
+	0x81, 0x26, 0x62, 0x28, 0xc5, 0xd8, 0x4b, 0x6d, 0xb3, 0xdb, 0x38, 0x68, 0xba, 0x99, 0x52, 0x37,
+	0x57, 0xea, 0xbe, 0xcf, 0x95, 0xf6, 0x56, 0x2e, 0xaf, 0x5b, 0xc6, 0xc5, 0xcf, 0x96, 0x09, 0x57,
+	0xd5, 0x3d, 0x99, 0xe9, 0xfc, 0xae, 0x80, 0x86, 0xea, 0xe3, 0x9d, 0xd2, 0x62, 0xbd, 0x05, 0x6b,
+	0x01, 0x4e, 0x30, 0x27, 0x3c, 0x2b, 0x6b, 0xfe, 0x45, 0xd9, 0x86, 0xbe, 0x29, 0x73, 0xf7, 0x34,
+	0x57, 0x9e, 0xd0, 0x7c, 0x0c, 0xfe, 0xf7, 0x69, 0xc2, 0x71, 0xc2, 0x53, 0x3e, 0xcc, 0x06, 0xaa,
+	0x74, 0x36, 0x0e, 0x3a, 0x6e, 0x61, 0xb1, 0x9a, 0xb8, 0x3b, 0xdd, 0x77, 0xfb, 0x39, 0x34, 0x6b,
+	0x17, 0x6e, 0xf8, 0xf7, 0x0f, 0xac, 0x43, 0x00, 0x0a, 0xe3, 0xb8, 0x1e, 0x4a, 0xab, 0xa4, 0xd0,
+	0x69, 0x0e, 0x3a, 0xc1, 0xa2, 0xb7, 0x24, 0x25, 0xc0, 0x3b, 0x17, 0xad, 0x1d, 0xb0, 0x82, 0x18,
+	0x1b, 0x86, 0x88, 0x87, 0xf6, 0x72, 0xdb, 0xec, 0xae, 0xc1, 0x3a, 0x62, 0x6c, 0x80, 0x78, 0x68,
+	0xed, 0x82, 0x0d, 0x99, 0x52, 0xde, 0x0c, 0x47, 0xe7, 0x02, 0x73, 0xbb, 0xa6, 0x10, 0xeb, 0x88,
+	0x31, 0x69, 0x38, 0xee, 0xc9, 0x43, 0xeb, 0x25, 0xf8, 0x8f, 0x24, 0x44, 0x10, 0x14, 0x0d, 0xb5,
+	0x7d, 0x75, 0x65, 0xdf, 0xba, 0x3e, 0x1d, 0xa8, 0xc3, 0xce, 0x57, 0x13, 0x6c, 0x3f, 0x7c, 0x36,
+	0x10, 0x7f, 0x4e, 0x31, 0x17, 0x0b, 0xbf, 0x9b, 0x43, 0xb0, 0x96, 0xe1, 0xf4, 0xfc, 0x2a, 0x0f,
+	0xe7, 0x77, 0x77, 0x45, 0xdc, 0x3b, 0x76, 0xc3, 0x86, 0x7f, 0x1b, 0x74, 0x3e, 0x02, 0x7b, 0xbe,
+	0x13, 0xce, 0xe4, 0x84, 0x17, 0x6e, 0x65, 0x1b, 0xd4, 0x13, 0x3a, 0xc6, 0x85, 0xeb, 0xb0, 0x26,
+	0xc3, 0xa3, 0x71, 0x59, 0xf1, 0x3e, 0x8d, 0x59, 0x84, 0xc5, 0x3f, 0x28, 0xfe, 0xbd, 0x0a, 0xea,
+	0xc7, 0xd9, 0xf7, 0xc1, 0x22, 0xc0, 0xce, 0x8a, 0x4d, 0x6e, 0x99, 0x94, 0x5b, 0x29, 0xd7, 0xaf,
+	0x79, 0xef, 0xa9, 0xc1, 0xcc, 0x6d, 0xef, 0xc0, 0x80, 0x5b, 0x7e, 0xf9, 0x5e, 0x47, 0x60, 0x67,
+	0x9e, 0x6a, 0x92, 0x99, 0xa7, 0x4d, 0x70, 0x17, 0xe4, 0xd2, 0x96, 0x0f, 0x0c, 0xb8, 0xed, 0x3f,
+	0xf2, 0x1a, 0x28, 0x68, 0x96, 0xb1, 0x65, 0x06, 0xe9, 0x9d, 0xf1, 0x16, 0xa6, 0xcb, 0xae, 0x0d,
+	0x0c, 0x68, 0xfb, 0x8f, 0x79, 0x5e, 0x4a, 0xe8, 0x6b, 0xd3, 0xf4, 0x6e, 0x2d, 0x4a, 0x98, 0x7b,
+	0x5d, 0x46, 0x98, 0xe7, 0x7a, 0xcb, 0xa0, 0xca, 0xd3, 0xb8, 0x77, 0x7a, 0x39, 0x73, 0xcc, 0xab,
+	0x99, 0x63, 0xfe, 0x9a, 0x39, 0xe6, 0xc5, 0x8d, 0x63, 0x5c, 0xdd, 0x38, 0xc6, 0x8f, 0x1b, 0xc7,
+	0xf8, 0xf0, 0x3a, 0x20, 0x22, 0x4c, 0x47, 0x92, 0xd3, 0x23, 0x3e, 0xde, 0x1b, 0x45, 0xd4, 0xff,
+	0xa4, 0xca, 0x79, 0xc5, 0xd7, 0x19, 0x31, 0xe2, 0x95, 0xfe, 0x83, 0x8c, 0x6a, 0xea, 0xeb, 0xf5,
+	0xea, 0x4f, 0x00, 0x00, 0x00, 0xff, 0xff, 0xf2, 0x8e, 0x72, 0x80, 0x61, 0x06, 0x00, 0x00,
+}
+
+func (m *ChainReplicationStatus) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *ChainReplicationStatus) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *ChainReplicationStatus) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	n1, err1 := github_com_cosmos_gogoproto_types.StdTimeMarshalTo(m.StartTime, dAtA[i-github_com_cosmos_gogoproto_types.SizeOfStdTime(m.StartTime):])
+	if err1 != nil {
+		return 0, err1
+	}
+	i -= n1
+	i = encodeVarintMessages(dAtA, i, uint64(n1))
+	i--
+	dAtA[i] = 0x22
+	if m.Height != 0 {
+		i = encodeVarintMessages(dAtA, i, uint64(m.Height))
+		i--
+		dAtA[i] = 0x18
+	}
+	if len(m.State) > 0 {
+		i -= len(m.State)
+		copy(dAtA[i:], m.State)
+		i = encodeVarintMessages(dAtA, i, uint64(len(m.State)))
+		i--
+		dAtA[i] = 0x12
+	}
+	if len(m.ChainID) > 0 {
+		i -= len(m.ChainID)
+		copy(dAtA[i:], m.ChainID)
+		i = encodeVarintMessages(dAtA, i, uint64(len(m.ChainID)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
 }
 
 func (m *ChainParams) Marshal() (dAtA []byte, err error) {
@@ -504,12 +641,12 @@ func (m *ChainParams) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 		i--
 		dAtA[i] = 0x12
 	}
-	n3, err3 := github_com_cosmos_gogoproto_types.StdTimeMarshalTo(m.GenesisTime, dAtA[i-github_com_cosmos_gogoproto_types.SizeOfStdTime(m.GenesisTime):])
-	if err3 != nil {
-		return 0, err3
+	n4, err4 := github_com_cosmos_gogoproto_types.StdTimeMarshalTo(m.GenesisTime, dAtA[i-github_com_cosmos_gogoproto_types.SizeOfStdTime(m.GenesisTime):])
+	if err4 != nil {
+		return 0, err4
 	}
-	i -= n3
-	i = encodeVarintMessages(dAtA, i, uint64(n3))
+	i -= n4
+	i = encodeVarintMessages(dAtA, i, uint64(n4))
 	i--
 	dAtA[i] = 0xa
 	return len(dAtA) - i, nil
@@ -663,6 +800,27 @@ func (m *Message) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	return len(dAtA) - i, nil
 }
 
+func (m *Message_ChainReplicationStatus) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *Message_ChainReplicationStatus) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	if m.ChainReplicationStatus != nil {
+		{
+			size, err := m.ChainReplicationStatus.MarshalToSizedBuffer(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = encodeVarintMessages(dAtA, i, uint64(size))
+		}
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
 func (m *Message_ChainReplicationRequest) MarshalTo(dAtA []byte) (int, error) {
 	size := m.Size()
 	return m.MarshalToSizedBuffer(dAtA[:size])
@@ -680,7 +838,7 @@ func (m *Message_ChainReplicationRequest) MarshalToSizedBuffer(dAtA []byte) (int
 			i = encodeVarintMessages(dAtA, i, uint64(size))
 		}
 		i--
-		dAtA[i] = 0xa
+		dAtA[i] = 0x12
 	}
 	return len(dAtA) - i, nil
 }
@@ -701,7 +859,7 @@ func (m *Message_ChainReplicationResponse) MarshalToSizedBuffer(dAtA []byte) (in
 			i = encodeVarintMessages(dAtA, i, uint64(size))
 		}
 		i--
-		dAtA[i] = 0x12
+		dAtA[i] = 0x1a
 	}
 	return len(dAtA) - i, nil
 }
@@ -722,7 +880,7 @@ func (m *Message_ChainReplicationComplete) MarshalToSizedBuffer(dAtA []byte) (in
 			i = encodeVarintMessages(dAtA, i, uint64(size))
 		}
 		i--
-		dAtA[i] = 0x1a
+		dAtA[i] = 0x22
 	}
 	return len(dAtA) - i, nil
 }
@@ -737,6 +895,28 @@ func encodeVarintMessages(dAtA []byte, offset int, v uint64) int {
 	dAtA[offset] = uint8(v)
 	return base
 }
+func (m *ChainReplicationStatus) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.ChainID)
+	if l > 0 {
+		n += 1 + l + sovMessages(uint64(l))
+	}
+	l = len(m.State)
+	if l > 0 {
+		n += 1 + l + sovMessages(uint64(l))
+	}
+	if m.Height != 0 {
+		n += 1 + sovMessages(uint64(m.Height))
+	}
+	l = github_com_cosmos_gogoproto_types.SizeOfStdTime(m.StartTime)
+	n += 1 + l + sovMessages(uint64(l))
+	return n
+}
+
 func (m *ChainParams) Size() (n int) {
 	if m == nil {
 		return 0
@@ -832,6 +1012,18 @@ func (m *Message) Size() (n int) {
 	return n
 }
 
+func (m *Message_ChainReplicationStatus) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.ChainReplicationStatus != nil {
+		l = m.ChainReplicationStatus.Size()
+		n += 1 + l + sovMessages(uint64(l))
+	}
+	return n
+}
 func (m *Message_ChainReplicationRequest) Size() (n int) {
 	if m == nil {
 		return 0
@@ -874,6 +1066,172 @@ func sovMessages(x uint64) (n int) {
 }
 func sozMessages(x uint64) (n int) {
 	return sovMessages(uint64((x << 1) ^ uint64((int64(x) >> 63))))
+}
+func (m *ChainReplicationStatus) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowMessages
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: ChainReplicationStatus: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: ChainReplicationStatus: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ChainID", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowMessages
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthMessages
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthMessages
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.ChainID = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field State", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowMessages
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthMessages
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthMessages
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.State = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 3:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Height", wireType)
+			}
+			m.Height = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowMessages
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Height |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field StartTime", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowMessages
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthMessages
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthMessages
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := github_com_cosmos_gogoproto_types.StdTimeUnmarshal(&m.StartTime, dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipMessages(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthMessages
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
 }
 func (m *ChainParams) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
@@ -1523,6 +1881,41 @@ func (m *Message) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ChainReplicationStatus", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowMessages
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthMessages
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthMessages
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			v := &ChainReplicationStatus{}
+			if err := v.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			m.Sum = &Message_ChainReplicationStatus{v}
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field ChainReplicationRequest", wireType)
 			}
 			var msglen int
@@ -1556,7 +1949,7 @@ func (m *Message) Unmarshal(dAtA []byte) error {
 			}
 			m.Sum = &Message_ChainReplicationRequest{v}
 			iNdEx = postIndex
-		case 2:
+		case 3:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field ChainReplicationResponse", wireType)
 			}
@@ -1591,7 +1984,7 @@ func (m *Message) Unmarshal(dAtA []byte) error {
 			}
 			m.Sum = &Message_ChainReplicationResponse{v}
 			iNdEx = postIndex
-		case 3:
+		case 4:
 			if wireType != 2 {
 				return fmt.Errorf("proto: wrong wireType = %d for field ChainReplicationComplete", wireType)
 			}
