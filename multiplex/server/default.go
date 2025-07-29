@@ -6,7 +6,7 @@ import (
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/libs/service"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
-	"github.com/ice-blockchain/cometbft/multiplex/runtime"
+	"github.com/ice-blockchain/cometbft/multiplex/types"
 )
 
 type (
@@ -28,7 +28,7 @@ func (DefaultServer) GetLogger() cmtlog.Logger {
 }
 
 // GetRuntimeRegistry returns the injected node runtime manager.
-func (DefaultServer) GetRuntimeRegistry() runtime.Manager {
+func (DefaultServer) GetRuntimeRegistry() types.RuntimeManager {
 	return nil
 }
 

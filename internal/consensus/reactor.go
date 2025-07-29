@@ -18,8 +18,8 @@ import (
 	cmtjson "github.com/ice-blockchain/cometbft/libs/json"
 	"github.com/ice-blockchain/cometbft/libs/log"
 	cmtsync "github.com/ice-blockchain/cometbft/libs/sync"
-	"github.com/ice-blockchain/cometbft/multiplex/runtime"
 	"github.com/ice-blockchain/cometbft/multiplex/server"
+	mxtypes "github.com/ice-blockchain/cometbft/multiplex/types"
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/p2p/conn"
 	sm "github.com/ice-blockchain/cometbft/state"
@@ -51,7 +51,7 @@ type Reactor struct {
 	nodeKey *p2p.NodeKey
 
 	msgStatusToPeers atomic.Bool
-	runtimeRegistry  *runtime.Registry
+	runtimeRegistry  mxtypes.IdleManager
 
 	waitSync atomic.Bool
 	eventBus *types.EventBus
@@ -104,7 +104,7 @@ func WithNodeKey(
 
 // WithRuntimeRegistry is an option helper to inject a custom runtime registry.
 func WithRuntimeRegistry(
-	reg *runtime.Registry,
+	reg mxtypes.IdleManager,
 ) func(*Reactor) {
 	return func(r *Reactor) {
 		r.runtimeRegistry = reg
@@ -122,7 +122,7 @@ func (conR *Reactor) GetState() *State {
 }
 
 // SetRuntimeRegistry sets a cuustom runtime registry.
-func (conR *Reactor) SetRuntimeRegistry(reg *runtime.Registry) {
+func (conR *Reactor) SetRuntimeRegistry(reg mxtypes.IdleManager) {
 	conR.runtimeRegistry = reg
 }
 

@@ -9,7 +9,7 @@ import (
 
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/rpc"
-	"github.com/ice-blockchain/cometbft/multiplex/runtime"
+	"github.com/ice-blockchain/cometbft/multiplex/types"
 )
 
 const (
@@ -32,13 +32,13 @@ const (
 // A server instance must be started before replication can happen and
 // before broadcast operations can be forwarded to a [client.Client].
 //
-// A server instance manages an instance of [runtime.RuntimeManager],
+// A server instance manages an instance of [types.RuntimeManager],
 // and one of [client.Acceptor], which are used in runtime processes.
 type Server interface {
 	service.Service
 
 	// GetRuntimeRegistry should return the node runtime manager.
-	GetRuntimeRegistry() runtime.Manager
+	GetRuntimeRegistry() types.RuntimeManager
 
 	// GetAcceptor should return a [client.Acceptor] instance.
 	GetAcceptor() client.Acceptor
