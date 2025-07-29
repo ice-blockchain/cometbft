@@ -6,30 +6,15 @@ option go_package = "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v
 import "gogoproto/gogo.proto";
 import "cometbft/p2p/v1/types.proto";
 
-// ChainProtocolVersion contains a ChainID and protocol versions for the software.
-message ChainProtocolVersion {
-  string chain_id = 1 [(gogoproto.customname) = "ChainID"];
-  cometbft.p2p.v1.ProtocolVersion protocol_version = 2;
-}
-
-// ChainListenAddr contains a ChainID and a listen address
-message ChainListenAddr {
-  string chain_id = 1 [(gogoproto.customname) = "ChainID"];
-  string listen_addr = 2;
-}
-
 // MultiNetworkNodeInfo is the node information exchanged between two
 // peers of a multi-network infra during the CometBFT P2P handshake.
 message MultiNetworkNodeInfo {
-  repeated string networks = 1;
-  repeated ChainProtocolVersion protocol_versions = 2;
-  repeated ChainListenAddr listen_addrs = 3;
-  repeated ChainListenAddr rpc_addrs = 4[(gogoproto.customname) = "RPCAddresses"];
+  cometbft.p2p.v1.ProtocolVersion protocol_version = 1;
 
-  string                   default_node_id   = 5 [(gogoproto.customname) = "DefaultNodeID"];
-  string                   listen_addr       = 6;
-  string                   version           = 7;
-  bytes                    channels          = 8;
-  string                   moniker           = 9;
-  cometbft.p2p.v1.DefaultNodeInfoOther other = 10 [(gogoproto.nullable) = false];
+  string                   default_node_id   = 2 [(gogoproto.customname) = "DefaultNodeID"];
+  string                   listen_addr       = 3;
+  string                   version           = 4;
+  bytes                    channels          = 5;
+  string                   moniker           = 6;
+  cometbft.p2p.v1.DefaultNodeInfoOther other = 7 [(gogoproto.nullable) = false];
 }
