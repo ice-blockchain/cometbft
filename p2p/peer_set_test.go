@@ -171,7 +171,7 @@ func TestPeerSetGet(t *testing.T) {
 		peer    = newMockPeer(nil)
 	)
 
-	assert.Nil(t, peerSet.GetOutbound(peer.ID()), "expecting a nil lookup, before .Add")
+	assert.Nil(t, peerSet.Get(peer.ID()), "expecting a nil lookup, before .Add")
 
 	if err := peerSet.Add(peer.ToPtr()); err != nil {
 		t.Fatalf("Failed to add new peer: %v", err)
@@ -184,7 +184,7 @@ func TestPeerSetGet(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			have, want := peerSet.GetOutbound(peer.ID()), peer
+			have, want := peerSet.Get(peer.ID()), peer
 			assert.Equal(t, want, have, "%d: have %v, want %v", i, want, have)
 		}(i)
 	}

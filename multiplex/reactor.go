@@ -1767,7 +1767,7 @@ func (r *Reactor) DialRelayForScope(
 
 	// Storage/transports of switches are protected by networkMutex.
 	var peerOutbound *p2p.PeerImpl
-	peerOutbound = scopedPeerSet.GetOutbound(peerAddr.ID)
+	peerOutbound = scopedPeerSet.Get(peerAddr.ID)
 
 	dialWithSw.Logger.Debug("Dialing relay",
 		"relay", partnerAddr.String(),
@@ -1812,7 +1812,7 @@ func (r *Reactor) DialRelayForScope(
 	}
 
 	// The PeerSet object at scopedPeerSet may have been modified.
-	peerOutbound = scopedPeerSet.GetOutbound(peerAddr.ID)
+	peerOutbound = scopedPeerSet.Get(peerAddr.ID)
 	if peerOutbound == nil && dialWithSw.IsDialingOrExistingAddress(peerAddr) {
 		// The Peer is still dialing. Try to find a matching outbound peer.
 

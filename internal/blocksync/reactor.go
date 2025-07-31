@@ -420,7 +420,7 @@ func (bcR *Reactor) poolRoutine(stateSynced bool) {
 			case <-bcR.pool.Quit():
 				return
 			case request := <-bcR.requestsCh:
-				peer := bcR.Switch.Peers(bcR.ChainID()).GetInbound(request.PeerID)
+				peer := bcR.Switch.Peers(bcR.ChainID()).Get(request.PeerID)
 				if peer == nil {
 					continue
 				}
@@ -432,7 +432,7 @@ func (bcR *Reactor) poolRoutine(stateSynced bool) {
 					bcR.Logger.Debug("Send queue is full, drop block request", "peer", peer.ID(), "height", request.Height)
 				}
 			case err := <-bcR.errorsCh:
-				peer := bcR.Switch.Peers(bcR.ChainID()).GetInbound(err.peerID)
+				peer := bcR.Switch.Peers(bcR.ChainID()).Get(err.peerID)
 				if peer != nil {
 					bcR.Switch.StopPeerForError(peer, err)
 				}
@@ -582,14 +582,14 @@ FOR_LOOP:
 			if err != nil {
 				bcR.Logger.Error("Invalid block", "height", first.Height, "err", err)
 				peerID := bcR.pool.RemovePeerAndRedoAllPeerRequests(first.Height)
-				peer := bcR.Switch.Peers(bcR.ChainID()).GetInbound(peerID)
+				peer := bcR.Switch.Peers(bcR.ChainID()).Get(peerID)
 				if peer != nil {
 					// NOTE: we've already removed the peer's request, but we
 					// still need to clean up the rest.
 					bcR.Switch.StopPeerForError(peer, ErrReactorValidation{Err: err})
 				}
 				peerID2 := bcR.pool.RemovePeerAndRedoAllPeerRequests(second.Height)
-				peer2 := bcR.Switch.Peers(bcR.ChainID()).GetInbound(peerID2)
+				peer2 := bcR.Switch.Peers(bcR.ChainID()).Get(peerID2)
 				if peer2 != nil && peer2 != peer {
 					// NOTE: we've already removed the peer's request, but we
 					// still need to clean up the rest.

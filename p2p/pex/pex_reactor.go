@@ -784,7 +784,7 @@ func (r *Reactor) crawlPeers(addrs []*p2p.NetAddress) {
 			continue
 		}
 
-		peer := r.Switch.Peers(r.ChainID).GetOutbound(addr.ID)
+		peer := r.Switch.Peers(r.ChainID).Get(addr.ID)
 		if peer != nil {
 			r.RequestAddrs(peer)
 		}

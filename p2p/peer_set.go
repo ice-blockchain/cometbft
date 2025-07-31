@@ -12,12 +12,20 @@ import (
 type IPeerSet interface {
 	// Has returns true if the set contains the peer referred to by this key.
 	Has(key ID) bool
-	// HasIP returns true if the set contains the peer referred to by this IP
+	// HasIP returns true if the set contains the peer referred to by this IP.
 	HasIP(ip net.IP) bool
-	// Get returns the outbound peer with the given key, or nil if not found.
-	GetOutbound(key ID) *PeerImpl
-	// Get returns the inbound peer with the given key, or nil if not found.
-	GetInbound(key ID) *PeerImpl
+	// HasPeer returns true if the set contains the peer referred to by p.
+	HasPeer(p *PeerImpl) bool
+
+	// Get returns the peer with the given key, or nil if not found.
+	Get(key ID) *PeerImpl
+	// GetByAddr returns peer with the given RemoteAddr, or nil if not found.
+	GetByAddr(addr net.Addr)
+	// Add adds p to the set or returns an error.
+	Add(peer *PeerImpl) error
+	// Remove returns true if p was removed from the set.
+	Remove(peer *PeerImpl) bool
+
 	// Copy returns a copy of the peers list.
 	Copy() []*PeerImpl
 	// Size returns the number of peers in the PeerSet.
@@ -33,8 +41,9 @@ type IPeerSet interface {
 // PeerSet is a special thread-safe structure for keeping a table of peers.
 type PeerSet struct {
 	mtx    cmtsync.Mutex
-	lookup map[string]*peerSetItem
 	list   []*PeerImpl
+	lookup map[string]*peerSetItem
+	addrs  map[string]*peerSetItem
 }
 
 type peerSetItem struct {
@@ -63,15 +72,18 @@ func (ps *PeerSet) Add(peer *PeerImpl) error {
 		// same NodeID. Note that these AddrBook may contain different peers.
 		return nil
 	}
-	if peer.GetRemovalFailed() {
-		return ErrPeerRemoval{}
-	}
 
 	index := len(ps.list)
+	item := &peerSetItem{peer, index}
+
 	// Appending is safe even with other goroutines
 	// iterating over the ps.list slice.
 	ps.list = append(ps.list, peer)
-	ps.lookup[ps.KeyForPeer(peer)] = &peerSetItem{peer, index}
+	ps.lookup[ps.KeyForPeer(peer)] = item
+
+	// Uses [net.Conn#RemoteAddr].
+	address := peer.RemoteAddr().String()
+	ps.addrs[address] = item
 	return nil
 }
 
@@ -91,34 +103,13 @@ func (ps *PeerSet) KeyForPeer(p *PeerImpl) string {
 	return ps.peerLookupKey(p)
 }
 
+// -----------------------------------------------------------------------------
+// implements Peer
+
 // Has returns true if the set contains the peer referred to by this
 // peerID, otherwise false.
 func (ps *PeerSet) Has(peerID ID) bool {
 	return ps.HasInbound(peerID) || ps.HasOutbound(peerID)
-}
-
-func (ps *PeerSet) HasPeer(p *PeerImpl) bool {
-	if p.IsOutbound() {
-		return ps.HasOutbound(p.ID())
-	}
-
-	return ps.HasInbound(p.ID())
-}
-
-// HasInbound returns true if the set contains the peer as inbound.
-func (ps *PeerSet) HasInbound(peerID ID) bool {
-	ps.mtx.Lock()
-	_, ok := ps.lookup[ps.KeyForInbound(peerID)]
-	ps.mtx.Unlock()
-	return ok
-}
-
-// HasOutbound returns true if the set contains the peer as inbound.
-func (ps *PeerSet) HasOutbound(peerID ID) bool {
-	ps.mtx.Lock()
-	_, ok := ps.lookup[ps.KeyForOutbound(peerID)]
-	ps.mtx.Unlock()
-	return ok
 }
 
 // HasIP returns true if the set contains the peer referred to by this IP
@@ -136,160 +127,29 @@ func (ps *PeerSet) HasIP(peerIP net.IP) bool {
 	return false
 }
 
-// GetInbound returns an inbound Peer with ID peerKey or nil.
-func (ps *PeerSet) GetInbound(peerID ID) *PeerImpl {
+// Get looks up a peer by the provided peerID. Returns nil if peer is not
+// found. Outbound peer entries have precedence.
+func (ps *PeerSet) Get(peerID ID) *PeerImpl {
+	getterFn := ps.getInbound
+	if ps.HasOutbound(peerID) {
+		getterFn = ps.getOutbound
+	}
+
 	ps.mtx.Lock()
 	defer ps.mtx.Unlock()
 
-	item, ok := ps.lookup[ps.KeyForInbound(peerID)]
-	if ok {
+	return getterFn(peerID)
+}
+
+// GetByAddr returns peer with the given RemoteAddr, or nil if not found.
+func (ps *PeerSet) GetByAddr(addr net.Addr) *PeerImpl {
+	ps.mtx.Lock()
+	defer ps.mtx.Unlock()
+
+	if item, ok := ps.addrs[addr.String()]; ok {
 		return item.peer
 	}
 	return nil
-}
-
-// GetOutbound returns an outbound Peer with ID peerKey or nil.
-func (ps *PeerSet) GetOutbound(peerID ID) *PeerImpl {
-	ps.mtx.Lock()
-	defer ps.mtx.Unlock()
-
-	item, ok := ps.lookup[ps.KeyForOutbound(peerID)]
-	if ok {
-		return item.peer
-	}
-	return nil
-}
-
-// GetInOrOut returns an inbound OR outbound Peer with ID peerKey,
-// or nil. If outboundFirst is true, we check for outbound first, otherwise
-// inbound first.
-func (ps *PeerSet) GetInOrOut(peerID ID, outboundFirst ...bool) *PeerImpl {
-	isOutboundFirst := true
-	if len(outboundFirst) > 0 && !outboundFirst[0] {
-		isOutboundFirst = false
-	}
-
-	var peerExists *PeerImpl
-	if isOutboundFirst {
-		peerExists = ps.GetOutbound(peerID)
-	} else {
-		peerExists = ps.GetInbound(peerID)
-	}
-
-	if peerExists != nil {
-		return peerExists
-	}
-
-	if isOutboundFirst {
-		peerExists = ps.GetInbound(peerID)
-	} else {
-		peerExists = ps.GetOutbound(peerID)
-	}
-
-	return peerExists
-}
-
-func (ps *PeerSet) GetByAddr(addr net.Addr, outbound bool) (p *PeerImpl) {
-	elligible := []*PeerImpl{}
-	peers := ps.Copy()
-	for _, peer := range peers {
-		if peer.mconn.SocketAddr() == addr {
-			elligible = append(elligible, peer)
-		}
-	}
-
-	if len(elligible) == 0 {
-		return // nil
-	}
-
-	if len(elligible) == 1 {
-		p = elligible[0]
-		return // p
-	}
-
-	for _, peer := range elligible {
-		if outbound && peer.IsOutbound() {
-			p = peer
-			return // p
-		} else if !outbound && !peer.IsOutbound() {
-			p = peer
-			return // p
-		}
-	}
-
-	// failsafe, couldn't find what is being requested,
-	// but we have elligible peers.
-	p = elligible[0]
-	return // p
-}
-
-func (ps *PeerSet) RemovePeer(peer *PeerImpl) bool {
-	ps.mtx.Lock()
-	if len(ps.list) == 0 {
-		ps.mtx.Unlock()
-		return false
-	}
-	ps.mtx.Unlock()
-
-	ok := ps.remove(peer.ID(), peer.IsOutbound())
-	if !ok {
-		peer.SetRemovalFailed()
-		return false
-	}
-	return true
-}
-
-// Remove removes the peer from the PeerSet.
-func (ps *PeerSet) Remove(peer *PeerImpl) bool {
-	ps.mtx.Lock()
-	if len(ps.list) == 0 {
-		ps.mtx.Unlock()
-		return false
-	}
-	ps.mtx.Unlock()
-
-	ok1 := ps.remove(peer.ID(), peer.IsOutbound())
-	ok2 := ps.remove(peer.ID(), !peer.IsOutbound())
-	if !(ok1 || ok2) {
-		// Removing the peer has failed so we set a flag to mark that a removal was attempted.
-		// This can happen when the peer add routine from the switch is running in
-		// parallel to the receive routine of MConn.
-		// There is an error within MConn but the switch has not actually added the peer to the peer set yet.
-		// Setting this flag will prevent a peer from being added to a node's peer set afterwards.
-		peer.SetRemovalFailed()
-		return false
-	}
-	return ok1 || ok2
-}
-
-func (ps *PeerSet) remove(id ID, outbound bool) bool {
-	ps.mtx.Lock()
-	defer ps.mtx.Unlock()
-
-	item, ok := ps.lookup[ps.Key(id, outbound)]
-	if !ok || len(ps.list) == 0 {
-		return false
-	}
-
-	index := item.index
-
-	// Remove from ps.lookup.
-	delete(ps.lookup, ps.Key(id, outbound))
-
-	// If it's not the last item.
-	if index != len(ps.list)-1 {
-		// Swap it with the last item.
-		lastPeer := ps.list[len(ps.list)-1]
-		item := ps.lookup[ps.KeyForPeer(lastPeer)]
-		item.index = index
-		ps.list[index] = item.peer
-	}
-
-	// Remove the last item from ps.list.
-	ps.list[len(ps.list)-1] = nil // nil the last entry of the slice to shorten, so it isn't reachable & can be GC'd.
-	ps.list = ps.list[:len(ps.list)-1]
-
-	return true
 }
 
 // Size returns the number of unique items in the peerSet.
@@ -331,6 +191,133 @@ func (ps *PeerSet) Random() *PeerImpl {
 	}
 
 	return ps.list[cmtrand.Int()%len(ps.list)]
+}
+
+// -----------------------------------------------------------------------------
+
+// HasPeer returns true if the set contains the peer referred to by this
+// instance of [PeerImpl], i.e. takes account of inbound/outbound.
+func (ps *PeerSet) HasPeer(p *PeerImpl) bool {
+	if p.IsOutbound() {
+		return ps.HasOutbound(p.ID())
+	}
+
+	return ps.HasInbound(p.ID())
+}
+
+// HasInbound returns true if the set contains the peer as inbound.
+func (ps *PeerSet) HasInbound(peerID ID) bool {
+	ps.mtx.Lock()
+	_, ok := ps.lookup[ps.KeyForInbound(peerID)]
+	ps.mtx.Unlock()
+	return ok
+}
+
+// HasOutbound returns true if the set contains the peer as inbound.
+func (ps *PeerSet) HasOutbound(peerID ID) bool {
+	ps.mtx.Lock()
+	_, ok := ps.lookup[ps.KeyForOutbound(peerID)]
+	ps.mtx.Unlock()
+	return ok
+}
+
+// Remove removes the peer from the PeerSet. Note that this may remove
+// up to 2 entries (inbound/outbound) for one peer ID.
+func (ps *PeerSet) Remove(peer *PeerImpl) bool {
+	ps.mtx.Lock()
+	if len(ps.list) == 0 {
+		ps.mtx.Unlock()
+		return false
+	}
+	ps.mtx.Unlock()
+
+	ok1 := ps.remove(peer.ID(), peer.IsOutbound())
+	ok2 := ps.remove(peer.ID(), !peer.IsOutbound())
+	if !(ok1 || ok2) {
+		return false
+	}
+	return ok1 || ok2
+}
+
+// RemovePeer removes the peer from the PeerSet. Note that this removes
+// always 1 entry (inbound or outbound) for one peer ID.
+func (ps *PeerSet) RemovePeer(peer *PeerImpl) bool {
+	ps.mtx.Lock()
+	if len(ps.list) == 0 {
+		ps.mtx.Unlock()
+		return false
+	}
+	ps.mtx.Unlock()
+
+	ok := ps.remove(peer.ID(), peer.IsOutbound())
+	if !ok {
+		return false
+	}
+	return true
+}
+
+// RemoveByAddr removes the peer from the PeerSet given a net.Addr.
+// Note that this may remove up to 2 entries (inbound/outbound) for one peer ID.
+func (ps *PeerSet) RemoveByAddr(addr net.Addr) error {
+	p := ps.GetByAddr(addr)
+	if p == nil {
+		return nil // Nothing to do
+	}
+
+	if ok := ps.Remove(p); !ok {
+		return ErrPeerRemoval{}
+	}
+	return nil
+}
+
+// -----------------------------------------------------------------------------
+
+// getInbound returns an inbound Peer with ID peerKey or nil.
+func (ps *PeerSet) getInbound(peerID ID) *PeerImpl {
+	if item, ok := ps.lookup[ps.KeyForInbound(peerID)]; ok {
+		return item.peer
+	}
+	return nil
+}
+
+// getOutbound returns an outbound Peer with ID peerKey or nil.
+func (ps *PeerSet) getOutbound(peerID ID) *PeerImpl {
+	if item, ok := ps.lookup[ps.KeyForOutbound(peerID)]; ok {
+		return item.peer
+	}
+	return nil
+}
+
+func (ps *PeerSet) remove(id ID, outbound bool) bool {
+	ps.mtx.Lock()
+	defer ps.mtx.Unlock()
+
+	item, ok := ps.lookup[ps.Key(id, outbound)]
+	if !ok || len(ps.list) == 0 {
+		return false
+	}
+
+	index := item.index
+
+	// Remove from ps.lookup.
+	delete(ps.lookup, ps.Key(id, outbound))
+	// Remove from ps.addrs.
+	delete(ps.addrs, item.peer.RemoteAddr().String())
+
+	// If it's not the last item.
+	if index != len(ps.list)-1 {
+		// Swap it with the last item.
+		lastPeer := ps.list[len(ps.list)-1]
+		item := ps.lookup[ps.KeyForPeer(lastPeer)]
+		item.index = index
+		ps.list[index] = item.peer
+	}
+
+	// Remove the last item from ps.list.
+	ps.list[len(ps.list)-1] = nil // nil the last entry of the slice to shorten, so it isn't reachable & can be GC'd.
+	ps.list = ps.list[:len(ps.list)-1]
+
+	return true
 }
 
 func (ps *PeerSet) lookupKey(id ID, outbound bool) string {
