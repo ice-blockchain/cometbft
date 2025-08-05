@@ -4,7 +4,6 @@ import (
 	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
 	"github.com/ice-blockchain/cometbft/multiplex/helpers"
 
-	cmtmem "github.com/ice-blockchain/cometbft/api/cometbft/mempool/v1"
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/libs/service"
 	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
@@ -37,6 +36,15 @@ type IdleManager interface {
 type RuntimeManager interface {
 	service.Service
 
+	// Resources returns the [ResourceManager].
+	Resources() ResourceManager
+	// Validators returns a map of [cmttypes.PrivValidator] by ChainID.
+	Validators() map[string]cmttypes.PrivValidator
+	// Composer returns the runtime composer instance.
+	Composer() RuntimeComposer
+
+	// AddRuntime should add a genesisDoc for chainID.
+	AddRuntime(chainID string, genesisDoc cmttypes.GenesisDoc) error
 	// InitRuntime should initialize all services and resources for chainID.
 	InitRuntime(chainID string, otherValPubKeys []string) error
 	// StartRuntime should start all services for chainID.
@@ -104,38 +112,63 @@ type ResourceManager interface {
 
 	// Get returns a resource or service by name and chainID.
 	Get(chainID, name string) any
+
+	// Multiplex returns a resource map for name by ChainID.
+	Multiplex(name string) map[string]any
+}
+
+// MessageManager defines the contract for a message pool.
+type MessageManager interface {
+	// AddIncoming adds a received message to the pool.
+	AddIncoming(e cmtp2p.Envelope) error
+	// AddOutgoing adds a sent message to the pool.
+	AddOutgoing(e cmtp2p.Envelope) error
 }
 
 // ReplicationManager defines the contract for the replications manager.
 type ReplicationManager interface {
 	service.Service
 
+	// Init initializes a replication processor for chainID with relays.
+	Init(chainID string, relays []*helpers.RelayAddress) error
+	// Process processes a received message e with the replication pool.
+	Process(e cmtp2p.Envelope) error
+
 	// Partners returns a list of relay ID from replication partners.
 	Partners(chainID string) []cmtp2p.ID
-
 	// Status returns the status of a chain replication.
 	Status(chainID string) *mxp2p.ChainReplicationStatus
-	// Requests returns the outgoing replication requests mapped by relay ID.
-	Requests(chainID string) map[cmtp2p.ID]*mxp2p.ChainReplicationRequest
-	// Responses returns the incoming replication responses mapped by relay ID.
-	Responses(chainID string) map[cmtp2p.ID]*mxp2p.ChainReplicationResponse
 
-	// Wait blocks the thread until chainID has 2/3+1 replication responses.
-	Wait(chainID string) error
+	// Accepted returns a channel, which is closed when chainID has 2/3+1 responses.
+	Accepted(chainID string) <-chan struct{}
+	// Completed returns a channel, which is closed when chainID has 2/3+1 completions.
+	Completed(chainID string) <-chan struct{}
+
+	// WaitAccepted blocks a thread until chainID has 2/3+1 responses.
+	WaitAccepted(chainID string) bool
+	// WaitCompleted blocks a thread until chainID has 2/3+1 completions.
+	WaitCompleted(chainID string) bool
 }
 
 // BroadcastManager defines the contract for the broadcast operations manager.
 type BroadcastManager interface {
 	service.Service
 
-	// Peers returns a list of relay ID from broadcast partners for txHash.
-	Peers(txHash string) []cmtp2p.ID
+	// Init initializes a broadcast processor for txHash with relays.
+	Init(txHash string, relays []*helpers.RelayAddress) error
+	// Process processes a received message e with the broadcast pool.
+	Process(e cmtp2p.Envelope) error
 
-	// Transactions returns the outgoing transaction messages mapped by relay ID.
-	Transactions() map[cmtp2p.ID]cmtmem.Txs
-	// Messages returns the incoming transaction ACKs for txHash mapped by relay ID.
-	Messages(txHash string) map[cmtp2p.ID]*mxp2p.AckTransactionBroadcast
+	// Partners returns a list of relay ID from broadcast partners for txHash.
+	Partners(txHash string) []cmtp2p.ID
 
-	// Wait blocks the thread until txHash has 2/3+1 ACK messages.
-	Wait(txHash string) error
+	// Accepted returns a channel, which is closed when txHash has 2/3+1 ACK messages.
+	Accepted(txHash string) <-chan struct{}
+	// Indexed returns a channel, which is closed when txHash got indexed locally.
+	Indexed(txHash string) <-chan struct{}
+
+	// WaitAccepted blocks the thread until txHash has 2/3+1 ACK messages.
+	WaitAccepted(txHash string)
+	// WaitIndexed blocks the thread until txHash got indexed locally.
+	WaitIndexed(txHash string)
 }

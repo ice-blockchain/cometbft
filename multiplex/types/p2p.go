@@ -17,6 +17,8 @@ type ConnectionManager interface {
 	// NodeInfo returns the local relay node information.
 	NodeInfo() cmtp2p.NodeInfo
 
+	// Transport returns the packet transporter.
+	Transport() cmtp2p.Transport
 	// Dispatcher returns the injected packet dispatcher.
 	Dispatcher() cmtp2p.Dispatcher
 	// Connector returns the injected connection dialer.
