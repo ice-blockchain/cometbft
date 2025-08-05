@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	"github.com/ice-blockchain/cometbft/libs/log"
 )
@@ -31,20 +32,28 @@ type Service interface {
 	Start() error
 	OnStart(ctx context.Context) error
 
+	// Return the time of the last call to [service.Start].
+	StartedAt() time.Time
+
 	// Stop the service.
 	// If it's already stopped, will return an error.
 	// OnStop must never error.
 	Stop() error
 	OnStop()
 
+	// Return the time of the last call to [service.Stop].
+	StoppedAt() time.Time
+
 	// Reset the service.
 	// Panics by default - must be overwritten to enable reset.
 	Reset(ctx context.Context) error
 	OnReset(ctx context.Context) error
 
-	// Return true if the service is running
+	// Return true if the service is running.
 	IsRunning() bool
+	// Return true if the service was started.
 	IsStarted() bool
+	// Return true if the service was stopped.
 	IsStopped() bool
 
 	// Quit returns a channel, which is closed once service is stopped.
@@ -56,6 +65,7 @@ type Service interface {
 	// SetLogger sets a logger.
 	SetLogger(l log.Logger)
 
+	// SetContext sets a context.
 	SetContext(c context.Context)
 }
 
@@ -110,6 +120,8 @@ type BaseService struct {
 	ctxCancel context.CancelFunc
 	ctx       context.Context
 	parentCtx context.Context
+	startedAt time.Time
+	stoppedAt time.Time
 	// The "subclass" of BaseService
 	impl Service
 }
@@ -162,6 +174,7 @@ func (bs *BaseService) Start() error {
 			return err
 		}
 
+		bs.startedAt = time.Now()
 		bs.quit = make(chan struct{})
 
 		go func() {
@@ -190,6 +203,11 @@ func (bs *BaseService) Start() error {
 // that way users don't need to call BaseService.OnStart().
 func (*BaseService) OnStart(ctx context.Context) error { return nil }
 
+// StartedAt implements Service by returning a timestamp.
+func (bs *BaseService) StartedAt() time.Time {
+	return bs.startedAt
+}
+
 // Stop implements Service by calling OnStop (if defined) and closing quit
 // channel. An error will be returned if the service is already stopped.
 func (bs *BaseService) Stop() error {
@@ -207,6 +225,7 @@ func (bs *BaseService) Stop() error {
 			"impl",
 			bs.impl)
 		bs.impl.OnStop()
+		bs.stoppedAt = time.Now()
 		close(bs.quit)
 		bs.ctxCancel()
 		return nil
@@ -223,6 +242,11 @@ func (bs *BaseService) Stop() error {
 // NOTE: Do not put anything in here,
 // that way users don't need to call BaseService.OnStop().
 func (*BaseService) OnStop() {}
+
+// StoppedAt implements Service by returning a timestamp.
+func (bs *BaseService) StoppedAt() time.Time {
+	return bs.stoppedAt
+}
 
 // Reset implements Service by calling OnReset callback (if defined). An error
 // will be returned if the service is running.

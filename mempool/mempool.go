@@ -100,10 +100,6 @@ type Mempool interface {
 	TxAccepted(tx types.Tx) bool
 }
 
-type TxAcceptor interface {
-	TxAccepted(tx types.Tx) bool
-}
-
 // PreCheckFunc is an optional filter executed before CheckTx and rejects
 // transaction if false is returned. An example would be to ensure that a
 // transaction doesn't exceeded the block size.

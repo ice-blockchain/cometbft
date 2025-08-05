@@ -15,7 +15,6 @@ import (
 	cfg "github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
-	"github.com/ice-blockchain/cometbft/multiplex/server"
 	mxtypes "github.com/ice-blockchain/cometbft/multiplex/types"
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/types"
@@ -212,7 +211,7 @@ func (memR *Reactor) GetChannels() []*p2p.ChannelDescriptor {
 			MessageType:         &protomem.Message{},
 		},
 		{
-			ID:          server.AckBroadcastChannel,
+			ID:          mxtypes.AckBroadcastChannel,
 			Priority:    3,
 			MessageType: &mxp2p.Receipt{},
 		},
@@ -288,7 +287,7 @@ func (memR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 func (memR *Reactor) Receive(e p2p.Envelope) {
 	memR.Logger.Debug("Receive", "src", e.Src, "chId", e.ChannelID, "msg", e.Message)
 
-	if e.ChannelID == server.AckBroadcastChannel {
+	if e.ChannelID == mxtypes.AckBroadcastChannel {
 		mxReactor := memR.Switch.GetMultiplexReactor()
 		memR.Logger.Debug("Forwarding bytes",
 			"mx", mxReactor,
@@ -509,7 +508,7 @@ func (memR *Reactor) processTxs(
 		}
 	}
 
-	// Uses the multiplex server.AckBroadcastChannel to send an acknowledgment
+	// Uses the multiplex mxtypes.AckBroadcastChannel to send an acknowledgment
 	// message, or receipt, to describe that the transaction has been checked.
 	if err := memR.sendAckTransactionBroadcast(peer, protoTxs); err != nil {
 		memR.Logger.Error("Failed to send AckTransactionBroadcast",
@@ -741,7 +740,7 @@ func (memR *Reactor) sendAckTransactionBroadcast(
 
 	sendToPeer := func(fromID p2p.ID, toPeer *p2p.PeerImpl) error {
 		if success := toPeer.Send(memR.ChainID, p2p.Envelope{
-			ChannelID: server.AckBroadcastChannel,
+			ChannelID: mxtypes.AckBroadcastChannel,
 			Message: &mxp2p.Receipt{
 				Sum: &mxp2p.Receipt_AckTransactionBroadcast{
 					AckTransactionBroadcast: &mxp2p.AckTransactionBroadcast{
@@ -789,7 +788,7 @@ func (memR *Reactor) sendChainReplicationComplete(
 ) {
 	sendReplCompleteToPeer := func(fromID p2p.ID, toPeer *p2p.PeerImpl) error {
 		if success := toPeer.Send(chainID, p2p.Envelope{
-			ChannelID: server.RuntimeChannel,
+			ChannelID: mxtypes.RuntimeChannel,
 			Message: &mxp2p.Message{
 				Sum: &mxp2p.Message_ChainReplicationComplete{
 					ChainReplicationComplete: &mxp2p.ChainReplicationComplete{
