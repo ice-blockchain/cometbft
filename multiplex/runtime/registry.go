@@ -2,14 +2,23 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/ice-blockchain/cometbft/config"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/libs/service"
+	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
+	"github.com/ice-blockchain/cometbft/proxy"
+	cmttypes "github.com/ice-blockchain/cometbft/types"
+
+	"github.com/ice-blockchain/cometbft/multiplex/helpers"
+	"github.com/ice-blockchain/cometbft/multiplex/p2p"
+	"github.com/ice-blockchain/cometbft/multiplex/types"
 )
 
 const (
@@ -34,12 +43,19 @@ type Registry struct {
 
 	// Active runtimes list, contains counter mapped by ChainID.
 	Runtimes map[string]uint64
-
 	// Inactive runtimes list, contains ChainID values.
 	Sleeping []string
-
 	// Schedules the idling of a sleeping runtime.
 	Scheduler map[string]time.Time
+
+	// Services
+	chainRegistry   helpers.ChainRegistry
+	abciClient      proxy.ChainConns
+	runtimeBaseConf *config.Config
+	resourceManager types.ResourceManager
+	runtimeComposer *runtimeComposer
+	consensusPool   *ConsensusPool
+	connectionPool  *p2p.ConnectionPool
 
 	// Options
 	cleanerInterval time.Duration
@@ -52,12 +68,38 @@ type Registry struct {
 }
 
 // Ensure that our implementation satisfies interface.
-var _ Manager = (*Registry)(nil)
+var _ types.RuntimeManager = (*Registry)(nil)
+var _ types.IdleManager = (*Registry)(nil)
 
 type RegistryOption func(*Registry)
 
 // NewRegistry creates a new nodes runtime registry.
-func NewRegistry(ctx context.Context, logger cmtlog.Logger, options ...RegistryOption) *Registry {
+func NewRegistry(
+	ctx context.Context,
+	baseConfig *config.Config,
+	chainRegistry helpers.ChainRegistry,
+	nodeKey *cmtp2p.NodeKey,
+	abciClient proxy.ChainConns,
+	resourceMgr types.ResourceManager,
+	logger cmtlog.Logger,
+	options ...RegistryOption,
+) *Registry {
+	nodeInfo := NewMultiNetworkNodeInfo()
+	transport := cmtp2p.NewMultiplexTransport(ctx, nodeInfo, nodeKey)
+
+	connectionPool := p2p.NewConnectionManager(ctx,
+		nodeKey,
+		transport,
+		resourceMgr,
+		logger,
+	)
+	runtimeComposer := NewComposer(ctx,
+		baseConfig,
+		connectionPool,
+		resourceMgr,
+		logger.With("module", "composer"),
+	)
+
 	reg := &Registry{
 		mtx: new(sync.Mutex),
 
@@ -65,6 +107,21 @@ func NewRegistry(ctx context.Context, logger cmtlog.Logger, options ...RegistryO
 		cleanerInterval: DefaultRuntimeCleanerInterval,
 		runIdleDuration: DefaultRuntimeIdleDuration,
 		logger:          logger,
+
+		// Services
+		abciClient:      abciClient,
+		runtimeBaseConf: baseConfig,
+		chainRegistry:   chainRegistry,
+		runtimeComposer: runtimeComposer,
+		connectionPool:  connectionPool,
+		consensusPool: NewConsensusHandler(ctx,
+			connectionPool.NodeKey(),
+			abciClient,
+			resourceMgr,
+			runtimeComposer,
+			logger.With("module", "consensus"),
+		),
+		resourceManager: resourceMgr,
 
 		// Storage
 		Runtimes:  map[string]uint64{},
@@ -107,17 +164,47 @@ func RegistryLogger(logger cmtlog.Logger) RegistryOption {
 	}
 }
 
+func RegistryWithComposerOptions(opts ...ComposerOption) RegistryOption {
+	return func(rr *Registry) {
+		rr.runtimeComposer.SetOptions(opts...)
+	}
+}
+
+func RegistryWithConsensusOptions(opts ...ConsensusPoolOption) RegistryOption {
+	return func(rr *Registry) {
+		rr.consensusPool.SetOptions(opts...)
+	}
+}
+
+func RegistryWithConnectionOptions(opts ...p2p.ConnectionPoolOption) RegistryOption {
+	return func(rr *Registry) {
+		rr.connectionPool.SetOptions(opts...)
+	}
+}
+
 // ----------------------------------------------------------------------------
 // Registry implements [service.Service]
 
 // OnStart implements [service.Service] by spawning the sleeper routine.
 func (reg *Registry) OnStart(ctx context.Context) error {
 	reg.logger.Debug("Starting runtime registry",
-		"num_active", reg.NumRuntimes(),
-		"num_sleeping", reg.NumSleeping(),
-		"idle_after", reg.IdleDuration(),
+		"numActive", reg.NumRuntimes(),
+		"numSleeping", reg.NumSleeping(),
+		"idleAfter", reg.IdleDuration(),
 		"timer", reg.CleanerInterval(),
 	)
+
+	if err := reg.connectionPool.Start(); err != nil {
+		return fmt.Errorf("failed to start ConnectionManager: %w", err)
+	}
+
+	if err := reg.runtimeComposer.Start(); err != nil {
+		return fmt.Errorf("failed to start RuntimeComposer: %w", err)
+	}
+
+	if err := reg.consensusPool.Start(); err != nil {
+		return fmt.Errorf("failed to start ConsensusHandler: %w", err)
+	}
 
 	reg.goShutdownCh = make(chan bool) // unbuffered
 	go reg.cleanerRoutine()
@@ -130,6 +217,26 @@ func (reg *Registry) OnStart(ctx context.Context) error {
 func (reg *Registry) OnStop() {
 	reg.mtx.Lock()
 	defer reg.mtx.Unlock()
+
+	if err := reg.runtimeComposer.Stop(); err != nil {
+		reg.logger.Error("failed to stop RuntimeComposer",
+			"err", err,
+		)
+	}
+
+	if err := reg.connectionPool.Stop(); err != nil {
+		reg.logger.Error("failed to stop ConnectionManager",
+			"err", err,
+		)
+	}
+
+	if err := reg.consensusPool.Stop(); err != nil {
+		reg.logger.Error("failed to stop ConsensusHandler",
+			"err", err,
+		)
+	}
+
+	// TODO(midas): should we free memory in ResourceManager?
 
 	// Make sure all goroutines are stopped.
 	close(reg.goShutdownCh)
@@ -146,13 +253,25 @@ func (reg *Registry) OnReset(ctx context.Context) error {
 	atomic.StoreUint64(&reg.numr, uint64(0))
 	atomic.StoreUint64(&reg.nums, uint64(0))
 
+	if err := reg.runtimeComposer.Reset(ctx); err != nil {
+		return fmt.Errorf("failed to reset RuntimeComposer: %w", err)
+	}
+
+	if err := reg.connectionPool.Reset(ctx); err != nil {
+		return fmt.Errorf("failed to reset ConnectionManager: %w", err)
+	}
+
+	if err := reg.consensusPool.Reset(ctx); err != nil {
+		return fmt.Errorf("failed to reset ConsensusHandler: %w", err)
+	}
+
 	reg.logger.Debug("Reset runtime registry")
 	return nil
 }
 
 // ----------------------------------------------------------------------------
 
-// SetOptions uses custom option helpers to configure a ReplayPool instance.
+// SetOptions uses custom option helpers.
 func (reg *Registry) SetOptions(options ...RegistryOption) {
 	for _, option := range options {
 		option(reg)
@@ -163,6 +282,9 @@ func (reg *Registry) SetOptions(options ...RegistryOption) {
 func (reg *Registry) Logger() cmtlog.Logger {
 	return reg.logger
 }
+
+// ----------------------------------------------------------------------------
+// IdleManager API implementation
 
 // NumRuntimes returns the number of active runtimes across all ChainID values.
 // i.e. if more than one runtime is active for a given ChainID, it will be
@@ -209,11 +331,6 @@ func (reg *Registry) CleanerInterval() time.Duration {
 func (reg *Registry) IdleDuration() time.Duration {
 	return reg.runIdleDuration
 }
-
-// ----------------------------------------------------------------------------
-// Registry API implementation
-//
-// The mutex is locked during the execution time of the methods listed below.
 
 // OnActivate marks a runtime for chainID as being active. A call to this
 // method increments the internal counter of active runtimes for chainID.
@@ -272,7 +389,148 @@ func (reg *Registry) OnComplete(chainID string) error {
 
 // OnIdle executes the callback cbOnIdle to idle a sleeping runtime by chainID.
 func (reg *Registry) OnIdle(chainID string) error {
-	// TODO(midas): implement runtime idling.
+	reg.logger.Debug("OnIdle", "chainId", chainID)
+
+	// StopRuntime takes a mutex lock.
+	if err := reg.StopRuntime(chainID); err != nil {
+		reg.logger.Error("failed to stop runtime",
+			"chainId", chainID,
+			"err", err)
+		return err
+	}
+
+	return nil
+}
+
+// ----------------------------------------------------------------------------
+// RuntimeManager API implementation
+//
+// The mutex is locked during the execution time of the methods listed below.
+
+// Resources returns the resource manager.
+func (reg *Registry) Resources() types.ResourceManager {
+	return reg.resourceManager
+}
+
+// Validators returns a map of [cmttypes.PrivValidator] by ChainID.
+func (reg *Registry) Validators() (out map[string]cmttypes.PrivValidator) {
+	privValMultiplex := reg.Resources().Multiplex(types.InstanceKeyPrivValidator)
+	out = make(map[string]cmttypes.PrivValidator, len(privValMultiplex))
+	for chainID, instance := range privValMultiplex {
+		out[chainID] = instance.GetInstance().(cmttypes.PrivValidator)
+	}
+	return // out
+}
+
+// Composer returns the runtime composer instance.
+func (reg *Registry) Composer() RuntimeComposer {
+	return reg.runtimeComposer
+}
+
+// AddRuntime should add a genesisDoc for chainID.
+func (reg *Registry) AddRuntime(
+	chainID string,
+	genesisDoc cmttypes.GenesisDoc,
+) error {
+	// TODO(midas): remove debug logs
+	reg.logger.Debug("AddRuntime", "chainId", chainID)
+
+	reg.mtx.Lock()
+	defer reg.mtx.Unlock()
+
+	// Injects a GenesisDoc in runtimeComposer.genesisDocSet.
+	reg.resourceManager.Set(chainID, types.InstanceKeyGenesisDoc, genesisDoc)
+	if err := reg.runtimeComposer.makeNetworkGenesis(chainID); err != nil {
+		return fmt.Errorf("failed to inject genesis doc for %s: %w", chainID, err)
+	}
+
+	// Updates the internal chainRegistry instance.
+	extChainID := NewExtendedChainIDFromString(chainID)
+	reg.chainRegistry.AddChain(
+		extChainID.GetUserAddress(),
+		chainID,
+	)
+
+	// NOTE(midas): we do not need to update the NodeInfo anymore,
+	// because the Networks list was removed from exported fields.
+
+	return nil
+}
+
+// InitRuntime should initialize all services and resources for chainID.
+func (reg *Registry) InitRuntime(chainID string, otherValPubKeys []string) error {
+	// TODO(midas): remove debug logs
+	reg.logger.Debug("InitRuntime", "chainId", chainID)
+
+	reg.mtx.Lock()
+	defer reg.mtx.Unlock()
+
+	if err := reg.runtimeComposer.Compose(chainID, otherValPubKeys); err != nil {
+		return fmt.Errorf("failed to compose network for %s: %w", chainID, err)
+	}
+
+	return nil
+}
+
+// StartRuntime should start all services for chainID.
+func (reg *Registry) StartRuntime(chainID string) error {
+	// TODO(midas): remove debug logs
+	reg.logger.Debug("StartRuntime", "chainId", chainID)
+
+	reg.mtx.Lock()
+	defer reg.mtx.Unlock()
+
+	// Injects new AppConns in MultiplexAppConn for ABCI.
+	if reg.abciClient != nil {
+		reg.abciClient.AddNetwork(chainID)
+	}
+
+	// Injects the state machine and block stores
+	if err := reg.runtimeComposer.Inject(chainID); err != nil {
+		return fmt.Errorf("failed to inject network for %s: %w", chainID, err)
+	}
+
+	// Execute the consensus/ABCI handshake for chainID.
+	// This will notably set the App version.
+	if err := reg.consensusPool.Handshake(chainID); err != nil {
+		return fmt.Errorf("failed consensus handshake for %s: %w", chainID, err)
+	}
+
+	// Create the mempool, blocksync and consensus reactors.
+	if err := reg.consensusPool.Inject(chainID); err != nil {
+		return fmt.Errorf("failed to create services for %s: %w", chainID, err)
+	}
+
+	// Create the node runtime, i.e. [node.Node] implementing CometBFT.
+	if err := reg.runtimeComposer.Build(chainID, reg.abciClient); err != nil {
+		return fmt.Errorf("failed to build runtime for %s: %w", chainID, err)
+	}
+
+	// Starts the [node.Node] and all consensus reactors.
+	if err := reg.consensusPool.Execute(chainID); err != nil {
+		return fmt.Errorf("failed to start consensus for %s: %w", chainID, err)
+	}
+
+	return nil
+}
+
+// StopRuntime should stop all services for chainID.
+func (reg *Registry) StopRuntime(chainID string) error {
+	// TODO(midas): remove debug logs
+	reg.logger.Debug("StopRuntime", "chainId", chainID)
+
+	reg.mtx.Lock()
+	defer reg.mtx.Unlock()
+
+	// Stops the [node.Node] and all consensus reactors.
+	if err := reg.consensusPool.Shutdown(chainID); err != nil {
+		return fmt.Errorf("failed to stop consensus for %s: %w", chainID, err)
+	}
+
+	// Stop the databases and services owned by composer.
+	if err := reg.runtimeComposer.Unload(chainID); err != nil {
+		return fmt.Errorf("failed to unload runtime for %s: %w", chainID, err)
+	}
 
 	return nil
 }
@@ -325,8 +583,8 @@ func (reg *Registry) cleanerRoutine() {
 		case <-time.After(cleanerInterval): // Every cleanerInterval, we garbage collect.
 			if atomic.LoadUint64(&reg.nums) == uint64(0) {
 				reg.logger.Debug("No sleeping runtime to garbage collect",
-					"num_active", reg.NumRuntimes(),
-					"num_sleeping", reg.NumSleeping(),
+					"numActive", reg.NumRuntimes(),
+					"numSleeping", reg.NumSleeping(),
 					"timer", reg.CleanerInterval(),
 				)
 				continue
