@@ -32,7 +32,7 @@ func (app *SnapsApp) InitChain(
 	chainID := req.ChainId
 
 	// Make sure we handle only relevant InitChain routines
-	if !app.reactor.HasNetwork(chainID) {
+	if !app.backend.HasNetwork(chainID) {
 		return nil, fmt.Errorf("invalid chain-id on InitChain: %s is not replicated", chainID)
 	}
 
@@ -60,7 +60,7 @@ func (app *SnapsApp) InitChain(
 	app.logger.Info("InitChain", "initialHeight", req.InitialHeight, "chainID", req.ChainId)
 
 	// Get the state machine instance to retrieve current AppHash
-	stateStore := app.reactor.GetStateStore(chainID)
+	stateStore := app.backend.GetStateStore(chainID)
 	stateMachine, err := stateStore.Load()
 	if err != nil {
 		return nil, fmt.Errorf("could not load state machine for %s from InitChain: %w", chainID, err)
@@ -89,13 +89,13 @@ func (app *SnapsApp) Info(
 	chainID := ctx.Value(client.KeyChainID).(string)
 
 	// Make sure we handle only relevant info requests
-	if !app.reactor.HasNetwork(chainID) {
+	if !app.backend.HasNetwork(chainID) {
 		app.logger.Error("received irrelevant snapshot chain identifier (Info)", "chainId", chainID)
 		return &abcitypes.InfoResponse{}, nil
 	}
 
 	// Get the state machine instance to retrieve current AppHash
-	stateStore := app.reactor.GetStateStore(chainID)
+	stateStore := app.backend.GetStateStore(chainID)
 	stateMachine, err := stateStore.Load()
 	if err != nil {
 		app.logger.Error("could not load state machine (Info)", "chainId", chainID)
@@ -186,7 +186,7 @@ func (app *SnapsApp) ProcessProposal(
 	chainID := ctx.Value(client.KeyChainID).(string)
 
 	// Make sure we handle only relevant proposals
-	if !app.reactor.HasNetwork(chainID) {
+	if !app.backend.HasNetwork(chainID) {
 		return nil, fmt.Errorf("received irrelevant chain identifier (ProcessProposal): %s", chainID)
 	}
 
@@ -209,7 +209,7 @@ func (app *SnapsApp) ProcessProposal(
 
 	// Note that if the mempool for this ChainID is not yet available, we can't
 	// ensure that the transaction(s) have passed CheckTx, so we must drop here.
-	if app.useMempool && app.reactor.GetMempool(chainID) == nil {
+	if app.useMempool && app.backend.GetMempool(chainID) == nil {
 		app.logger.Error("ProcessProposal failed to get mempool; rejecting proposal",
 			"chainId", chainID,
 			"height", req.Height,
@@ -228,7 +228,7 @@ func (app *SnapsApp) ProcessProposal(
 		txAccepted := true
 		for _, tx := range req.Txs {
 			// The GetMempool() call is checked for non-nil return in above block.
-			txAccepted = txAccepted && app.reactor.GetMempool(chainID).TxAccepted(tx)
+			txAccepted = txAccepted && app.backend.GetMempool(chainID).TxAccepted(tx)
 
 			// TODO(midas): remove debug logs
 			app.logger.Debug("TxAccepted",
@@ -270,7 +270,7 @@ func (app *SnapsApp) FinalizeBlock(
 	resp := &abcitypes.FinalizeBlockResponse{TxResults: []*abcitypes.ExecTxResult{}}
 
 	// Make sure we handle only relevant snapshotting routines
-	if !app.reactor.HasNetwork(chainID) {
+	if !app.backend.HasNetwork(chainID) {
 		return resp, fmt.Errorf(
 			"invalid chain-id on FinalizeBlock: %s is not replicated", chainID)
 	}
@@ -398,7 +398,7 @@ func (app *SnapsApp) addToReplayPool(
 
 	// Register this batch in the reactor's replay pool.
 	// Transactions will be added to a transaction bucket by user address.
-	replayPool := app.reactor.GetReplayPool()
+	replayPool := app.backend.GetReplayPool()
 	replayPool.Add(userAddress, transactions...)
 	return nil
 }
@@ -438,7 +438,7 @@ func (app *SnapsApp) Commit(
 	}
 
 	// Make sure we handle only relevant commits
-	if !app.reactor.HasNetwork(chainID) {
+	if !app.backend.HasNetwork(chainID) {
 		app.logger.Error("received irrelevant snapshot chain identifier (Commit)", "chainId", chainID)
 		return resp, nil
 	}
