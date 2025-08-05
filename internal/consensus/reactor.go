@@ -18,7 +18,6 @@ import (
 	cmtjson "github.com/ice-blockchain/cometbft/libs/json"
 	"github.com/ice-blockchain/cometbft/libs/log"
 	cmtsync "github.com/ice-blockchain/cometbft/libs/sync"
-	"github.com/ice-blockchain/cometbft/multiplex/server"
 	mxtypes "github.com/ice-blockchain/cometbft/multiplex/types"
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/p2p/conn"
@@ -259,7 +258,7 @@ func (conR *Reactor) announceReplicationToPeers(
 ) {
 	sendReplCompleteToPeer := func(fromID p2p.ID, toPeer *p2p.PeerImpl) error {
 		if success := toPeer.Send(chainID, p2p.Envelope{
-			ChannelID: server.RuntimeChannel,
+			ChannelID: mxtypes.RuntimeChannel,
 			Message: &mxp2p.Message{
 				Sum: &mxp2p.Message_ChainReplicationComplete{
 					ChainReplicationComplete: &mxp2p.ChainReplicationComplete{
@@ -371,7 +370,7 @@ func (*Reactor) GetChannels() []*p2p.ChannelDescriptor {
 			MessageType:         &cmtcons.Message{},
 		},
 		{
-			ID:          server.RuntimeChannel,
+			ID:          mxtypes.RuntimeChannel,
 			Priority:    10, // This channel does not have priority.
 			MessageType: &mxp2p.Message{},
 		},
@@ -553,7 +552,7 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 		return
 	}
 
-	if e.ChannelID == server.RuntimeChannel {
+	if e.ChannelID == mxtypes.RuntimeChannel {
 		mxReactor := conR.Switch.Reactor(conn.SharedChannelsNamespace, "MULTIPLEX")
 		if mxReactor != nil && mxReactor.IsRunning() {
 			mxReactor.Receive(e)
@@ -712,7 +711,7 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 			conR.Logger.Error(fmt.Sprintf("Unknown message type %v", reflect.TypeOf(msg)))
 		}
 
-	case server.RuntimeChannel:
+	case mxtypes.RuntimeChannel:
 		return
 
 	default:
