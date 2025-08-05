@@ -1,0 +1,257 @@
+package p2p
+
+import (
+	"context"
+	"fmt"
+	"reflect"
+	"sync"
+
+	"github.com/cosmos/gogoproto/proto"
+
+	tmp2p "github.com/ice-blockchain/cometbft/api/cometbft/p2p/v1"
+	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
+	"github.com/ice-blockchain/cometbft/libs/service"
+	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
+	cmttypes "github.com/ice-blockchain/cometbft/types"
+
+	"github.com/ice-blockchain/cometbft/multiplex/types"
+)
+
+// packetDispatcher defines a runtime composer.
+type packetDispatcher struct {
+	mtx *sync.Mutex
+
+	resourceManager types.ResourceManager
+
+	reactorsByChIds     map[byte]string
+	reactorsServiceKeys map[string]string
+	channelsIndex       map[byte]*Channel
+
+	// Options
+	logger cmtlog.Logger
+}
+
+// Ensure that our implementation satisfies interface.
+var _ cmtp2p.Dispatcher = (*packetDispatcher)(nil)
+var _ cmtp2p.ChannelProvider = (*packetDispatcher)(nil)
+
+type DispatcherOption func(*packetDispatcher)
+
+// NewDispatcher creates a new database service.
+func NewDispatcher(
+	ctx context.Context,
+	nodeInfo *MultiNetworkNodeInfo,
+	resourceManager types.ResourceManager,
+	logger cmtlog.Logger,
+	options ...DispatcherOption,
+) cmtp2p.Dispatcher {
+	router := &packetDispatcher{
+		mtx: new(sync.Mutex),
+
+		resourceManager: resourceManager,
+		reactorsByChIds: map[byte]string{},
+		reactorsServiceKeys: map[string]string{
+			"BLOCKSYNC": types.ServiceKeyBlockSyncReactor,
+			"CONSENSUS": types.ServiceKeyConsensusReactor,
+			"EVIDENCE":  types.ServiceKeyEvidenceReactor,
+			"MEMPOOL":   types.ServiceKeyMempoolReactor,
+			"PEX":       types.ServiceKeyAddressesReactor,
+		},
+		channelsIndex: map[byte]*Channel{},
+
+		// Options
+		logger: logger,
+	}
+
+	// Use option helpers
+	router.SetOptions(options...)
+	router.BaseService = *service.NewBaseService(ctx, nil, "packetDispatcher", router)
+
+	for reactor, channelIds := range GetRuntimeChannels() {
+		for _, chID := range channelIds {
+			router.reactorsByChIds[chID] = reactor
+		}
+	}
+
+	return router
+}
+
+// DispatcherWithLogger injects a custom logger instance.
+func DispatcherWithLogger(logger cmtlog.Logger) DispatcherOption {
+	return func(router *packetDispatcher) {
+		router.logger = logger
+	}
+}
+
+// ----------------------------------------------------------------------------
+// cmtp2p.Dispatcher API implementation
+
+// Target returns the target reactor to process packet.
+func (router *packetDispatcher) Target(packet tmp2p.PacketMsg) cmtp2p.Reactor {
+	router.mtx.Lock()
+	defer router.mtx.Unlock()
+
+	// Uses a static list of reactors names
+	name := router.reactorsByChIds[packet.ChannelID]
+
+	// Populated in NewDispatcher().
+	skey := router.reactorsServiceKeys[name]
+
+	// Get the service instance from resources.
+	return router.resourceManager.Get(
+		packet.ChainID,
+		skey,
+	).(cmtp2p.Reactor)
+}
+
+// Dispatch forwards the packet to the target reactor.
+func (router *packetDispatcher) Dispatch(
+	sourcePeer *cmtp2p.PeerImpl,
+	packet tmp2p.PacketMsg,
+) error {
+	// Get the packet's target reactor.
+	target := router.Target(packet),
+
+	// Find the correct proto message type.
+	chDescs := target.GetChannels()
+	msgType := proto.Message{}
+	for _, chDesc := range chDescs {
+		if chDesc.ID != packet.ChannelID {
+			continue
+		}
+
+		msgType = chDesc.MessageType
+		break
+	}
+
+	// Unmarshal the packet data and unwrap before dispatching.
+	msg := proto.Clone(msgType)
+	if err := proto.Unmarshal(packet.Data, msg); err != nil {
+		return fmt.Errorf("failed to unmarshal message: %v into type: %s",
+			err, reflect.TypeOf(msgType),
+		)
+	}
+	if w, ok := msg.(cmttypes.Unwrapper); ok {
+		if msg, err = w.Unwrap(); err != nil {
+			return fmt.Errorf("failed to unwrap message: %w", err)
+		}
+	}
+
+	return target.Receive(Envelope{
+		ChainID:   packet.ChainID,
+		ChannelID: packet.ChannelID,
+		Src:       sourcePeer,
+		Message:   msg,
+	})
+}
+
+// Reactors returns reactors for chainID by name.
+func (router *packetDispatcher) Reactors(chainID string) map[string]cmtp2p.Reactor {
+	router.mtx.Lock()
+	defer router.mtx.Unlock()
+
+	reactors := make(map[string]cmtp2p.Reactor, len(router.reactorsServiceKeys))
+	for name, serviceKey := range router.reactorsServiceKeys {
+		reactors[name] = router.resourceManager.Get(
+			chainID,
+			serviceKey,
+		).(cmtp2p.Reactor)
+	}
+
+	return reactors
+}
+
+// ----------------------------------------------------------------------------
+// cmtp2p.ChannelProvider API implementation
+
+// GetChannels returns a slice of Channel instances.
+func (router *packetDispatcher) GetChannels() (channels []*Channel) {
+	router.mtx.Lock()
+	defer router.mtx.Unlock()
+
+	channels = make([]*Channel, len(router.channelsIndex))
+	if len(router.channelsIndex) > 0 {
+		for _, channel := range router.channelsIndex {
+			channels = append(channels, channel)
+		}
+		return // channels
+	}
+
+	chDescs := GetChannelDescriptors()
+	router.channelsIndex = make(map[byte]*Channel, len(chDescs))
+	for chID, chDesc := range chDescs {
+		router.channelsIndex[chID] = newChannel(chDesc)
+		channels = append(channels, router.channelsIndex[chID])
+	}
+	return // channels
+}
+
+// GetChannel returns a Channel by ID.
+func (router *packetDispatcher) GetChannel(chID byte) *Channel {
+	router.mtx.Lock()
+	defer router.mtx.Unlock()
+
+	if len(router.channelsIndex) == 0 {
+		return nil
+	}
+
+	if _, ok := router.channelsIndex[chID]; !ok {
+		return nil
+	}
+
+	return router.channelsIndex[chID]
+}
+
+// GetDescriptor returns a ChannelDescriptor by ID.
+func (router *packetDispatcher) GetDescriptor(chID byte) *ChannelDescriptor {
+	router.mtx.Lock()
+	defer router.mtx.Unlock()
+
+	if len(router.channelsIndex) == 0 {
+		return nil
+	}
+
+	if _, ok := router.channelsIndex[chID]; !ok {
+		return nil
+	}
+
+	return router.channelsIndex[chID].Desc()
+}
+
+// ----------------------------------------------------------------------------
+
+// SetOptions uses custom option helpers.
+func (router *packetDispatcher) SetOptions(options ...DispatcherOption) {
+	for _, option := range options {
+		option(router)
+	}
+}
+
+// Logger returns the logger instance.
+func (router *packetDispatcher) Logger() cmtlog.Logger {
+	return router.logger
+}
+
+// ----------------------------------------------------------------------------
+
+func newChannel(desc *ChannelDescriptor) *Channel {
+	desc = desc.FillDefaults()
+	if desc.Priority <= 0 {
+		panic("Channel default priority must be a positive integer")
+	}
+	return &Channel{
+		// ChainID:   chainID,
+		// conn:      conn,
+		desc:      desc,
+		sendQueue: make(chan []byte, desc.SendQueueCapacity),
+		sending:   []byte{},
+		recving:   make([]byte, 0, desc.RecvBufferCapacity),
+		nextPacketMsg: &tmp2p.PacketMsg{
+			// ChainID:   chainID,
+			ChannelID: int32(desc.ID),
+		},
+		nextP2pWrapperPacketMsg: &tmp2p.Packet_PacketMsg{},
+		nextPacket:              &tmp2p.Packet{},
+		maxPacketMsgPayloadSize: 1024, // defaultMaxPacketMsgPayloadSize
+	}
+}
