@@ -403,7 +403,7 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 		chainPeerSet := memR.Switch.Peers(memR.ChainID)
 		peerForAckTx := e.Src
 		if chainPeerSet.Has(e.Src.ID()) {
-			peerForAckTx = chainPeerSet.GetInOrOut(e.Src.ID(), true) // prefer outbound
+			peerForAckTx = chainPeerSet.Get(e.Src.ID())
 		}
 		memR.processTxs(peerForAckTx, protoTxs) // also, ACK this transaction
 
@@ -603,7 +603,7 @@ func (memR *Reactor) EnableInOutTxs() {
 	for k, e := range memR.pendingMsgs {
 		peerForAckTx := e.Src
 		if chainPeerSet.Has(e.Src.ID()) {
-			peerForAckTx = chainPeerSet.GetInOrOut(e.Src.ID(), true) // prefer outbound
+			peerForAckTx = chainPeerSet.Get(e.Src.ID())
 		}
 		memR.processTxs(peerForAckTx, e.Message.(*protomem.Txs).GetTxs()) // also, ACK this transaction
 		delete(memR.pendingMsgs, k)

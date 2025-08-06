@@ -10,7 +10,6 @@ import (
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/server"
-	"github.com/ice-blockchain/cometbft/multiplex/snapsapp"
 	"github.com/ice-blockchain/cometbft/node"
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/privval"
@@ -20,14 +19,12 @@ import (
 )
 
 // NodesMultiplexProvider takes a config and a logger and returns a
-// ready-to-go nodes multiplex, i.e. [mx.MultiplexMap[*node.Node]].
-//
-// Note that providers *must not* start node instance.
+// ready-to-go nodes multiplex nodeKey.
 type NodesMultiplexProvider func(
 	*config.Config,
 	cmtlog.Logger,
 	...node.Option,
-) (MultiplexMap[*node.Node], error)
+) (*p2p.NodeKey, error)
 
 // DefaultNewNodesMultiplex returns a CometBFT Nodes Multiplex with default
 // settings for the PrivValidator, ClientCreator, GenesisDoc, and DBProvider.
@@ -40,8 +37,8 @@ func DefaultNewNodesMultiplex(
 	globalCfg *config.Config,
 	logger cmtlog.Logger,
 	options ...node.Option,
-) (MultiplexMap[*node.Node], error) {
-	nodesMultiplex, _, err := NewNodesMultiplex(
+) (*p2p.NodeKey, error) {
+	nodeKey, err := NewNodesMultiplex(
 		context.Background(),
 		&client.DefaultAcceptor{},
 		globalCfg,
@@ -52,7 +49,7 @@ func DefaultNewNodesMultiplex(
 		return nil, err
 	}
 
-	return nodesMultiplex, nil
+	return nodeKey, nil
 }
 
 // ----------------------------------------------------------------------------
@@ -85,8 +82,7 @@ func NewNodesMultiplex(
 	logger cmtlog.Logger,
 	options ...node.Option,
 ) (
-	MultiplexMap[*node.Node],
-	*Reactor,
+	*p2p.NodeKey,
 	error,
 ) {
 	// Creates one [p2p.NodeKey] instance per nodes multiplex
@@ -96,113 +92,18 @@ func NewNodesMultiplex(
 			"failed to load or gen node key %s: %w", globalCfg.NodeKeyFile(), err)
 	}
 
-	// Fallback to legacy node implementation as soon as possible
-	// The returned MultiplexMap contains only one entry and the
-	// node implementation used is `node/node.go`, i.e. no multiplex.
-	if globalCfg.Strategy == DisableReplicationStrategy() {
-		return NewLegacyNodeMultiplex(ctx, globalCfg, nodeKey, logger, options...)
-	}
-	// End fallback to legacy node implementation
-
-	// CAUTION: this method expects the genesis file to contain a GenesisDocSet.
-	genesisDocProvider := MultiplexGenesisDocProviderFunc(globalCfg)
-
-	// Uses a singleton chain registry to interpret multiplex configurations
-	chainRegistry, err := NewChainRegistry(&globalCfg.MultiplexConfig, globalCfg.GenesisFile())
-	if err != nil {
-		return nil, nil, fmt.Errorf(
-			"failed to create the ChainRegistry: %w", err)
-	}
-
-	// Initialize a multiplex reactor which handles the configuration
-	// of multiple parallel nodes, as many as there are replicated chains.
-	// Create the reactor instance and safety-check genesis doc.
-	reactor := NewReactor(
-		ctx,
-		nodeKey,
-		globalCfg,
-		logger.With("module", "multiplex"),
-		chainRegistry,
-		genesisDocProvider,
-		WithAcceptor(acceptor),
-	)
+	// // Fallback to legacy node implementation as soon as possible
+	// // The returned MultiplexMap contains only one entry and the
+	// // node implementation used is `node/node.go`, i.e. no multiplex.
+	// if globalCfg.Strategy == DisableReplicationStrategy() {
+	// 	return NewLegacyNodeMultiplex(ctx, globalCfg, nodeKey, logger, options...)
+	// }
+	// // End fallback to legacy node implementation
 
 	// Warn the user about experimental status
 	logger.Info("WARNING - EXPERIMENTAL: Starting a nodes multiplex", "nodeId", string(nodeKey.ID()))
 
-	knownNetworks := chainRegistry.GetChains()
-	logger.Debug("WARNING - EXPERIMENTAL: Known networks", "len", len(knownNetworks))
-
-	// Start the multiplex reactor, this initializes the filesystem,
-	// then the databases and stores.
-	// This process creates concurrent goroutines to configure nodes.
-	//
-	// This method calls `mx.NewConfigOverwrite()` for each network.
-	if err := reactor.Start(); err != nil {
-		return nil, nil, fmt.Errorf(
-			"could not start the multiplex reactor: %w", err)
-	}
-
-	// Start the replay pool which processes transaction batches
-	// that this relay may have missed during downtime, or must
-	// replay during blocksync and/or consensus processes.
-	replayPool := reactor.GetReplayPool()
-	if err := replayPool.Start(); err != nil {
-		return nil, nil, fmt.Errorf(
-			"could not start the replay pool: %w", err)
-	}
-
-	// Create the local ABCI client for the SnapsApp application.
-	//
-	// This application is forcefully enabled using the multiplex package,
-	// note that we also *ignore* the ProxyApp field in [config.Config].
-	//
-	// The ABCI client is created once for the nodes multiplex, and we use
-	// a breaking [proxy.ChainConns] interface rather than [proxy.AppConns].
-	localSnapsApp := snapsapp.NewSnapsApplication(
-		reactor,
-		logger.With("module", "snapsapp"),
-		snapsapp.WithAcceptor(acceptor),
-	)
-	abciClientCreator := proxy.NewLocalClientCreator(localSnapsApp)
-
-	// Start the ABCI client (proxyApp)
-	// Note that we create only one ABCI client shared by all replicated chains.
-	//
-	// BREAKING: we use [proxy.ChainConns] interfaces rather than [proxy.AppConns].
-	abciClient := proxy.NewMultiplexAppConn(
-		ctx,
-		knownNetworks,
-		abciClientCreator,
-		proxy.PrometheusMetrics(globalCfg.Instrumentation.Namespace+"_"+string(nodeKey.ID())),
-	)
-	abciClient.SetLogger(logger.With("module", "proxy"))
-	if err := abciClient.Start(); err != nil {
-		return nil, nil, fmt.Errorf(
-			"error starting proxy app connections: %w", err)
-	}
-
-	// Reactor: ABCI; ABCI: Reactor.
-	reactor.SetSnapsApp(localSnapsApp)
-	reactor.SetABCIClient(abciClient)
-
-	// We must make sure that the switch will be available for consensus reactors.
-	if cometbftAddr, err := GetAddressForCometBFT(globalCfg, nodeKey); err == nil {
-		reactor.CreateOrLoadCometBFTEventSwitch(ctx, cometbftAddr)
-	}
-
-	// Inform about all replicated chains being consensus ready
-	logger.Info("All multiplex services are ready",
-		"nodeId", string(nodeKey.ID()),
-		"len", len(knownNetworks),
-	)
-
-	// OBSOLETE: The nodes multiplex map is being deprecated in favor of
-	// Reactor.serviceRegistry with ServiceKeyNodeRuntime.
-	//
-	// TODO(midas): Next iteration, remove this return value.
-	nodesMultiplex := MultiplexMap[*node.Node]{}
-	return nodesMultiplex, reactor, nil
+	return nodeKey, nil
 }
 
 // ----------------------------------------------------------------------------
@@ -224,7 +125,6 @@ func NewLegacyNodeMultiplex(
 	options ...node.Option,
 ) (
 	MultiplexMap[*node.Node],
-	*Reactor,
 	error,
 ) {
 	multiplex := MultiplexMap[*node.Node]{}
@@ -238,7 +138,7 @@ func NewLegacyNodeMultiplex(
 		},
 	)
 	if err != nil {
-		return multiplex, nil, err
+		return multiplex, err
 	}
 
 	// Uses the default genesisDoc provider functor
@@ -258,7 +158,7 @@ func NewLegacyNodeMultiplex(
 		options...,
 	)
 	if err != nil {
-		return multiplex, nil, err
+		return multiplex, err
 	}
 
 	// Read the GenesisDoc, errors can be ignored as they would have triggered
@@ -272,7 +172,7 @@ func NewLegacyNodeMultiplex(
 	// as a fallback for when multiplex configuration is inconsistent or missing.
 	multiplex[genesisDoc.ChainID] = NewChainInstance[*node.Node](genesisDoc.ChainID, readyNode)
 
-	return multiplex, &Reactor{}, nil
+	return multiplex, nil
 }
 
 // ----------------------------------------------------------------------------

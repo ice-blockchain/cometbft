@@ -23,6 +23,7 @@ type packetDispatcher struct {
 
 	resourceManager types.ResourceManager
 
+	multiplexReactor    cmtp2p.Reactor
 	reactorsByChIds     map[byte]string
 	reactorsServiceKeys map[string]string
 	channelsIndex       map[byte]*Channel
@@ -159,6 +160,33 @@ func (router *packetDispatcher) Reactors(chainID string) map[string]cmtp2p.React
 	}
 
 	return reactors
+}
+
+// Reactor returns a reactor for chainID by name.
+func (router *packetDispatcher) Reactor(chainID string, name string) cmtp2p.Reactor {
+	reactors := router.Reactors(chainID)
+
+	if r, ok := reactors[name]; ok {
+		return r
+	}
+
+	return nil
+}
+
+// SetMultiplexReactor sets the multiplex reactor.
+func (router *packetDispatcher) SetMultiplexReactor(mxR cmtp2p.Reactor) {
+	router.mtx.Lock()
+	defer router.mtx.Unlock()
+
+	router.multiplexReactor = mxR
+}
+
+// GetMultiplexReactor returns the multiplex reactor.
+func (router *packetDispatcher) GetMultiplexReactor() cmtp2p.Reactor {
+	router.mtx.Lock()
+	defer router.mtx.Unlock()
+
+	return router.multiplexReactor
 }
 
 // ----------------------------------------------------------------------------

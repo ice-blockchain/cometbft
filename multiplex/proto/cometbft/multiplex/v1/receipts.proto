@@ -7,9 +7,9 @@ import "gogoproto/gogo.proto";
 
 // AckTransactionBroadcast acknowledges the broadcast of a transaction batch.
 message AckTransactionBroadcast {
-  repeated bytes tx_hashes = 1;
-  string node_id           = 2;
-  string chain_id          = 3 [(gogoproto.customname) = "ChainID"];
+  bytes tx_hash   = 1;
+  string node_id  = 2;
+  string chain_id = 3 [(gogoproto.customname) = "ChainID"];
 }
 
 // Receipt is an abstract receipt message.

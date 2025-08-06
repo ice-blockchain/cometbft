@@ -17,17 +17,15 @@ import (
 	"github.com/ice-blockchain/cometbft/p2p"
 
 	"github.com/ice-blockchain/cometbft/multiplex/client"
-	"github.com/ice-blockchain/cometbft/multiplex/server"
+	"github.com/ice-blockchain/cometbft/multiplex/helpers"
+	"github.com/ice-blockchain/cometbft/multiplex/types"
 )
 
-// GetRoutines returns an injected implementation of [server.Jobs] methods
-// or the default implementations as defined with MultiplexBackend.
-//
-// This is mainly used to overwrite routines for testing purposes.
-// GetRoutines implements [Adapter].
-func (b *MultiplexBackend) GetRoutines() *server.Jobs {
+// Routines returns an implementation of [types.Jobs] methods with
+// the default methods implemented in [MultiplexBackend].
+func (b *MultiplexBackend) Routines() *types.Jobs {
 	if b.routines == nil {
-		b.routines = &server.Jobs{
+		b.routines = &types.Jobs{
 			DiscoveryDialer: b.DefaultDiscoveryDialerRoutine(),
 			CometBFTDialer:  b.DefaultCometBFTDialerRoutine(),
 			NodeReplRequest: b.DefaultNodeReplRequestRoutine(),
@@ -44,17 +42,17 @@ func (b *MultiplexBackend) GetRoutines() *server.Jobs {
 // Default routines implementation for a MultiplexBackend
 
 // DefaultDiscoveryDialerRoutine dials relays to enable discovery messages
-// on [server.ReplicationChannel].
+// on [types.ReplicationChannel].
 //
 // This method checks for compatibility of relays by executing a connection
 // handshake as defined with [p2p.Switch#DialPeerWithAddress]. The discovery
 // switch is updated to accept [mxp2p.ChainReplicationRequest] messages.
-func (b *MultiplexBackend) DefaultDiscoveryDialerRoutine() server.DiscoveryDialerFn {
+func (b *MultiplexBackend) DefaultDiscoveryDialerRoutine() types.DiscoveryDialerFn {
 	return func(
 		ctx context.Context,
-		relays []*server.RelayAddress,
+		relays []*helpers.RelayAddress,
 		waitGroup *sync.WaitGroup,
-		errorsCh chan<- server.RelayDialError,
+		errorsCh chan<- types.RelayDialError,
 		logger cmtlog.Logger,
 	) {
 		// We dial using discovery, init'd in [MultiplexBackend#MustStart].
@@ -63,13 +61,13 @@ func (b *MultiplexBackend) DefaultDiscoveryDialerRoutine() server.DiscoveryDiale
 		// Concurrently dial relays to enable ReplicationChannel messages.
 		// CheckDialCompatibleRelay opens connection for `DiscoveryPort`.
 		for _, relayAddr := range relays {
-			go func(sw *p2p.Switch, addr *server.RelayAddress) {
+			go func(sw *p2p.Switch, addr *helpers.RelayAddress) {
 				defer waitGroup.Done()
 				startTz := time.Now()
 
 				// Uses the local P2P switch to dial a remote peer.
 				if err := b.CheckDialCompatibleRelay(ctx, sw, addr); err != nil {
-					errorsCh <- server.RelayDialError{
+					errorsCh <- types.RelayDialError{
 						Addr:  addr,
 						Error: err,
 					}
@@ -92,13 +90,13 @@ func (b *MultiplexBackend) DefaultDiscoveryDialerRoutine() server.DiscoveryDiale
 // This method checks for compatibility of relays by executing a connection
 // handshake as defined with [p2p.Switch#DialPeerWithAddress]. The CometBFT
 // switch is updated to accept blocksync, consensus and mempool messages.
-func (b *MultiplexBackend) DefaultCometBFTDialerRoutine() server.CometBFTDialerFn {
+func (b *MultiplexBackend) DefaultCometBFTDialerRoutine() types.CometBFTDialerFn {
 	return func(
 		ctx context.Context,
-		relays []*server.RelayAddress,
+		relays []*helpers.RelayAddress,
 		relevantChainIds []string,
 		waitGroup *sync.WaitGroup,
-		errorsCh chan<- server.RelayDialError,
+		errorsCh chan<- types.RelayDialError,
 		logger cmtlog.Logger,
 	) {
 		// We dial using CometBFT, init'd in [MultiplexBackend#MustStart].
@@ -107,7 +105,7 @@ func (b *MultiplexBackend) DefaultCometBFTDialerRoutine() server.CometBFTDialerF
 		// Concurrently dial relays to enable CometBFT messages.
 		// Opens peer connections for `DiscoveryPort+1`.
 		for _, relayAddr := range relays {
-			cometbftAddr, _ := server.NewRelayAddress(relayAddr.AddressForCometBFT())
+			cometbftAddr, _ := helpers.NewRelayAddress(relayAddr.AddressForCometBFT())
 			for _, relevantChainID := range relevantChainIds {
 				// TODO(midas): remove debug logs
 				logger.Debug("Now dialing relay for CometBFT",
@@ -115,12 +113,12 @@ func (b *MultiplexBackend) DefaultCometBFTDialerRoutine() server.CometBFTDialerF
 					"chainId", relevantChainID,
 				)
 
-				go func(sw *p2p.Switch, addr *server.RelayAddress, chainID string) {
+				go func(sw *p2p.Switch, addr *helpers.RelayAddress, chainID string) {
 					defer waitGroup.Done()
 					startTz := time.Now()
 
 					if err := b.reactor.DialRelayForScope(sw, addr, chainID); err != nil {
-						errorsCh <- server.RelayDialError{
+						errorsCh <- types.RelayDialError{
 							Addr:  addr,
 							Error: err,
 						}
@@ -144,10 +142,10 @@ func (b *MultiplexBackend) DefaultCometBFTDialerRoutine() server.CometBFTDialerF
 //
 // This method broadcasts a [mxp2p.ChainReplicationRequest] message to
 // relays, to ask them to replicate a chain using the ChainParams.
-func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplRequestFn {
+func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() types.NodeReplRequestFn {
 	return func(
 		_ context.Context,
-		relays []*server.RelayAddress,
+		relays []*helpers.RelayAddress,
 		chainID string,
 		notifyCh chan<- client.BroadcastStatus,
 		logger cmtlog.Logger,
@@ -216,7 +214,7 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 				)
 
 				peer.Send(chainID, p2p.Envelope{
-					ChannelID: server.ReplicationChannel,
+					ChannelID: types.ReplicationChannel,
 					Message: &mxp2p.Message{
 						Sum: &mxp2p.Message_ChainReplicationRequest{
 							ChainReplicationRequest: &mxp2p.ChainReplicationRequest{
@@ -254,10 +252,10 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() server.NodeReplReques
 //
 // This method creates a new network genesis using [Reactor#MustCreateNetwork],
 // then injects a node runtime using [Reactor#MustInjectNodeRuntime].
-func (b *MultiplexBackend) DefaultNetworksCreatorRoutine() server.NetworksCreatorFn {
+func (b *MultiplexBackend) DefaultNetworksCreatorRoutine() types.NetworksCreatorFn {
 	return func(
 		clientCtx context.Context,
-		relaysByChain map[string][]*server.RelayAddress,
+		relaysByChain map[string][]*helpers.RelayAddress,
 		missingChains []string,
 		validatorsByChain map[string][]string,
 		genesisWg *sync.WaitGroup,
@@ -348,11 +346,11 @@ func (b *MultiplexBackend) DefaultNetworksCreatorRoutine() server.NetworksCreato
 // If any broadcast to other relays produces an error, the complete
 // transaction batch will be discarded, and a rollback message will
 // be broadcast to other relay's mempool reactors.
-func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcastFn {
+func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() types.RelaysBroadcastFn {
 	return func(
 		ctx context.Context,
-		relaysByChain map[string][]*server.RelayAddress,
-		replReqRelays map[string][]*server.RelayAddress,
+		relaysByChain map[string][]*helpers.RelayAddress,
+		replReqRelays map[string][]*helpers.RelayAddress,
 		userAddress string,
 		transactions []client.Transaction,
 		waitGroup *sync.WaitGroup,
@@ -485,7 +483,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() server.RelaysBroadcas
 // in case any of the relays has already included the transactions in their
 // mempool. The mempool should call [Acceptor#RollbackTx] upon receiving this
 // message.
-func (b *MultiplexBackend) DefaultCancelBroadcastRoutine() server.CancelBroadcastFn {
+func (b *MultiplexBackend) DefaultCancelBroadcastRoutine() types.CancelBroadcastFn {
 	return func(
 		ctx context.Context,
 		userAddress string,

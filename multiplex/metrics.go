@@ -138,8 +138,6 @@ func collectSampleP2P(
 //
 // TODO(midas): enable user-grouped metrics with ChainID and RelayID.
 func collectSampleCometBFT(
-	// relayID string,
-	// chainID string,
 	namespace string,
 	ms *Metrics,
 ) func() {
@@ -166,15 +164,6 @@ func collectSampleCometBFT(
 		ms.TotalBlocks.Add(totalBlocks)
 		ms.TotalTxs.Add(totalTxes)
 		ms.Errors.Add(totalErrs)
-
-		// Some metrics are grouped by user address
-		// extdChainID := helpers.NewExtendedChainIDFromString(chainID)
-		// userAddress := extdChainID.GetUserAddress()
-
-		// Populate user-grouped metrics
-		// ms.TotalBlocksPerUser.With("node_id", relayID, "user_address", userAddress).Add(totalBlocks)
-		// ms.TotalTxsPerUser.With("node_id", relayID, "user_address", userAddress).Add(totalTxes)
-		// ms.ErrorsPerUser.With("node_id", relayID, "user_address", userAddress).Add(totalErrs)
 	}
 }
 

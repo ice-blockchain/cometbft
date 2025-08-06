@@ -1,32 +1,25 @@
 package multiplex
 
 import (
-	"bytes"
+	"encoding/hex"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/ice-blockchain/cometbft/crypto"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
-	sm "github.com/ice-blockchain/cometbft/state"
+	"github.com/ice-blockchain/cometbft/types"
 )
 
 // ----------------------------------------------------------------------------
 // Utils
 
-func onlyValidatorIsUs(state sm.State, pubKey crypto.PubKey) bool {
-	if state.Validators.Size() > 1 {
-		return false
-	}
-	addr, _ := state.Validators.GetByIndex(0)
-	return bytes.Equal(pubKey.Address(), addr)
-}
-
-func validatorsIncludesUs(state sm.State, pubKey crypto.PubKey) bool {
-	if _, addr := state.Validators.GetByAddress(pubKey.Address()); addr != nil {
-		return true
-	}
-
-	return false
+// overwriteListenPort replaces the port in a service listen address.
+func overwriteListenPort(laddr string, port int) string {
+	re := regexp.MustCompile(`(.*)(\:\d+)(.*)`)
+	newPort := ":" + strconv.Itoa(port)
+	return re.ReplaceAllString(laddr, `$1`+newPort+`$3`)
 }
 
 // splitAndTrimEmpty slices s into all subslices separated by sep and returns a
@@ -73,6 +66,15 @@ func txHashesToHex(transactions ...client.Transaction) []string {
 	return txHashes
 }
 
+// txBytesToHashes returns a string-slice with transaction hashes in hex format.
+func txBytesToHashes(protoTxs [][]byte) []string {
+	txHashes := make([]string, 0, len(protoTxs))
+	for _, bzTx := range protoTxs {
+		txHashes = append(txHashes, bytesToHex(types.Tx(bzTx).Hash()))
+	}
+	return txHashes
+}
+
 // chainIdsFromTransactions accepts a userAddress and transactions,
 // and it returns a slice of ChainID values.
 func chainIdsFromTransactions(
@@ -103,4 +105,20 @@ func mapTransactionsByChainID(
 		txesByChainID[txChainID] = append(txesByChainID[txChainID], tx)
 	}
 	return txesByChainID
+}
+
+// bytesToHex returns an upper-case hexadecimal format of bytes.
+func bytesToHex(
+	bytes []byte,
+) string {
+	return strings.ToUpper(
+		hex.EncodeToString(bytes),
+	)
+}
+
+// pubKeyToHex returns an upper-case hexadecimal format of pubKey.
+func pubKeyToHex(
+	pubKey crypto.PubKey,
+) string {
+	return bytesToHex(pubKey.Bytes())
 }

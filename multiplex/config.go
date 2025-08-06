@@ -1,13 +1,45 @@
 package multiplex
 
 import (
-	"fmt"
-	"path/filepath"
-	"regexp"
-	"strconv"
+	"time"
 
 	"github.com/ice-blockchain/cometbft/config"
-	"github.com/ice-blockchain/cometbft/multiplex/helpers"
+)
+
+const (
+	// Collecting metrics every 10 seconds, this may need to be adapted
+	// to equal the Prometheus scrape interval (1s) for better granularity.
+	DefaultMetricsTickerDuration = 10 * time.Second
+
+	// Prometheus timeout configuration
+	DefaultReadHeaderTimeout = 10 * time.Second
+
+	// Transaction events timeout configuration. This duration defines the
+	// maximum waiting time for transactions to appear in the tx indexer.
+	// Used as a failsafe to stop [WaitForTransactionEvents] from waiting
+	// for transactions forever upon completion of broadcast operations.
+	DefaultTransactionTimeout = 60 * time.Second
+
+	// Maximum number of indexer read operrations when expecting transaction
+	// indexing events during or after a broadcast operation.
+	// Used as a failsafe to stop [MultiplexBackend#OnTransactionIndexed] from
+	// waiting forever.
+	DefaultMaxIndexerReadAttempts = 20
+
+	// Remote replication timeout configuration. This duration defines the
+	// maximum waiting time for remote replication to complete.
+	// Used as a failsafe to stop [WaitForRelaysReplicationCompleted] from
+	// waiting for runtime updates forever.
+	//
+	// Using a timeout of 2 hours permits to cover for networks that grow
+	// above of 2 million blocks with a blocksync range of 200-400 blocks.
+	//
+	// NOTE(midas): For a production environment, it is recommended to set
+	// this timeout to 0 using `WithReplicationTimeout(0)`.
+	DefaultReplicationTimeout = 2 * time.Hour
+
+	// Network requests timeout configuration, e.g. [GetRemoteRelayInfo].
+	DefaultRequestTimeout = 5 * time.Second
 )
 
 // -----------------------------------------------------------------------------
@@ -75,152 +107,4 @@ func WithDiscoveryPort(discoveryPort uint16) func(*config.MultiplexConfig) {
 	return func(conf *config.MultiplexConfig) {
 		conf.DiscoveryPort = discoveryPort
 	}
-}
-
-// NewConfigOverwrite updates a node configuration in-place to overwrite the
-// services listen addresses and uses the chainRegistry instance to retrieve
-// seed nodes configuration and state-sync configuration.
-//
-// This method uses [NewConfigOverwriteWithParameters] after having read the
-// parameters from the chainRegistry.
-func NewConfigOverwrite(
-	baseConfig *config.Config,
-	chainRegistry ChainRegistry,
-	withChainID string,
-) (*config.Config, error) {
-	// Multiplex can be configured to start at different port
-	discoveryPort := int(baseConfig.DiscoveryPort) // defaults to 30001
-
-	// Seed nodes *may* be empty, error ignored here.
-	seedNodes, _ := chainRegistry.GetSeeds(withChainID)
-
-	// Sync configuration contains disabled state-sync configuration.
-	syncConfig := config.DefaultStateSyncConfig()
-	syncConfig.Enable = false
-
-	// Deep-copy the config.Config object and overwrite ports.
-	mxConfig, err := NewConfigOverwriteWithParameters(
-		baseConfig,
-		withChainID,
-		seedNodes,
-		syncConfig,
-		discoveryPort,
-	)
-	if err != nil {
-		return nil, fmt.Errorf(
-			"could not create a config overwrite for ChainID %s: %w", withChainID, err)
-	}
-
-	return mxConfig, nil
-}
-
-// NewConfigOverwriteWithParameters updates a node configuration in-place to
-// overwrite the seed nodes and WAL filepaths so that each replicated chain
-// writes to a separate WAL-file.
-// This method overwrites the `P2P.Seeds` configuration option such that
-// each replicated chain uses its own seed nodes.
-//
-// It returns the newly created *deep-copy* of the node configuration.
-func NewConfigOverwriteWithParameters(
-	baseConfig *config.Config,
-	withChainID string,
-	seedNodes string,
-	syncConfig *config.StateSyncConfig,
-	discoveryPort int,
-) (*config.Config, error) {
-	// Validate the provided ChainID
-	extChainID := helpers.NewExtendedChainIDFromString(withChainID)
-	if extChainID == nil {
-		return nil, fmt.Errorf(
-			"found incompatible ChainID %s", withChainID)
-	}
-
-	// Errors would have been handled in above statement
-	address := extChainID.GetUserAddress()
-
-	// Deep-copy the config object to create multiple nodes
-	mxConfig := deepCopyConfig(baseConfig)
-
-	// ----------------------------
-	// P2P Configuration Overwrite
-	mxConfig.P2P.Seeds = seedNodes // CAUTION: always connect to seeds
-	mxConfig.P2P.ListenAddress = overwriteListenPort(
-		baseConfig.P2P.ListenAddress,
-		discoveryPort+1, // defaults to 30002
-	)
-
-	// ----------------------------
-	// RPC Configuration Overwrite
-	mxConfig.RPC.ListenAddress = overwriteListenPort(
-		baseConfig.RPC.ListenAddress,
-		discoveryPort+2, // defaults to 30003
-	)
-
-	// ----------------------------
-	// WAL Configuration Overwrite
-	// i.e.: data/%address%/%ChainID%/wal
-	dataDir := filepath.Join(baseConfig.RootDir, config.DefaultDataDir)
-	walFile := filepath.Join(dataDir, address, withChainID, "wal")
-	walPath := filepath.Join(config.DefaultDataDir, address, withChainID, "wal")
-
-	// We overwrite the wal file to allow parallel I/O for multiple nodes
-	mxConfig.Consensus.SetWalFile(walFile)
-	mxConfig.Consensus.WalPath = walPath
-
-	// ----------------------------
-	// Sync Configuration Overwrite
-	// We enable state-sync here if the config requires it
-	mxConfig.StateSync.Enable = syncConfig.Enable
-	mxConfig.StateSync.TrustPeriod = syncConfig.TrustPeriod
-	mxConfig.StateSync.TrustHeight = syncConfig.TrustHeight
-	mxConfig.StateSync.TrustHash = syncConfig.TrustHash
-
-	// At least 2 witnesses are required for state-sync
-	mxConfig.StateSync.RPCServers = make([]string, len(syncConfig.RPCServers))
-	copy(mxConfig.StateSync.RPCServers, syncConfig.RPCServers)
-
-	return mxConfig, nil
-}
-
-// -----------------------------------------------------------------------------
-// Private helpers implementation.
-
-// deepCopyConfig deep-copies a config pointer to create a new config object.
-func deepCopyConfig(cfg *config.Config) *config.Config {
-	// Re-allocate new config
-	next := &config.Config{
-		BaseConfig:      config.BaseConfig{},
-		RPC:             &config.RPCConfig{},
-		GRPC:            &config.GRPCConfig{},
-		P2P:             &config.P2PConfig{},
-		Mempool:         &config.MempoolConfig{},
-		StateSync:       &config.StateSyncConfig{},
-		BlockSync:       &config.BlockSyncConfig{},
-		Consensus:       &config.ConsensusConfig{},
-		Storage:         &config.StorageConfig{},
-		TxIndex:         &config.TxIndexConfig{},
-		Instrumentation: &config.InstrumentationConfig{},
-	}
-
-	// Copy values from base
-	next.BaseConfig = cfg.BaseConfig
-	*next.RPC = *cfg.RPC
-	*next.GRPC = *cfg.GRPC
-	*next.P2P = *cfg.P2P
-	*next.Mempool = *cfg.Mempool
-	*next.StateSync = *cfg.StateSync
-	*next.BlockSync = *cfg.BlockSync
-	*next.Consensus = *cfg.Consensus
-	*next.Storage = *cfg.Storage
-	*next.TxIndex = *cfg.TxIndex
-	*next.Instrumentation = *cfg.Instrumentation
-
-	return next
-}
-
-// overwriteListenPort replaces the port in a service listen address.
-func overwriteListenPort(laddr string, port int) string {
-	re := regexp.MustCompile(`(.*)(\:\d+)(.*)`)
-	newPort := ":" + strconv.Itoa(port)
-	return re.ReplaceAllString(laddr, `$1`+newPort+`$3`)
 }

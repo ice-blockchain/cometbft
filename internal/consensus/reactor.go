@@ -1383,7 +1383,7 @@ func (conR *Reactor) peerStatsRoutine(ctx context.Context) {
 			}
 
 			// Get peer
-			peer := conR.Switch.Peers(conR.ChainID).GetInOrOut(msg.PeerID, false) // inbound first
+			peer := conR.Switch.Peers(conR.ChainID).Get(msg.PeerID)
 			if peer == nil {
 				conR.Logger.Debug("Failed attempt to update peer stats - PeerID not found",
 					"peer", msg.PeerID,
