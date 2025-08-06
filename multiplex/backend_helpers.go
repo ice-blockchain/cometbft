@@ -13,7 +13,6 @@ import (
 	"github.com/ice-blockchain/cometbft/multiplex/helpers"
 	mxrpc "github.com/ice-blockchain/cometbft/multiplex/rpc"
 	"github.com/ice-blockchain/cometbft/multiplex/types"
-	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
 )
 
 // ----------------------------------------------------------------------------
@@ -99,37 +98,6 @@ func (b *MultiplexBackend) InitValidators(
 	return // pubKeysPerChainID, nil
 }
 
-// GetRemoteValidatorsInfo connects to relayAddress using a JSONRPC client,
-// and calls the InitValidators remote procedure to retrieve public keys.
-//
-// The relayAddress parameter should use `DiscoveryPort` as this method
-// will map it to its corresponding RelayInfo port (`DiscoveryPort - 1`).
-//
-// GetRemoteValidatorsInfo implements [types.Backend].
-func (b *MultiplexBackend) GetRemoteValidatorsInfo(
-	clientCtx context.Context,
-	relayAddress *helpers.RelayAddress,
-	requiredNetworks []string,
-) (*mxrpc.RPCResultInitValidators, error) {
-	valsInfo,
-		httpClient,
-		infoErr := b.reactor.GetRemoteValidatorsInfo(
-		clientCtx,
-		relayAddress,
-		requiredNetworks,
-		b.reactor.relayInfoTimeout,
-	)
-	if infoErr != nil {
-		return nil, infoErr
-	}
-
-	b.relayMtx.Lock()
-	b.httpClients = append(b.httpClients, httpClient)
-	b.relayMtx.Unlock()
-
-	return valsInfo, nil
-}
-
 // GetValidatorsByNetwork maps each supported network to a slice of validator
 // public keys in string (hex) format.
 //
@@ -212,36 +180,6 @@ func (b *MultiplexBackend) GetValidatorsByNetwork(
 	}
 
 	return // validatorsByChain, nil
-}
-
-// GetRemoteRelayInfo connects to relayAddress using a JSONRPC client,
-// and calls the GetRelayInfo remote procedure to retrieve the Relay ID,
-// the supported networks and the listen address for the remote relay.
-//
-// The relayAddress parameter should use `DiscoveryPort` as this method
-// will map it to its corresponding RelayInfo port (`DiscoveryPort - 1`).
-//
-// GetRemoteRelayInfo implements [types.Backend].
-func (b *MultiplexBackend) GetRemoteRelayInfo(
-	clientCtx context.Context,
-	relayAddress *helpers.RelayAddress,
-) (*mxrpc.RPCResultRelayInfo, error) {
-	relayInfo,
-		httpClient,
-		infoErr := b.reactor.GetRemoteRelayInfo(
-		clientCtx,
-		relayAddress,
-		b.reactor.relayInfoTimeout,
-	)
-	if infoErr != nil {
-		return nil, infoErr
-	}
-
-	b.relayMtx.Lock()
-	b.httpClients = append(b.httpClients, httpClient)
-	b.relayMtx.Unlock()
-
-	return relayInfo, nil
 }
 
 // GetRelaysByNetwork maps each supported network to a slice of relay addresses
@@ -363,20 +301,16 @@ func (b *MultiplexBackend) GetRelaysByNetwork(
 	return healthyRelays, chainRelays, errorRelays
 }
 
-// CheckDialCompatibleRelay dials the relay using a local [p2p.Switch] instance
-// to perform a handshake and determine whether relayAddress is compatible.
-//
-// Ignore existing address errors here in case of long-living process
-// broadcasting more transactions, when peer is already dialed or being dialed.
+// CheckDialCompatibleRelay dials the relay to perform a handshake and
+// determine whether relayAddress is compatible.
 //
 // CheckDialCompatibleRelay implements [types.Backend].
 func (b *MultiplexBackend) CheckDialCompatibleRelay(
 	_ context.Context,
-	dialWithSw *cmtp2p.Switch,
 	relayAddr *helpers.RelayAddress,
 ) error {
 	// If this is us, nothing to do.
-	if relayAddr.ID() == b.reactor.GetNodeKey().ID() {
+	if relayAddr.ID() == b.nodeKey.ID() {
 		return nil
 	}
 
@@ -388,14 +322,9 @@ func (b *MultiplexBackend) CheckDialCompatibleRelay(
 		"relay", relayAddr.String(),
 	)
 
-	// if err := b.reactor.DialRelayForScope(dialWithSw, relayAddr, p2p.ScopeForDiscovery); err != nil {
-	// 	if b.reactor.IsDialError(err) {
-	// 		return fmt.Errorf(
-	// 			"could not dial relay %s for discovery: %w", relayAddr.String(), err)
-	// 	}
-	// }
-
-	return nil
+	netAddress := relayAddr.NetAddress()
+	_, err := b.discoveryPool.Connector().Dial(netAddress)
+	return err
 }
 
 // ----------------------------------------------------------------------------
@@ -511,166 +440,3 @@ func (b *MultiplexBackend) ApplyFilterReplRequestRelays(
 
 	return catchupRelays
 }
-
-// ----------------------------------------------------------------------------
-// DEPRECATED
-
-// // GetRemoteValidatorsInfo connects to relayAddress using a JSONRPC client,
-// // and calls the InitValidators remote procedure to retrieve public keys
-// // of remote validators instances for requiredNetworks.
-// //
-// // The relayAddress parameter should use `DiscoveryPort` as this method
-// // will map it to its corresponding RelayInfo port (`DiscoveryPort-1`).
-// func (r *Reactor) GetRemoteValidatorsInfo(
-// 	clientCtx context.Context,
-// 	relayAddress *server.RelayAddress,
-// 	requiredNetworks []string,
-// 	requestTimeout time.Duration,
-// ) (*mxrpc.RPCResultInitValidators, *http.Client, error) {
-// 	// TODO(midas): should re-use this http client in GetRemoteRelayInfo.
-// 	c, connectErr := rpcclient.New(relayAddress.AddressForRelayInfo())
-// 	if connectErr != nil {
-// 		return nil, nil, connectErr
-// 	}
-
-// 	deadline := time.Now().Add(requestTimeout)
-// 	timeoutCtx, cancelFn := context.WithDeadline(context.Background(), deadline)
-// 	defer cancelFn()
-
-// 	result := &mxrpc.RPCResultInitValidators{}
-// 	params := map[string]any{
-// 		"networks": requiredNetworks,
-// 	}
-// 	_, callErr := c.Call(timeoutCtx, "validators", params, result)
-
-// 	select {
-// 	// cancelled by caller
-// 	case <-clientCtx.Done():
-// 		cancelledErr := fmt.Errorf(
-// 			"InitValidators cancelled with %s", relayAddress.AddressForRelayInfo())
-// 		r.logger.Error(cancelledErr.Error())
-// 		return nil, nil, cancelledErr
-// 	// context timeout (request took too long)
-// 	case <-timeoutCtx.Done():
-// 		timeoutErr := fmt.Errorf(
-// 			"InitValidators timed out with %s", relayAddress.AddressForRelayInfo())
-// 		r.logger.Error(timeoutErr.Error())
-// 		return nil, nil, timeoutErr
-// 	default:
-// 	}
-
-// 	if callErr != nil {
-// 		return nil, nil, callErr
-// 	}
-
-// 	return result, c.GetHTTPClient(), nil
-// }
-
-// // GetRemoteRelayInfo connects to relayAddress using a JSONRPC client,
-// // and calls the GetRelayInfo remote procedure to retrieve the Relay ID,
-// // the supported networks and the listen address for the remote relay.
-// //
-// // The relayAddress parameter should use `DiscoveryPort` as this method
-// // will map it to its corresponding RelayInfo port (`DiscoveryPort - 1`).
-// func (r *Reactor) GetRemoteRelayInfo(
-// 	clientCtx context.Context,
-// 	relayAddress *server.RelayAddress,
-// 	requestTimeout time.Duration,
-// ) (*mxrpc.RPCResultRelayInfo, *http.Client, error) {
-// 	// TODO(midas): re-use client from GetRemoteValidatorsInfo.
-// 	c, connectErr := rpcclient.New(relayAddress.AddressForRelayInfo())
-// 	if connectErr != nil {
-// 		return nil, nil, connectErr
-// 	}
-
-// 	deadline := time.Now().Add(requestTimeout)
-// 	timeoutCtx, cancelFn := context.WithDeadline(context.Background(), deadline)
-// 	defer cancelFn()
-
-// 	result := &mxrpc.RPCResultRelayInfo{}
-// 	params := map[string]any{}
-// 	_, callErr := c.Call(timeoutCtx, "info", params, result)
-
-// 	select {
-// 	// cancelled by caller
-// 	case <-clientCtx.Done():
-// 		cancelledErr := fmt.Errorf(
-// 			"RelayInfo cancelled with %s", relayAddress.AddressForRelayInfo())
-// 		r.logger.Error(cancelledErr.Error())
-// 		return nil, nil, cancelledErr
-// 	// context timeout (request took too long)
-// 	case <-timeoutCtx.Done():
-// 		timeoutErr := fmt.Errorf(
-// 			"RelayInfo timed out with %s", relayAddress.AddressForRelayInfo())
-// 		r.logger.Error(timeoutErr.Error())
-// 		return nil, nil, timeoutErr
-// 	default:
-// 	}
-
-// 	if callErr != nil {
-// 		return nil, nil, callErr
-// 	}
-
-// 	return result, c.GetHTTPClient(), nil
-// }
-
-// // GetRemoteDiscoveryAddress calls the RelayInfo remote procedure for sourcePeer
-// // to determine its' discovery address and networks information.
-// func (r *Reactor) GetRemoteDiscoveryAddress(
-// 	sourcePeer *p2p.PeerImpl,
-// ) (*server.RelayAddress, error) {
-// 	// Note that publicAddr may contain a secret connection port and must
-// 	// not be used as the DiscoveryPort to determine CometBFT ports.
-// 	publicAddr, err := sourcePeer.NodeInfo().NetAddress()
-// 	if err != nil {
-// 		return nil, fmt.Errorf(
-// 			"invalid replication source address %s: %w", sourcePeer.SocketAddr(), err)
-// 	}
-// 	// CAUTION: do not use as `DiscoveryPort`, may contain secret conn port.
-// 	sourceAddr, err := server.NewRelayAddress(publicAddr.String())
-// 	if err != nil {
-// 		return nil, fmt.Errorf(
-// 			"invalid replication source relay address %s: %w", publicAddr.String(), err)
-// 	}
-
-// 	// Check if we have a RelayInfo and already know this peer by ID.
-// 	r.networkMutex.RLock()
-// 	partnerRelayInfo, hasRelayInfo := r.knownRelayInfo[string(sourceAddr.ID())]
-// 	r.networkMutex.RUnlock()
-
-// 	var discoveryPort uint16
-
-// 	// We may first need to call the RelayInfo RPC, to find DiscoveryPort.
-// 	if !hasRelayInfo {
-// 		relayInfoStr := sourceAddr.AddressForRelayInfo()
-// 		rpcAddr, _ := server.NewRelayAddress(relayInfoStr) // DiscoveryPort-1
-// 		relayInfo, _, infoErr := r.GetRemoteRelayInfo(
-// 			context.TODO(),
-// 			rpcAddr,
-// 			r.relayInfoTimeout,
-// 		)
-// 		if infoErr != nil {
-// 			return nil, infoErr
-// 		}
-
-// 		r.networkMutex.Lock()
-// 		r.knownRelayInfo[string(sourceAddr.ID())] = relayInfo
-// 		r.networkMutex.Unlock()
-
-// 		discoveryPort = relayInfo.DiscoveryPort
-// 	} else {
-// 		discoveryPort = partnerRelayInfo.DiscoveryPort
-// 	}
-
-// 	// Now we know which port is the discovery port on this relay.
-// 	sourceAddr.SetPort(discoveryPort)
-
-// 	// We can now safely use sourceAddr as it contains `DiscoveryPort` of the relay.
-// 	discoveryAddr, err := server.NewRelayAddress(sourceAddr.String())
-// 	if err != nil {
-// 		return nil, fmt.Errorf(
-// 			"invalid discovery relay address %s: %w", publicAddr.String(), err)
-// 	}
-
-// 	return discoveryAddr, nil
-// }

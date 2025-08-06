@@ -8,6 +8,7 @@ import (
 	"github.com/ice-blockchain/cometbft/internal/evidence"
 	mempl "github.com/ice-blockchain/cometbft/mempool"
 	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
+	cmtmock "github.com/ice-blockchain/cometbft/p2p/mock"
 	"github.com/ice-blockchain/cometbft/p2p/pex"
 	"github.com/ice-blockchain/cometbft/statesync"
 
@@ -58,7 +59,8 @@ func GetChannelIds(channels map[string][]byte) []byte {
 
 // GetChannelDescriptors returns a map of channel descriptors by channel ID.
 func GetChannelDescriptors() map[byte]*cmtp2p.ChannelDescriptor {
-	reactor := cmtp2p.NewBaseReactor(context.Background(), "_", nil)
+	reactor := cmtmock.NewReactor(context.Background())
+
 	reactorImpls := map[string]cmtp2p.Reactor{
 		"BLOCKSYNC": reactor.(*bc.Reactor),
 		"CONSENSUS": reactor.(*cs.Reactor),
@@ -69,7 +71,7 @@ func GetChannelDescriptors() map[byte]*cmtp2p.ChannelDescriptor {
 		// TODO(midas): missing MULTIPLEX
 	}
 
-	chDescs := map[byte]*ChannelDescriptor{}
+	chDescs := map[byte]*cmtp2p.ChannelDescriptor{}
 	for _, impl := range reactorImpls {
 		channelDescs := impl.GetChannels()
 		for _, chDesc := range channelDescs {

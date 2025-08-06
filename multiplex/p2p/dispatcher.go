@@ -10,8 +10,8 @@ import (
 
 	tmp2p "github.com/ice-blockchain/cometbft/api/cometbft/p2p/v1"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
-	"github.com/ice-blockchain/cometbft/libs/service"
 	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
+	cmtconn "github.com/ice-blockchain/cometbft/p2p/conn"
 	cmttypes "github.com/ice-blockchain/cometbft/types"
 
 	"github.com/ice-blockchain/cometbft/multiplex/types"
@@ -58,7 +58,7 @@ func NewDispatcher(
 			"MEMPOOL":   types.ServiceKeyMempoolReactor,
 			"PEX":       types.ServiceKeyAddressesReactor,
 		},
-		channelsIndex: map[byte]*Channel{},
+		channelsIndex: map[byte]*cmtp2p.Channel{},
 
 		// Options
 		logger: logger,
@@ -66,7 +66,6 @@ func NewDispatcher(
 
 	// Use option helpers
 	router.SetOptions(options...)
-	router.BaseService = *service.NewBaseService(ctx, nil, "packetDispatcher", router)
 
 	for reactor, channelIds := range GetRuntimeChannels() {
 		for _, chID := range channelIds {
@@ -93,7 +92,7 @@ func (router *packetDispatcher) Target(packet tmp2p.PacketMsg) cmtp2p.Reactor {
 	defer router.mtx.Unlock()
 
 	// Uses a static list of reactors names
-	name := router.reactorsByChIds[packet.ChannelID]
+	name := router.reactorsByChIds[byte(packet.ChannelID)]
 
 	// Populated in NewDispatcher().
 	skey := router.reactorsServiceKeys[name]
@@ -109,15 +108,15 @@ func (router *packetDispatcher) Target(packet tmp2p.PacketMsg) cmtp2p.Reactor {
 func (router *packetDispatcher) Dispatch(
 	sourcePeer *cmtp2p.PeerImpl,
 	packet tmp2p.PacketMsg,
-) error {
+) (err error) {
 	// Get the packet's target reactor.
 	target := router.Target(packet)
 
 	// Find the correct proto message type.
 	chDescs := target.GetChannels()
-	msgType := proto.Message{}
+	var msgType proto.Message
 	for _, chDesc := range chDescs {
-		if chDesc.ID != packet.ChannelID {
+		if chDesc.ID != byte(packet.ChannelID) {
 			continue
 		}
 
@@ -127,23 +126,26 @@ func (router *packetDispatcher) Dispatch(
 
 	// Unmarshal the packet data and unwrap before dispatching.
 	msg := proto.Clone(msgType)
-	if err := proto.Unmarshal(packet.Data, msg); err != nil {
-		return fmt.Errorf("failed to unmarshal message: %v into type: %s",
+	if err = proto.Unmarshal(packet.Data, msg); err != nil {
+		err = fmt.Errorf("failed to unmarshal message: %v into type: %s",
 			err, reflect.TypeOf(msgType),
 		)
+		return
 	}
 	if w, ok := msg.(cmttypes.Unwrapper); ok {
 		if msg, err = w.Unwrap(); err != nil {
-			return fmt.Errorf("failed to unwrap message: %w", err)
+			err = fmt.Errorf("failed to unwrap message: %w", err)
+			return
 		}
 	}
 
-	return target.Receive(Envelope{
+	target.Receive(cmtp2p.Envelope{
 		ChainID:   packet.ChainID,
-		ChannelID: packet.ChannelID,
+		ChannelID: byte(packet.ChannelID),
 		Src:       sourcePeer,
 		Message:   msg,
 	})
+	return
 }
 
 // Reactors returns reactors for chainID by name.
@@ -197,7 +199,7 @@ func (router *packetDispatcher) GetChannels() (channels []*cmtp2p.Channel) {
 	router.mtx.Lock()
 	defer router.mtx.Unlock()
 
-	channels = make([]*Channel, len(router.channelsIndex))
+	channels = make([]*cmtp2p.Channel, len(router.channelsIndex))
 	if len(router.channelsIndex) > 0 {
 		for _, channel := range router.channelsIndex {
 			channels = append(channels, channel)
@@ -206,9 +208,9 @@ func (router *packetDispatcher) GetChannels() (channels []*cmtp2p.Channel) {
 	}
 
 	chDescs := GetChannelDescriptors()
-	router.channelsIndex = make(map[byte]*Channel, len(chDescs))
+	router.channelsIndex = make(map[byte]*cmtp2p.Channel, len(chDescs))
 	for chID, chDesc := range chDescs {
-		router.channelsIndex[chID] = newChannel(chDesc)
+		router.channelsIndex[chID] = cmtconn.NewChannel(chDesc)
 		channels = append(channels, router.channelsIndex[chID])
 	}
 	return // channels
@@ -258,28 +260,4 @@ func (router *packetDispatcher) SetOptions(options ...DispatcherOption) {
 // Logger returns the logger instance.
 func (router *packetDispatcher) Logger() cmtlog.Logger {
 	return router.logger
-}
-
-// ----------------------------------------------------------------------------
-
-func newChannel(desc *cmtp2p.ChannelDescriptor) *cmtp2p.Channel {
-	desc = desc.FillDefaults()
-	if desc.Priority <= 0 {
-		panic("Channel default priority must be a positive integer")
-	}
-	return &cmtp2p.Channel{
-		// ChainID:   chainID,
-		// conn:      conn,
-		desc:      desc,
-		sendQueue: make(chan []byte, desc.SendQueueCapacity),
-		sending:   []byte{},
-		recving:   make([]byte, 0, desc.RecvBufferCapacity),
-		nextPacketMsg: &tmp2p.PacketMsg{
-			// ChainID:   chainID,
-			ChannelID: int32(desc.ID),
-		},
-		nextP2pWrapperPacketMsg: &tmp2p.Packet_PacketMsg{},
-		nextPacket:              &tmp2p.Packet{},
-		maxPacketMsgPayloadSize: 1024, // defaultMaxPacketMsgPayloadSize
-	}
 }

@@ -23,7 +23,7 @@ type ConnectionPool struct {
 
 	// Services
 	transport  cmtp2p.Transport
-	connector  cmtp2p.Connector
+	connector  *peerConnector
 	dispatcher cmtp2p.Dispatcher
 	handshaker types.Handshaker
 
@@ -57,13 +57,14 @@ func NewConnectionManager(
 	logger cmtlog.Logger,
 	options ...ConnectionPoolOption,
 ) *ConnectionPool {
+	nodeInfo := transport.NodeInfo().(*MultiNetworkNodeInfo)
 	dispatcher := NewDispatcher(ctx, nodeInfo, resourceManager, logger)
 	connector := NewConnector(ctx, transport, dispatcher, logger)
 
 	pool := &ConnectionPool{
 		mtx:      new(sync.Mutex),
 		nodeKey:  nodeKey,
-		nodeInfo: transport.NodeInfo(),
+		nodeInfo: nodeInfo,
 
 		handshaker: NewHandshaker(ctx, nodeInfo, logger),
 		dispatcher: dispatcher,
@@ -121,9 +122,9 @@ func (pool *ConnectionPool) OnStop() {
 
 	peers := pool.peers.Copy()
 	for _, peer := range peers {
-		if pool.poolected.Has(string(peer.ID())) {
-			if err := pool.stopRoutines(peer); err != nil {
-				pool.logger.Error("Error stopping rouutines", "err", err, "peer", p)
+		if pool.connected.Has(string(peer.ID())) {
+			if err := pool.connector.stopRoutines(peer); err != nil {
+				pool.logger.Error("Error stopping rouutines", "err", err, "peer", peer)
 			}
 
 			pool.connected.Delete(string(peer.ID()))
@@ -182,10 +183,10 @@ func (pool *ConnectionPool) Handshaker() types.Handshaker {
 
 // NumPeers returns the number of inbound and outbound peers.
 func (pool *ConnectionPool) NumPeers(chainIds ...string) (inbound, outbound, dialing int) {
-	pool.mtx.RLock()
-	defer pool.mtx.RUnlock()
+	pool.mtx.Lock()
+	defer pool.mtx.Unlock()
 
-	var peers []*PeerImpl
+	var peers []*cmtp2p.PeerImpl
 	if len(chainIds) > 0 {
 		peers = pool.Peers(chainIds...).Copy()
 	} else {
@@ -206,12 +207,12 @@ func (pool *ConnectionPool) NumPeers(chainIds ...string) (inbound, outbound, dia
 
 // Peers returns a peerset by its chainID.
 func (pool *ConnectionPool) Peers(chainIds ...string) *cmtp2p.PeerSet {
-	pool.mtx.RLock()
-	defer pool.mtx.RUnlock()
+	pool.mtx.Lock()
+	defer pool.mtx.Unlock()
 
 	if len(chainIds) > 0 {
 		allPeers := pool.peers.Copy()
-		outPeers := make([]*PeerImpl, 0, len(allPeers))
+		outPeers := make([]*cmtp2p.PeerImpl, 0, len(allPeers))
 
 		chainPeerSet := cmtp2p.NewPeerSet()
 		for _, chainID := range chainIds {
@@ -219,10 +220,10 @@ func (pool *ConnectionPool) Peers(chainIds ...string) *cmtp2p.PeerSet {
 				continue
 			}
 
-			peerIds := pool.peerIdsByChainIds.Get(chainID)
-			outPeers = append(outPeers, slices.DeleteFunc(allPeers, func(p *PeerImpl) bool {
+			peerIds := pool.peerIdsByChainIds.Get(chainID).([]string)
+			outPeers = append(outPeers, slices.DeleteFunc(allPeers, func(p *cmtp2p.PeerImpl) bool {
 				return !slices.Contains(peerIds, string(p.ID()))
-			}))
+			})...)
 		}
 
 		for _, peer := range outPeers {
@@ -240,8 +241,8 @@ func (pool *ConnectionPool) AddPeer(peer *cmtp2p.PeerImpl) error {
 	// TODO(midas): remove debug logs
 	pool.logger.Debug("Adding peer", "peer", peer)
 
-	pool.mtx.RLock()
-	defer pool.mtx.RUnlock()
+	pool.mtx.Lock()
+	defer pool.mtx.Unlock()
 
 	// In case this peer got stopped before, we must reset it.`
 	if peer.IsStopped() {
@@ -250,20 +251,20 @@ func (pool *ConnectionPool) AddPeer(peer *cmtp2p.PeerImpl) error {
 
 	pool.peers.Add(peer)
 
-	//XXX reactor.InitPeer
+	// TODO(midas): do we still need reactor.InitPeer here?
 
 	if !peer.IsRunning() {
 		if err := peer.Start(); err != nil {
-			pool.logger.Error("Error starting peer", "err", err, "peer", p)
+			pool.logger.Error("Error starting peer", "err", err, "peer", peer)
 			return err
 		}
 	}
 
-	//XXX reactor.AddPeer
+	// TODO(midas): do we still need reactor.AddPeer here?
 
 	if !pool.connected.Has(string(peer.ID())) {
 		if err := pool.connector.startRoutines(peer); err != nil {
-			pool.logger.Error("Error starting routines", "err", err, "peer", p)
+			pool.logger.Error("Error starting routines", "err", err, "peer", peer)
 			return err
 		}
 
@@ -278,8 +279,8 @@ func (pool *ConnectionPool) RemovePeer(peerID cmtp2p.ID) error {
 	// TODO(midas): remove debug logs
 	pool.logger.Debug("Removing peer", "peerId", peerID)
 
-	pool.mtx.RLock()
-	defer pool.mtx.RUnlock()
+	pool.mtx.Lock()
+	defer pool.mtx.Unlock()
 
 	if !pool.peers.Has(peerID) {
 		return nil // Nothing to do
@@ -289,7 +290,7 @@ func (pool *ConnectionPool) RemovePeer(peerID cmtp2p.ID) error {
 
 	if pool.connected.Has(string(peerID)) {
 		if err := pool.connector.stopRoutines(peer); err != nil {
-			pool.logger.Error("Error stopping routines", "err", err, "peer", p)
+			pool.logger.Error("Error stopping routines", "err", err, "peer", peer)
 		}
 
 		pool.connected.Delete(string(peerID))
@@ -329,7 +330,7 @@ func (pool *ConnectionPool) Broadcast(e cmtp2p.Envelope) error {
 
 	peers := peerSet.Copy()
 	for _, p := range peers {
-		go func(peer Peer) {
+		go func(peer *cmtp2p.PeerImpl) {
 			success := peer.Send(e.ChainID, e)
 			_ = success
 		}(p)
@@ -348,7 +349,7 @@ func (pool *ConnectionPool) TryBroadcast(e cmtp2p.Envelope) error {
 
 	peers := peerSet.Copy()
 	for _, p := range peers {
-		go func(peer Peer) {
+		go func(peer *cmtp2p.PeerImpl) {
 			success := peer.TrySend(e.ChainID, e)
 			_ = success
 		}(p)
@@ -367,11 +368,11 @@ func (pool *ConnectionPool) SetPeerForChainID(
 
 	peerIds := []string{}
 	if pool.peerIdsByChainIds.Has(chainID) {
-		peerIds = pool.peerIdsByChainIds.Get(chainID)
+		peerIds = pool.peerIdsByChainIds.Get(chainID).([]string)
 	}
 
 	if !slices.Contains(peerIds, string(peerID)) {
-		peerIds = append(peerIds, peerID)
+		peerIds = append(peerIds, string(peerID))
 		pool.peerIdsByChainIds.Set(chainID, peerIds)
 	}
 	return len(peerIds)
@@ -387,7 +388,7 @@ func (pool *ConnectionPool) InitPeerForChainID(
 	pool.mtx.Lock()
 	var lastInitTz time.Time
 	if pool.initTimeByPeerKey.Has(peerKey) {
-		lastInitTz = pool.initTimeByPeerKey.Get(peerKey)
+		lastInitTz = pool.initTimeByPeerKey.Get(peerKey).(time.Time)
 	}
 	pool.mtx.Unlock()
 
@@ -417,11 +418,11 @@ func (pool *ConnectionPool) AddPeerForChainID(
 ) (added bool) {
 	peerKey := strings.Join([]string{string(peerID), chainID}, ":")
 
-	var peerForReactor *PeerImpl
-	peer := pool.peers.Get(peerID)
-
+	var peerForReactor *cmtp2p.PeerImpl
 	if !pool.peersForReactors.Has(peerKey) {
 		peerForReactor = pool.InitPeerForChainID(peerID, chainID)
+	} else {
+		peerForReactor = pool.peersForReactors.Get(peerKey).(*cmtp2p.PeerImpl)
 	}
 
 	reactors := pool.dispatcher.Reactors(chainID)

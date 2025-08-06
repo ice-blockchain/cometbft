@@ -1,6 +1,8 @@
 package mock
 
 import (
+	"context"
+
 	"github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/p2p/conn"

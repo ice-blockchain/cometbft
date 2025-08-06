@@ -6,6 +6,7 @@ import (
 	"github.com/cosmos/gogoproto/proto"
 
 	tmp2p "github.com/ice-blockchain/cometbft/api/cometbft/p2p/v1"
+	"github.com/ice-blockchain/cometbft/libs/service"
 	"github.com/ice-blockchain/cometbft/p2p/conn"
 	"github.com/ice-blockchain/cometbft/types"
 )
@@ -53,6 +54,8 @@ type Dispatcher interface {
 
 // Connector defines the contract for peer connectors.
 type Connector interface {
+	service.Service
+
 	// Dial dials addr or returns an error.
 	Dial(addr *NetAddress) (*PeerImpl, error)
 	// Listen listens for peer connections.

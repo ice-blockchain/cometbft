@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"sync"
 
 	"github.com/cosmos/gogoproto/proto"
@@ -47,7 +46,7 @@ func NewConnector(
 	dispatcher cmtp2p.Dispatcher,
 	logger cmtlog.Logger,
 	options ...ConnectorOption,
-) cmtp2p.Connector {
+) *peerConnector {
 	conn := &peerConnector{
 		mtx:        new(sync.Mutex),
 		transport:  transport,
@@ -277,7 +276,9 @@ func (conn *peerConnector) startRoutines(peer *cmtp2p.PeerImpl) error {
 				Data:      msgBytes,
 			})
 		},
-		conn.stopPeerForError,
+		func(reason any) {
+			conn.stopPeerForError(peer, reason)
+		},
 	)
 
 	if err := conn.mconns[peer.ID()].Start(); err != nil {
@@ -316,13 +317,12 @@ func (conn *peerConnector) isPersistent(*cmtp2p.NetAddress) bool {
 func (conn *peerConnector) stopPeerForError(p *cmtp2p.PeerImpl, r any) {
 	conn.logger.Error("Stopping peer for error", "peer", p, "reason", r)
 
-	conn.RemovePeer(p.ID())
+	conn.pool.RemovePeer(p.ID())
 	conn.stopRoutines(p)
 }
 
 // wrapMsgBytes wraps a [proto.Message] and marshals it, or errors.
 func (conn *peerConnector) wrapMsgBytes(msg proto.Message) ([]byte, error) {
-	msgType := reflect.TypeOf(msg)
 	if w, ok := msg.(types.Wrapper); ok {
 		msg = w.Wrap()
 	}

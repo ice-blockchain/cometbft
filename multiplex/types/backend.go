@@ -64,12 +64,14 @@ type Server interface {
 // See also:
 // - [Server]
 // - [rpc.Backend]
+// - [rpc.Client]
 // - [RelayComposer]
 // - [RelayHelpers]
 // - [BroadcastHelpers]
 type Backend interface {
 	Server
 	rpc.Backend
+	rpc.Client
 	RelayComposer
 	RelayHelpers
 	BroadcastHelpers
@@ -164,7 +166,6 @@ type RelayComposer interface {
 // their validators public keys, their server information, or the local
 // blockchain heights stored on the relay.
 type RelayHelpers interface {
-
 	// SaveRelayInfo stores the RPC call response.
 	SaveRelayInfo(relayInfo *rpc.RPCResultRelayInfo)
 	// GetRelayInfo returns a a RPC call response or nil.
@@ -179,21 +180,6 @@ type RelayHelpers interface {
 		userAddress string,
 		transactions ...client.Transaction,
 	) ([]string, []string)
-
-	// GetRemoteValidatorsInfo should request a RPCResultInitValidator object
-	// which contains a map of validators public keys by ChainID.
-	GetRemoteValidatorsInfo(
-		ctx context.Context,
-		relayAddress *helpers.RelayAddress,
-		networks []string,
-	) (*rpc.RPCResultInitValidators, error)
-
-	// GetRemoteRelayInfo should request a relay information object which contains
-	// a CometBFT Node ID, the supported networks and the node's listen address.
-	GetRemoteRelayInfo(
-		ctx context.Context,
-		relayAddress *helpers.RelayAddress,
-	) (*rpc.RPCResultRelayInfo, error)
 
 	// GetValidatorsByNetwork should find the supported networks, then map each
 	// of the ChainID to a slice of validator public keys.
@@ -215,7 +201,6 @@ type RelayHelpers interface {
 	// and thereby defining whether a relay is compatible for dialing.
 	CheckDialCompatibleRelay(
 		ctx context.Context,
-		dialWithSw *p2p.Switch,
 		relayAddress *helpers.RelayAddress,
 	) error
 }

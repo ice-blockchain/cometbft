@@ -869,9 +869,6 @@ func (chDesc ChannelDescriptor) FillDefaults() (filled *ChannelDescriptor) {
 // TODO: lowercase.
 // NOTE: not goroutine-safe.
 type Channel struct {
-	ChainID string
-
-	conn             *MConnection
 	desc             *ChannelDescriptor
 	sendQueueChainID string
 	sendQueue        chan []byte
@@ -887,6 +884,26 @@ type Channel struct {
 	maxPacketMsgPayloadSize int
 
 	Logger log.Logger
+}
+
+func NewChannel(desc *ChannelDescriptor) *Channel {
+	desc = desc.FillDefaults()
+	if desc.Priority <= 0 {
+		panic("Channel default priority must be a positive integer")
+	}
+
+	return &Channel{
+		desc:      desc,
+		sendQueue: make(chan []byte, desc.SendQueueCapacity),
+		sending:   []byte{},
+		recving:   make([]byte, 0, desc.RecvBufferCapacity),
+		nextPacketMsg: &tmp2p.PacketMsg{
+			ChannelID: int32(desc.ID),
+		},
+		nextP2pWrapperPacketMsg: &tmp2p.Packet_PacketMsg{},
+		nextPacket:              &tmp2p.Packet{},
+		maxPacketMsgPayloadSize: 1024, // defaultMaxPacketMsgPayloadSize
+	}
 }
 
 func (ch *Channel) SetLogger(l log.Logger) {

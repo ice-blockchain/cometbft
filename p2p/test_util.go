@@ -15,6 +15,7 @@ import (
 	cmtrand "github.com/ice-blockchain/cometbft/internal/rand"
 	cmtbytes "github.com/ice-blockchain/cometbft/libs/bytes"
 	"github.com/ice-blockchain/cometbft/libs/log"
+	"github.com/ice-blockchain/cometbft/libs/service"
 	"github.com/ice-blockchain/cometbft/p2p/conn"
 )
 
@@ -106,6 +107,7 @@ func (*mockPool) AddPeerForChainID(peerID ID, chainID string) bool       { retur
 // ----------------------------------------------------------------------------
 
 type mockConnector struct {
+	service.BaseService
 }
 
 var _ Connector = (*mockConnector)(nil)

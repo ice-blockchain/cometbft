@@ -1,6 +1,7 @@
 package mock
 
 import (
+	"context"
 	"net"
 
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
@@ -35,7 +36,7 @@ func NewPeer(ip net.IP) *Peer {
 		addr: netAddr,
 		kv:   make(map[string]any),
 	}
-	mp.BaseService = service.NewBaseService(nil, "MockPeer", mp)
+	mp.BaseService = service.NewBaseService(context.Background(), nil, "MockPeer", mp)
 	if err := mp.Start(); err != nil {
 		panic(err)
 	}
