@@ -172,7 +172,6 @@ func NewMConnection(
 	ctx context.Context,
 	conn net.Conn,
 	channelProvider ChannelProvider,
-	// chDescs map[string][]*ChannelDescriptor,
 	onReceive receiveCbFunc,
 	onError errorCbFunc,
 ) *MConnection {

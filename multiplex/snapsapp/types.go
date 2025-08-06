@@ -19,6 +19,8 @@ type TxAcceptor interface {
 type Backend interface {
 	// HasNetwork should return true if a ChainID is known to a node.
 	HasNetwork(chainID string) bool
+	// GetNetworks should return a slice of ChainID values known to a node.
+	GetNetworks() []string
 
 	// StateStore should return the state store for ChainID.
 	StateStore(chainID string) sm.Store

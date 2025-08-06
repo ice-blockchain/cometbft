@@ -1,6 +1,8 @@
 package p2p
 
 import (
+	"context"
+
 	bc "github.com/ice-blockchain/cometbft/internal/blocksync"
 	cs "github.com/ice-blockchain/cometbft/internal/consensus"
 	"github.com/ice-blockchain/cometbft/internal/evidence"
@@ -55,9 +57,9 @@ func GetChannelIds(channels map[string][]byte) []byte {
 }
 
 // GetChannelDescriptors returns a map of channel descriptors by channel ID.
-func GetChannelDescriptors() map[byte]*ChannelDescriptor {
-	reactor := &cmtp2p.BaseReactor{}
-	reactorImpls := []*cmtp2p.Reactor{
+func GetChannelDescriptors() map[byte]*cmtp2p.ChannelDescriptor {
+	reactor := cmtp2p.NewBaseReactor(context.Background(), "_", nil)
+	reactorImpls := map[string]cmtp2p.Reactor{
 		"BLOCKSYNC": reactor.(*bc.Reactor),
 		"CONSENSUS": reactor.(*cs.Reactor),
 		"MEMPOOL":   reactor.(*mempl.Reactor),

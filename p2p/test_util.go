@@ -137,6 +137,9 @@ func (*mockDispatcher) Reactors(chainID string) map[string]Reactor              
 func (*mockDispatcher) Reactor(chainID string, name string) Reactor                 { return nil }
 func (*mockDispatcher) SetMultiplexReactor(mxR Reactor)                             {}
 func (*mockDispatcher) GetMultiplexReactor() Reactor                                { return nil }
+func (*mockDispatcher) GetChannels() (channels []*Channel)                          { return }
+func (*mockDispatcher) GetChannel(chID byte) *Channel                               { return nil }
+func (*mockDispatcher) GetDescriptor(chID byte) *ChannelDescriptor                  { return nil }
 
 // ------------------------------------------------------------------
 // Connects switches via arbitrary net.Conn. Used for testing.

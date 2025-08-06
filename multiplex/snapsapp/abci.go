@@ -38,29 +38,29 @@ func (app *SnapsApp) InitChain(
 
 	// On a new chain, we consider the init chain block height as 0, even though
 	// req.InitialHeight is 1 by default.
-	app.ihMutex.Lock()
+	app.mtx.Lock()
 	app.initialHeights[chainID] = req.InitialHeight
 	if app.initialHeights[chainID] == 0 { // If initial height is 0, set it to 1
 		app.initialHeights[chainID] = 1
 	}
-	app.ihMutex.Unlock()
+	app.mtx.Unlock()
 
 	if err := app.setFinalizeBlockHeight(chainID, 0); err != nil {
 		return nil, fmt.Errorf("could not update block height for %s from InitChain: %w", chainID, err)
 	}
 
 	// if req.InitialHeight is > 1, then we set the initial version on the app
-	app.lbMutex.Lock()
+	app.mtx.Lock()
 	if req.InitialHeight > 1 {
 		app.lastBlockHeights[chainID] = req.InitialHeight
 	} else {
 		app.lastBlockHeights[chainID] = 0
 	}
-	app.lbMutex.Unlock()
+	app.mtx.Unlock()
 	app.logger.Info("InitChain", "initialHeight", req.InitialHeight, "chainID", req.ChainId)
 
 	// Get the state machine instance to retrieve current AppHash
-	stateStore := app.backend.GetStateStore(chainID)
+	stateStore := app.backend.StateStore(chainID)
 	stateMachine, err := stateStore.Load()
 	if err != nil {
 		return nil, fmt.Errorf("could not load state machine for %s from InitChain: %w", chainID, err)
@@ -95,7 +95,7 @@ func (app *SnapsApp) Info(
 	}
 
 	// Get the state machine instance to retrieve current AppHash
-	stateStore := app.backend.GetStateStore(chainID)
+	stateStore := app.backend.StateStore(chainID)
 	stateMachine, err := stateStore.Load()
 	if err != nil {
 		app.logger.Error("could not load state machine (Info)", "chainId", chainID)
@@ -198,18 +198,15 @@ func (app *SnapsApp) ProcessProposal(
 	}
 
 	// Update the current working block height
-	app.whMutex.Lock()
-	app.workingHeights[chainID] = req.Height
-	app.whMutex.Unlock()
-
 	// Update the last block height for this ChainID
-	app.lbMutex.Lock()
+	app.mtx.Lock()
+	app.workingHeights[chainID] = req.Height
 	app.lastBlockHeights[chainID] = req.Height
-	app.lbMutex.Unlock()
+	app.mtx.Unlock()
 
 	// Note that if the mempool for this ChainID is not yet available, we can't
 	// ensure that the transaction(s) have passed CheckTx, so we must drop here.
-	if app.useMempool && app.backend.GetMempool(chainID) == nil {
+	if app.useMempool && app.backend.Mempool(chainID) == nil {
 		app.logger.Error("ProcessProposal failed to get mempool; rejecting proposal",
 			"chainId", chainID,
 			"height", req.Height,
@@ -228,7 +225,7 @@ func (app *SnapsApp) ProcessProposal(
 		txAccepted := true
 		for _, tx := range req.Txs {
 			// The GetMempool() call is checked for non-nil return in above block.
-			txAccepted = txAccepted && app.backend.GetMempool(chainID).TxAccepted(tx)
+			txAccepted = txAccepted && app.backend.Mempool(chainID).TxAccepted(tx)
 
 			// TODO(midas): remove debug logs
 			app.logger.Debug("TxAccepted",
@@ -301,12 +298,12 @@ func (app *SnapsApp) FinalizeBlock(
 	// we are finalizing a block received through blocksync. In this case,
 	// instead of executing the CommitBroadcastTx callback, we forward the
 	// transaction batch to the replay pool to execute ReplayBroadcastTxBatch.
-	app.whMutex.RLock()
+	app.mtx.RLock()
 	isReplayMode := false
 	if workingHeight, ok := app.workingHeights[chainID]; ok {
 		isReplayMode = workingHeight != req.Height
 	}
-	app.whMutex.RUnlock()
+	app.mtx.RUnlock()
 
 	// Forward the transaction batch to an Acceptor if any is available.
 	if app.txAcceptor != nil && len(processedTxs) > 0 {
@@ -320,9 +317,9 @@ func (app *SnapsApp) FinalizeBlock(
 			batch = append(batch, tx)
 			txHashes = append(txHashes, txHash)
 
-			app.txMutex.RLock()
+			app.mtx.RLock()
 			_, committed := app.committedTxHashes[txHash]
-			app.txMutex.RUnlock()
+			app.mtx.RUnlock()
 			if !committed {
 				hasUncommittedTx = true
 			}
@@ -369,12 +366,12 @@ func (app *SnapsApp) FinalizeBlock(
 					"err", err,
 				)
 			} else {
-				app.txMutex.Lock()
+				app.mtx.Lock()
 				for _, tx := range batch {
 					txHash := fmt.Sprintf("%X", tx.Hash())
 					app.committedTxHashes[txHash] = true
 				}
-				app.txMutex.Unlock()
+				app.mtx.Unlock()
 			}
 		}
 	}
@@ -398,7 +395,7 @@ func (app *SnapsApp) addToReplayPool(
 
 	// Register this batch in the reactor's replay pool.
 	// Transactions will be added to a transaction bucket by user address.
-	replayPool := app.backend.GetReplayPool()
+	replayPool := app.backend.ReplayPool()
 	replayPool.Add(userAddress, transactions...)
 	return nil
 }
@@ -443,9 +440,9 @@ func (app *SnapsApp) Commit(
 		return resp, nil
 	}
 
-	app.fbMutex.RLock()
+	app.mtx.RLock()
 	workingHeight := app.finalizeBlockHeights[chainID]
-	app.fbMutex.RUnlock()
+	app.mtx.RUnlock()
 
 	app.logger.Info("Committed block height",
 		"height", workingHeight,

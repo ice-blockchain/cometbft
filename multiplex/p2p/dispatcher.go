@@ -26,7 +26,7 @@ type packetDispatcher struct {
 	multiplexReactor    cmtp2p.Reactor
 	reactorsByChIds     map[byte]string
 	reactorsServiceKeys map[string]string
-	channelsIndex       map[byte]*Channel
+	channelsIndex       map[byte]*cmtp2p.Channel
 
 	// Options
 	logger cmtlog.Logger
@@ -111,7 +111,7 @@ func (router *packetDispatcher) Dispatch(
 	packet tmp2p.PacketMsg,
 ) error {
 	// Get the packet's target reactor.
-	target := router.Target(packet),
+	target := router.Target(packet)
 
 	// Find the correct proto message type.
 	chDescs := target.GetChannels()
@@ -193,7 +193,7 @@ func (router *packetDispatcher) GetMultiplexReactor() cmtp2p.Reactor {
 // cmtp2p.ChannelProvider API implementation
 
 // GetChannels returns a slice of Channel instances.
-func (router *packetDispatcher) GetChannels() (channels []*Channel) {
+func (router *packetDispatcher) GetChannels() (channels []*cmtp2p.Channel) {
 	router.mtx.Lock()
 	defer router.mtx.Unlock()
 
@@ -215,7 +215,7 @@ func (router *packetDispatcher) GetChannels() (channels []*Channel) {
 }
 
 // GetChannel returns a Channel by ID.
-func (router *packetDispatcher) GetChannel(chID byte) *Channel {
+func (router *packetDispatcher) GetChannel(chID byte) *cmtp2p.Channel {
 	router.mtx.Lock()
 	defer router.mtx.Unlock()
 
@@ -231,7 +231,7 @@ func (router *packetDispatcher) GetChannel(chID byte) *Channel {
 }
 
 // GetDescriptor returns a ChannelDescriptor by ID.
-func (router *packetDispatcher) GetDescriptor(chID byte) *ChannelDescriptor {
+func (router *packetDispatcher) GetDescriptor(chID byte) *cmtp2p.ChannelDescriptor {
 	router.mtx.Lock()
 	defer router.mtx.Unlock()
 
@@ -262,12 +262,12 @@ func (router *packetDispatcher) Logger() cmtlog.Logger {
 
 // ----------------------------------------------------------------------------
 
-func newChannel(desc *ChannelDescriptor) *Channel {
+func newChannel(desc *cmtp2p.ChannelDescriptor) *cmtp2p.Channel {
 	desc = desc.FillDefaults()
 	if desc.Priority <= 0 {
 		panic("Channel default priority must be a positive integer")
 	}
-	return &Channel{
+	return &cmtp2p.Channel{
 		// ChainID:   chainID,
 		// conn:      conn,
 		desc:      desc,

@@ -158,7 +158,7 @@ func (pool *ConnectionPool) NodeInfo() cmtp2p.NodeInfo {
 }
 
 // Transport returns the packet transporter.
-func (pool *ConnectionPool) Transport() Transport {
+func (pool *ConnectionPool) Transport() cmtp2p.Transport {
 	return pool.transport
 }
 
@@ -300,12 +300,12 @@ func (pool *ConnectionPool) RemovePeer(peerID cmtp2p.ID) error {
 }
 
 // HasPeer returns true if peer is in the PeerSet.
-func (pool *ConnectionPool) HasPeer(peer *PeerImpl) bool {
+func (pool *ConnectionPool) HasPeer(peer *cmtp2p.PeerImpl) bool {
 	return pool.peers.HasPeer(peer)
 }
 
 // HasPeerID returns true if id is in the PeerSet.
-func (pool *ConnectionPool) HasPeerID(id ID) bool {
+func (pool *ConnectionPool) HasPeerID(id cmtp2p.ID) bool {
 	return pool.peers.Has(id)
 }
 
@@ -315,7 +315,7 @@ func (pool *ConnectionPool) HasPeerIP(ip net.IP) bool {
 }
 
 // Broadcast sends a message to all peers.
-func (pool *ConnectionPool) Broadcast(e Envelope) error {
+func (pool *ConnectionPool) Broadcast(e cmtp2p.Envelope) error {
 	peerSet := pool.Peers(e.ChainID)
 
 	if peerSet.Size() == 0 {
@@ -339,7 +339,7 @@ func (pool *ConnectionPool) Broadcast(e Envelope) error {
 }
 
 // TryBroadcast sends a message to all peers.
-func (pool *ConnectionPool) TryBroadcast(e Envelope) error {
+func (pool *ConnectionPool) TryBroadcast(e cmtp2p.Envelope) error {
 	peerSet := pool.Peers(e.ChainID)
 
 	if peerSet.Size() == 0 {

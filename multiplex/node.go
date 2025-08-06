@@ -8,14 +8,15 @@ import (
 	"github.com/ice-blockchain/cometbft/crypto"
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
-	"github.com/ice-blockchain/cometbft/multiplex/client"
-	"github.com/ice-blockchain/cometbft/multiplex/server"
 	"github.com/ice-blockchain/cometbft/node"
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/privval"
 	"github.com/ice-blockchain/cometbft/proxy"
 	sm "github.com/ice-blockchain/cometbft/state"
 	"github.com/ice-blockchain/cometbft/version"
+
+	"github.com/ice-blockchain/cometbft/multiplex/client"
+	"github.com/ice-blockchain/cometbft/multiplex/helpers"
 )
 
 // NodesMultiplexProvider takes a config and a logger and returns a
@@ -242,7 +243,7 @@ func GetAddressForCometBFT(
 		int(globalCfg.DiscoveryPort+1), // always DiscoveryPort+1
 	)
 
-	relayAddr, addrErr := server.NewRelayAddress(p2pListenAddr)
+	relayAddr, addrErr := helpers.NewRelayAddress(p2pListenAddr)
 	if addrErr != nil {
 		return nil, fmt.Errorf(
 			"could not create relay address for P2P: %w", err)

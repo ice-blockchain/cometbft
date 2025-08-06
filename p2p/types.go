@@ -11,6 +11,7 @@ import (
 )
 
 type (
+	Channel           = conn.Channel
 	ChannelProvider   = conn.ChannelProvider
 	ChannelDescriptor = conn.ChannelDescriptor
 	ConnectionStatus  = conn.ConnectionStatus
@@ -31,6 +32,9 @@ var (
 
 // Dispatcher defines the contract for a [tmp2p.PacketMsg] dispatcher.
 type Dispatcher interface {
+	// A dispatcher should also provide connection channels.
+	ChannelProvider
+
 	// Target returns the target reactor to process packet.
 	Target(packet tmp2p.PacketMsg) Reactor
 	// Dispatch forwards the packet to the target reactor.

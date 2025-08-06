@@ -7,11 +7,14 @@ import (
 	"reflect"
 	"sync"
 
+	"github.com/cosmos/gogoproto/proto"
+
+	tmp2p "github.com/ice-blockchain/cometbft/api/cometbft/p2p/v1"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/libs/service"
 	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
+	cmtconn "github.com/ice-blockchain/cometbft/p2p/conn"
 	"github.com/ice-blockchain/cometbft/types"
-	"google.golang.org/protobuf/proto"
 )
 
 // peerConnector defines a peer connector as decribed with [cmtp2p.Connector].
@@ -25,7 +28,7 @@ type peerConnector struct {
 
 	// Services
 	pool   *ConnectionPool
-	mconns map[cmtp2p.ID]*cmtp2p.MConnection
+	mconns map[cmtp2p.ID]*cmtconn.MConnection
 
 	// Options
 	logger cmtlog.Logger
@@ -51,7 +54,7 @@ func NewConnector(
 		dispatcher: dispatcher,
 
 		// Services
-		mconns: make(map[cmtp2p.ID]*cmtp2p.MConnection, 0),
+		mconns: make(map[cmtp2p.ID]*cmtconn.MConnection, 0),
 
 		// Options
 		logger: logger,
@@ -105,20 +108,19 @@ func (conn *peerConnector) OnReset(ctx context.Context) error {
 // cmtp2p.Connector API implementation
 
 // Dial dials addr or returns an error.
-func (conn *peerConnector) Dial(addr *NetAddress) (*PeerImpl, error) {
+func (conn *peerConnector) Dial(addr *cmtp2p.NetAddress) (*cmtp2p.PeerImpl, error) {
 	// TODO(midas): remove debug logs
 	conn.logger.Debug("Dialing peer", "address", addr)
 
-	conn.mtx.RLock()
-	defer conn.mtx.RUnlock()
+	conn.mtx.Lock()
+	defer conn.mtx.Unlock()
 
 	// Dial the remote relay
-	p, err := conn.transport.Dial(conn.Context(), addr, cmtp2p.PeerConfig{
-		dispatcher:   conn.dispatcher,
-		isPersistent: conn.isPersistent,
-		onPeerError:  conn.stopPeerForError,
-		outbound:     true,
-	})
+	p, err := conn.transport.Dial(conn.Context(), *addr, cmtp2p.NewPeerConfig(
+		conn.dispatcher,
+		conn.stopPeerForError,
+		cmtp2p.PeerConfigOutbound(true),
+	))
 	if err != nil {
 		conn.handleErrorGracefully(err)
 		conn.logger.Error("Outbound peer rejected",
@@ -135,7 +137,7 @@ func (conn *peerConnector) Dial(addr *NetAddress) (*PeerImpl, error) {
 	if err := conn.pool.AddPeer(p); err != nil {
 		conn.logger.Error("failed to add outbound peer to set",
 			"addr", addr.DialString(),
-			"peer", peer,
+			"peer", p,
 			"err", err,
 		)
 		return p, err
@@ -155,12 +157,11 @@ func (conn *peerConnector) Listen() error {
 		}
 
 		// Accept incoming remote relay connections.
-		p, err := conn.transport.Accept(conn.Context(), cmtp2p.PeerConfig{
-			dispatcher:   conn.dispatcher,
-			isPersistent: conn.isPersistent,
-			onPeerError:  conn.stopPeerForError,
-			outbound:     false,
-		})
+		p, err := conn.transport.Accept(conn.Context(), cmtp2p.NewPeerConfig(
+			conn.dispatcher,
+			conn.stopPeerForError,
+			cmtp2p.PeerConfigOutbound(false),
+		))
 		// If Close() was called, exit silently
 		if err != nil && conn.transport.IsClosing() {
 			return err
@@ -193,13 +194,13 @@ func (conn *peerConnector) Listen() error {
 }
 
 // Send sends a packet to peerID.
-func (conn *peerConnector) Send(e Envelope) error {
+func (conn *peerConnector) Send(e cmtp2p.Envelope) error {
 	if _, ok := conn.mconns[e.Src.ID()]; !ok {
 		return fmt.Errorf(
 			"missing MConnection for peer %s", e.Src.ID())
 	}
 
-	msgBytes, err := wrapMsgBytes(e.Message)
+	msgBytes, err := conn.wrapMsgBytes(e.Message)
 	if err != nil {
 		return err
 	}
@@ -219,13 +220,13 @@ func (conn *peerConnector) Send(e Envelope) error {
 }
 
 // TrySend tries to send a packet to peerID.
-func (conn *peerConnector) TrySend(e Envelope) error {
+func (conn *peerConnector) TrySend(e cmtp2p.Envelope) error {
 	if _, ok := conn.mconns[e.Src.ID()]; !ok {
 		return fmt.Errorf(
 			"missing MConnection for peer %s", e.Src.ID())
 	}
 
-	msgBytes, err := wrapMsgBytes(e.Message)
+	msgBytes, err := conn.wrapMsgBytes(e.Message)
 	if err != nil {
 		return err
 	}
@@ -261,26 +262,25 @@ func (conn *peerConnector) Logger() cmtlog.Logger {
 // ----------------------------------------------------------------------------
 
 // startRoutines starts the send and receive routines for peer.
-func (conn *peerConnector) startRoutines(peer *PeerImpl) error {
-	conn.mtx.RLock()
-	defer conn.mtx.RUnlock()
+func (conn *peerConnector) startRoutines(peer *cmtp2p.PeerImpl) error {
+	conn.mtx.Lock()
+	defer conn.mtx.Unlock()
 
 	// Re-initialize all channels in case this conn is reset.
-	conn.mconns[p.ID()] = cmtp2p.NewMConnection(conn.Context(),
+	conn.mconns[peer.ID()] = cmtconn.NewMConnection(conn.Context(),
 		peer.Conn(),
+		conn.dispatcher,
 		func(chainID string, chID byte, msgBytes []byte) {
 			conn.dispatcher.Dispatch(peer, tmp2p.PacketMsg{
 				ChainID:   chainID,
-				ChannelID: chID,
+				ChannelID: int32(chID),
 				Data:      msgBytes,
 			})
 		},
-		func(reason any) {
-			conn.stopPeerForError(peer, reason)
-		},
+		conn.stopPeerForError,
 	)
 
-	if err := conn.mconns[p.ID()].Start(); err != nil {
+	if err := conn.mconns[peer.ID()].Start(); err != nil {
 		conn.logger.Error("failed to start routines",
 			"peer", peer,
 			"err", err,
@@ -291,9 +291,9 @@ func (conn *peerConnector) startRoutines(peer *PeerImpl) error {
 }
 
 // stopRoutines stops the send and receive routines for peer.
-func (conn *peerConnector) stopRoutines(peer *PeerImpl) error {
-	conn.mtx.RLock()
-	defer conn.mtx.RUnlock()
+func (conn *peerConnector) stopRoutines(peer *cmtp2p.PeerImpl) error {
+	conn.mtx.Lock()
+	defer conn.mtx.Unlock()
 
 	if err := conn.mconns[peer.ID()].Stop(); err != nil {
 		conn.logger.Error("failed to stop routines",
@@ -308,12 +308,12 @@ func (conn *peerConnector) stopRoutines(peer *PeerImpl) error {
 // ----------------------------------------------------------------------------
 
 // isPersistent returns false because multiplex doesn't allow persistent peers.
-func (conn *peerConnector) isPersistent(*NetAddress) bool {
+func (conn *peerConnector) isPersistent(*cmtp2p.NetAddress) bool {
 	return false
 }
 
 // stopPeerForError removes a peer from the peer set after an error happened.
-func (conn *peerConnector) stopPeerForError(p *PeerImpl, r any) {
+func (conn *peerConnector) stopPeerForError(p *cmtp2p.PeerImpl, r any) {
 	conn.logger.Error("Stopping peer for error", "peer", p, "reason", r)
 
 	conn.RemovePeer(p.ID())
