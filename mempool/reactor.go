@@ -2,8 +2,10 @@ package mempool
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -729,14 +731,10 @@ func (memR *Reactor) sendAckTransactionBroadcast(
 	protoTxs [][]byte,
 ) error {
 	myPeerID := memR.nodeKey.ID()
-	txHashes := [][]byte{}
-	txHashesHex := []string{}
-	for _, rawTx := range protoTxs {
-		memTx := types.Tx(rawTx)
-		txHash := memTx.Hash()
-		txHashes = append(txHashes, txHash)
-		txHashesHex = append(txHashesHex, fmt.Sprintf("%X", txHash))
-	}
+	txHash := types.Tx(protoTxs[0]).Hash()
+	txHashHex := strings.ToUpper(
+		hex.EncodeToString(txHash),
+	)
 
 	sendToPeer := func(fromID p2p.ID, toPeer *p2p.PeerImpl) error {
 		if success := toPeer.Send(memR.ChainID, p2p.Envelope{
@@ -744,9 +742,9 @@ func (memR *Reactor) sendAckTransactionBroadcast(
 			Message: &mxp2p.Receipt{
 				Sum: &mxp2p.Receipt_AckTransactionBroadcast{
 					AckTransactionBroadcast: &mxp2p.AckTransactionBroadcast{
-						TxHashes: txHashes,
-						NodeId:   string(fromID),
-						ChainID:  memR.ChainID,
+						TxHash:  txHash,
+						NodeId:  string(fromID),
+						ChainID: memR.ChainID,
 					},
 				},
 			},
@@ -761,16 +759,16 @@ func (memR *Reactor) sendAckTransactionBroadcast(
 	if peer == nil {
 		return fmt.Errorf(
 			"failed sending AckTransactionBroadcast, got empty peer for ChainID %s and txHash %v",
-			string(memR.ChainID), txHashesHex)
+			string(memR.ChainID), txHashHex)
 	}
 
 	// TODO(midas): remove debug logs
 	memR.Logger.Debug("Sending AckTransactionBroadcast to peer",
-		"from_id", myPeerID,
-		"peer_id", peer.ID(),
+		"from", myPeerID,
+		"to", peer.ID(),
 		"peer", peer,
-		"chain_id", memR.ChainID,
-		"tx_hashes", txHashesHex,
+		"chainId", memR.ChainID,
+		"txHash", txHashHex,
 	)
 
 	if err := sendToPeer(myPeerID, peer); err != nil {

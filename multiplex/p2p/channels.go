@@ -9,7 +9,7 @@ import (
 	"github.com/ice-blockchain/cometbft/p2p/pex"
 	"github.com/ice-blockchain/cometbft/statesync"
 
-	"github.com/ice-blockchain/cometbft/multiplex/server"
+	"github.com/ice-blockchain/cometbft/multiplex/types"
 )
 
 // GetRuntimeChannels returns a slice with ChannelID values mapped by reactor
@@ -30,9 +30,9 @@ func GetRuntimeChannels() map[string][]byte {
 
 		"MULTIPLEX": []byte{
 			// AckBroadcastChannel may be used to send AckTransactionBroadcast messages.
-			server.AckBroadcastChannel,
+			types.AckBroadcastChannel,
 			// RuntimeChannel may be used to send ChainReplicationComplete messages.
-			server.RuntimeChannel,
+			types.RuntimeChannel,
 		},
 	}
 }
@@ -41,7 +41,7 @@ func GetRuntimeChannels() map[string][]byte {
 // name, required for relays to accept discovery messages, e.g. ChainReplicationRequest.
 func GetDiscoveryChannels() map[string][]byte {
 	return map[string][]byte{
-		"MULTIPLEX": []byte{server.ReplicationChannel},
+		"MULTIPLEX": []byte{types.ReplicationChannel},
 	}
 }
 
