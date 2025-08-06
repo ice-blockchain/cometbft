@@ -2,6 +2,7 @@ package p2p
 
 import (
 	"context"
+
 	"github.com/ice-blockchain/cometbft/libs/service"
 	"github.com/ice-blockchain/cometbft/p2p/conn"
 )

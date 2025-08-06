@@ -104,7 +104,7 @@ func createOutboundPeerAndPerformHandshake(
 		return nil, err
 	}
 
-	cfg := peerConfig{
+	cfg := PeerConfig{
 		reactorsByCh:  reactorsByCh,
 		msgTypeByChID: msgTypeByChID,
 		chDescs:       chDescs,

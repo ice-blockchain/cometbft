@@ -501,7 +501,8 @@ func (r *Reactor) ensurePeersRoutine() {
 func (r *Reactor) ensurePeers() {
 	var (
 		out, in, dial = r.Switch.NumPeers(r.ChainID)
-		numToDial     = r.Switch.MaxNumOutboundPeers() - (out + dial)
+		// numToDial     = r.Switch.MaxNumOutboundPeers() - (out + dial)
+		numToDial = 0
 	)
 
 	// NOTE(midas): Networks with smaller nodes count (we use 7 relays) tend
@@ -547,9 +548,9 @@ func (r *Reactor) ensurePeers() {
 		if _, selected := toDial[try.ID]; selected {
 			continue
 		}
-		if r.Switch.IsDialingOrExistingAddress(try) {
-			continue
-		}
+		// if r.Switch.IsDialingOrExistingAddress(try) {
+		// 	continue
+		// }
 		// TODO: consider moving some checks from toDial into here
 		// so we don't even consider dialing peers that we want to wait
 		// before dialing again, or have dialed too many times already
@@ -605,10 +606,10 @@ func (r *Reactor) dialAttemptsInfo(addr *p2p.NetAddress) (attempts int, lastDial
 
 func (r *Reactor) dialPeer(addr *p2p.NetAddress) error {
 	attempts, lastDialed := r.dialAttemptsInfo(addr)
-	if !r.Switch.IsPeerPersistent(addr) && attempts > maxAttemptsToDial {
-		r.book.MarkBad(addr, defaultBanTime)
-		return errMaxAttemptsToDial{}
-	}
+	// if !r.Switch.IsPeerPersistent(addr) && attempts > maxAttemptsToDial {
+	// 	r.book.MarkBad(addr, defaultBanTime)
+	// 	return errMaxAttemptsToDial{}
+	// }
 
 	// exponential backoff if it's not our first attempt to dial given address
 	if attempts > 0 {
@@ -645,11 +646,11 @@ func (r *Reactor) dialPeer(addr *p2p.NetAddress) error {
 
 // maxBackoffDurationForPeer caps the backoff duration for persistent peers.
 func (r *Reactor) maxBackoffDurationForPeer(addr *p2p.NetAddress, planned time.Duration) time.Duration {
-	if r.config.PersistentPeersMaxDialPeriod > 0 &&
-		planned > r.config.PersistentPeersMaxDialPeriod &&
-		r.Switch.IsPeerPersistent(addr) {
-		return r.config.PersistentPeersMaxDialPeriod
-	}
+	// if r.config.PersistentPeersMaxDialPeriod > 0 &&
+	// 	planned > r.config.PersistentPeersMaxDialPeriod &&
+	// 	r.Switch.IsPeerPersistent(addr) {
+	// 	return r.config.PersistentPeersMaxDialPeriod
+	// }
 	return planned
 }
 
@@ -808,9 +809,9 @@ func (r *Reactor) cleanupCrawlPeerInfos() {
 // attemptDisconnects checks if we've been with each peer long enough to disconnect.
 func (r *Reactor) attemptDisconnects() {
 	for _, peer := range r.Switch.Peers(r.ChainID).Copy() {
-		if peer.Status().Duration < r.config.SeedDisconnectWaitPeriod {
-			continue
-		}
+		// if peer.Status().Duration < r.config.SeedDisconnectWaitPeriod {
+		// 	continue
+		// }
 		if peer.IsPersistent() {
 			continue
 		}

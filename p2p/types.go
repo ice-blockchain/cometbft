@@ -11,6 +11,7 @@ import (
 )
 
 type (
+	ChannelProvider   = conn.ChannelProvider
 	ChannelDescriptor = conn.ChannelDescriptor
 	ConnectionStatus  = conn.ConnectionStatus
 )
@@ -34,6 +35,16 @@ type Dispatcher interface {
 	Target(packet tmp2p.PacketMsg) Reactor
 	// Dispatch forwards the packet to the target reactor.
 	Dispatch(sourcePeer *PeerImpl, packet tmp2p.PacketMsg) error
+
+	// Reactors returns reactors for chainID by name.
+	Reactors(chainID string) map[string]Reactor
+	// Reactor returns a reactor for chainID by name.
+	Reactor(chainID string, name string) Reactor
+
+	// SetMultiplexReactor sets the multiplex reactor.
+	SetMultiplexReactor(mxR Reactor)
+	// GetMultiplexReactor returns the multiplex reactor.
+	GetMultiplexReactor() Reactor
 }
 
 // Connector defines the contract for peer connectors.
@@ -42,18 +53,14 @@ type Connector interface {
 	Dial(addr *NetAddress) (*PeerImpl, error)
 	// Listen listens for peer connections.
 	Listen() error
+}
 
-	// Read reads a packet from peerID and returns its contents in bytes.
-	Read(peerID ID, packet tmp2p.PacketMsg) (Envelope, error)
-
+// Messager defines the contract for peer messagers.
+type Messager interface {
 	// Send sends a packet to peerID.
 	Send(e Envelope) error
 	// TrySend tries to send a packet to peerID (no failure).
 	TrySend(e Envelope) error
-	// Broadcast sends a message to all peers.
-	Broadcast(e Envelope) error
-	// TryBroadcast sends a message to all peers.
-	TryBroadcast(e Envelope) error
 }
 
 // Pool defines the contract for a connection pool.
@@ -66,9 +73,9 @@ type Pool interface {
 	Dispatcher() Dispatcher
 
 	// NumPeers returns the number of inbound and outbound peers.
-	NumPeers() (inbound, outbound, dialing int)
+	NumPeers(chainIds ...string) (inbound, outbound, dialing int)
 	// Peers returns the PeerSet to which we broadcast.
-	Peers() *PeerSet
+	Peers(chainIds ...string) *PeerSet
 	// AddPeer registers a new peer in the peerset.
 	AddPeer(peer *PeerImpl) error
 	// RemovePeer removes a peer from the peerset.
@@ -79,4 +86,16 @@ type Pool interface {
 	HasPeerID(id ID) bool
 	// HasPeerIP returns true if ip is in the PeerSet.
 	HasPeerIP(ip net.IP) bool
+
+	// Broadcast sends a message to all peers.
+	Broadcast(e Envelope) error
+	// TryBroadcast sends a message to all peers.
+	TryBroadcast(e Envelope) error
+
+	// SetPeerForChainID adds peerID to the chainPeers entry for chainID.
+	SetPeerForChainID(peerID ID, chainID string) int
+	// InitPeerForChainID calls InitPeer(peerID) for reactors of chainID.
+	InitPeerForChainID(peerID ID, chainID string) *PeerImpl
+	// AddPeerForChainID calls AddPeer(peerID) for reactors of chainID.
+	AddPeerForChainID(peerID ID, chainID string) bool
 }

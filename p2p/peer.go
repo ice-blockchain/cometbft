@@ -4,17 +4,12 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"reflect"
-	"slices"
 	"time"
-
-	"github.com/cosmos/gogoproto/proto"
 
 	"github.com/ice-blockchain/cometbft/internal/cmap"
 	"github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/libs/service"
 	cmtconn "github.com/ice-blockchain/cometbft/p2p/conn"
-	"github.com/ice-blockchain/cometbft/types"
 )
 
 //go:generate ../scripts/mockery_generate.sh Peer
@@ -35,11 +30,7 @@ type Peer interface {
 	IsOutbound() bool   // did we dial the peer
 	IsPersistent() bool // do we redial this peer when we disconnect
 
-	MConn() *cmtconn.MConnection
-	CloseConn() error // close original connection
-
-	NodeInfo() NodeInfo // peer's info
-	Status() cmtconn.ConnectionStatus
+	NodeInfo() NodeInfo      // peer's info
 	SocketAddr() *NetAddress // actual address of the socket
 
 	Send(chainID string, e Envelope) bool
@@ -48,9 +39,6 @@ type Peer interface {
 	Set(key string, value any)
 	Get(key string) any
 	Has(key string) bool
-
-	SetRemovalFailed()
-	GetRemovalFailed() bool
 
 	GetLogger() log.Logger
 }
@@ -117,7 +105,7 @@ type PeerImpl struct {
 
 	// raw peerConn and the multiplex connection
 	peerConn
-	mconn *cmtconn.MConnection
+	msgr Messager
 
 	// peer's node info and the channel it knows about
 	// channels = nodeInfo.Channels
@@ -130,9 +118,6 @@ type PeerImpl struct {
 
 	metrics        *Metrics
 	pendingMetrics *peerPendingMetricsCache
-
-	// When removal of a peer fails, we set this flag
-	removalAttemptFailed bool
 }
 
 type PeerOption func(*PeerImpl)
@@ -140,10 +125,7 @@ type PeerOption func(*PeerImpl)
 func newPeer(
 	ctx context.Context,
 	pc peerConn,
-	mConfig cmtconn.MConnConfig,
 	nodeInfo NodeInfo,
-	cfg peerConfig,
-	sw *Switch,
 	options ...PeerOption,
 ) *PeerImpl {
 	p := &PeerImpl{
@@ -155,15 +137,6 @@ func newPeer(
 		pendingMetrics: newPeerPendingMetricsCache(),
 	}
 
-	p.mconn = createMConnection(
-		ctx,
-		pc.conn,
-		p,
-		cfg,
-		cfg.onPeerError,
-		mConfig,
-		sw,
-	)
 	p.BaseService = *service.NewBaseService(ctx, nil, "Peer", p)
 	for _, option := range options {
 		option(p)
@@ -175,14 +148,11 @@ func newPeer(
 // String representation.
 func (p *PeerImpl) String() string {
 	if p.outbound {
-		return fmt.Sprintf("Peer{%v %v out}", p.mconn, p.ID())
+		return fmt.Sprintf("Peer{%v out}", p.ID())
 	}
 
-	return fmt.Sprintf("Peer{%v %v in}", p.mconn, p.ID())
-}
-
-func (p *PeerImpl) MConn() *cmtconn.MConnection {
-	return p.mconn
+	// return fmt.Sprintf("Peer{%v %v in}", p.mconn, p.ID())
+	return fmt.Sprintf("Peer{%v in}", p.ID())
 }
 
 // ---------------------------------------------------
@@ -191,7 +161,7 @@ func (p *PeerImpl) MConn() *cmtconn.MConnection {
 // SetLogger implements BaseService.
 func (p *PeerImpl) SetLogger(l log.Logger) {
 	p.Logger = l
-	p.mconn.SetLogger(l)
+	// p.mconn.SetLogger(l)
 }
 
 // GetLogger returns the Logger.
@@ -205,15 +175,7 @@ func (p *PeerImpl) OnStart(ctx context.Context) error {
 		p.Logger.Error("Error starting peer service", "err", err)
 	}
 
-	if err := p.mconn.Start(); err != nil {
-		p.Logger.Error("Error starting mconn service", "err", err)
-	}
-
 	p.Logger.Debug("Peer started")
-
-	// if p.mconn.HasStartedRoutines() {
-	// 	go p.metricsReporter()
-	// }
 	return nil
 }
 
@@ -221,26 +183,16 @@ func (p *PeerImpl) OnStart(ctx context.Context) error {
 // .Send() calls will get flushed before closing the connection.
 //
 // NOTE: it is not safe to call this method more than once.
-func (p *PeerImpl) FlushStop() {
-	p.mconn.FlushStop() // stop everything and close the conn
-}
+func (p *PeerImpl) FlushStop() {}
 
 // OnStop implements BaseService.
 func (p *PeerImpl) OnStop() {
-	// Stop everything and close the conn
-	if err := p.mconn.Stop(); err != nil && err != service.ErrAlreadyStopped {
-		p.Logger.Error("Error while stopping peer", "err", err)
-	}
-
 	p.Logger.Debug("Peer stopped")
 }
 
 // OnReset implements service.Service.
 func (p *PeerImpl) OnReset(ctx context.Context) error {
 	p.Logger.Debug("Peer reset")
-	if err := p.mconn.Reset(ctx); err != nil {
-		p.Logger.Error("Error resetting the mconn", "err", err)
-	}
 	return nil
 }
 
@@ -275,17 +227,29 @@ func (p *PeerImpl) SocketAddr() *NetAddress {
 	return p.peerConn.socketAddr
 }
 
-// Status returns the peer's ConnectionStatus.
-func (p *PeerImpl) Status() cmtconn.ConnectionStatus {
-	return p.mconn.Status()
-}
-
 // Send msg bytes to the channel identified by chID byte. Returns false if the
 // send queue is full after timeout, specified by MConnection.
 //
 // thread safe.
 func (p *PeerImpl) Send(chainID string, e Envelope) bool {
-	return p.send(chainID, e.ChannelID, e.Message, p.mconn.Send)
+	if p.msgr == nil {
+		p.Logger.Error("failed to send message; missing Messager",
+			"peer", p,
+			"msg", e,
+		)
+		return false
+	}
+
+	if err := p.msgr.Send(e); err != nil {
+		p.Logger.Error("failed to send message",
+			"peer", p,
+			"msg", e,
+			"err", err,
+		)
+		return false
+	}
+
+	return true
 }
 
 // TrySend msg bytes to the channel identified by chID byte. Immediately returns
@@ -293,34 +257,23 @@ func (p *PeerImpl) Send(chainID string, e Envelope) bool {
 //
 // thread safe.
 func (p *PeerImpl) TrySend(chainID string, e Envelope) bool {
-	return p.send(chainID, e.ChannelID, e.Message, p.mconn.TrySend)
-}
+	if p.msgr == nil {
+		p.Logger.Error("failed to try-send message; missing Messager",
+			"peer", p,
+			"msg", e,
+		)
+		return false
+	}
 
-func (p *PeerImpl) send(
-	chainID string,
-	chID byte,
-	msg proto.Message,
-	sendFunc func(string, byte, []byte) bool,
-) bool {
-	if !p.IsRunning() {
-		return false
-	} else if !p.hasChannel(chID) {
+	if err := p.msgr.TrySend(e); err != nil {
+		p.Logger.Error("failed to try-send message",
+			"peer", e.Src,
+			"err", err,
+		)
 		return false
 	}
-	msgType := getMsgType(msg)
-	if w, ok := msg.(types.Wrapper); ok {
-		msg = w.Wrap()
-	}
-	msgBytes, err := proto.Marshal(msg)
-	if err != nil {
-		p.Logger.Error("marshaling message to send", "error", err)
-		return false
-	}
-	res := sendFunc(chainID, chID, msgBytes)
-	if res {
-		p.pendingMetrics.AddPendingSendBytes(msgType, len(msgBytes))
-	}
-	return res
+
+	return true
 }
 
 // Has checks if data is present for the given key.
@@ -355,22 +308,14 @@ func (p *PeerImpl) hasChannel(chID byte) bool {
 	return false
 }
 
-// CloseConn closes original connection. Used for cleaning up in cases where the peer had not been started at all.
-func (p *PeerImpl) CloseConn() error {
-	return p.peerConn.conn.Close()
-}
-
-func (p *PeerImpl) SetRemovalFailed() {
-	p.removalAttemptFailed = true
-}
-
-func (p *PeerImpl) GetRemovalFailed() bool {
-	return p.removalAttemptFailed
-}
-
 // ---------------------------------------------------
 // methods only used for testing
 // TODO: can we remove these?
+
+// Conn returns the net.Conn instance.
+func (pc *peerConn) Conn() net.Conn {
+	return pc.conn
+}
 
 // CloseConn closes the underlying connection.
 func (pc *peerConn) CloseConn() {
@@ -382,13 +327,13 @@ func (p *PeerImpl) RemoteAddr() net.Addr {
 	return p.peerConn.conn.RemoteAddr()
 }
 
-// CanSend returns true if the send queue is not full, false otherwise.
-func (p *PeerImpl) CanSend(chainID string, chID byte) bool {
-	if !p.IsRunning() {
-		return false
-	}
-	return p.mconn.CanSend(chainID, chID)
-}
+// // CanSend returns true if the send queue is not full, false otherwise.
+// func (p *PeerImpl) CanSend(chainID string, chID byte) bool {
+// 	if !p.IsRunning() {
+// 		return false
+// 	}
+// 	return p.mconn.CanSend(chainID, chID)
+// }
 
 // ---------------------------------------------------
 
@@ -398,27 +343,26 @@ func PeerMetrics(metrics *Metrics) PeerOption {
 	}
 }
 
+func PeerMessager(msgr Messager) PeerOption {
+	return func(p *PeerImpl) {
+		p.msgr = msgr
+	}
+}
+
 func (p *PeerImpl) metricsReporter() {
 	metricsTicker := time.NewTicker(metricsTickerDuration)
 	defer metricsTicker.Stop()
 
-	for {
-		// If we are (also) shutting down, stop here.
-		select {
-		case <-p.Quit():
-			return
-		default:
-		}
-
+	for p.Context().Err() == nil {
 		select {
 		case <-metricsTicker.C:
-			status := p.mconn.Status()
-			var sendQueueSize float64
-			for _, chStatus := range status.Channels {
-				sendQueueSize += float64(chStatus.SendQueueSize)
-			}
+			// status := p.mconn.Status()
+			// var sendQueueSize float64
+			// for _, chStatus := range status.Channels {
+			// 	sendQueueSize += float64(chStatus.SendQueueSize)
+			// }
 
-			p.metrics.PeerPendingSendBytes.With("peer_id", string(p.ID())).Set(sendQueueSize)
+			// p.metrics.PeerPendingSendBytes.With("peer_id", string(p.ID())).Set(sendQueueSize)
 			// Report per peer, per message total bytes, since the last interval
 			func() {
 				p.pendingMetrics.mtx.Lock()
@@ -443,100 +387,4 @@ func (p *PeerImpl) metricsReporter() {
 			return
 		}
 	}
-}
-
-// ------------------------------------------------------------------
-// helper funcs
-
-func createMConnection(
-	ctx context.Context,
-	conn net.Conn,
-	p *PeerImpl,
-	peerCfg peerConfig,
-	onPeerError func(*PeerImpl, any),
-	config cmtconn.MConnConfig,
-	sw *Switch,
-) *cmtconn.MConnection {
-	onReceive := func(chainID string, chID byte, msgBytes []byte) {
-		var reactor Reactor
-
-		// Get updated version of reactors and messages maps.
-		sw.reactorsMtx.Lock()
-		reactorsByCh := sw.reactorsByCh
-		msgTypeByChID := sw.msgTypeByChID
-		sw.reactorsMtx.Unlock()
-
-		msgLookupKey := chainID
-
-		var mxChannels = []byte{
-			replicationChannel,
-			ackBroadcastChannel,
-			runtimeChannel,
-			mempoolChannel,
-		}
-
-		// If we don't have reactors for this chainID, try to find the channel
-		// in shared channels, otherwise ignore message to stop MConnection from
-		// panicking about an unknown channel for a reactor that is not yet ready.
-		if _, ok := reactorsByCh[chainID]; !ok {
-			_, hasSharedReactors := reactorsByCh[cmtconn.SharedChannelsNamespace]
-			if !hasSharedReactors {
-				return // ignore for now.
-			}
-
-			if reactor, ok = reactorsByCh[cmtconn.SharedChannelsNamespace][chID]; !ok {
-				return // ignore for now.
-			}
-
-			msgLookupKey = cmtconn.SharedChannelsNamespace
-		} else if slices.Contains(mxChannels, chID) {
-			// MempoolReactor is attached to shared channels due to listed
-			// MempoolChannel in multiplex Reactor.
-			reactor = reactorsByCh[cmtconn.SharedChannelsNamespace][chID]
-			msgLookupKey = cmtconn.SharedChannelsNamespace
-		} else {
-			reactor = reactorsByCh[chainID][chID]
-		}
-
-		if reactor == nil {
-			// Don't panic, and ignore for now, i.e. peer needs to come back later.
-			return
-		}
-
-		mt := msgTypeByChID[msgLookupKey][chID]
-		msg := proto.Clone(mt)
-		err := proto.Unmarshal(msgBytes, msg)
-		if err != nil {
-			panic(fmt.Sprintf("unmarshaling message: %v into type: %s", err, reflect.TypeOf(mt)))
-		}
-		if w, ok := msg.(types.Unwrapper); ok {
-			msg, err = w.Unwrap()
-			if err != nil {
-				panic(fmt.Sprintf("unwrapping message: %v", err))
-			}
-		}
-		p.pendingMetrics.AddPendingRecvBytes(getMsgType(msg), len(msgBytes))
-		reactor.Receive(Envelope{
-			ChainID:   chainID,
-			ChannelID: chID,
-			Src:       p,
-			Message:   msg,
-		})
-	}
-
-	onError := func(r any) {
-		onPeerError(p, r)
-	}
-
-	sw.reactorsMtx.Lock()
-	chDescs := sw.chDescs
-	sw.reactorsMtx.Unlock()
-	return cmtconn.NewMConnectionWithConfig(
-		ctx,
-		conn,
-		chDescs,
-		onReceive,
-		onError,
-		config,
-	)
 }

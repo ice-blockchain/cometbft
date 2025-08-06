@@ -259,7 +259,7 @@ func TestSwitchPeerFilter(t *testing.T) {
 	rp.Start()
 	t.Cleanup(rp.Stop)
 
-	p, err := sw.transport.Dial(*rp.Addr(), peerConfig{
+	p, err := sw.transport.Dial(*rp.Addr(), PeerConfig{
 		chDescs:      sw.chDescs,
 		onPeerError:  sw.StopPeerForError,
 		isPersistent: sw.IsPeerPersistent,
@@ -308,7 +308,7 @@ func TestSwitchPeerFilterTimeout(t *testing.T) {
 	rp.Start()
 	defer rp.Stop()
 
-	p, err := sw.transport.Dial(*rp.Addr(), peerConfig{
+	p, err := sw.transport.Dial(*rp.Addr(), PeerConfig{
 		chDescs:      sw.chDescs,
 		onPeerError:  sw.StopPeerForError,
 		isPersistent: sw.IsPeerPersistent,
@@ -339,7 +339,7 @@ func TestSwitchPeerFilterDuplicate(t *testing.T) {
 	rp.Start()
 	defer rp.Stop()
 
-	p, err := sw.transport.Dial(*rp.Addr(), peerConfig{
+	p, err := sw.transport.Dial(*rp.Addr(), PeerConfig{
 		chDescs:      sw.chDescs,
 		onPeerError:  sw.StopPeerForError,
 		isPersistent: sw.IsPeerPersistent,
@@ -390,7 +390,7 @@ func TestSwitchStopsNonPersistentPeerOnError(t *testing.T) {
 	rp.Start()
 	defer rp.Stop()
 
-	p, err := sw.transport.Dial(*rp.Addr(), peerConfig{
+	p, err := sw.transport.Dial(*rp.Addr(), PeerConfig{
 		chDescs:      sw.chDescs,
 		onPeerError:  sw.StopPeerForError,
 		isPersistent: sw.IsPeerPersistent,
@@ -401,7 +401,7 @@ func TestSwitchStopsNonPersistentPeerOnError(t *testing.T) {
 	err = sw.addPeer(p)
 	require.NoError(err)
 
-	require.NotNil(sw.Peers("").GetInbound(rp.ID()))
+	require.NotNil(sw.Peers("").Get(rp.ID()))
 
 	// simulate failure by closing connection
 	err = p.CloseConn()
@@ -488,7 +488,7 @@ func TestSwitchReconnectsToOutboundPersistentPeer(t *testing.T) {
 
 	err = sw.DialPeerWithAddress(rp.Addr())
 	require.NoError(t, err)
-	require.NotNil(t, sw.Peers("").GetOutbound(rp.ID()))
+	require.NotNil(t, sw.Peers("").Get(rp.ID()))
 
 	p := sw.Peers("").Copy()[0]
 	err = p.CloseConn()
@@ -513,7 +513,7 @@ func TestSwitchReconnectsToOutboundPersistentPeer(t *testing.T) {
 	conf.TestDialFail = true // will trigger a reconnect
 	err = sw.addOutboundPeerWithConfig(rp.Addr(), conf, "")
 	require.Error(t, err)
-	// DialPeerWithAddres - sw.peerConfig resets the dialer
+	// DialPeerWithAddres - sw.PeerConfig resets the dialer
 	waitUntilSwitchHasAtLeastNPeers(sw, 2)
 	assert.Equal(t, 2, sw.Peers("").Size())
 }
@@ -539,7 +539,7 @@ func TestSwitchReconnectsToInboundPersistentPeer(t *testing.T) {
 	conn, err := rp.Dial(sw.NetAddress())
 	require.NoError(t, err)
 	time.Sleep(50 * time.Millisecond)
-	require.NotNil(t, sw.Peers("").GetOutbound(rp.ID()))
+	require.NotNil(t, sw.Peers("").Get(rp.ID()))
 
 	conn.Close()
 
@@ -568,7 +568,7 @@ func TestSwitchDialPeersAsync(t *testing.T) {
 	err = sw.DialPeersAsync([]string{rp.Addr().String()})
 	require.NoError(t, err)
 	time.Sleep(dialRandomizerIntervalMilliseconds * time.Millisecond)
-	require.NotNil(t, sw.Peers("").GetOutbound(rp.ID()))
+	require.NotNil(t, sw.Peers("").Get(rp.ID()))
 }
 
 func waitUntilSwitchHasAtLeastNPeers(sw *Switch, n int) {
@@ -699,11 +699,11 @@ func (errorTransport) NetAddress() NetAddress {
 	panic("not implemented")
 }
 
-func (et errorTransport) Accept(peerConfig) (*PeerImpl, error) {
+func (et errorTransport) Accept(PeerConfig) (*PeerImpl, error) {
 	return nil, et.acceptErr
 }
 
-func (errorTransport) Dial(NetAddress, peerConfig) (*PeerImpl, error) {
+func (errorTransport) Dial(NetAddress, PeerConfig) (*PeerImpl, error) {
 	panic("not implemented")
 }
 
@@ -803,7 +803,7 @@ func TestSwitchInitPeerIsNotCalledBeforeRemovePeer(t *testing.T) {
 	// wait till the switch adds rp to the peer set, then stop the peer asynchronously
 	for {
 		time.Sleep(20 * time.Millisecond)
-		if peer := sw.Peers("").GetOutbound(rp.ID()); peer != nil {
+		if peer := sw.Peers("").Get(rp.ID()); peer != nil {
 			go sw.StopPeerForError(peer, "test")
 			break
 		}

@@ -11,7 +11,6 @@ import (
 	"net"
 	"reflect"
 	"runtime/debug"
-	"slices"
 	"sync/atomic"
 	"time"
 
@@ -85,20 +84,26 @@ Inbound message bytes are handled with an onReceive callback function.
 type MConnection struct {
 	service.BaseService
 
-	conn          net.Conn
-	bufConnReader *bufio.Reader
-	bufConnWriter *bufio.Writer
-	sendMonitor   *flow.Monitor
-	recvMonitor   *flow.Monitor
-	send          chan struct{}
-	pong          chan struct{}
-	channelsMtx   cmtsync.Mutex
-	channels      []*Channel
-	channelsIdx   map[string]map[byte]*Channel
-	onReceive     receiveCbFunc
-	onError       errorCbFunc
-	errored       uint32
-	config        MConnConfig
+	// conn contains a SecretConnection.
+	conn            net.Conn
+	bufConnReader   *bufio.Reader
+	bufConnWriter   *bufio.Writer
+	channelProvider ChannelProvider
+
+	// Callbacks
+	onReceive receiveCbFunc
+	onError   errorCbFunc
+
+	// Monitors send and recv rates.
+	sendMonitor *flow.Monitor
+	recvMonitor *flow.Monitor
+
+	// Internal channels
+	send chan struct{}
+	pong chan struct{}
+	// channelsMtx   cmtsync.Mutex
+	errored uint32
+	config  MConnConfig
 
 	// Closing quitSendRoutine will cause the sendRoutine to eventually quit.
 	// doneSendRoutine is closed when the sendRoutine actually quits.
@@ -118,8 +123,6 @@ type MConnection struct {
 	// close conn if pong is not received in pongTimeout
 	pongTimer     *time.Timer
 	pongTimeoutCh chan bool // true - timeout, false - peer sent pong
-
-	chStatsTimer *time.Ticker // update channel stats periodically
 
 	created time.Time // time of creation
 
@@ -168,14 +171,16 @@ func DefaultMConnConfig() MConnConfig {
 func NewMConnection(
 	ctx context.Context,
 	conn net.Conn,
-	chDescs map[string][]*ChannelDescriptor,
+	channelProvider ChannelProvider,
+	// chDescs map[string][]*ChannelDescriptor,
 	onReceive receiveCbFunc,
 	onError errorCbFunc,
 ) *MConnection {
 	return NewMConnectionWithConfig(
 		ctx,
 		conn,
-		chDescs,
+		channelProvider,
+		// chDescs,
 		onReceive,
 		onError,
 		DefaultMConnConfig())
@@ -185,7 +190,8 @@ func NewMConnection(
 func NewMConnectionWithConfig(
 	ctx context.Context,
 	conn net.Conn,
-	chDescs map[string][]*ChannelDescriptor,
+	channelProvider ChannelProvider,
+	// chDescs map[string][]*ChannelDescriptor,
 	onReceive receiveCbFunc,
 	onError errorCbFunc,
 	config MConnConfig,
@@ -195,15 +201,16 @@ func NewMConnectionWithConfig(
 	}
 
 	mconn := &MConnection{
-		conn:          conn,
-		bufConnReader: bufio.NewReaderSize(conn, minReadBufferSize),
-		bufConnWriter: bufio.NewWriterSize(conn, minWriteBufferSize),
-		send:          make(chan struct{}, 1),
-		pong:          make(chan struct{}, 1),
-		onReceive:     onReceive,
-		onError:       onError,
-		config:        config,
-		created:       time.Now(),
+		conn:            conn,
+		bufConnReader:   bufio.NewReaderSize(conn, minReadBufferSize),
+		bufConnWriter:   bufio.NewWriterSize(conn, minWriteBufferSize),
+		channelProvider: channelProvider,
+		send:            make(chan struct{}, 1),
+		pong:            make(chan struct{}, 1),
+		onReceive:       onReceive,
+		onError:         onError,
+		config:          config,
+		created:         time.Now(),
 	}
 
 	atomic.StoreUint32(&mconn.startedRoutines, 0)
@@ -216,42 +223,11 @@ func NewMConnectionWithConfig(
 	mconn.doneSendRoutine = make(chan struct{})
 	mconn.quitRecvRoutine = make(chan struct{})
 
-	// Create channels
-	channelsIdx := make(map[string]map[byte]*Channel, len(chDescs))
-	channels := []*Channel{}
-
-	templateChainID := ""
-	for chainID, chByChain := range chDescs {
-		channelsIdx[chainID] = make(map[byte]*Channel, len(chByChain))
-		for _, desc := range chByChain {
-			channel := newChannel(chainID, mconn, desc)
-			channelsIdx[chainID][channel.desc.ID] = channel
-			channels = append(channels, channel)
-		}
-
-		if len(templateChainID) == 0 {
-			templateChainID = chainID
-		}
-	}
-
-	// When no ChainID is passed with chDescs, we must estimate the size of
-	// a ChainID, i.e. ExtendedChainID uses "mx-chain-..." with 66 bytes.
-	//
-	// TODO(midas): The size of ChainID may be added to peerConfig.
-	if len(templateChainID) == 0 {
-		templateChainID = RandomStringOfSize(66)
-	}
-
-	mconn.channelsMtx.Lock()
-	mconn.channels = channels
-	mconn.channelsIdx = channelsIdx
-	mconn.channelsMtx.Unlock()
-	atomic.AddUint32(&mconn.numOpenChannels, uint32(len(channels)))
-
 	mconn.BaseService = *service.NewBaseService(ctx, nil, "MConnection", mconn)
 
 	// maxPacketMsgSize() is a bit heavy, so call just once,
 	// it uses oneChainID to create a correctly-sized PacketMsg.
+	templateChainID := RandomStringOfSize(66)
 	mconn._maxPacketMsgSize = mconn.maxPacketMsgSize(templateChainID)
 
 	return mconn
@@ -259,105 +235,10 @@ func NewMConnectionWithConfig(
 
 func (c *MConnection) SetLogger(l log.Logger) {
 	c.BaseService.SetLogger(l)
-	for _, ch := range c.channels {
-		ch.SetLogger(l)
-	}
 }
 
 func (c *MConnection) SocketAddr() net.Addr {
 	return c.conn.RemoteAddr()
-}
-
-func (c *MConnection) FindMatchingChannelDescriptor(chID byte) *ChannelDescriptor {
-	c.channelsMtx.Lock()
-	defer c.channelsMtx.Unlock()
-
-	for _, channels := range c.channelsIdx {
-		if channel, ok := channels[chID]; ok {
-			return channel.Desc()
-		}
-	}
-
-	return nil
-}
-
-// AddChannel registers a ChannelDescriptor in a running mconn for chainID,
-// reactors may then process messages on a new channel for this network.
-func (c *MConnection) AddChannel(ctx context.Context, chainID string, desc *ChannelDescriptor) (*Channel, bool) {
-	hasStartedRoutines := c.HasStartedRoutines()
-
-	c.channelsMtx.Lock()
-	if _, ok := c.channelsIdx[chainID]; !ok {
-		c.channelsIdx[chainID] = map[byte]*Channel{}
-	}
-
-	if _, ok := c.channelsIdx[chainID][desc.ID]; ok {
-		defer c.channelsMtx.Unlock()
-		// Nothing to do
-		return c.channelsIdx[chainID][desc.ID], false // channel not added
-	}
-
-	channel := newChannel(chainID, c, desc)
-	channel.SetLogger(c.Logger)
-
-	c.channelsIdx[chainID][channel.desc.ID] = channel
-	c.channels = append(c.channels, channel)
-	c.channelsMtx.Unlock()
-
-	atomic.AddUint32(&c.numOpenChannels, uint32(1))
-
-	// Start routines if it's our first and only channel.
-	if !hasStartedRoutines {
-		c.Logger.Debug("New channel added - starting connection services",
-			"chain_id", chainID,
-			"chID", desc.ID,
-		)
-		c.startServices(ctx)
-	}
-
-	return channel, true // channel added
-}
-
-func (c *MConnection) RemoveChannel(chainID string, desc *ChannelDescriptor) bool {
-	c.channelsMtx.Lock()
-	if _, ok := c.channelsIdx[chainID]; !ok {
-		defer c.channelsMtx.Unlock()
-		return false // not removed
-	}
-
-	if _, ok := c.channelsIdx[chainID][desc.ID]; !ok {
-		defer c.channelsMtx.Unlock()
-		return false // not removed
-	}
-
-	c.channelsIdx[chainID][desc.ID] = nil // inaccessible (GC).
-	delete(c.channelsIdx[chainID], desc.ID)
-
-	c.channels = slices.DeleteFunc(c.channels, func(channel *Channel) bool {
-		return channel.ChainID == chainID && channel.desc.ID == desc.ID
-	})
-	c.channelsMtx.Unlock()
-
-	if atomic.LoadUint32(&c.numOpenChannels) > 0 {
-		atomic.AddUint32(&c.numOpenChannels, ^uint32(0)) // -1
-	}
-
-	c.Logger.Debug("Removed MConnection channel",
-		"chain_id", chainID,
-		"chID", desc.ID,
-		"num_mconn_chs", atomic.LoadUint32(&c.numOpenChannels),
-	)
-
-	// Only stop if channelsIdx is empty (no more channels).
-	if atomic.LoadUint32(&c.numOpenChannels) == 0 {
-		c.Logger.Debug("All channels are closed - stopping connection services",
-			"chain_id", chainID,
-			"chID", desc.ID,
-		)
-		c.stopServices()
-	}
-
-	return true
 }
 
 func (c *MConnection) NumOpenChannels() uint32 {
@@ -366,21 +247,7 @@ func (c *MConnection) NumOpenChannels() uint32 {
 
 // OnStart implements BaseService.
 func (c *MConnection) OnStart(ctx context.Context) error {
-	c.channelsMtx.Lock()
-	_, hasSharedChannels := c.channelsIdx[SharedChannelsNamespace]
-	hasChainIDWithShared := hasSharedChannels && len(c.channelsIdx) > 1
-	hasChainIDWithoutShared := !hasSharedChannels && len(c.channelsIdx) > 0
-	c.channelsMtx.Unlock()
-
-	hasChainIDForMessages := (hasChainIDWithoutShared || hasChainIDWithShared) && !c.HasStartedRoutines()
-	if hasChainIDForMessages {
-		c.Logger.Debug("Found at least one ChainID - starting connection services",
-			"num_ch", c.NumOpenChannels(),
-		)
-		return c.startServices(ctx)
-	}
-
-	return nil
+	return c.startServices(ctx)
 }
 
 // HasStartedRoutines returns true or false depending on the routines' state.
@@ -419,7 +286,7 @@ func (c *MConnection) startServices(ctx context.Context) error {
 		c.quitRecvRoutine = make(chan struct{})
 
 		c.flushTimer = timer.NewThrottleTimer("flush", c.config.FlushThrottle)
-		c.chStatsTimer = time.NewTicker(updateStats)
+		// c.chStatsTimer = time.NewTicker(updateStats)
 
 		c.sendMonitor = flow.New(0, 0)
 		c.recvMonitor = flow.New(0, 0)
@@ -460,7 +327,7 @@ func (c *MConnection) stopServices() (alreadyStopped bool) {
 		c.BaseService.OnStop()
 		c.flushTimer.Stop()
 		c.pingTimer.Stop()
-		c.chStatsTimer.Stop()
+		// c.chStatsTimer.Stop()
 		c.recvMonitor.Stop()
 		c.sendMonitor.Stop()
 
@@ -578,63 +445,6 @@ func (c *MConnection) stopForError(r any) {
 	}
 }
 
-// getChannel searches for a reactor by ChainID and chID.
-// If none can be found, it will search in shared channels by chID.
-func (c *MConnection) getChannel(chainID string, chID byte) (*Channel, error) {
-	c.channelsMtx.Lock()
-	_, hasChannelsByChain := c.channelsIdx[chainID]
-	c.channelsMtx.Unlock()
-
-	// Searches for the ChainID in the channels index.
-	// If it doesn't exist, see if this channel is shared.
-	if !hasChannelsByChain {
-		channel, err := c.getSharedChannel(chID)
-		if err != nil {
-			return nil, fmt.Errorf("Unknown chain_id %s", chainID)
-		}
-
-		return channel, nil
-	}
-
-	c.channelsMtx.Lock()
-	channel, hasChannelByChainAndId := c.channelsIdx[chainID][chID]
-	c.channelsMtx.Unlock()
-
-	// Searches the channel per ChainID.
-	// If it doesn't exist, see if this channel is shared.
-	if !hasChannelByChainAndId {
-		return c.getSharedChannel(chID)
-	}
-
-	return channel, nil
-}
-
-func (c *MConnection) getSharedChannel(chID byte) (*Channel, error) {
-	c.channelsMtx.Lock()
-	defer c.channelsMtx.Unlock()
-
-	if _, ok := c.channelsIdx[SharedChannelsNamespace]; ok {
-		if _, ok := c.channelsIdx[SharedChannelsNamespace][chID]; ok {
-			return c.channelsIdx[SharedChannelsNamespace][chID], nil
-		}
-	}
-
-	if _, ok := c.channelsIdx["discovery"]; ok {
-		if _, ok := c.channelsIdx["discovery"][chID]; ok {
-			return c.channelsIdx["discovery"][chID], nil
-		}
-	}
-
-	return nil, fmt.Errorf("Unknown channel 0x%X (%d)", chID, chID)
-}
-
-func (c *MConnection) GetChannelsIdx() map[string]map[byte]*Channel {
-	c.channelsMtx.Lock()
-	defer c.channelsMtx.Unlock()
-
-	return c.channelsIdx
-}
-
 // Queues a message to be sent to channel.
 func (c *MConnection) Send(chainID string, chID byte, msgBytes []byte) bool {
 	if !c.IsRunning() {
@@ -643,15 +453,7 @@ func (c *MConnection) Send(chainID string, chID byte, msgBytes []byte) bool {
 
 	c.Logger.Debug("Send", "chain_id", chainID, "channel", chID, "conn", c, "msgBytes", log.NewLazySprintf("%X", msgBytes))
 
-	channel, err := c.getChannel(chainID, chID)
-	if err != nil {
-		if chDesc := c.FindMatchingChannelDescriptor(chID); chDesc != nil {
-			channel, _ = c.AddChannel(c.BaseService.Context(), chainID, chDesc)
-		} else {
-			c.Logger.Error(fmt.Sprintf("Cannot send bytes: %s", err.Error()))
-			return false
-		}
-	}
+	channel := c.channelProvider.GetChannel(chID)
 
 	// Send message to channel.
 	success := channel.sendBytes(chainID, msgBytes)
@@ -676,16 +478,7 @@ func (c *MConnection) TrySend(chainID string, chID byte, msgBytes []byte) bool {
 
 	c.Logger.Debug("TrySend", "chain_id", chainID, "channel", chID, "conn", c, "msgBytes", log.NewLazySprintf("%X", msgBytes))
 
-	// Searches the reactor instance per channel.
-	channel, err := c.getChannel(chainID, chID)
-	if err != nil {
-		if chDesc := c.FindMatchingChannelDescriptor(chID); chDesc != nil {
-			channel, _ = c.AddChannel(c.BaseService.Context(), chainID, chDesc)
-		} else {
-			c.Logger.Error(fmt.Sprintf("Cannot send bytes: %s", err.Error()))
-			return false
-		}
-	}
+	channel := c.channelProvider.GetChannel(chID)
 
 	ok := channel.trySendBytes(chainID, msgBytes)
 	if ok {
@@ -706,17 +499,7 @@ func (c *MConnection) CanSend(chainID string, chID byte) bool {
 		return false
 	}
 
-	// Searches the reactor instance per channel.
-	channel, err := c.getChannel(chainID, chID)
-	if err != nil {
-		if chDesc := c.FindMatchingChannelDescriptor(chID); chDesc != nil {
-			channel, _ = c.AddChannel(c.BaseService.Context(), chainID, chDesc)
-		} else {
-			c.Logger.Error(fmt.Sprintf("Cannot send bytes: %s", err.Error()))
-			return false
-		}
-	}
-
+	channel := c.channelProvider.GetChannel(chID)
 	return channel.canSend()
 }
 
@@ -736,16 +519,6 @@ FOR_LOOP:
 			// NOTE: flushTimer.Set() must be called every time
 			// something is written to .bufConnWriter.
 			c.flush()
-		case <-c.chStatsTimer.C:
-			c.channelsMtx.Lock()
-			allChannels := c.channels
-			c.channelsMtx.Unlock()
-
-			for _, channel := range allChannels {
-				c.channelsMtx.Lock()
-				channel.updateStats()
-				c.channelsMtx.Unlock()
-			}
 		case <-c.pingTimer.C:
 			c.Logger.Debug("Send Ping")
 			_n, err = protoWriter.WriteMsg(mustWrapPacket(&tmp2p.PacketPing{}))
@@ -829,7 +602,7 @@ func (c *MConnection) sendBatchPacketMsgs(w protoio.Writer, batchSize int) bool 
 		}
 	}()
 	for i := 0; i < batchSize; i++ {
-		channel := selectChannelToGossipOn(c.channels)
+		channel := selectChannelToGossipOn(c.channelProvider.GetChannels())
 		// nothing to send across any channel.
 		if channel == nil {
 			return true
@@ -966,20 +739,7 @@ FOR_LOOP:
 			chainID := pkt.PacketMsg.ChainID
 			channelID := byte(pkt.PacketMsg.ChannelID)
 
-			channel, err := c.getChannel(chainID, channelID)
-			if err != nil {
-				if chDesc := c.FindMatchingChannelDescriptor(channelID); chDesc != nil {
-					channel, _ = c.AddChannel(c.BaseService.Context(), chainID, chDesc)
-				} else {
-					c.Logger.Debug("Ignoring message for unknown ChainID",
-						"chainID", chainID,
-						"channelID", channelID,
-						"conn", c)
-					// Note that we do not call `stopForError` anymore to prevent
-					// instability in network connections when handling new ChainID.
-					continue FOR_LOOP
-				}
-			}
+			channel := c.channelProvider.GetChannel(channelID)
 
 			msgBytes, err := channel.recvPacketMsg(*pkt.PacketMsg)
 			if err != nil {
@@ -1033,12 +793,16 @@ func (c *MConnection) maxPacketMsgSize(chainID string) int {
 	return size
 }
 
+// -----------------------------------------------------------------------------
+
 type ConnectionStatus struct {
 	Duration    time.Duration
 	SendMonitor flow.Status
 	RecvMonitor flow.Status
 	Channels    []ChannelStatus
 }
+
+// -----------------------------------------------------------------------------
 
 type ChannelStatus struct {
 	ID                byte
@@ -1054,7 +818,7 @@ func (c *MConnection) Status() ConnectionStatus {
 	status.SendMonitor = c.sendMonitor.Status()
 	status.RecvMonitor = c.recvMonitor.Status()
 	status.Channels = []ChannelStatus{}
-	for _, channel := range c.channels {
+	for _, channel := range c.channelProvider.GetChannels() {
 		status.Channels = append(status.Channels, ChannelStatus{
 			ID:                channel.desc.ID,
 			SendQueueCapacity: cap(channel.sendQueue),
@@ -1064,6 +828,18 @@ func (c *MConnection) Status() ConnectionStatus {
 		})
 	}
 	return status
+}
+
+// -----------------------------------------------------------------------------
+
+// ChannelProvider defines the contract for channel providers.
+type ChannelProvider interface {
+	// GetChannels returns a slice of Channel instances.
+	GetChannels() []*Channel
+	// GetChannel returns a Channel by ID.
+	GetChannel(chID byte) *Channel
+	// GetDescriptor returns a ChannelDescriptor by ID.
+	GetDescriptor(chID byte) *ChannelDescriptor
 }
 
 // -----------------------------------------------------------------------------
@@ -1114,28 +890,6 @@ type Channel struct {
 	Logger log.Logger
 }
 
-func newChannel(chainID string, conn *MConnection, desc *ChannelDescriptor) *Channel {
-	desc = desc.FillDefaults()
-	if desc.Priority <= 0 {
-		panic("Channel default priority must be a positive integer")
-	}
-	return &Channel{
-		ChainID:   chainID,
-		conn:      conn,
-		desc:      desc,
-		sendQueue: make(chan []byte, desc.SendQueueCapacity),
-		sending:   []byte{},
-		recving:   make([]byte, 0, desc.RecvBufferCapacity),
-		nextPacketMsg: &tmp2p.PacketMsg{
-			ChainID:   chainID,
-			ChannelID: int32(desc.ID),
-		},
-		nextP2pWrapperPacketMsg: &tmp2p.Packet_PacketMsg{},
-		nextPacket:              &tmp2p.Packet{},
-		maxPacketMsgPayloadSize: conn.config.MaxPacketMsgPayloadSize,
-	}
-}
-
 func (ch *Channel) SetLogger(l log.Logger) {
 	ch.Logger = l
 }
@@ -1154,8 +908,6 @@ func (ch *Channel) sendBytes(chainID string, bytes []byte) bool {
 		atomic.AddInt32(&ch.sendQueueSize, 1)
 		return true
 	case <-time.After(defaultSendTimeout):
-		return false
-	case <-ch.conn.Quit():
 		return false
 	}
 }
@@ -1240,7 +992,7 @@ func (ch *Channel) writePacketMsgTo(w protoio.Writer) (n int, err error) {
 // Not goroutine-safe.
 func (ch *Channel) recvPacketMsg(packet tmp2p.PacketMsg) ([]byte, error) {
 	if ch.Logger != nil {
-		ch.Logger.Debug("Read PacketMsg", "conn", ch.conn, "packet", packet, "chID", ch.desc.ID)
+		ch.Logger.Debug("Read PacketMsg", "packet", packet, "chID", ch.desc.ID)
 	}
 	recvCap, recvReceived := ch.desc.RecvMessageCapacity, len(ch.recving)+len(packet.Data)
 	if recvCap < recvReceived {
@@ -1309,13 +1061,4 @@ func RandomStringOfSize(n int) string {
 		b[i] = letterBytes[rand.Intn(len(letterBytes))]
 	}
 	return string(b)
-}
-
-// UpdateOnReceive updates the onReceive callback function with new reactors.
-// This is needed when new ChainIDs are added to the multiplex system.
-func (c *MConnection) UpdateOnReceive(newOnReceive receiveCbFunc) {
-	c.channelsMtx.Lock()
-	defer c.channelsMtx.Unlock()
-
-	c.onReceive = newOnReceive
 }

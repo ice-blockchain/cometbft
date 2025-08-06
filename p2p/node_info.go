@@ -51,7 +51,6 @@ type nodeInfoAddress interface {
 type nodeInfoTransport interface {
 	Validate() error
 	CompatibleWith(other NodeInfo) error
-	GetCommonChains(other NodeInfo) ([]string, error)
 }
 
 // -------------------------------------------------------------

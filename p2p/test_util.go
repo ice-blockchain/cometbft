@@ -1,11 +1,13 @@
 package p2p
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"testing"
 	"time"
 
+	tmp2p "github.com/ice-blockchain/cometbft/api/cometbft/p2p/v1"
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/crypto"
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
@@ -36,12 +38,12 @@ func (mockNodeInfo) Validate() error                            { return nil }
 func (mockNodeInfo) CompatibleWith(NodeInfo) error              { return nil }
 func (mockNodeInfo) GetCommonChains(NodeInfo) ([]string, error) { return []string{}, nil }
 
-func AddPeerToSwitchPeerSet(sw *Switch, peer *PeerImpl) {
-	sw.peersMtx.RLock()
-	defer sw.peersMtx.RUnlock()
+// func AddPeerToSwitchPeerSet(sw *Switch, peer *PeerImpl) {
+// 	sw.peersMtx.RLock()
+// 	defer sw.peersMtx.RUnlock()
 
-	sw.peersByScope[""].Add(peer) //nolint:errcheck // ignore error
-}
+// 	sw.peersByScope[""].Add(peer) //nolint:errcheck // ignore error
+// }
 
 func CreateRandomPeer(outbound bool) Peer {
 	addr, netAddr := CreateRoutableAddr()
@@ -51,8 +53,8 @@ func CreateRandomPeer(outbound bool) Peer {
 			socketAddr: netAddr,
 		},
 		nodeInfo: mockNodeInfo{netAddr},
-		mconn:    &conn.MConnection{},
-		metrics:  NopMetrics(),
+		// mconn:    &conn.MConnection{},
+		metrics: NopMetrics(),
 	}
 	p.SetLogger(log.TestingLogger().With("peer", addr))
 	return p
@@ -77,6 +79,64 @@ func CreateRoutableAddr() (addr string, netAddr *NetAddress) {
 	}
 	return addr, netAddr
 }
+
+// ----------------------------------------------------------------------------
+
+type mockPool struct {
+}
+
+var _ Pool = (*mockPool)(nil)
+
+func (*mockPool) Transport() Transport                                   { return nil }
+func (*mockPool) Connector() Connector                                   { return &mockConnector{} }
+func (*mockPool) Dispatcher() Dispatcher                                 { return &mockDispatcher{} }
+func (*mockPool) NumPeers(_ ...string) (inbound, outbound, dialing int)  { return 0, 0, 0 }
+func (*mockPool) Peers(_ ...string) *PeerSet                             { return &PeerSet{} }
+func (*mockPool) AddPeer(peer *PeerImpl) error                           { return nil }
+func (*mockPool) RemovePeer(peerID ID) error                             { return nil }
+func (*mockPool) HasPeer(peer *PeerImpl) bool                            { return true }
+func (*mockPool) HasPeerID(id ID) bool                                   { return true }
+func (*mockPool) HasPeerIP(ip net.IP) bool                               { return true }
+func (*mockPool) Broadcast(e Envelope) error                             { return nil }
+func (*mockPool) TryBroadcast(e Envelope) error                          { return nil }
+func (*mockPool) SetPeerForChainID(peerID ID, chainID string) int        { return 0 }
+func (*mockPool) InitPeerForChainID(peerID ID, chainID string) *PeerImpl { return nil }
+func (*mockPool) AddPeerForChainID(peerID ID, chainID string) bool       { return false }
+
+// ----------------------------------------------------------------------------
+
+type mockConnector struct {
+}
+
+var _ Connector = (*mockConnector)(nil)
+
+func NewConnector(ctx context.Context) *mockConnector {
+	c := &mockConnector{}
+	return c
+}
+
+func (*mockConnector) Dial(addr *NetAddress) (*PeerImpl, error) { return nil, nil }
+func (*mockConnector) Listen() error                            { return nil }
+
+func (*mockConnector) Read(peerID ID, packet tmp2p.PacketMsg) (Envelope, error) {
+	return Envelope{}, nil
+}
+func (*mockConnector) Send(e Envelope) error    { return nil }
+func (*mockConnector) TrySend(e Envelope) error { return nil }
+
+// ----------------------------------------------------------------------------
+
+type mockDispatcher struct {
+}
+
+var _ Dispatcher = (*mockDispatcher)(nil)
+
+func (*mockDispatcher) Target(packet tmp2p.PacketMsg) Reactor                       { return nil }
+func (*mockDispatcher) Dispatch(sourcePeer *PeerImpl, packet tmp2p.PacketMsg) error { return nil }
+func (*mockDispatcher) Reactors(chainID string) map[string]Reactor                  { return map[string]Reactor{} }
+func (*mockDispatcher) Reactor(chainID string, name string) Reactor                 { return nil }
+func (*mockDispatcher) SetMultiplexReactor(mxR Reactor)                             {}
+func (*mockDispatcher) GetMultiplexReactor() Reactor                                { return nil }
 
 // ------------------------------------------------------------------
 // Connects switches via arbitrary net.Conn. Used for testing.
@@ -211,23 +271,27 @@ func (sw *Switch) addPeerWithConnection(t *testing.T, conn net.Conn) error {
 		return err
 	}
 
-	cfg := peerConfig{
-		reactorsByCh:  sw.reactorsByCh,
-		msgTypeByChID: sw.msgTypeByChID,
-		chDescs:       sw.chDescs,
-		onPeerError:   sw.StopPeerForError,
-	}
+	// cfg := peerConfig{
+	// 	reactorsByCh:  sw.reactorsByCh,
+	// 	msgTypeByChID: sw.msgTypeByChID,
+	// 	chDescs:       sw.chDescs,
+	// 	onPeerError:   sw.StopPeerForError,
+	// }
 
 	p := newPeer(
 		t.Context(),
 		pc,
-		MConnConfig(sw.config),
+		// MConnConfig(sw.config),
 		ni,
-		cfg,
-		sw,
+		// cfg,
+		// sw,
 	)
 
-	if err = sw.addPeer(p); err != nil {
+	// if err = sw.addPeer(p); err != nil {
+	// 	pc.CloseConn()
+	// 	return err
+	// }
+	if err = sw.pool.AddPeer(p); err != nil {
 		pc.CloseConn()
 		return err
 	}
@@ -265,22 +329,32 @@ func MakeSwitch(
 		panic(err)
 	}
 
-	tr := NewMultiplexTransport(t.Context(), nodeInfo, nodeKey, MConnConfig(cfg))
+	tr := NewMultiplexTransport(t.Context(),
+		nodeInfo,
+		nodeKey,
+		// MConnConfig(cfg),
+	)
 
 	if err := tr.Listen(*addr); err != nil {
 		panic(err)
 	}
 
+	pool := &mockPool{}
+
 	// TODO: let the config be passed in?
-	sw := initSwitch(i, NewSwitch(t.Context(), cfg, tr, opts...))
+	sw := initSwitch(i, NewSwitch(t.Context(),
+		cfg,
+		pool,
+		opts...,
+	))
 	sw.SetLogger(log.TestingLogger().With("switch", i))
 	sw.SetNodeKey(&nodeKey)
 
-	ni := nodeInfo.(DefaultNodeInfo)
-	for ch := range sw.reactorsByCh[""] {
-		ni.Channels = append(ni.Channels, ch)
-	}
-	nodeInfo = ni
+	// ni := nodeInfo.(DefaultNodeInfo)
+	// for ch := range sw.reactorsByCh[""] {
+	// 	ni.Channels = append(ni.Channels, ch)
+	// }
+	// nodeInfo = ni
 
 	// TODO: We need to setup reactors ahead of time so the NodeInfo is properly
 	// populated and we don't have to do those awkward overrides and setters.

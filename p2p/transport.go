@@ -44,17 +44,21 @@ type Transport interface {
 	NetAddress() NetAddress
 
 	// Accept returns a newly connected Peer.
-	Accept(ctx context.Context, config peerConfig) (*PeerImpl, error)
+	Accept(ctx context.Context, config PeerConfig) (*PeerImpl, error)
 
 	// Dial connects to the Peer for the address.
-	Dial(ctx context.Context, addr NetAddress, config peerConfig) (*PeerImpl, error)
+	Dial(ctx context.Context, addr NetAddress, config PeerConfig) (*PeerImpl, error)
 
 	// Cleanup any resources associated with Peer.
 	Cleanup(peer *PeerImpl)
 
 	// Flags when transport is being closed.
 	IsClosing() bool
-	SetSwitch(sw *Switch)
+
+	// NodeInfo returns a [NodeInfo]
+	NodeInfo() NodeInfo
+
+	// SetSwitch(sw *Switch)
 }
 
 // transportLifecycle bundles the methods for callers to control start and stop
@@ -146,15 +150,8 @@ type MultiplexTransport struct {
 	nodeKey          NodeKey
 	resolver         IPResolver
 
-	// TODO(xla): This config is still needed as we parameterise peerConn and
-	// peer currently. All relevant configuration should be refactored into options
-	// with sane defaults.
-	mConfig conn.MConnConfig
-
 	// Permits to overwrite the handshake handler
 	handshakeFn TransportHandshakeFn
-
-	sw *Switch
 }
 
 // Test multiplexTransport for interface completeness.
@@ -168,7 +165,6 @@ func NewMultiplexTransport(
 	ctx context.Context,
 	nodeInfo NodeInfo,
 	nodeKey NodeKey,
-	mConfig conn.MConnConfig,
 ) *MultiplexTransport {
 	return &MultiplexTransport{
 		acceptc:          make(chan accept),
@@ -176,7 +172,6 @@ func NewMultiplexTransport(
 		dialTimeout:      defaultDialTimeout,
 		filterTimeout:    defaultFilterTimeout,
 		handshakeTimeout: defaultHandshakeTimeout,
-		mConfig:          mConfig,
 		nodeInfo:         nodeInfo,
 		nodeKey:          nodeKey,
 		conns:            NewConnSet(),
@@ -190,7 +185,6 @@ func NewMultiplexTransport(
 func NewMultiplexTransportWithCustomHandshake(
 	nodeInfo NodeInfo,
 	nodeKey NodeKey,
-	mConfig conn.MConnConfig,
 	handshakeFn TransportHandshakeFn,
 ) *MultiplexTransport {
 	return &MultiplexTransport{
@@ -199,7 +193,6 @@ func NewMultiplexTransportWithCustomHandshake(
 		dialTimeout:      defaultDialTimeout,
 		filterTimeout:    defaultFilterTimeout,
 		handshakeTimeout: defaultHandshakeTimeout,
-		mConfig:          mConfig,
 		nodeInfo:         nodeInfo,
 		nodeKey:          nodeKey,
 		conns:            NewConnSet(),
@@ -207,17 +200,19 @@ func NewMultiplexTransportWithCustomHandshake(
 		handshakeFn:      handshakeFn,
 	}
 }
-func (mt *MultiplexTransport) SetSwitch(sw *Switch) {
-	mt.sw = sw
-}
 
 // NetAddress implements Transport.
 func (mt *MultiplexTransport) NetAddress() NetAddress {
 	return mt.netAddr
 }
 
+// NodeInfo returns a [NodeInfo]
+func (mt *MultiplexTransport) NodeInfo() NodeInfo {
+	return mt.nodeInfo
+}
+
 // Accept implements Transport.
-func (mt *MultiplexTransport) Accept(ctx context.Context, cfg peerConfig) (*PeerImpl, error) {
+func (mt *MultiplexTransport) Accept(ctx context.Context, cfg PeerConfig) (*PeerImpl, error) {
 	select {
 	// This case should never have any side-effectful/blocking operations to
 	// ensure that quality peers are ready to be used.
@@ -228,7 +223,13 @@ func (mt *MultiplexTransport) Accept(ctx context.Context, cfg peerConfig) (*Peer
 
 		cfg.outbound = false
 
-		return mt.wrapPeer(ctx, a.conn, a.nodeInfo, cfg, a.netAddr, mt.sw), nil
+		return mt.wrapPeer(ctx,
+			a.conn,
+			a.nodeInfo,
+			cfg,
+			a.netAddr,
+			// mt.sw,
+		), nil
 	case <-mt.closec:
 		return nil, ErrTransportClosed{}
 	}
@@ -238,22 +239,13 @@ func (mt *MultiplexTransport) Accept(ctx context.Context, cfg peerConfig) (*Peer
 func (mt *MultiplexTransport) Dial(
 	ctx context.Context,
 	addr NetAddress,
-	cfg peerConfig,
+	cfg PeerConfig,
 ) (*PeerImpl, error) {
 	c, err := addr.DialTimeout(mt.dialTimeout)
 	if err != nil {
 		return nil, err
 	}
 
-	if mt.mConfig.TestFuzz {
-		// so we have time to do peer handshakes and get set up.
-		c = FuzzConnAfterFromConfig(c, 10*time.Second, mt.mConfig.TestFuzzConfig)
-	}
-
-	// TODO(xla): Evaluate if we should apply filters if we explicitly dial.
-	if err := mt.filterConn(c, true); err != nil {
-		return nil, err
-	}
 	hsStart := time.Now()
 	secretConn, nodeInfo, err := mt.upgrade(c, &addr)
 	if err != nil {
@@ -268,7 +260,13 @@ func (mt *MultiplexTransport) Dial(
 	}
 	cfg.outbound = true
 
-	p := mt.wrapPeer(ctx, secretConn, nodeInfo, cfg, &addr, mt.sw)
+	p := mt.wrapPeer(
+		ctx,
+		secretConn,
+		nodeInfo,
+		cfg,
+		&addr,
+	)
 
 	return p, nil
 }
@@ -438,7 +436,7 @@ func (mt *MultiplexTransport) IsClosing() bool {
 // closes the connection.
 func (mt *MultiplexTransport) Cleanup(p *PeerImpl) {
 	mt.conns.RemoveAddr(p.RemoteAddr())
-	_ = p.CloseConn()
+	// _ = p.CloseConn()
 }
 
 func (mt *MultiplexTransport) cleanup(c net.Conn) error {
@@ -590,9 +588,8 @@ func (mt *MultiplexTransport) wrapPeer(
 	ctx context.Context,
 	c net.Conn,
 	ni NodeInfo,
-	cfg peerConfig,
+	cfg PeerConfig,
 	socketAddr *NetAddress,
-	sw *Switch,
 ) *PeerImpl {
 	persistent := false
 	if cfg.isPersistent != nil {
@@ -616,10 +613,7 @@ func (mt *MultiplexTransport) wrapPeer(
 	p := newPeer(
 		ctx,
 		peerConn,
-		mt.mConfig,
 		ni,
-		cfg,
-		sw,
 		PeerMetrics(cfg.metrics),
 	)
 
