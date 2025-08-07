@@ -127,38 +127,41 @@ func (mgr *ReplicationPool) Process(e cmtp2p.Envelope) error {
 	// Also store the peer ID as a partner.
 	mgr.addPartner(e.ChainID, e.Src.ID())
 
-	extMsg := e.Message.(type)
-	switch extMsg.GetSum().(type) {
-	case *mxp2p.Message_ChainReplicationRequest:
-		replRequest := extMsg.GetChainReplicationRequest()
+	switch extMsg := e.Message.(type) {
+	case *mxp2p.Message:
+		msg := extMsg.GetSum()
+		switch msg.(type) {
+		case *mxp2p.Message_ChainReplicationRequest:
+			replRequest := extMsg.GetChainReplicationRequest()
 
-		mgr.logger.Debug("Processing ChainReplicationRequest", "msg", replRequest)
-		mgr.addRequest(replRequest)
+			mgr.logger.Debug("Processing ChainReplicationRequest", "msg", replRequest)
+			mgr.addRequest(replRequest)
 
-		// Nothing more to do about ChainReplicationRequest.
+			// Nothing more to do about ChainReplicationRequest.
 
-	case *mxp2p.Message_ChainReplicationResponse:
-		replResponse := extMsg.GetChainReplicationResponse()
+		case *mxp2p.Message_ChainReplicationResponse:
+			replResponse := extMsg.GetChainReplicationResponse()
 
-		mgr.logger.Debug("Processing ChainReplicationResponse", "msg", replResponse)
-		mgr.addResponse(replResponse)
+			mgr.logger.Debug("Processing ChainReplicationResponse", "msg", replResponse)
+			mgr.addResponse(replResponse)
 
-		// Close the "Accepted" channel when we have 2/3+1 responses.
-		if mgr.evaluateAcceptanceMajority(replResponse.ChainID) {
-			ch := mgr.Accepted(replResponse.ChainID)
-			close(ch) // DONE!
-		}
+			// Close the "Accepted" channel when we have 2/3+1 responses.
+			if mgr.evaluateAcceptanceMajority(replResponse.ChainID) {
+				ch := mgr.Accepted(replResponse.ChainID)
+				close(ch) // DONE!
+			}
 
-	case *mxp2p.Message_ChainReplicationComplete:
-		replComplete := extMsg.GetChainReplicationComplete()
+		case *mxp2p.Message_ChainReplicationComplete:
+			replComplete := extMsg.GetChainReplicationComplete()
 
-		mgr.logger.Debug("Processing ChainReplicationComplete", "msg", replComplete)
-		mgr.addComplete(replComplete)
+			mgr.logger.Debug("Processing ChainReplicationComplete", "msg", replComplete)
+			mgr.addComplete(replComplete)
 
-		// Close the "Complete" channel when we have 2/3+1 completions.
-		if mgr.evaluateCompletionMajority(replComplete.ChainID) {
-			ch := mgr.Complete(replComplete.ChainID)
-			close(ch) // DONE!
+			// Close the "Complete" channel when we have 2/3+1 completions.
+			if mgr.evaluateCompletionMajority(replComplete.ChainID) {
+				ch := mgr.Completed(replComplete.ChainID)
+				close(ch) // DONE!
+			}
 		}
 	}
 
@@ -182,42 +185,66 @@ func (mgr *ReplicationPool) Status(chainID string) *mxp2p.ChainReplicationStatus
 	return nil
 }
 
+// Requests returns the stored replication requests for chainID.
+func (mgr *ReplicationPool) Requests(chainID string) []*mxp2p.ChainReplicationRequest {
+	mgr.mtx.Lock()
+	defer mgr.mtx.Unlock()
+
+	if r, ok := mgr.requests[chainID]; ok {
+		return r
+	}
+
+	return []*mxp2p.ChainReplicationRequest{}
+}
+
+// Responses returns the stored replication responses for chainID.
+func (mgr *ReplicationPool) Responses(chainID string) []*mxp2p.ChainReplicationResponse {
+	mgr.mtx.Lock()
+	defer mgr.mtx.Unlock()
+
+	if r, ok := mgr.responses[chainID]; ok {
+		return r
+	}
+
+	return []*mxp2p.ChainReplicationResponse{}
+}
+
 // Accepted returns a channel, which is closed when chainID has 2/3+1 responses.
-func (mgr *ReplicationPool) Accepted(chainID string) <-chan struct{} {
+func (mgr *ReplicationPool) Accepted(chainID string) chan struct{} {
 	mgr.mtx.Lock()
 	acceptedCh, hasChannel := mgr.acceptedChs[chainID]
-	mgr.mtx.unlock()
+	mgr.mtx.Unlock()
 
 	if !hasChannel {
 		acceptedCh = make(chan struct{}, 1) // buffered
 
 		mgr.mtx.Lock()
 		mgr.acceptedChs[chainID] = acceptedCh
-		mgr.mtx.unlock()
+		mgr.mtx.Unlock()
 	}
 
 	return acceptedCh
 }
 
 // Completed returns a channel, which is closed when chainID has 2/3+1 completions.
-func (mgr *ReplicationPool) Completed(chainID string) <-chan struct{} {
+func (mgr *ReplicationPool) Completed(chainID string) chan struct{} {
 	mgr.mtx.Lock()
 	completeCh, hasChannel := mgr.completeChs[chainID]
-	mgr.mtx.unlock()
+	mgr.mtx.Unlock()
 
 	if !hasChannel {
 		completeCh = make(chan struct{}, 1) // buffered
 
 		mgr.mtx.Lock()
 		mgr.completeChs[chainID] = completeCh
-		mgr.mtx.unlock()
+		mgr.mtx.Unlock()
 	}
 
 	return completeCh
 }
 
 // WaitAccepted blocks a thread until chainID has 2/3+1 responses.
-func (mgr *BroadcastPool) WaitAccepted(chainID string) bool {
+func (mgr *ReplicationPool) WaitAccepted(chainID string) bool {
 	ch := mgr.Accepted(chainID)
 
 	for mgr.Context().Err() == nil {
@@ -233,8 +260,8 @@ func (mgr *BroadcastPool) WaitAccepted(chainID string) bool {
 }
 
 // WaitCompleted blocks a thread until chainID has 2/3+1 completions.
-func (mgr *BroadcastPool) WaitCompleted(chainID string) bool {
-	ch := mgr.Complete(chainID)
+func (mgr *ReplicationPool) WaitCompleted(chainID string) bool {
+	ch := mgr.Completed(chainID)
 
 	for mgr.Context().Err() == nil {
 		select {
@@ -310,7 +337,7 @@ func (mgr *ReplicationPool) addComplete(res *mxp2p.ChainReplicationComplete) {
 	}
 
 	prev = append(prev, res)
-	mgr.completes[req.ChainID] = prev
+	mgr.completes[res.ChainID] = prev
 }
 
 // evaluateAcceptanceMajority counts the received ChainReplicationResponse
@@ -319,7 +346,9 @@ func (mgr *ReplicationPool) evaluateAcceptanceMajority(
 	chainID string,
 ) bool {
 	if _, ok := mgr.relays[chainID]; !ok {
-		return false
+		return true
+	} else if len(mgr.relays[chainID]) == 0 {
+		return true
 	}
 	if _, ok := mgr.responses[chainID]; !ok {
 		return false
@@ -339,6 +368,8 @@ func (mgr *ReplicationPool) evaluateCompletionMajority(
 ) bool {
 	if _, ok := mgr.relays[chainID]; !ok {
 		return false
+	} else if len(mgr.relays[chainID]) == 0 {
+		return true
 	}
 	if _, ok := mgr.completes[chainID]; !ok {
 		return false

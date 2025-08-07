@@ -22,6 +22,7 @@ import (
 	"github.com/ice-blockchain/cometbft/libs/service"
 	mempl "github.com/ice-blockchain/cometbft/mempool"
 	"github.com/ice-blockchain/cometbft/node"
+	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/p2p/pex"
 	"github.com/ice-blockchain/cometbft/privval"
 	"github.com/ice-blockchain/cometbft/proxy"
@@ -50,10 +51,11 @@ type runtimeComposer struct {
 	genesisDocSet    *helpers.ChecksummedGenesisDocSet
 	composedChainIds map[string]struct{}
 	injectedChainIds map[string]struct{}
+	cometbftSwitch   *cmtp2p.Switch
 
 	// Services
-	resourceManager *ResourceRegistry
-	connectionPool  *p2p.ConnectionPool
+	resourceMgr    types.ResourceManager
+	connectionPool *p2p.ConnectionPool
 
 	// Options
 	logger cmtlog.Logger
@@ -69,7 +71,7 @@ func NewComposer(
 	ctx context.Context,
 	baseConfig *config.Config,
 	connectionPool *p2p.ConnectionPool,
-	resourceManager *ResourceRegistry,
+	resourceMgr types.ResourceManager,
 	logger cmtlog.Logger,
 	options ...ComposerOption,
 ) *runtimeComposer {
@@ -86,8 +88,8 @@ func NewComposer(
 		logger: logger,
 
 		// Services
-		connectionPool:  connectionPool,
-		resourceManager: resourceManager,
+		connectionPool: connectionPool,
+		resourceMgr:    resourceMgr,
 	}
 
 	// Use option helpers
@@ -127,6 +129,16 @@ func (c *runtimeComposer) SetOptions(options ...ComposerOption) {
 // Logger returns the logger instance.
 func (c *runtimeComposer) Logger() cmtlog.Logger {
 	return c.logger
+}
+
+// SetSwitch is used to set a cmtp2p.Switch for CometBFT.
+func (c *runtimeComposer) SetSwitch(sw *cmtp2p.Switch) {
+	c.cometbftSwitch = sw
+}
+
+// Switch returns the cmtp2p.Switch instance for CometBFT.
+func (c *runtimeComposer) Switch() *cmtp2p.Switch {
+	return c.cometbftSwitch
 }
 
 // ----------------------------------------------------------------------------
@@ -179,37 +191,37 @@ func (c *runtimeComposer) OnReset(ctx context.Context) error {
 
 	for chainID := range composedChainIds {
 		if eventBus := c.EventBus(chainID); eventBus != nil {
-			serviceResetFn(eventBus.(service.Service))
+			serviceResetFn(eventBus)
 		}
 
-		if memR := c.resourceManager.Get(chainID,
+		if memR := c.resourceMgr.Get(chainID,
 			types.ServiceKeyMempoolReactor,
 		).(*mempl.Reactor); memR != nil {
-			serviceResetFn(memR.(service.Service))
+			serviceResetFn(memR)
 		}
 
-		if bsR := c.resourceManager.Get(chainID,
+		if bsR := c.resourceMgr.Get(chainID,
 			types.ServiceKeyBlockSyncReactor,
 		).(*blocksync.Reactor); bsR != nil {
-			serviceResetFn(bsR.(service.Service))
+			serviceResetFn(bsR)
 		}
 
-		if conR := c.resourceManager.Get(chainID,
+		if conR := c.resourceMgr.Get(chainID,
 			types.ServiceKeyConsensusReactor,
 		).(*cs.Reactor); conR != nil {
-			serviceResetFn(conR.(service.Service))
+			serviceResetFn(conR)
 		}
 
-		if evR := c.resourceManager.Get(chainID,
+		if evR := c.resourceMgr.Get(chainID,
 			types.ServiceKeyEvidenceReactor,
 		).(*evidence.Reactor); evR != nil {
-			serviceResetFn(evR.(service.Service))
+			serviceResetFn(evR)
 		}
 
-		if idxS := c.resourceManager.Get(chainID,
+		if idxS := c.resourceMgr.Get(chainID,
 			types.ServiceKeyIndexers,
 		).(*txindex.IndexerService); idxS != nil {
-			serviceResetFn(idxS.(service.Service))
+			serviceResetFn(idxS)
 		}
 	}
 
@@ -262,7 +274,7 @@ func (c *runtimeComposer) Compose(
 		return err
 	}
 
-	c.composedChainIds[chainID] = struct{}
+	c.composedChainIds[chainID] = struct{}{}
 	return nil
 }
 
@@ -295,7 +307,7 @@ func (c *runtimeComposer) Inject(chainID string) error {
 		return err
 	}
 
-	c.injectedChainIds[chainID] = struct{}
+	c.injectedChainIds[chainID] = struct{}{}
 	return nil
 }
 
@@ -310,7 +322,7 @@ func (c *runtimeComposer) Build(
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
 
-	if c.resourceManager.Has(chainID, types.ServiceKeyNodeRuntime) {
+	if c.resourceMgr.Has(chainID, types.ServiceKeyNodeRuntime) {
 		return nil // Nothing to do
 	}
 
@@ -324,15 +336,15 @@ func (c *runtimeComposer) Build(
 	stateStore := c.StateStore(chainID)
 	blockStore := c.BlockStore(chainID)
 	stateMachine := c.StateMachine(chainID)
-	pruner := c.resourceManager.Get(chainID, types.ServiceKeyPruner).(*sm.Pruner)
-	indexerService := c.resourceManager.Get(chainID, types.ServiceKeyIndexers).(*txindex.IndexerService)
-	consensusReactor := c.resourceManager.Get(chainID, types.ServiceKeyConsensusReactor).(*cs.Reactor)
+	pruner := c.resourceMgr.Get(chainID, types.ServiceKeyPruner).(*sm.Pruner)
+	indexerService := c.resourceMgr.Get(chainID, types.ServiceKeyIndexers).(*txindex.IndexerService)
+	consensusReactor := c.resourceMgr.Get(chainID, types.ServiceKeyConsensusReactor).(*cs.Reactor)
 	proxyApp := abciClient.ToAppConns(chainID)
 
 	// Connections
 	withNodeInfo := c.connectionPool.NodeInfo()
 	withNodeKey := c.connectionPool.NodeKey()
-	eventSwitch := c.connectionPool.Switch()
+	eventSwitch := c.Switch()
 	connTransport := eventSwitch.Transport()
 	pexAddrBook := eventSwitch.GetAddrBook().(pex.AddrBook)
 
@@ -366,7 +378,7 @@ func (c *runtimeComposer) Build(
 		nodeInstance,
 	)
 
-	c.resourceManager.Set(chainID, types.ServiceKeyNodeRuntime, nodeInstance)
+	c.resourceMgr.Set(chainID, types.ServiceKeyNodeRuntime, nodeInstance)
 	return nil
 }
 
@@ -391,7 +403,7 @@ func (c *runtimeComposer) Unload(chainID string) error {
 		types.ServiceKeyDatabaseEvidence,
 	}
 	for _, dbServiceKey := range dbServiceKeys {
-		if dbService := c.resourceManager.Get(
+		if dbService := c.resourceMgr.Get(
 			chainID,
 			dbServiceKey,
 		).(service.Service); dbService != nil {
@@ -412,7 +424,7 @@ func (c *runtimeComposer) Unload(chainID string) error {
 		}
 	}
 
-	if indexerService := c.resourceManager.Get(chainID,
+	if indexerService := c.resourceMgr.Get(chainID,
 		types.ServiceKeyIndexers,
 	).(*txindex.IndexerService); indexerService != nil {
 		if indexerService.IsRunning() {
@@ -420,7 +432,7 @@ func (c *runtimeComposer) Unload(chainID string) error {
 		}
 	}
 
-	if blocksPruner := c.resourceManager.Get(chainID,
+	if blocksPruner := c.resourceMgr.Get(chainID,
 		types.ServiceKeyPruner,
 	).(*sm.Pruner); blocksPruner != nil {
 		if blocksPruner.IsRunning() {
@@ -433,7 +445,7 @@ func (c *runtimeComposer) Unload(chainID string) error {
 
 // ConfPath returns the filesystem path to config for chainID.
 func (c *runtimeComposer) ConfPath(chainID string) string {
-	return c.resourceManager.Get(
+	return c.resourceMgr.Get(
 		chainID,
 		types.InstanceKeyPathConf,
 	).(string)
@@ -441,7 +453,7 @@ func (c *runtimeComposer) ConfPath(chainID string) string {
 
 // DataPath returns the filesystem path to data for chainID.
 func (c *runtimeComposer) DataPath(chainID string) string {
-	return c.resourceManager.Get(
+	return c.resourceMgr.Get(
 		chainID,
 		types.InstanceKeyPathData,
 	).(string)
@@ -449,7 +461,7 @@ func (c *runtimeComposer) DataPath(chainID string) string {
 
 // Config returns the configuration instance for chainID.
 func (c *runtimeComposer) Config(chainID string) *config.Config {
-	return c.resourceManager.Get(
+	return c.resourceMgr.Get(
 		chainID,
 		types.InstanceKeyConfig,
 	).(*config.Config)
@@ -457,7 +469,7 @@ func (c *runtimeComposer) Config(chainID string) *config.Config {
 
 // GenesisDoc returns the genesis configuration for chainID.
 func (c *runtimeComposer) GenesisDoc(chainID string) cmttypes.GenesisDoc {
-	return c.resourceManager.Get(
+	return c.resourceMgr.Get(
 		chainID,
 		types.InstanceKeyGenesisDoc,
 	).(cmttypes.GenesisDoc)
@@ -466,7 +478,7 @@ func (c *runtimeComposer) GenesisDoc(chainID string) cmttypes.GenesisDoc {
 // Database returns a database for chainID.
 // Uses dbServiceKey as registered service key.
 func (c *runtimeComposer) Database(chainID, dbServiceKey string) *helpers.DBService {
-	return c.resourceManager.Get(
+	return c.resourceMgr.Get(
 		chainID,
 		dbServiceKey,
 	).(*helpers.DBService)
@@ -474,7 +486,7 @@ func (c *runtimeComposer) Database(chainID, dbServiceKey string) *helpers.DBServ
 
 // Validator returns the priv validator for chainID.
 func (c *runtimeComposer) Validator(chainID string) cmttypes.PrivValidator {
-	return c.resourceManager.Get(
+	return c.resourceMgr.Get(
 		chainID,
 		types.InstanceKeyPrivValidator,
 	).(cmttypes.PrivValidator)
@@ -482,7 +494,7 @@ func (c *runtimeComposer) Validator(chainID string) cmttypes.PrivValidator {
 
 // EventBus returns the event bus for chainID.
 func (c *runtimeComposer) EventBus(chainID string) *cmttypes.EventBus {
-	return c.resourceManager.Get(
+	return c.resourceMgr.Get(
 		chainID,
 		types.ServiceKeyEventBus,
 	).(*cmttypes.EventBus)
@@ -490,7 +502,7 @@ func (c *runtimeComposer) EventBus(chainID string) *cmttypes.EventBus {
 
 // StateMachine returns the state machine for chainID.
 func (c *runtimeComposer) StateMachine(chainID string) sm.State {
-	statePtr := c.resourceManager.Get(
+	statePtr := c.resourceMgr.Get(
 		chainID,
 		types.InstanceKeyStateMachine,
 	).(*sm.State)
@@ -499,7 +511,7 @@ func (c *runtimeComposer) StateMachine(chainID string) sm.State {
 
 // StateStore returns the state store for chainID.
 func (c *runtimeComposer) StateStore(chainID string) sm.Store {
-	return c.resourceManager.Get(
+	return c.resourceMgr.Get(
 		chainID,
 		types.InstanceKeyStateStore,
 	).(sm.Store)
@@ -507,7 +519,7 @@ func (c *runtimeComposer) StateStore(chainID string) sm.Store {
 
 // BlockStore returns the blocks store for chainID.
 func (c *runtimeComposer) BlockStore(chainID string) *bs.BlockStore {
-	return c.resourceManager.Get(
+	return c.resourceMgr.Get(
 		chainID,
 		types.InstanceKeyBlockStore,
 	).(*bs.BlockStore)
@@ -515,7 +527,7 @@ func (c *runtimeComposer) BlockStore(chainID string) *bs.BlockStore {
 
 // Mempool returns the mempool for chainID.
 func (c *runtimeComposer) Mempool(chainID string) mempl.Mempool {
-	mempoolReactor := c.resourceManager.Get(
+	mempoolReactor := c.resourceMgr.Get(
 		chainID,
 		types.ServiceKeyMempoolReactor,
 	).(*mempl.Reactor)
@@ -524,7 +536,7 @@ func (c *runtimeComposer) Mempool(chainID string) mempl.Mempool {
 
 // EvidencePool returns the evidence pool for chainID.
 func (c *runtimeComposer) EvidencePool(chainID string) *evidence.Pool {
-	evidenceReactor := c.resourceManager.Get(
+	evidenceReactor := c.resourceMgr.Get(
 		chainID,
 		types.ServiceKeyEvidenceReactor,
 	).(*evidence.Reactor)
@@ -533,7 +545,7 @@ func (c *runtimeComposer) EvidencePool(chainID string) *evidence.Pool {
 
 // BlockExecutor returns the blocks executor for chainID.
 func (c *runtimeComposer) BlockExecutor(chainID string) *sm.BlockExecutor {
-	return c.resourceManager.Get(
+	return c.resourceMgr.Get(
 		chainID,
 		types.InstanceKeyBlockExecutor,
 	).(*sm.BlockExecutor)
@@ -541,7 +553,7 @@ func (c *runtimeComposer) BlockExecutor(chainID string) *sm.BlockExecutor {
 
 // Node returns the node service for chainID.
 func (c *runtimeComposer) Node(chainID string) *node.Node {
-	return c.resourceManager.Get(
+	return c.resourceMgr.Get(
 		chainID,
 		types.ServiceKeyNodeRuntime,
 	).(*node.Node)
@@ -570,9 +582,9 @@ func (c *runtimeComposer) makeNetworkConfig(
 		int(c.runtimeBaseConf.DiscoveryPort),
 	)
 
-	c.resourceManager.Set(chainID, types.InstanceKeyPathData, dataDir)
-	c.resourceManager.Set(chainID, types.InstanceKeyPathConf, confDir)
-	c.resourceManager.Set(chainID, types.InstanceKeyConfig, cfg)
+	c.resourceMgr.Set(chainID, types.InstanceKeyPathData, dataDir)
+	c.resourceMgr.Set(chainID, types.InstanceKeyPathConf, confDir)
+	c.resourceMgr.Set(chainID, types.InstanceKeyConfig, cfg)
 	return nil
 }
 
@@ -610,7 +622,7 @@ func (c *runtimeComposer) makeNetworkDatabases(
 				databaseLogger,
 			)
 
-			c.resourceManager.Set(chainID, dbServiceKey, databaseService)
+			c.resourceMgr.Set(chainID, dbServiceKey, databaseService)
 		}
 	}
 
@@ -639,7 +651,7 @@ func (c *runtimeComposer) makeNetworkValidator(
 		return err
 	}
 
-	c.resourceManager.Set(chainID, types.InstanceKeyPrivValidator, privValidator)
+	c.resourceMgr.Set(chainID, types.InstanceKeyPrivValidator, privValidator)
 	return nil
 }
 
@@ -647,7 +659,7 @@ func (c *runtimeComposer) makeNetworkGenesis(
 	chainID string,
 ) error {
 	var genesisDoc cmttypes.GenesisDoc
-	if !c.resourceManager.Has(chainID, types.InstanceKeyGenesisDoc) {
+	if !c.resourceMgr.Has(chainID, types.InstanceKeyGenesisDoc) {
 		validatorPubKeys := c.validatorsByNet[chainID]
 
 		powerPerValidator := 10
@@ -671,9 +683,9 @@ func (c *runtimeComposer) makeNetworkGenesis(
 			Validators:      genesisValidators,
 		}
 
-		c.resourceManager.Set(chainID, types.InstanceKeyGenesisDoc, genesisDoc)
+		c.resourceMgr.Set(chainID, types.InstanceKeyGenesisDoc, genesisDoc)
 	} else {
-		genesisDoc = c.resourceManager.Get(
+		genesisDoc = c.resourceMgr.Get(
 			chainID,
 			types.InstanceKeyGenesisDoc,
 		).(cmttypes.GenesisDoc)
@@ -701,14 +713,14 @@ func (c *runtimeComposer) makeNetworkGenesis(
 func (c *runtimeComposer) makeNetworkPruner(
 	chainID string,
 ) error {
-	if c.resourceManager.Has(chainID, types.ServiceKeyPruner) {
+	if c.resourceMgr.Has(chainID, types.ServiceKeyPruner) {
 		return nil // Nothing to do.
 	}
 
 	// Updates the application retain height to 0, to disable pruner.
-	stateStore := c.resourceManager.Get(chainID, types.InstanceKeyStateStore).(sm.Store)
-	blockStore := c.resourceManager.Get(chainID, types.InstanceKeyBlockStore).(*bs.BlockStore)
-	indexerService := c.resourceManager.Get(chainID, types.ServiceKeyIndexers).(*txindex.IndexerService)
+	stateStore := c.resourceMgr.Get(chainID, types.InstanceKeyStateStore).(sm.Store)
+	blockStore := c.resourceMgr.Get(chainID, types.InstanceKeyBlockStore).(*bs.BlockStore)
+	indexerService := c.resourceMgr.Get(chainID, types.ServiceKeyIndexers).(*txindex.IndexerService)
 
 	// NOTE(midas): Disables the blocks pruner completely.
 	if err := stateStore.SaveApplicationRetainHeight(0); err != nil {
@@ -726,7 +738,7 @@ func (c *runtimeComposer) makeNetworkPruner(
 		c.logger.With("module", "state"),
 	)
 
-	c.resourceManager.Set(chainID, types.ServiceKeyPruner, pruner)
+	c.resourceMgr.Set(chainID, types.ServiceKeyPruner, pruner)
 	return nil
 }
 
@@ -736,8 +748,8 @@ func (c *runtimeComposer) makeNetworkPruner(
 func (c *runtimeComposer) startNetworkStateMachine(
 	chainID string,
 ) error {
-	stateDatabaseService := c.resourceManager.Get(chainID, types.ServiceKeyDatabaseState).(service.Service)
-	blockDatabaseService := c.resourceManager.Get(chainID, types.ServiceKeyDatabaseBlock).(service.Service)
+	stateDatabaseService := c.resourceMgr.Get(chainID, types.ServiceKeyDatabaseState).(service.Service)
+	blockDatabaseService := c.resourceMgr.Get(chainID, types.ServiceKeyDatabaseBlock).(service.Service)
 
 	// Ensure that state and blockstore databases are open.
 	if err := helpers.EnsureStartDBService(c.Context(), stateDatabaseService); err != nil {
@@ -797,9 +809,9 @@ func (c *runtimeComposer) startNetworkStateMachine(
 		bs.WithDBKeyLayout(dbKeyLayoutVersion),
 	)
 
-	c.resourceManager.Set(chainID, types.InstanceKeyStateMachine, &stateMachine) // *sm.State
-	c.resourceManager.Set(chainID, types.InstanceKeyStateStore, stateStore)
-	c.resourceManager.Set(chainID, types.InstanceKeyBlockStore, blockStore)
+	c.resourceMgr.Set(chainID, types.InstanceKeyStateMachine, &stateMachine) // *sm.State
+	c.resourceMgr.Set(chainID, types.InstanceKeyStateStore, stateStore)
+	c.resourceMgr.Set(chainID, types.InstanceKeyBlockStore, blockStore)
 	return nil
 }
 
@@ -807,16 +819,16 @@ func (c *runtimeComposer) startNetworkEventBus(
 	chainID string,
 ) error {
 	var eventBus *cmttypes.EventBus
-	if !c.resourceManager.Has(chainID, types.ServiceKeyEventBus) {
+	if !c.resourceMgr.Has(chainID, types.ServiceKeyEventBus) {
 		eventBus = cmttypes.NewEventBus(c.Context())
 		eventBus.SetLogger(c.logger.With("module", "events"))
 		if err := eventBus.Start(); err != nil {
 			return fmt.Errorf("error starting event bus: %w", err)
 		}
 
-		c.resourceManager.Set(chainID, types.ServiceKeyEventBus, eventBus)
+		c.resourceMgr.Set(chainID, types.ServiceKeyEventBus, eventBus)
 	} else {
-		eventBus = c.resourceManager.Get(chainID, types.ServiceKeyEventBus).(*cmttypes.EventBus)
+		eventBus = c.resourceMgr.Get(chainID, types.ServiceKeyEventBus).(*cmttypes.EventBus)
 		if !eventBus.IsRunning() {
 			if eventBus.IsStopped() {
 				eventBus.Reset(c.Context()) // permit re-start
@@ -835,7 +847,7 @@ func (c *runtimeComposer) startNetworkIndexers(
 	chainID string,
 ) error {
 	// Ensure that tx_index database is open.
-	indexerDbService := c.resourceManager.Get(chainID, types.ServiceKeyDatabaseIndex).(service.Service)
+	indexerDbService := c.resourceMgr.Get(chainID, types.ServiceKeyDatabaseIndex).(service.Service)
 	if err := helpers.EnsureStartDBService(c.Context(), indexerDbService); err != nil {
 		return fmt.Errorf(
 			"failed to open tx_index database for %s: %w", chainID, err)
@@ -846,7 +858,7 @@ func (c *runtimeComposer) startNetworkIndexers(
 		blockIndexer indexer.BlockIndexer
 	)
 
-	if !c.resourceManager.Has(chainID, types.ServiceKeyIndexers) {
+	if !c.resourceMgr.Has(chainID, types.ServiceKeyIndexers) {
 		indexerDatabase := indexerDbService.(*helpers.DBService).DB()
 		txIndexer = txidxkv.NewTxIndex(indexerDatabase)
 		blockIndexer = blockidxkv.New(
@@ -861,9 +873,9 @@ func (c *runtimeComposer) startNetworkIndexers(
 			return fmt.Errorf("error starting indexers: %w", err)
 		}
 
-		c.resourceManager.Set(chainID, types.ServiceKeyIndexers, indexerService)
+		c.resourceMgr.Set(chainID, types.ServiceKeyIndexers, indexerService)
 	} else {
-		indexerService := c.resourceManager.Get(chainID, types.ServiceKeyIndexers).(*txindex.IndexerService)
+		indexerService := c.resourceMgr.Get(chainID, types.ServiceKeyIndexers).(*txindex.IndexerService)
 		txIndexer = indexerService.GetTxIndexer()
 		blockIndexer = indexerService.GetBlockIndexer()
 

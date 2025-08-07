@@ -27,5 +27,6 @@ const (
 	ServiceKeyAddressesReactor = "chain/addressesReactor" // PEX
 
 	// Multiplex
-	ServiceKeyNodeRuntime = "chain/nodeRuntime"
+	ServiceKeyNodeRuntime      = "chain/nodeRuntime"
+	ServiceKeyMultiplexReactor = "shared/multiplexReactor"
 )

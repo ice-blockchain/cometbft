@@ -2,6 +2,7 @@ package multiplex
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -9,6 +10,8 @@ import (
 	"time"
 
 	"github.com/ice-blockchain/cometbft/crypto"
+	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
+
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/helpers"
 	mxrpc "github.com/ice-blockchain/cometbft/multiplex/rpc"
@@ -17,6 +20,29 @@ import (
 
 // ----------------------------------------------------------------------------
 // types.RelayHelpers API implementation
+
+// SaveRelayInfo stores the RPC call response with information about the
+// relay in a map where keys are CometBFT Node IDs.
+func (b *MultiplexBackend) SaveRelayInfo(relayInfo *mxrpc.RPCResultRelayInfo) {
+	b.mtx.Lock()
+	defer b.mtx.Unlock()
+
+	relayID := string(relayInfo.DefaultNodeID)
+	b.knownRelayInfo[relayID] = relayInfo
+}
+
+// GetRelayInfo returns the RPC call response with information about the
+// relay or nil if it is unknown for relayID.
+func (b *MultiplexBackend) GetRelayInfo(relayID cmtp2p.ID) *mxrpc.RPCResultRelayInfo {
+	b.mtx.Lock()
+	defer b.mtx.Unlock()
+
+	relayInfo, ok := b.knownRelayInfo[string(relayID)]
+	if !ok {
+		return nil
+	}
+	return relayInfo
+}
 
 // GetLocalNetworkHeights returns a list of networks that must be created.
 // That list is always a subset of the list of required networks.
@@ -275,7 +301,7 @@ func (b *MultiplexBackend) GetRelaysByNetwork(
 		healthyRelays = append(healthyRelays, relayAddr)
 
 		// Save the RelayInfo result as we need it for dialing.
-		b.reactor.SaveRelayInfo(result.result)
+		b.SaveRelayInfo(result.result)
 
 		// Also, populate a map of relay addresses by ChainID.
 		for _, chainID := range result.result.Networks {
@@ -389,7 +415,7 @@ func (b *MultiplexBackend) ApplyFilterReplRequestRelays(
 	// Makes sure to avoid mistakenly including self.
 	relaysWithoutSelf := []*helpers.RelayAddress{}
 	for _, relayAddr := range relays {
-		if relayAddr.ID() != b.reactor.GetNodeKey().ID() {
+		if relayAddr.ID() != b.nodeKey.ID() {
 			relaysWithoutSelf = append(relaysWithoutSelf, relayAddr)
 		}
 	}
@@ -405,7 +431,7 @@ func (b *MultiplexBackend) ApplyFilterReplRequestRelays(
 		// Build a (searchable) slice of relay IDs
 		relayIdsByChain := []string{}
 		for _, relayAddr := range relaysByChain {
-			if relayAddr.ID() != b.reactor.GetNodeKey().ID() {
+			if relayAddr.ID() != b.nodeKey.ID() {
 				relayIdsByChain = append(relayIdsByChain, string(relayAddr.ID()))
 			}
 		}
@@ -424,25 +450,187 @@ func (b *MultiplexBackend) ApplyFilterReplRequestRelays(
 		if _, has := catchupRelays[chainID]; !has {
 			catchupRelays[chainID] = append(catchupRelays[chainID], relaysWithoutSelf...)
 		}
-
-		// Reset the sent requests cache for required networks
-		// TODO(midas): It is preferrable to move this registry over to the Reactor.
-		b.replRequestsMtx.Lock()
-		b.replRequestsSent[chainID] = []string{}
-		b.replRequestsMtx.Unlock()
 	}
 
 	return catchupRelays
 }
 
-
-WaitForRelaysAckChainReplications(
+// WaitForRelaysAckChainReplications should wait for *remote* relays replication
+// acceptance and it should return a list of accepting relays per ChainID.
+// Use this method to wait for a chain replication to be accepted *remotely*.
+func (b *MultiplexBackend) WaitForRelaysAckChainReplications(
 	ctx context.Context,
 	catchupRelays map[string][]*helpers.RelayAddress,
 	transactions ...client.Transaction,
 ) (
-	relaysPerChain map[string][]string,
 	numExpected int,
 	numReceived int,
 	err error,
-)
+) {
+	totalNumReplRequests := 0
+	numChainReplications := 0
+	for _, addrs := range catchupRelays {
+		totalNumReplRequests += len(addrs)
+		if len(addrs) > 0 {
+			numChainReplications++
+		}
+	}
+
+	numReceived = 0
+	numExpected = totalNumReplRequests
+	transactionHashes := txHashesToHex(transactions...)
+	broadcastID := client.GetBroadcastID(transactions...)
+
+	asyncResultsCh := make(chan types.AckReplicationResult, numChainReplications)
+	for chainID, chainCatchupRelays := range catchupRelays {
+		if len(chainCatchupRelays) == 0 {
+			continue
+		}
+
+		b.logger.Info("Starting replication response processor",
+			"requestId", broadcastID,
+			"chainId", chainID,
+			"txBatch", transactionHashes,
+			"numRelays", len(chainCatchupRelays),
+		)
+
+		// And we start a goroutine that will be waiting for responses.
+		go func() {
+			// This blocks the goroutine until shutdown and/or replication accepted.
+			if ok := b.replicationMgr.WaitAccepted(chainID); ok {
+				responses := b.replicationMgr.Responses(chainID)
+				recvPeerIds := make([]string, 0, len(responses))
+				for _, replResponse := range responses {
+					recvPeerIds = append(recvPeerIds, replResponse.NodeId)
+				}
+
+				asyncResultsCh <- types.AckReplicationResult{
+					Relays:  recvPeerIds,
+					ChainID: chainID,
+				}
+			}
+		}()
+	}
+
+	// Waits until we have all required results (or errors).
+	for i := 0; i < numChainReplications; i++ {
+		select {
+		case result := <-asyncResultsCh:
+			numReceived += len(result.Relays)
+
+			b.logger.Info("Stopped replication response processor (SUCCESS)",
+				"requestId", broadcastID,
+				"chainId", result.ChainID,
+				"txBatch", transactionHashes,
+				"numReceived", numReceived,
+			)
+
+		case <-b.Quit():
+			err = errors.New("interrupted by shutdown process")
+			b.logger.Error("Stopped replication response processor with error",
+				"requestId", broadcastID,
+				"txBatch", transactionHashes,
+				"err", err,
+			)
+		}
+	}
+
+	return
+}
+
+// WaitForRelaysAckTransactionBatch should wait for *remote* relays transaction
+// acceptance and it should return a list of accepting relays per tx hash.
+// Use this method to wait for a transaction batch to be accepted *remotely*.
+func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
+	ctx context.Context,
+	userAddress string,
+	chainRelays map[string][]*helpers.RelayAddress,
+	catchupRelays map[string][]*helpers.RelayAddress,
+	transactions ...client.Transaction,
+) (
+	numExpected int,
+	numReceived int,
+	err error,
+) {
+	numReceived = 0
+	transactionHashes := txHashesToHex(transactions...)
+	broadcastID := client.GetBroadcastID(transactions...)
+
+	// Contains only relay IDs for which we must wait for AckTransactionBroadcast.
+	relevantRelayAddrs := b.ApplyFilterAckTransactionRelayIds(
+		chainRelays,   // Healthy relays
+		catchupRelays, // Relays received ReplRequest
+	)
+	relevantRelays := func(relays []string) (ras []*helpers.RelayAddress) {
+		ras = make([]*helpers.RelayAddress, 0, len(relays))
+		for _, relayAddr := range relays {
+			ra, _ := helpers.NewRelayAddress(relayAddr)
+			ras = append(ras, ra)
+		}
+		return
+	}(relevantRelayAddrs)
+
+	// Each relevant (healthy) relay should acknowledge each transaction once.
+	numExpected = len(relevantRelays) * len(transactions)
+	if numExpected == 0 {
+		return
+	}
+
+	asyncResultsCh := make(chan types.AckTransactionResult, len(transactions))
+
+	// For every transaction that must be acknowledged, we open a channel
+	// that will be used by [multiplex.Reactor#Receive] when it intercepts
+	// a [AckTransactionBroadcast] message on the [server.AckBroadcastChannel].
+	for _, transaction := range transactions {
+		txHash := bytesToHex(transaction.Hash())
+
+		b.logger.Info("Starting ack messages processor",
+			"requestId", broadcastID,
+			"txHash", txHash,
+			"txBatch", transactionHashes,
+			"numRelays", len(relevantRelays),
+		)
+
+		// And we start a goroutine that will be waiting for ACKs.
+		go func() {
+			// This blocks the goroutine until shutdown and/or replication accepted.
+			if ok := b.broadcastMgr.WaitAccepted(txHash); ok {
+				responses := b.broadcastMgr.Responses(txHash)
+				recvPeerIds := make([]string, 0, len(responses))
+				for _, replResponse := range responses {
+					recvPeerIds = append(recvPeerIds, replResponse.NodeId)
+				}
+
+				asyncResultsCh <- types.AckTransactionResult{
+					Relays: recvPeerIds,
+					TxHash: txHash,
+				}
+			}
+		}()
+	}
+
+	// Waits until we have all required results (or errors).
+	for i := 0; i < len(transactions); i++ {
+		select {
+		case result := <-asyncResultsCh:
+			numReceived += len(result.Relays)
+
+			b.logger.Info("Stopped transaction ACK processor (SUCCESS)",
+				"requestId", broadcastID,
+				"txHash", result.TxHash,
+				"txBatch", transactionHashes,
+				"numReceived", numReceived,
+			)
+
+		case <-b.Quit():
+			err = errors.New("interrupted by shutdown process")
+			b.logger.Error("Stopped transaction ACK processor with error",
+				"requestId", broadcastID,
+				"txBatch", transactionHashes,
+				"err", err,
+			)
+		}
+	}
+
+	return
+}

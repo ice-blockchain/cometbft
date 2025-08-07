@@ -44,8 +44,8 @@ type Server interface {
 	// CometBFT returns the switch listening on `DiscoveryPort+2`.
 	CometBFT() *p2p.Switch
 
-	// RuntimeRegistry should return a [IdleManager].
-	RuntimeRegistry() IdleManager
+	RuntimeManager() RuntimeManager
+	IdleManager() IdleManager
 	// Acceptor should return a [client.Acceptor] instance.
 	Acceptor() client.Acceptor
 	// ChainConns returns the ABCI client as defined with [proxy.ChainConns].
@@ -236,7 +236,6 @@ type BroadcastHelpers interface {
 		catchupRelays map[string][]*helpers.RelayAddress,
 		transactions ...client.Transaction,
 	) (
-		relaysPerChain map[string][]string,
 		numExpected int,
 		numReceived int,
 		err error,
@@ -252,30 +251,8 @@ type BroadcastHelpers interface {
 		catchupRelays map[string][]*helpers.RelayAddress,
 		transactions ...client.Transaction,
 	) (
-		expectedRelaysPerTx,
-		relaysPerTx map[string][]string,
 		numExpected int,
 		numReceived int,
 		err error,
 	)
-
-	// WaitForRelaysReplicationCompleted should wait for *remote* relays replication
-	// finalization and it should return a number of completed replication requests.
-	// Use this method to wait for a chain replication to be *finalized* remotely.
-	//
-	// CAUTION: A chain replication may take hours to complete given a higher
-	// number of blocks to synchronize with the network. Use accordingly.
-	WaitForRelaysReplicationCompleted(
-		ctx context.Context,
-		syncingChainIds []string,
-		transactions ...client.Transaction,
-	) (numCompleted int, err error)
-
-	// WaitForTransactionsEvents should wait for a number of transaction events
-	// to confirm that transactions got included.
-	WaitForTransactionsEvents(
-		ctx context.Context,
-		userAddress string,
-		transactions ...client.Transaction,
-	) (numCompleted int, err error)
 }

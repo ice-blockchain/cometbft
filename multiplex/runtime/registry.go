@@ -84,8 +84,8 @@ func NewRegistry(
 	logger cmtlog.Logger,
 	options ...RegistryOption,
 ) *Registry {
-	nodeInfo := NewMultiNetworkNodeInfo()
-	transport := cmtp2p.NewMultiplexTransport(ctx, nodeInfo, nodeKey)
+	nodeInfo := p2p.NewMultiNetworkNodeInfo()
+	transport := cmtp2p.NewMultiplexTransport(ctx, nodeInfo, *nodeKey)
 
 	connectionPool := p2p.NewConnectionManager(ctx,
 		nodeKey,
@@ -423,7 +423,7 @@ func (reg *Registry) Validators() (out map[string]cmttypes.PrivValidator) {
 }
 
 // Composer returns the runtime composer instance.
-func (reg *Registry) Composer() RuntimeComposer {
+func (reg *Registry) Composer() types.RuntimeComposer {
 	return reg.runtimeComposer
 }
 
@@ -445,7 +445,7 @@ func (reg *Registry) AddRuntime(
 	}
 
 	// Updates the internal chainRegistry instance.
-	extChainID := NewExtendedChainIDFromString(chainID)
+	extChainID := helpers.NewExtendedChainIDFromString(chainID)
 	reg.chainRegistry.AddChain(
 		extChainID.GetUserAddress(),
 		chainID,

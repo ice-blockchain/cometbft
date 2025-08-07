@@ -4,6 +4,9 @@ import (
 	"context"
 	"sync"
 
+	"github.com/cosmos/gogoproto/proto"
+
+	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/libs/service"
 	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
@@ -44,7 +47,7 @@ func NewMessageManager(
 	ctx context.Context,
 	logger cmtlog.Logger,
 	options ...MessagePoolOption,
-) types.MessageManager {
+) *MessagePool {
 	pool := &MessagePool{
 		mtx: new(sync.Mutex),
 
@@ -87,8 +90,7 @@ func (pool *MessagePool) AddIncoming(e cmtp2p.Envelope) error {
 	pool.addMessage(string(e.Src.ID()), pool.incoming, e)
 
 	// Also store by parsed message type.
-	extMsg := e.Message.(type)
-	msgType := string(extMsg.GetSum().(type))
+	msgType := pool.getMsgType(e.Message)
 	pool.addMessage(msgType, pool.incomingByType, e)
 
 	// And store by ChainID.
@@ -105,8 +107,7 @@ func (pool *MessagePool) AddOutgoing(e cmtp2p.Envelope) error {
 	pool.addMessage(string(e.Src.ID()), pool.outgoing, e)
 
 	// Also store by parsed message type.
-	extMsg := e.Message.(type)
-	msgType := string(extMsg.GetSum().(type))
+	msgType := pool.getMsgType(e.Message)
 	pool.addMessage(msgType, pool.outgoingByType, e)
 
 	// And store by ChainID.
@@ -145,4 +146,29 @@ func (pool *MessagePool) addMessage(
 	byKey = append(byKey, e)
 	store.msgs[key] = byKey
 	return store.msgs[key]
+}
+
+// getMsgType parses the type of message in msg.
+func (pool *MessagePool) getMsgType(msg proto.Message) string {
+	var msgType string
+	switch extMsg := msg.(type) {
+	case *mxp2p.Receipt:
+		msg := extMsg.GetSum()
+		switch msg.(type) {
+		case *mxp2p.Receipt_AckTransactionBroadcast:
+			msgType = "AckTransactionBroadcast"
+		}
+	case *mxp2p.Message:
+		msg := extMsg.GetSum()
+		switch msg.(type) {
+		case *mxp2p.Message_ChainReplicationRequest:
+			msgType = "ChainReplicationRequest"
+		case *mxp2p.Message_ChainReplicationResponse:
+			msgType = "ChainReplicationResponse"
+		case *mxp2p.Message_ChainReplicationComplete:
+			msgType = "ChainReplicationComplete"
+		}
+	}
+
+	return msgType
 }

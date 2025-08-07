@@ -122,21 +122,24 @@ func (mgr *BroadcastPool) Process(e cmtp2p.Envelope) error {
 	// Adds incoming message to message pool.
 	mgr.pool.AddIncoming(e)
 
-	extMsg := e.Message.(type)
-	switch extMsg.GetSum().(type) {
-	case *mxp2p.Receipt_AckTransactionBroadcast:
-		ackTxBroadcast := extMsg.GetAckTransactionBroadcast()
+	switch extMsg := e.Message.(type) {
+	case *mxp2p.Receipt:
+		msg := extMsg.GetSum()
+		switch msg.(type) {
+		case *mxp2p.Receipt_AckTransactionBroadcast:
+			ackTxBroadcast := extMsg.GetAckTransactionBroadcast()
 
-		mgr.logger.Debug("Processing AckTransactionBroadcast", "msg", ackTxBroadcast)
+			mgr.logger.Debug("Processing AckTransactionBroadcast", "msg", ackTxBroadcast)
 
-		txHash := bytesToHex(ackTxBroadcast.TxHash)
-		mgr.addPartner(txHash, e.Src.ID())
-		mgr.addMessage(ackTxBroadcast)
+			txHash := bytesToHex(ackTxBroadcast.TxHash)
+			mgr.addPartner(txHash, e.Src.ID())
+			mgr.addMessage(ackTxBroadcast)
 
-		// Close the "Accepted" channel when we have 2/3+1 ACK messages.
-		if mgr.evaluateAcceptanceMajority(txHash) {
-			ch := mgr.Accepted(txHash)
-			close(ch) // DONE!
+			// Close the "Accepted" channel when we have 2/3+1 ACK messages.
+			if mgr.evaluateAcceptanceMajority(txHash) {
+				ch := mgr.Accepted(txHash)
+				close(ch) // DONE!
+			}
 		}
 	}
 
@@ -155,35 +158,47 @@ func (mgr *BroadcastPool) Partners(txHash string) []cmtp2p.ID {
 	return []cmtp2p.ID{}
 }
 
+// Responses returns the stored ack transaction messages for txHash.
+func (mgr *BroadcastPool) Responses(txHash string) []*mxp2p.AckTransactionBroadcast {
+	mgr.mtx.Lock()
+	defer mgr.mtx.Unlock()
+
+	if m, ok := mgr.messages[txHash]; ok {
+		return m
+	}
+
+	return []*mxp2p.AckTransactionBroadcast{}
+}
+
 // Accepted returns a channel, which is closed when txHash has 2/3+1 ACK messages.
-func (mgr *BroadcastPool) Accepted(txHash string) <-chan struct{} {
+func (mgr *BroadcastPool) Accepted(txHash string) chan struct{} {
 	mgr.mtx.Lock()
 	acceptedCh, hasChannel := mgr.acceptedChs[txHash]
-	mgr.mtx.unlock()
+	mgr.mtx.Unlock()
 
 	if !hasChannel {
 		acceptedCh = make(chan struct{}, 1) // buffered
 
 		mgr.mtx.Lock()
 		mgr.acceptedChs[txHash] = acceptedCh
-		mgr.mtx.unlock()
+		mgr.mtx.Unlock()
 	}
 
 	return acceptedCh
 }
 
 // Indexed returns a channel, which is closed when txHash got indexed locally
-func (mgr *BroadcastPool) Indexed(txHash string) <-chan struct{} {
+func (mgr *BroadcastPool) Indexed(txHash string) chan struct{} {
 	mgr.mtx.Lock()
 	indexedCh, hasChannel := mgr.indexedChs[txHash]
-	mgr.mtx.unlock()
+	mgr.mtx.Unlock()
 
 	if !hasChannel {
 		indexedCh = make(chan struct{}, 1) // buffered
 
 		mgr.mtx.Lock()
 		mgr.indexedChs[txHash] = indexedCh
-		mgr.mtx.unlock()
+		mgr.mtx.Unlock()
 	}
 
 	return indexedCh
@@ -272,6 +287,8 @@ func (mgr *BroadcastPool) evaluateAcceptanceMajority(
 ) bool {
 	if _, ok := mgr.relays[txHash]; !ok {
 		return false
+	} else if len(mgr.relays[txHash]) == 0 {
+		return true
 	}
 	if _, ok := mgr.messages[txHash]; !ok {
 		return false

@@ -57,6 +57,11 @@ type RuntimeManager interface {
 type RuntimeComposer interface {
 	service.Service
 
+	// SetSwitch is used to set a cmtp2p.Switch for CometBFT.
+	SetSwitch(sw *cmtp2p.Switch)
+	// Switch returns the cmtp2p.Switch instance for CometBFT.
+	Switch() *cmtp2p.Switch
+
 	// Compose initializes a runtime for chainID.
 	Compose(chainID string, remoteValidatorPubKeys []string) error
 	// Inject injects a running state machine and block store.
@@ -114,7 +119,7 @@ type ResourceManager interface {
 	Get(chainID, name string) any
 
 	// Multiplex returns a resource map for name by ChainID.
-	Multiplex(name string) map[string]any
+	Multiplex(name string) helpers.MultiplexMap[any]
 }
 
 // MessageManager defines the contract for a message pool.
@@ -138,11 +143,15 @@ type ReplicationManager interface {
 	Partners(chainID string) []cmtp2p.ID
 	// Status returns the status of a chain replication.
 	Status(chainID string) *mxp2p.ChainReplicationStatus
+	// Requests returns the stored replication requests for chainID.
+	Requests(chainID string) []*mxp2p.ChainReplicationRequest
+	// Responses returns the stored replication responses for chainID.
+	Responses(chainID string) []*mxp2p.ChainReplicationResponse
 
 	// Accepted returns a channel, which is closed when chainID has 2/3+1 responses.
-	Accepted(chainID string) <-chan struct{}
+	Accepted(chainID string) chan struct{}
 	// Completed returns a channel, which is closed when chainID has 2/3+1 completions.
-	Completed(chainID string) <-chan struct{}
+	Completed(chainID string) chan struct{}
 
 	// WaitAccepted blocks a thread until chainID has 2/3+1 responses.
 	WaitAccepted(chainID string) bool
@@ -161,14 +170,16 @@ type BroadcastManager interface {
 
 	// Partners returns a list of relay ID from broadcast partners for txHash.
 	Partners(txHash string) []cmtp2p.ID
+	// Responses returns the stored ack transaction messages for txHash.
+	Responses(txHash string) []*mxp2p.AckTransactionBroadcast
 
 	// Accepted returns a channel, which is closed when txHash has 2/3+1 ACK messages.
-	Accepted(txHash string) <-chan struct{}
+	Accepted(txHash string) chan struct{}
 	// Indexed returns a channel, which is closed when txHash got indexed locally.
-	Indexed(txHash string) <-chan struct{}
+	Indexed(txHash string) chan struct{}
 
 	// WaitAccepted blocks the thread until txHash has 2/3+1 ACK messages.
-	WaitAccepted(txHash string)
+	WaitAccepted(txHash string) bool
 	// WaitIndexed blocks the thread until txHash got indexed locally.
-	WaitIndexed(txHash string)
+	WaitIndexed(txHash string) bool
 }

@@ -89,7 +89,7 @@ func NewNodesMultiplex(
 	// Creates one [p2p.NodeKey] instance per nodes multiplex
 	nodeKey, err := p2p.LoadOrGenNodeKey(globalCfg.NodeKeyFile())
 	if err != nil {
-		return nil, nil, fmt.Errorf(
+		return nil, fmt.Errorf(
 			"failed to load or gen node key %s: %w", globalCfg.NodeKeyFile(), err)
 	}
 
@@ -125,10 +125,10 @@ func NewLegacyNodeMultiplex(
 	logger cmtlog.Logger,
 	options ...node.Option,
 ) (
-	MultiplexMap[*node.Node],
+	helpers.MultiplexMap[*node.Node],
 	error,
 ) {
-	multiplex := MultiplexMap[*node.Node]{}
+	multiplex := helpers.MultiplexMap[*node.Node]{}
 
 	// Uses the default privValidator from config (FilePV)
 	privValidator, err := privval.LoadOrGenFilePV(
@@ -171,7 +171,7 @@ func NewLegacyNodeMultiplex(
 	//
 	// We store the instance in a multiplex map to allow this method to be used
 	// as a fallback for when multiplex configuration is inconsistent or missing.
-	multiplex[genesisDoc.ChainID] = NewChainInstance[*node.Node](genesisDoc.ChainID, readyNode)
+	multiplex[genesisDoc.ChainID] = helpers.NewChainInstance[*node.Node](genesisDoc.ChainID, readyNode)
 
 	return multiplex, nil
 }
@@ -250,7 +250,7 @@ func GetAddressForCometBFT(
 	}
 
 	relayAddr.SetID(nodeKey.ID())
-	if cometbftAddr, err = relayAddr.NetAddress(); err != nil {
+	if cometbftAddr = relayAddr.NetAddress(); err != nil {
 		return nil, fmt.Errorf(
 			"could not create p2p listen address: %w", err)
 	}

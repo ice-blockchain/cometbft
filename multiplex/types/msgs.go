@@ -23,27 +23,3 @@ type AckReplicationResult struct {
 	// May contain an error
 	Error error
 }
-
-// RuntimeUpdateResult describes a remote status update result.
-// Used by [MultiplexBackend#WaitForRelaysReplicationCompleted].
-type RuntimeUpdateResult struct {
-	// Contains relay IDs of relays that have announced the completion
-	// of their replication for ChainID.
-	Relays  []string
-	ChainID string
-
-	// May contain an error
-	Error error
-}
-
-// TransactionEventResult describes a transaction event result.
-// Used by [MultiplexBackend#WaitForTransactionsEvents].
-type TransactionEventResult struct {
-	// Contains transaction hashes in hex format for transactions
-	// which have been included in a block on ChainID.
-	TxHashes []string
-	ChainID  string
-
-	// May contain an error
-	Error error
-}

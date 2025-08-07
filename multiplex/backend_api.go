@@ -10,6 +10,7 @@ import (
 	mempl "github.com/ice-blockchain/cometbft/mempool"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/helpers"
+	"github.com/ice-blockchain/cometbft/multiplex/types"
 )
 
 // ----------------------------------------------------------------------------
@@ -34,8 +35,11 @@ func (b *MultiplexBackend) AddTransactions(
 			"chainId", chainID,
 		)
 
-		memplReactor := b.runtimeRegistry.Composer().Mempool(chainID)
-		if memplReactor == nil {
+		memplReactor, ok := b.resourceMgr.Get(
+			chainID,
+			types.ServiceKeyMempoolReactor,
+		).(*mempl.Reactor)
+		if !ok {
 			return fmt.Errorf(
 				"failed to get local mempool; AddTransactions with ChainID %s", chainID)
 		}
@@ -83,8 +87,11 @@ func (b *MultiplexBackend) RemoveTransactions(
 			"chainId", chainID,
 		)
 
-		memplReactor := b.runtimeRegistry.Composer().Mempool(chainID)
-		if memplReactor == nil {
+		memplReactor, ok := b.resourceMgr.Get(
+			chainID,
+			types.ServiceKeyMempoolReactor,
+		).(*mempl.Reactor)
+		if !ok {
 			return fmt.Errorf(
 				"failed to get local mempool; RemoveTransactions with ChainID %s", chainID)
 		}
@@ -222,7 +229,7 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 
 		// Wait for the syncing relays to announce a ChainReplicationComplete.
 		// Additionally, we make sure txes are all indexed after completion.
-		go waitForChainReplications(ctx,
+		go b.waitForChainReplications(ctx,
 			syncingPeersChainIds,
 			transactionsByChain,
 		)
@@ -294,7 +301,7 @@ func (b *MultiplexBackend) waitForIndexedTransactions(
 					defer txesWg.Done()
 
 					txHash := txHashesToHex(tx)[0]
-					if ok := b.broadcastMgr.Wait(txHash); ok {
+					if ok := b.broadcastMgr.WaitIndexed(txHash); ok {
 						numCompleted++
 					}
 				}()
@@ -327,12 +334,12 @@ func (b *MultiplexBackend) waitForChainReplications(
 	// This goroutine will be locked until relevant relays are done with replication.
 	completionWg := new(sync.WaitGroup)
 	completionWg.Add(len(relevantChainIds))
-	for syncingChainID := range relevantChainIds {
+	for _, syncingChainID := range relevantChainIds {
 		go func() {
 			defer completionWg.Done()
 
 			// This blocks the goroutine until shutdown and/or replication done.
-			if ok := b.replicationMgr.WaitCompleted(chainID); ok {
+			if ok := b.replicationMgr.WaitCompleted(syncingChainID); ok {
 				numCompleted++
 			}
 		}()
@@ -341,11 +348,9 @@ func (b *MultiplexBackend) waitForChainReplications(
 
 	// TODO(midas): remove debug logs
 	b.logger.Debug("All relays have caught up and completed chain replications",
-		"requestId", broadcastID,
 		"numNetworks", len(relevantChainIds),
 		"numSynced", numCompleted,
 		"chainIds", relevantChainIds,
-		"txBatch", transactionHashes,
 	)
 
 	return // numCompleted

@@ -1,26 +1,30 @@
 package multiplex
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"time"
 
-	"github.com/ice-blockchain/cometbft/config"
-	"github.com/ice-blockchain/cometbft/multiplex/helpers"
-	"github.com/ice-blockchain/cometbft/multiplex/p2p"
-	"github.com/ice-blockchain/cometbft/multiplex/replay"
-	"github.com/ice-blockchain/cometbft/multiplex/runtime"
-	"github.com/ice-blockchain/cometbft/multiplex/snapsapp"
-	"github.com/ice-blockchain/cometbft/multiplex/types"
-	"github.com/ice-blockchain/cometbft/node"
-	"github.com/ice-blockchain/cometbft/proxy"
-	rpccore "github.com/ice-blockchain/cometbft/rpc/core"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/cors"
+
+	cmtpubsub "github.com/ice-blockchain/cometbft/libs/pubsub"
+	"github.com/ice-blockchain/cometbft/node"
+	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
+	"github.com/ice-blockchain/cometbft/proxy"
+	rpccore "github.com/ice-blockchain/cometbft/rpc/core"
+	rpcserver "github.com/ice-blockchain/cometbft/rpc/jsonrpc/server"
+
+	"github.com/ice-blockchain/cometbft/multiplex/helpers"
+	"github.com/ice-blockchain/cometbft/multiplex/p2p"
+	"github.com/ice-blockchain/cometbft/multiplex/replay"
+	mxrpc "github.com/ice-blockchain/cometbft/multiplex/rpc"
+	"github.com/ice-blockchain/cometbft/multiplex/runtime"
+	"github.com/ice-blockchain/cometbft/multiplex/snapsapp"
+	"github.com/ice-blockchain/cometbft/multiplex/types"
 )
 
 // ----------------------------------------------------------------------------
@@ -38,18 +42,18 @@ func (b *MultiplexBackend) Init() error {
 	)
 
 	// Sets the relay address (P2P DiscoveryPort)
-	b.relayAddr = helpers.NewRelayAddress(b.listenAddress)
+	b.relayAddr, _ = helpers.NewRelayAddress(b.listenAddress)
 	b.relayAddr.SetID(b.nodeKey.ID())
 
 	// Uses a singleton chain registry to interpret multiplex configurations.
-	b.chainRegistry, _ = NewChainRegistry(
+	b.chainRegistry, _ = helpers.NewChainRegistry(
 		&b.backendCfg.MultiplexConfig,
 		b.backendCfg.GenesisFile(),
 	)
 
 	// Create the local ABCI client for the SnapsApp application.
 	if err := b.InitSnapsAppClient(); err != nil {
-		return err.(ErrSetupSnapsApp)
+		return err.(ErrSetupSnapsapp)
 	}
 
 	// Create the RuntimeManager instance.
@@ -70,9 +74,10 @@ func (b *MultiplexBackend) Init() error {
 	// TODO(midas): remove debug logs
 	b.logger.Debug("Done initializing multiplex backend",
 		"addr", b.relayAddr.String(),
-		"size", len(b.chainRegistry.GetNetworks()),
+		"size", len(b.GetNetworks()),
 		"nodeId", b.nodeKey.ID(),
 	)
+	return nil
 }
 
 // InitSnapsAppClient initializes the local SnapsApp application.
@@ -89,7 +94,7 @@ func (b *MultiplexBackend) InitSnapsAppClient() error {
 		clientCreator,
 		proxy.PrometheusMetrics(metricsName),
 	)
-	b.chainConns.SetLogger(logger.With("module", "proxy"))
+	b.chainConns.SetLogger(b.logger.With("module", "proxy"))
 
 	return nil
 }
@@ -107,7 +112,7 @@ func (b *MultiplexBackend) InitRuntimeManager() error {
 	b.replayPool = replay.NewReplayPool(b.Context(),
 		b.logger.With("module", "replay"),
 		replay.ReplayPoolThreshold(10),
-		replay.ReplayPoolAcceptor(reactor.acceptorImpl),
+		replay.ReplayPoolAcceptor(b.acceptor),
 	)
 
 	return nil
@@ -134,6 +139,7 @@ func (b *MultiplexBackend) InitDiscoverySwitch() error {
 		b.nodeKey,
 		localTransport,
 		b.resourceMgr,
+		discoveryLogger,
 	)
 
 	b.discoverySwitch = cmtp2p.NewSwitch(b.Context(),
@@ -169,13 +175,14 @@ func (b *MultiplexBackend) InitCometBFTSwitch() error {
 		b.nodeKey,
 		localTransport,
 		b.resourceMgr,
+		cometLogger,
 	)
 
 	b.cometbftSwitch = cmtp2p.NewSwitch(b.Context(),
 		b.backendCfg.P2P,
 		b.cometbftPool,
 	)
-	b.cometbftSwitch.SetLogger(cometbftLogger)
+	b.cometbftSwitch.SetLogger(cometLogger)
 	b.cometbftSwitch.SetNodeInfo(b.cometbftInfo)
 	b.cometbftSwitch.SetNodeKey(b.nodeKey)
 
@@ -207,7 +214,7 @@ func (b *MultiplexBackend) InitLightRPCRoutes() error {
 		}
 
 		nodeRoutes := env.GetRoutes()
-		if rpcConfig.Unsafe {
+		if b.backendCfg.RPC.Unsafe {
 			env.AddUnsafeRoutes(nodeRoutes)
 		}
 
@@ -220,7 +227,7 @@ func (b *MultiplexBackend) InitLightRPCRoutes() error {
 		for route, rpcFunc := range nodeRoutes {
 			routePath := route + "/" + chainID
 
-			b.knownRPCRoutes[routePath] = true
+			b.knownRPCRoutes[routePath] = rpcFunc
 		}
 	}
 
@@ -231,11 +238,7 @@ func (b *MultiplexBackend) InitLightRPCRoutes() error {
 // to transport [ChainReplicationRequest] messages to nodes that do not have
 // network ports open yet (due to not replicating any network).
 // Creates a transport listening on `DiscoveryPort`.
-func (b *MultiplexBackend) StartP2PServerDiscovery(
-	ctx context.Context,
-	nodeCfg *config.Config,
-	nodeKey *cmtp2p.NodeKey,
-) error {
+func (b *MultiplexBackend) StartP2PServerDiscovery() error {
 	netListenAddr := b.relayAddr.NetAddress()
 
 	b.logger.Info("Process is now setting up P2P discovery",
@@ -267,11 +270,8 @@ func (b *MultiplexBackend) StartP2PServerDiscovery(
 // may be used to retrieve node information, including the node ID.
 // This method sets the listen address in discoveryAddr.
 // Creates a transport listening on `DiscoveryPort-1`.
-func (b *MultiplexBackend) StartRPCServerDiscovery(
-	nodeCfg *config.Config,
-	nodeKey *cmtp2p.NodeKey,
-) error {
-	rpcRelayAddr := helpers.NewRelayAddress(b.relayAddr.AddressForRelayInfo())
+func (b *MultiplexBackend) StartRPCServerDiscovery() error {
+	rpcRelayAddr, _ := helpers.NewRelayAddress(b.relayAddr.AddressForRelayInfo())
 	b.logger.Info("Process is now setting up RPC discovery",
 		"addr", rpcRelayAddr.StringWithoutId(),
 	)
@@ -365,7 +365,7 @@ func (b *MultiplexBackend) StartP2PServerCometBFT() error {
 //
 // Creates a transport listening on `DiscoveryPort+2`.
 func (b *MultiplexBackend) StartRPCServerCometBFT() error {
-	rpcRelayAddr := helpers.NewRelayAddress(b.relayAddr.AddressForLightRPC())
+	rpcRelayAddr, _ := helpers.NewRelayAddress(b.relayAddr.AddressForLightRPC())
 	rpcLogger := b.logger.With("module", "rpc-server")
 	wmLogger := rpcLogger.With("protocol", "websocket")
 
@@ -412,7 +412,7 @@ func (b *MultiplexBackend) StartRPCServerCometBFT() error {
 
 	// Creates a listener later attached to Serve method.
 	rpcListener, err := rpcserver.Listen(
-		relayAddr.StringWithoutId(),
+		rpcRelayAddr.StringWithoutId(),
 		rpcConf.MaxOpenConnections,
 	)
 	if err != nil {
@@ -427,7 +427,7 @@ func (b *MultiplexBackend) StartRPCServerCometBFT() error {
 			AllowedMethods: b.backendCfg.RPC.CORSAllowedMethods,
 			AllowedHeaders: b.backendCfg.RPC.CORSAllowedHeaders,
 		})
-		rootHandler = corsMiddleware.Handler(rpcMultiplexer)
+		rootHandler = corsMiddleware.Handler(b.rpcMultiplexer)
 	}
 
 	// Server the RPC endpoints and listen until shutdown.
@@ -470,8 +470,7 @@ func (b *MultiplexBackend) StartPrometheusServer() error {
 		return nil
 	}
 
-	monRelayAddr := helpers.NewRelayAddress(b.relayAddr.AddressForMonitoring())
-	netListenAddr := monRelayAddr.NetAddress()
+	monRelayAddr, _ := helpers.NewRelayAddress(b.relayAddr.AddressForMonitoring())
 
 	b.logger.Info("Process is now setting up Prometheus HTTP",
 		"addr", monRelayAddr.StringHostname(),
@@ -600,4 +599,6 @@ func (b *MultiplexBackend) StopSharedServices() error {
 			}
 		}()
 	}
+
+	return nil
 }

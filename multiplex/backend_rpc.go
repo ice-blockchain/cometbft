@@ -6,22 +6,22 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ice-blockchain/cometbft/node"
+	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
 	rpccore "github.com/ice-blockchain/cometbft/rpc/core"
 	rpcclient "github.com/ice-blockchain/cometbft/rpc/jsonrpc/client"
 	rpcserver "github.com/ice-blockchain/cometbft/rpc/jsonrpc/server"
 
 	"github.com/ice-blockchain/cometbft/multiplex/helpers"
-	"github.com/ice-blockchain/cometbft/multiplex/p2p"
 	mxrpc "github.com/ice-blockchain/cometbft/multiplex/rpc"
 	"github.com/ice-blockchain/cometbft/multiplex/types"
-	"github.com/ice-blockchain/cometbft/node"
 )
 
 // ----------------------------------------------------------------------------
 // mxrpc.Backend API implementation
 
 // GetRelayID returns the node ID assigned in the reactor.
-func (b *MultiplexBackend) GetRelayID() p2p.ID {
+func (b *MultiplexBackend) GetRelayID() cmtp2p.ID {
 	return b.nodeKey.ID()
 }
 
@@ -33,12 +33,12 @@ func (b *MultiplexBackend) GetListenAddress() string {
 // GetDiscoveryPort returns the port used for discovery,
 // i.e. it should map to the relay's discovery port.
 func (b *MultiplexBackend) GetDiscoveryPort() uint16 {
-	return b.relayAddr.Port
+	return b.relayAddr.Port()
 }
 
 // GetNetworks should return a slice of supported ChainID values.
 func (b *MultiplexBackend) GetNetworks() []string {
-	return b.runtimeRegistry.Networks()
+	return b.GetNetworks()
 }
 
 // GetValidatorPubs returns all validator pubkeys available per ChainID.
@@ -91,7 +91,7 @@ func (b *MultiplexBackend) EnableNewRuntimeRPC(networks []string) error {
 		}
 
 		nodeRoutes := env.GetRoutes()
-		if nodeCfg.RPC.Unsafe {
+		if b.backendCfg.RPC.Unsafe {
 			env.AddUnsafeRoutes(nodeRoutes)
 		}
 
@@ -116,7 +116,7 @@ func (b *MultiplexBackend) EnableNewRuntimeRPC(networks []string) error {
 			newRoutes[routePath] = rpcFunc
 
 			b.mtx.Lock()
-			reactor.knownRPCRoutes[routePath] = true
+			b.knownRPCRoutes[routePath] = rpcFunc
 			b.mtx.Unlock()
 		}
 	}
@@ -186,10 +186,6 @@ func (b *MultiplexBackend) GetRemoteValidatorsInfo(
 		return nil, callErr
 	}
 
-	b.mtx.Lock()
-	b.httpClients = append(b.httpClients, httpClient)
-	b.mtx.Unlock()
-
 	return result, nil
 }
 
@@ -239,10 +235,6 @@ func (b *MultiplexBackend) GetRemoteRelayInfo(
 	if callErr != nil {
 		return nil, callErr
 	}
-
-	b.mtx.Lock()
-	b.httpClients = append(b.httpClients, httpClient)
-	b.mtx.Unlock()
 
 	return result, nil
 }
@@ -324,6 +316,10 @@ func (b *MultiplexBackend) connectToRemoteRelayInfoRPC(
 
 	b.mtx.Lock()
 	b.jsonRpcClients[rpcAddress] = c
+	b.mtx.Unlock()
+
+	b.mtx.Lock()
+	b.httpClients = append(b.httpClients, c.GetHTTPClient())
 	b.mtx.Unlock()
 
 	return c, nil

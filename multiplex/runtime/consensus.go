@@ -37,7 +37,7 @@ type ConsensusPool struct {
 	acceptorImpl    client.Acceptor
 	abciClient      proxy.ChainConns
 	runtimeComposer *runtimeComposer
-	resourceManager *ResourceRegistry
+	resourceMgr     types.ResourceManager
 
 	// Options
 	logger cmtlog.Logger
@@ -53,7 +53,7 @@ func NewConsensusHandler(
 	ctx context.Context,
 	nodeKey *cmtp2p.NodeKey,
 	abciClient proxy.ChainConns,
-	resourceManager *ResourceRegistry,
+	resourceMgr types.ResourceManager,
 	composer types.RuntimeComposer,
 	logger cmtlog.Logger,
 	options ...ConsensusPoolOption,
@@ -61,7 +61,7 @@ func NewConsensusHandler(
 	pool := &ConsensusPool{
 		mtx:             new(sync.Mutex),
 		abciClient:      abciClient,
-		resourceManager: resourceManager,
+		resourceMgr:     resourceMgr,
 		runtimeComposer: composer.(*runtimeComposer),
 
 		// Provides a default acceptor implementation
@@ -163,7 +163,7 @@ func (pool *ConsensusPool) Handshake(chainID string) error {
 		return sm.ErrCannotLoadState{Err: err}
 	}
 
-	pool.resourceManager.Set(chainID, types.InstanceKeyStateMachine, reloadedState)
+	pool.resourceMgr.Set(chainID, types.InstanceKeyStateMachine, reloadedState)
 	return nil
 }
 
@@ -247,7 +247,7 @@ func (pool *ConsensusPool) Execute(chainID string) error {
 		mempoolReactor   *mempl.Reactor
 	)
 
-	if bsR := pool.resourceManager.Get(chainID, types.ServiceKeyBlockSyncReactor); bsR != nil {
+	if bsR := pool.resourceMgr.Get(chainID, types.ServiceKeyBlockSyncReactor); bsR != nil {
 		stateStore := pool.runtimeComposer.StateStore(chainID)
 		blockStore := pool.runtimeComposer.BlockStore(chainID)
 
@@ -256,13 +256,13 @@ func (pool *ConsensusPool) Execute(chainID string) error {
 		blocksyncReactor.SetStateStore(stateStore)
 		blocksyncReactor.SetBlockStore(blockStore)
 	}
-	if conR := pool.resourceManager.Get(chainID, types.ServiceKeyConsensusReactor); conR != nil {
+	if conR := pool.resourceMgr.Get(chainID, types.ServiceKeyConsensusReactor); conR != nil {
 		consensusReactor = conR.(*cs.Reactor)
 	}
-	if evR := pool.resourceManager.Get(chainID, types.ServiceKeyEvidenceReactor); evR != nil {
+	if evR := pool.resourceMgr.Get(chainID, types.ServiceKeyEvidenceReactor); evR != nil {
 		evidenceReactor = evR.(*evidence.Reactor)
 	}
-	if memR := pool.resourceManager.Get(chainID, types.ServiceKeyMempoolReactor); memR != nil {
+	if memR := pool.resourceMgr.Get(chainID, types.ServiceKeyMempoolReactor); memR != nil {
 		mempoolReactor = memR.(*mempl.Reactor)
 	}
 
@@ -311,10 +311,10 @@ func (pool *ConsensusPool) Execute(chainID string) error {
 func (pool *ConsensusPool) Shutdown(
 	chainID string,
 ) error {
-	blocksyncReactor := pool.resourceManager.Get(chainID, types.ServiceKeyBlockSyncReactor).(*blocksync.Reactor)
-	consensusReactor := pool.resourceManager.Get(chainID, types.ServiceKeyConsensusReactor).(*cs.Reactor)
-	evidenceReactor := pool.resourceManager.Get(chainID, types.ServiceKeyEvidenceReactor).(*evidence.Reactor)
-	mempoolReactor := pool.resourceManager.Get(chainID, types.ServiceKeyMempoolReactor).(*mempl.Reactor)
+	blocksyncReactor := pool.resourceMgr.Get(chainID, types.ServiceKeyBlockSyncReactor).(*blocksync.Reactor)
+	consensusReactor := pool.resourceMgr.Get(chainID, types.ServiceKeyConsensusReactor).(*cs.Reactor)
+	evidenceReactor := pool.resourceMgr.Get(chainID, types.ServiceKeyEvidenceReactor).(*evidence.Reactor)
+	mempoolReactor := pool.resourceMgr.Get(chainID, types.ServiceKeyMempoolReactor).(*mempl.Reactor)
 
 	if blocksyncReactor.IsRunning() || blocksyncReactor.IsStarted() {
 		blocksyncReactor.Stop()
@@ -329,7 +329,7 @@ func (pool *ConsensusPool) Shutdown(
 		mempoolReactor.Stop()
 	}
 
-	nodeInstance := pool.resourceManager.Get(chainID, types.ServiceKeyNodeRuntime).(*node.Node)
+	nodeInstance := pool.resourceMgr.Get(chainID, types.ServiceKeyNodeRuntime).(*node.Node)
 	if nodeInstance.IsRunning() {
 		nodeInstance.Stop()
 	}
@@ -343,7 +343,7 @@ func (pool *ConsensusPool) Shutdown(
 func (pool *ConsensusPool) makeNetworkAddressBook(
 	chainID string,
 ) error {
-	if pool.resourceManager.Has(chainID, types.ServiceKeyAddressesReactor) {
+	if pool.resourceMgr.Has(chainID, types.ServiceKeyAddressesReactor) {
 		return nil // Nothing to do
 	}
 
@@ -392,14 +392,14 @@ func (pool *ConsensusPool) makeNetworkAddressBook(
 	)
 	pexReactor.SetLogger(pool.logger.With("module", "pex"))
 
-	pool.resourceManager.Set(chainID, types.ServiceKeyAddressesReactor, pexReactor)
+	pool.resourceMgr.Set(chainID, types.ServiceKeyAddressesReactor, pexReactor)
 	return nil
 }
 
 func (pool *ConsensusPool) makeNetworkMempoolReactor(
 	chainID string,
 ) error {
-	if pool.resourceManager.Has(chainID, types.ServiceKeyMempoolReactor) {
+	if pool.resourceMgr.Has(chainID, types.ServiceKeyMempoolReactor) {
 		return nil // Nothing to do
 	}
 
@@ -443,14 +443,14 @@ func (pool *ConsensusPool) makeNetworkMempoolReactor(
 	}
 	mempoolReactor.SetLogger(pool.logger.With("module", "mempool"))
 
-	pool.resourceManager.Set(chainID, types.ServiceKeyMempoolReactor, mempoolReactor)
+	pool.resourceMgr.Set(chainID, types.ServiceKeyMempoolReactor, mempoolReactor)
 	return nil
 }
 
 func (pool *ConsensusPool) makeNetworkEvidenceReactor(
 	chainID string,
 ) error {
-	evidenceDBService := pool.resourceManager.Get(chainID, types.ServiceKeyDatabaseEvidence).(service.Service)
+	evidenceDBService := pool.resourceMgr.Get(chainID, types.ServiceKeyDatabaseEvidence).(service.Service)
 	if err := helpers.EnsureStartDBService(pool.Context(), evidenceDBService); err != nil {
 		return fmt.Errorf(
 			"failed to open evidence database for %s: %w", chainID, err)
@@ -462,7 +462,7 @@ func (pool *ConsensusPool) makeNetworkEvidenceReactor(
 	runtimeConfig := pool.runtimeComposer.Config(chainID)
 
 	// Create the [evidence.Reactor].
-	if !pool.resourceManager.Has(chainID, types.ServiceKeyEvidenceReactor) {
+	if !pool.resourceMgr.Has(chainID, types.ServiceKeyEvidenceReactor) {
 		evidencePool, err := evidence.NewPool(
 			evidenceDB,
 			stateStore,
@@ -478,7 +478,7 @@ func (pool *ConsensusPool) makeNetworkEvidenceReactor(
 		)
 		evidenceReactor.SetLogger(pool.logger.With("module", "evidence"))
 
-		pool.resourceManager.Set(chainID, types.ServiceKeyEvidenceReactor, evidenceReactor)
+		pool.resourceMgr.Set(chainID, types.ServiceKeyEvidenceReactor, evidenceReactor)
 	}
 
 	return nil
@@ -498,7 +498,7 @@ func (pool *ConsensusPool) makeNetworkBlocksyncReactor(
 	shouldBlockSync := !onlyValidatorIsUs(stateMachine.Copy(), privValPubKey) && !validatorsIncludesUs(stateMachine.Copy(), privValPubKey)
 
 	// Create the [sm.BlockExecutor] and [blocksync.Reactor].
-	if !pool.resourceManager.Has(chainID, types.ServiceKeyBlockSyncReactor) {
+	if !pool.resourceMgr.Has(chainID, types.ServiceKeyBlockSyncReactor) {
 		blockExecutor := sm.NewBlockExecutor(
 			stateStore,
 			pool.logger.With("module", "state"),
@@ -521,8 +521,8 @@ func (pool *ConsensusPool) makeNetworkBlocksyncReactor(
 		)
 		blockSyncReactor.SetLogger(pool.logger.With("module", "blocksync"))
 
-		pool.resourceManager.Set(chainID, types.InstanceKeyBlockExecutor, blockExecutor)
-		pool.resourceManager.Set(chainID, types.ServiceKeyBlockSyncReactor, blockSyncReactor)
+		pool.resourceMgr.Set(chainID, types.InstanceKeyBlockExecutor, blockExecutor)
+		pool.resourceMgr.Set(chainID, types.ServiceKeyBlockSyncReactor, blockSyncReactor)
 	}
 
 	return nil
@@ -544,7 +544,7 @@ func (pool *ConsensusPool) makeNetworkConsensusReactor(
 	shouldBlockSync := !onlyValidatorIsUs(stateMachine.Copy(), privValPubKey) && !validatorsIncludesUs(stateMachine.Copy(), privValPubKey)
 
 	// Create the [cs.State] and [cs.Reactor].
-	if !pool.resourceManager.Has(chainID, types.ServiceKeyConsensusReactor) {
+	if !pool.resourceMgr.Has(chainID, types.ServiceKeyConsensusReactor) {
 		consensusState := cs.NewState(
 			pool.Context(),
 			runtimeConfig.Consensus, // contains overwrite of WAL
@@ -572,7 +572,7 @@ func (pool *ConsensusPool) makeNetworkConsensusReactor(
 		eventBus := pool.runtimeComposer.EventBus(chainID)
 		consensusReactor.SetEventBus(eventBus)
 
-		pool.resourceManager.Set(chainID, types.ServiceKeyConsensusReactor, consensusReactor)
+		pool.resourceMgr.Set(chainID, types.ServiceKeyConsensusReactor, consensusReactor)
 	}
 
 	return nil
