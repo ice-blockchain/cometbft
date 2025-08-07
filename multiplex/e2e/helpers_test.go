@@ -15,6 +15,16 @@ import (
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 )
 
+// MakeConfig creates a test configuration with custom rootDir.
+func MakeConfig(tb testing.TB, rootDir string) *config.Config {
+	tb.Helper()
+
+	conf := config.TestConfig()
+	conf.SetRoot(rootDir)
+
+	return conf
+}
+
 // CAUTION: This helper uses an empty multiplex config on multiple relays.
 func ResetTestMultiplexRelays(
 	tb testing.TB,
@@ -31,8 +41,7 @@ func ResetTestMultiplexRelays(
 	tmpRootDir, err := os.MkdirTemp("", tb.Name()+"-1")
 	require.NoError(tb, err)
 
-	relayConf1 := config.TestConfig()
-	relayConf1.SetRoot(tmpRootDir)
+	relayConf1 := MakeConfig(tb, tmpRootDir)
 
 	serverRelay1, err := mx.NewServer(
 		tb.Context(),
@@ -47,8 +56,7 @@ func ResetTestMultiplexRelays(
 	for r := 1; r < numRelays; r++ {
 		tmpRootDir, err := os.MkdirTemp("", tb.Name()+"-"+strconv.Itoa(r+1))
 
-		relayConfX := config.TestConfig()
-		relayConfX.SetRoot(tmpRootDir)
+		relayConfX := MakeConfig(tb, tmpRootDir)
 
 		serverRelayX, err := mx.NewServer(
 			tb.Context(),
@@ -66,7 +74,13 @@ func ResetTestMultiplexRelays(
 
 // -----------------------------------------------------------------------------
 
-func closeAndRemoveAll(tb testing.TB, rootDir string, backend *mx.MultiplexBackend) {
+// closeAndRemoveAll is a helper to shutdown a running [mx.MultiplexBackend] and
+// remove all filesystem resources created under rootDir.
+func closeAndRemoveAll(
+	tb testing.TB,
+	rootDir string,
+	backend *mx.MultiplexBackend,
+) {
 	tb.Helper()
 
 	defer os.RemoveAll(rootDir)
@@ -74,5 +88,19 @@ func closeAndRemoveAll(tb testing.TB, rootDir string, backend *mx.MultiplexBacke
 	if backend.IsRunning() {
 		err := backend.Stop()
 		assert.NoError(tb, err, "should shutdown backend gracefully")
+	}
+}
+
+// shutdownBackends stops all backends concurrently.
+func shutdownBackends(
+	tb testing.TB,
+	backends ...*mx.MultiplexBackend,
+) {
+	tb.Helper()
+
+	for i := 0; i < len(backends); i++ {
+		backend := backends[i]
+		rootDir := backend.Config().RootDir
+		go closeAndRemoveAll(tb, rootDir, backend)
 	}
 }

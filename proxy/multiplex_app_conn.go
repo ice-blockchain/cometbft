@@ -410,22 +410,22 @@ func (conn *multiplexAppConn) killTMOnClientError() {
 }
 
 func (conn *multiplexAppConn) stopAllClients() {
-	if conn.sharedClients.consensus != nil {
+	if conn.sharedClients.consensus != nil && conn.sharedClients.consensus.IsRunning() {
 		if err := conn.sharedClients.consensus.Stop(); err != nil {
 			conn.Logger.Error("error while stopping consensus client", "error", err)
 		}
 	}
-	if conn.sharedClients.mempool != nil {
+	if conn.sharedClients.mempool != nil && conn.sharedClients.mempool.IsRunning() {
 		if err := conn.sharedClients.mempool.Stop(); err != nil {
 			conn.Logger.Error("error while stopping mempool client", "error", err)
 		}
 	}
-	if conn.sharedClients.query != nil {
+	if conn.sharedClients.query != nil && conn.sharedClients.query.IsRunning() {
 		if err := conn.sharedClients.query.Stop(); err != nil {
 			conn.Logger.Error("error while stopping query client", "error", err)
 		}
 	}
-	if conn.sharedClients.snapshot != nil {
+	if conn.sharedClients.snapshot != nil && conn.sharedClients.snapshot.IsRunning() {
 		if err := conn.sharedClients.snapshot.Stop(); err != nil {
 			conn.Logger.Error("error while stopping snapshot client", "error", err)
 		}

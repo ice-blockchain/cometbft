@@ -271,7 +271,8 @@ func NewServer(
 		defer addTimeSample(backend.metrics.InitDurationSeconds, initTime)()
 	}
 
-	backend.logger.Info("NewServer",
+	// TODO(midas): remove debug logs
+	backend.logger.Debug("NewServer",
 		"addr", backend.relayAddr.String(),
 		"took", time.Since(initTime).String(),
 	)
@@ -388,8 +389,9 @@ func (b *MultiplexBackend) ReplayPool() *replay.ReplayPool {
 func (b *MultiplexBackend) OnStart(ctx context.Context) error {
 	startTime := time.Now()
 
-	b.logger.Info("Starting a multiplex backend",
-		"nodeId", b.nodeKey.ID(),
+	// TODO(midas): remove debug logs
+	b.logger.Debug("OnStart",
+		"addr", b.relayAddr.String(),
 		"path", b.backendCfg.RootDir,
 	)
 
@@ -434,9 +436,11 @@ func (b *MultiplexBackend) OnStart(ctx context.Context) error {
 		b.mtx.Unlock()
 		wg.Done()
 
-		b.logger.Info("Discovery servers started; waiting to replicate chains",
+		b.logger.Info("Discovery servers started",
 			"time", cmttime.Now(),
-			"nodeId", b.nodeKey.ID(),
+			"info", b.discoverySwitch.NodeInfo(),
+			"p2p", b.relayAddr.String(),
+			"rpc", b.relayAddr.AddressForRelayInfo(),
 		)
 
 		// Keep this goroutine alive until shutdown explicitely.
@@ -468,7 +472,7 @@ func (b *MultiplexBackend) OnStart(ctx context.Context) error {
 
 		b.logger.Info("Prometheus server started",
 			"time", cmttime.Now(),
-			"nodeId", b.nodeKey.ID(),
+			"addr", b.relayAddr.AddressForMonitoring(),
 		)
 
 		// Keep this goroutine alive until shutdown explicitely.
@@ -505,10 +509,11 @@ func (b *MultiplexBackend) OnStart(ctx context.Context) error {
 		b.mtx.Unlock()
 		wg.Done()
 
-		b.logger.Info("CometBFT servers started; waiting to activate runtimes",
+		b.logger.Info("CometBFT servers started",
 			"time", cmttime.Now(),
-			"nodeId", b.nodeKey.ID(),
 			"info", b.cometbftSwitch.NodeInfo(),
+			"p2p", b.relayAddr.AddressForCometBFT(),
+			"rpc", b.relayAddr.AddressForLightRPC(),
 		)
 
 		// Keep this goroutine alive until shutdown explicitely.
@@ -538,8 +543,9 @@ func (b *MultiplexBackend) OnStart(ctx context.Context) error {
 // OnStop stops the event switches and servers, as well
 func (b *MultiplexBackend) OnStop() {
 	// TODO(midas): remove debug logs
-	b.logger.Debug("Process is now shutting down node backend",
-		"nodeId", b.nodeKey.ID(),
+	b.logger.Debug("OnStop",
+		"addr", b.relayAddr.String(),
+		"path", b.backendCfg.RootDir,
 	)
 
 	// Since we shall modify the event switches and internal channels,
@@ -552,11 +558,13 @@ func (b *MultiplexBackend) OnStop() {
 
 	if b.discoverySwitch != nil {
 		b.discoverySwitch.Stop()
+		b.discoveryPool.Stop()
 		b.discoverySwitch = nil // Reset must re-create
 	}
 
 	if b.cometbftSwitch != nil {
 		b.cometbftSwitch.Stop()
+		b.cometbftPool.Stop()
 		b.cometbftSwitch = nil // Reset must re-create
 	}
 	b.mtx.Unlock()
@@ -577,15 +585,23 @@ func (b *MultiplexBackend) OnStop() {
 		httpClient.CloseIdleConnections()
 	}
 
-	if err := b.prometheusHttp.Shutdown(b.Context()); err != nil {
-		b.logger.Error(
-			"Error stopping HTTP server while shutting down", "err", err)
+	if b.prometheusHttp != nil {
+		if err := b.prometheusHttp.Shutdown(b.Context()); err != nil {
+			b.logger.Error(
+				"Error stopping HTTP server while shutting down", "err", err)
+		}
 	}
 	b.mtx.Unlock()
 }
 
 // OnReset resets the runtime manager and shared services.
 func (b *MultiplexBackend) OnReset(ctx context.Context) error {
+	// TODO(midas): remove debug logs
+	b.logger.Debug("OnReset",
+		"addr", b.relayAddr.String(),
+		"path", b.backendCfg.RootDir,
+	)
+
 	if b.chainConns != nil && b.chainConns.IsStopped() {
 		if err := b.chainConns.Reset(ctx); err != nil {
 			b.logger.Error(
@@ -644,12 +660,10 @@ func (b *MultiplexBackend) logStartupInfo() {
 
 	b.logger.Info("Started a multiplex backend",
 		"id", b.nodeKey.ID(),
-		"numRuntimes", b.runtimeRegistry.NumRuntimes(),
-		"numNetworks", b.GetNetworks(),
-		"discoveryP2P", discoveryP2PAddr,
-		"discoveryRPC", discoveryRPCAddr.StringWithoutId(),
-		"cometbftP2P", cometbftP2PAddr,
-		"cometbftRPC", cometbftRPCAddr.StringWithoutId(),
+		"discovery", discoveryP2PAddr,
+		"relayInfo", discoveryRPCAddr.StringWithoutId(),
+		"cometbft", cometbftP2PAddr,
+		"cometRPC", cometbftRPCAddr.StringWithoutId(),
 		"prometheus", prometheusAddr.StringHostname(),
 	)
 }

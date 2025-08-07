@@ -10,8 +10,6 @@ import (
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/libs/protoio"
 	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
-
-	"github.com/ice-blockchain/cometbft/multiplex/types"
 )
 
 // connectionHandshaker defines a runtime composer.
@@ -25,7 +23,7 @@ type connectionHandshaker struct {
 }
 
 // Ensure that our implementation satisfies interface.
-var _ types.Handshaker = (*connectionHandshaker)(nil)
+var _ cmtp2p.Handshaker = (*connectionHandshaker)(nil)
 
 type HandshakerOption func(*connectionHandshaker)
 
@@ -35,7 +33,7 @@ func NewHandshaker(
 	nodeInfo *MultiNetworkNodeInfo,
 	logger cmtlog.Logger,
 	options ...HandshakerOption,
-) types.Handshaker {
+) cmtp2p.Handshaker {
 	h := &connectionHandshaker{
 		mtx:      new(sync.Mutex),
 		nodeInfo: nodeInfo,

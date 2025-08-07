@@ -56,11 +56,6 @@ func (b *MultiplexBackend) Init() error {
 		return err.(ErrSetupSnapsapp)
 	}
 
-	// Create the RuntimeManager instance.
-	if err := b.InitRuntimeManager(); err != nil {
-		return err.(ErrSetupRuntime)
-	}
-
 	// Create the cmtp2p.Switch instance for Discovery.
 	if err := b.InitDiscoverySwitch(); err != nil {
 		return err.(ErrSetupDiscovery)
@@ -69,6 +64,11 @@ func (b *MultiplexBackend) Init() error {
 	// Create the cmtp2p.Switch instance for Discovery.
 	if err := b.InitCometBFTSwitch(); err != nil {
 		return err.(ErrSetupCometBFT)
+	}
+
+	// Create the RuntimeManager instance, requires connection pools.
+	if err := b.InitRuntimeManager(); err != nil {
+		return err.(ErrSetupRuntime)
 	}
 
 	return nil
@@ -89,25 +89,6 @@ func (b *MultiplexBackend) InitSnapsAppClient() error {
 		proxy.PrometheusMetrics(metricsName),
 	)
 	b.chainConns.SetLogger(b.logger.With("module", "proxy"))
-
-	return nil
-}
-
-// InitRuntimeManager initializes the internal [RuntimeManager].
-func (b *MultiplexBackend) InitRuntimeManager() error {
-	b.runtimeRegistry = runtime.NewRegistry(b.Context(),
-		b.backendCfg,
-		b.chainRegistry,
-		b.nodeKey,
-		b.chainConns,
-		b.resourceMgr,
-		b.logger.With("module", "runtime"),
-	)
-	b.replayPool = replay.NewReplayPool(b.Context(),
-		b.logger.With("module", "replay"),
-		replay.ReplayPoolThreshold(10),
-		replay.ReplayPoolAcceptor(b.acceptor),
-	)
 
 	return nil
 }
@@ -184,6 +165,27 @@ func (b *MultiplexBackend) InitCometBFTSwitch() error {
 	return nil
 }
 
+// InitRuntimeManager initializes the internal [RuntimeManager].
+func (b *MultiplexBackend) InitRuntimeManager() error {
+	b.runtimeRegistry = runtime.NewRegistry(b.Context(),
+		b.backendCfg,
+		b.chainRegistry,
+		b.nodeKey,
+		b.chainConns,
+		b.discoveryPool,
+		b.cometbftPool,
+		b.resourceMgr,
+		b.logger.With("module", "runtime"),
+	)
+	b.replayPool = replay.NewReplayPool(b.Context(),
+		b.logger.With("module", "replay"),
+		replay.ReplayPoolThreshold(10),
+		replay.ReplayPoolAcceptor(b.acceptor),
+	)
+
+	return nil
+}
+
 // InitLightRPCRoutes initializes the CometBFT RPC routes.
 func (b *MultiplexBackend) InitLightRPCRoutes() error {
 	// We configure one RPC environment per running network,
@@ -235,11 +237,12 @@ func (b *MultiplexBackend) InitLightRPCRoutes() error {
 func (b *MultiplexBackend) StartP2PServerDiscovery() error {
 	netListenAddr := b.relayAddr.NetAddress()
 
-	b.logger.Info("Process is now setting up P2P discovery",
+	// TODO(midas): remove debug logs
+	b.logger.Info("StartP2PServerDiscovery",
 		"addr", netListenAddr.DialString(),
 	)
 
-	eventSwitch := b.Discovery()
+	eventSwitch := b.discoverySwitch
 	if err := eventSwitch.Start(); err != nil {
 		return fmt.Errorf(
 			"could not start p2p switch: %w", err)
@@ -266,7 +269,9 @@ func (b *MultiplexBackend) StartP2PServerDiscovery() error {
 // Creates a transport listening on `DiscoveryPort-1`.
 func (b *MultiplexBackend) StartRPCServerDiscovery() error {
 	rpcRelayAddr, _ := helpers.NewRelayAddress(b.relayAddr.AddressForRelayInfo())
-	b.logger.Info("Process is now setting up RPC discovery",
+
+	// TODO(midas): remove debug logs
+	b.logger.Info("StartRPCServerDiscovery",
 		"addr", rpcRelayAddr.StringWithoutId(),
 	)
 
@@ -322,11 +327,12 @@ func (b *MultiplexBackend) StartRPCServerDiscovery() error {
 func (b *MultiplexBackend) StartP2PServerCometBFT() error {
 	netListenAddr := b.relayAddr.NetAddressForCometBFT()
 
-	b.logger.Info("Process is now setting up P2P cometbft",
+	// TODO(midas): remove debug logs
+	b.logger.Debug("StartP2PServerCometBFT",
 		"addr", netListenAddr.DialString(),
 	)
 
-	eventSwitch := b.CometBFT()
+	eventSwitch := b.cometbftSwitch
 	if err := eventSwitch.Start(); err != nil {
 		return fmt.Errorf(
 			"could not start p2p switch: %w", err)
@@ -363,7 +369,8 @@ func (b *MultiplexBackend) StartRPCServerCometBFT() error {
 	rpcLogger := b.logger.With("module", "rpc-server")
 	wmLogger := rpcLogger.With("protocol", "websocket")
 
-	b.logger.Info("Process is now setting up CometBFT RPC",
+	// TODO(midas): remove debug logs
+	b.logger.Debug("StartRPCServerCometBFT",
 		"addr", rpcRelayAddr.StringWithoutId(),
 	)
 
@@ -435,7 +442,7 @@ func (b *MultiplexBackend) StartRPCServerCometBFT() error {
 				rpcLogger,
 				rpcConf,
 			); err != nil && !errors.Is(err, net.ErrClosed) {
-				b.logger.Error("Error serving server with TLS", "err", err)
+				b.logger.Error("Error serving CometBFT RPC server with TLS", "err", err)
 			}
 		}()
 	} else {
@@ -446,7 +453,7 @@ func (b *MultiplexBackend) StartRPCServerCometBFT() error {
 				rpcLogger,
 				rpcConf,
 			); err != nil && !errors.Is(err, net.ErrClosed) {
-				b.logger.Error("Error serving server", "err", err)
+				b.logger.Error("Error serving CometBFT RPC server", "err", err)
 			}
 		}()
 	}
@@ -466,7 +473,8 @@ func (b *MultiplexBackend) StartPrometheusServer() error {
 
 	monRelayAddr, _ := helpers.NewRelayAddress(b.relayAddr.AddressForMonitoring())
 
-	b.logger.Info("Process is now setting up Prometheus HTTP",
+	// TODO(midas): remove debug logs
+	b.logger.Debug("StartPrometheusServer",
 		"addr", monRelayAddr.StringHostname(),
 	)
 
@@ -495,6 +503,11 @@ func (b *MultiplexBackend) StartPrometheusServer() error {
 func (b *MultiplexBackend) StartSharedServices() error {
 	b.mtx.Lock()
 	defer b.mtx.Unlock()
+
+	// TODO(midas): remove debug logs
+	b.logger.Debug("StartSharedServices",
+		"addr", b.relayAddr.String(),
+	)
 
 	// We share one ABCI client amongst all replication chains.
 	if !b.chainConns.IsRunning() {
@@ -533,7 +546,11 @@ func (b *MultiplexBackend) StartSharedServices() error {
 
 // StopSharedServices stops the global services shared amongst networks.
 func (b *MultiplexBackend) StopSharedServices() error {
-	// At first, stop the runtimes registry as it shouldn't interfere with shutdown.
+	// TODO(midas): remove debug logs
+	b.logger.Debug("StopSharedServices",
+		"addr", b.relayAddr.String(),
+	)
+
 	if b.runtimeRegistry != nil && b.runtimeRegistry.IsRunning() {
 		// Try to shutdown gracefully (each ChainID individually).
 		restNodeRuntimes := b.runtimeRegistry.ActiveRuntimes()
@@ -547,51 +564,19 @@ func (b *MultiplexBackend) StopSharedServices() error {
 			}
 		}
 
-		go func() {
-			b.mtx.Lock()
-			defer b.mtx.Unlock()
-
-			if err := b.runtimeRegistry.Stop(); err != nil {
-				b.logger.Error(
-					"failed to stop the runtime manager", "err", err)
-			}
-		}()
+		go b.runtimeRegistry.Stop()
 	}
 
 	if b.replayPool != nil && b.replayPool.IsRunning() {
-		go func() {
-			b.mtx.Lock()
-			defer b.mtx.Unlock()
-
-			if err := b.replayPool.Stop(); err != nil {
-				b.logger.Error(
-					"failed to stop the replay pool", "err", err)
-			}
-		}()
+		go b.replayPool.Stop()
 	}
 
 	if b.chainConns != nil && b.chainConns.IsRunning() {
-		go func() {
-			b.mtx.Lock()
-			defer b.mtx.Unlock()
-
-			if err := b.chainConns.Stop(); err != nil {
-				b.logger.Error(
-					"failed to stop the ABCI client", "err", err)
-			}
-		}()
+		go b.chainConns.Stop()
 	}
 
 	if b.reactor != nil && b.reactor.IsRunning() {
-		go func() {
-			b.mtx.Lock()
-			defer b.mtx.Unlock()
-
-			if err := b.reactor.Stop(); err != nil {
-				b.logger.Error(
-					"failed to stop the replay pool", "err", err)
-			}
-		}()
+		go b.reactor.Stop()
 	}
 
 	return nil

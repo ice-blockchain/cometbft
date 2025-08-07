@@ -1,9 +1,6 @@
 package types
 
 import (
-	"net"
-	"time"
-
 	"github.com/ice-blockchain/cometbft/libs/service"
 	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
 )
@@ -24,14 +21,5 @@ type ConnectionManager interface {
 	// Connector returns the injected connection dialer.
 	Connector() cmtp2p.Connector
 	// Handshaker returns the injected connection handshaker.
-	Handshaker() Handshaker
-}
-
-// Handshaker defines the contract for a connection handshaker.
-type Handshaker interface {
-	// NodeInfo returns the local node information.
-	NodeInfo() cmtp2p.NodeInfo
-
-	// Handshake executes a handshake and returns a remote node information.
-	Handshake(c net.Conn, timeout time.Duration) (cmtp2p.NodeInfo, error)
+	Handshaker() cmtp2p.Handshaker
 }

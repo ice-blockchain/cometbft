@@ -2,6 +2,7 @@ package p2p
 
 import (
 	"net"
+	"time"
 
 	"github.com/cosmos/gogoproto/proto"
 
@@ -52,6 +53,15 @@ type Dispatcher interface {
 	GetMultiplexReactor() Reactor
 }
 
+// Handshaker defines the contract for a connection handshaker.
+type Handshaker interface {
+	// NodeInfo returns the local node information.
+	NodeInfo() NodeInfo
+
+	// Handshake executes a handshake and returns a remote node information.
+	Handshake(net.Conn, time.Duration) (NodeInfo, error)
+}
+
 // Connector defines the contract for peer connectors.
 type Connector interface {
 	service.Service
@@ -78,6 +88,8 @@ type Pool interface {
 	Connector() Connector
 	// Dispatcher returns a packet dispatcher.
 	Dispatcher() Dispatcher
+	// Handshaker returns the connection handshaker.
+	Handshaker() Handshaker
 
 	// NumPeers returns the number of inbound and outbound peers.
 	NumPeers(chainIds ...string) (inbound, outbound, dialing int)

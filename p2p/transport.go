@@ -7,10 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/net/netutil"
-
 	tmp2p "github.com/ice-blockchain/cometbft/api/cometbft/p2p/v1"
 	"github.com/ice-blockchain/cometbft/crypto"
+	"github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/libs/protoio"
 	"github.com/ice-blockchain/cometbft/libs/service"
 	"github.com/ice-blockchain/cometbft/p2p/conn"
@@ -40,6 +39,8 @@ type accept struct {
 // the transport. Each transport is also responsible to filter establishing
 // peers specific to its domain.
 type Transport interface {
+	transportLifecycle
+
 	// Listening address.
 	NetAddress() NetAddress
 
@@ -58,7 +59,11 @@ type Transport interface {
 	// NodeInfo returns a [NodeInfo]
 	NodeInfo() NodeInfo
 
-	// SetSwitch(sw *Switch)
+	// SetHandshaker sets a custom Handshaker.
+	SetHandshaker(h Handshaker)
+
+	// SetLogger sets a custom log.Logger.
+	SetLogger(l log.Logger)
 }
 
 // transportLifecycle bundles the methods for callers to control start and stop
@@ -166,7 +171,7 @@ func NewMultiplexTransport(
 	nodeInfo NodeInfo,
 	nodeKey NodeKey,
 ) *MultiplexTransport {
-	return &MultiplexTransport{
+	tr := &MultiplexTransport{
 		acceptc:          make(chan accept),
 		closec:           make(chan struct{}),
 		dialTimeout:      defaultDialTimeout,
@@ -178,16 +183,20 @@ func NewMultiplexTransport(
 		resolver:         net.DefaultResolver,
 		handshakeFn:      nil,
 	}
+
+	tr.BaseService = *service.NewBaseService(ctx, nil, "MultiplexTransport", tr)
+	return tr
 }
 
 // NewMultiplexTransportWithCustomHandshake returns a tcp connected multiplexed peer
 // with a custom handshake function overwrite.
 func NewMultiplexTransportWithCustomHandshake(
+	ctx context.Context,
 	nodeInfo NodeInfo,
 	nodeKey NodeKey,
 	handshakeFn TransportHandshakeFn,
 ) *MultiplexTransport {
-	return &MultiplexTransport{
+	tr := &MultiplexTransport{
 		acceptc:          make(chan accept),
 		closec:           make(chan struct{}),
 		dialTimeout:      defaultDialTimeout,
@@ -199,6 +208,9 @@ func NewMultiplexTransportWithCustomHandshake(
 		resolver:         net.DefaultResolver,
 		handshakeFn:      handshakeFn,
 	}
+
+	tr.BaseService = *service.NewBaseService(ctx, nil, "MultiplexTransport", tr)
+	return tr
 }
 
 // NetAddress implements Transport.
@@ -211,8 +223,18 @@ func (mt *MultiplexTransport) NodeInfo() NodeInfo {
 	return mt.nodeInfo
 }
 
+// SetHandshaker sets a custom Handshaker object used for handshakeFn.
+func (mt *MultiplexTransport) SetHandshaker(h Handshaker) {
+	mt.handshakeFn = func(c net.Conn, d time.Duration, _ NodeInfo) (NodeInfo, error) {
+		return h.Handshake(c, d)
+	}
+}
+
 // Accept implements Transport.
 func (mt *MultiplexTransport) Accept(ctx context.Context, cfg PeerConfig) (*PeerImpl, error) {
+	// TODO(midas): remove debug logs
+	mt.Logger.Debug("Accept", "nodeInfo", mt.nodeInfo)
+
 	select {
 	// This case should never have any side-effectful/blocking operations to
 	// ensure that quality peers are ready to be used.
@@ -232,6 +254,9 @@ func (mt *MultiplexTransport) Accept(ctx context.Context, cfg PeerConfig) (*Peer
 		), nil
 	case <-mt.closec:
 		return nil, ErrTransportClosed{}
+	case <-ctx.Done():
+		mt.Close()
+		return nil, ErrTransportClosed{}
 	}
 }
 
@@ -241,6 +266,9 @@ func (mt *MultiplexTransport) Dial(
 	addr NetAddress,
 	cfg PeerConfig,
 ) (*PeerImpl, error) {
+	// TODO(midas): remove debug logs
+	mt.Logger.Debug("Dial", "nodeInfo", mt.nodeInfo, "addr", addr)
+
 	c, err := addr.DialTimeout(mt.dialTimeout)
 	if err != nil {
 		return nil, err
@@ -273,8 +301,10 @@ func (mt *MultiplexTransport) Dial(
 
 // Close implements transportLifecycle.
 func (mt *MultiplexTransport) Close() error {
-	// Using sync.Once to prevent concurrent closing of the channel
-	// TBI: Whether introducing a Mutex performs better or not.
+	// TODO(midas): remove debug logs
+	mt.Logger.Debug("Close", "nodeInfo", mt.nodeInfo)
+
+	// Using sync.Once to prevent concurrent closing of the channel.
 	mt.once.Do(func() {
 		close(mt.closec)
 	})
@@ -291,10 +321,6 @@ func (mt *MultiplexTransport) Listen(addr NetAddress) error {
 	ln, err := net.Listen("tcp", addr.DialString())
 	if err != nil {
 		return err
-	}
-
-	if mt.maxIncomingConnections > 0 {
-		ln = netutil.LimitListener(ln, mt.maxIncomingConnections)
 	}
 
 	mt.netAddr = addr
@@ -342,7 +368,7 @@ func (mt *MultiplexTransport) AddChannel(chID byte) {
 }
 
 func (mt *MultiplexTransport) acceptPeers() {
-	for {
+	for mt.Context().Err() == nil {
 		c, err := mt.listener.Accept()
 		if err != nil {
 			// If Close() has been called, silently exit.

@@ -25,7 +25,7 @@ type ConnectionPool struct {
 	transport  cmtp2p.Transport
 	connector  *peerConnector
 	dispatcher cmtp2p.Dispatcher
-	handshaker types.Handshaker
+	handshaker cmtp2p.Handshaker
 
 	// Resources
 	nodeInfo  *MultiNetworkNodeInfo
@@ -60,6 +60,11 @@ func NewConnectionManager(
 	nodeInfo := transport.NodeInfo().(*MultiNetworkNodeInfo)
 	dispatcher := NewDispatcher(ctx, nodeInfo, resourceManager, logger)
 	connector := NewConnector(ctx, transport, dispatcher, logger)
+
+	// Use our custom handshaker for all transports.
+	handshaker := NewHandshaker(ctx, nodeInfo, logger)
+	transport.SetHandshaker(handshaker)
+	transport.SetLogger(logger.With("module", "p2p"))
 
 	pool := &ConnectionPool{
 		mtx:      new(sync.Mutex),
@@ -130,6 +135,8 @@ func (pool *ConnectionPool) OnStop() {
 			pool.connected.Delete(string(peer.ID()))
 		}
 	}
+
+	pool.transport.Close()
 }
 
 // OnReset implements [service.Service] by resetting the service.
@@ -174,7 +181,7 @@ func (pool *ConnectionPool) Connector() cmtp2p.Connector {
 }
 
 // Handshaker returns the injected connection handshaker.
-func (pool *ConnectionPool) Handshaker() types.Handshaker {
+func (pool *ConnectionPool) Handshaker() cmtp2p.Handshaker {
 	return pool.handshaker
 }
 

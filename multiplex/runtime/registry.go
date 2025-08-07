@@ -55,7 +55,8 @@ type Registry struct {
 	resourceManager types.ResourceManager
 	runtimeComposer *runtimeComposer
 	consensusPool   *ConsensusPool
-	connectionPool  *p2p.ConnectionPool
+	discoveryPool   *p2p.ConnectionPool
+	cometbftPool    *p2p.ConnectionPool
 
 	// Options
 	cleanerInterval time.Duration
@@ -80,22 +81,15 @@ func NewRegistry(
 	chainRegistry helpers.ChainRegistry,
 	nodeKey *cmtp2p.NodeKey,
 	abciClient proxy.ChainConns,
+	discoveryPool *p2p.ConnectionPool,
+	cometbftPool *p2p.ConnectionPool,
 	resourceMgr types.ResourceManager,
 	logger cmtlog.Logger,
 	options ...RegistryOption,
 ) *Registry {
-	nodeInfo := p2p.NewMultiNetworkNodeInfo()
-	transport := cmtp2p.NewMultiplexTransport(ctx, nodeInfo, *nodeKey)
-
-	connectionPool := p2p.NewConnectionManager(ctx,
-		nodeKey,
-		transport,
-		resourceMgr,
-		logger,
-	)
 	runtimeComposer := NewComposer(ctx,
 		baseConfig,
-		connectionPool,
+		cometbftPool, // composes CometBFT consensus
 		resourceMgr,
 		logger.With("module", "composer"),
 	)
@@ -113,9 +107,10 @@ func NewRegistry(
 		runtimeBaseConf: baseConfig,
 		chainRegistry:   chainRegistry,
 		runtimeComposer: runtimeComposer,
-		connectionPool:  connectionPool,
+		discoveryPool:   discoveryPool,
+		cometbftPool:    cometbftPool,
 		consensusPool: NewConsensusHandler(ctx,
-			connectionPool.NodeKey(),
+			cometbftPool.NodeKey(),
 			abciClient,
 			resourceMgr,
 			runtimeComposer,
@@ -179,12 +174,6 @@ func RegistryWithConsensusOptions(opts ...ConsensusPoolOption) RegistryOption {
 	}
 }
 
-func RegistryWithConnectionOptions(opts ...p2p.ConnectionPoolOption) RegistryOption {
-	return func(rr *Registry) {
-		rr.connectionPool.SetOptions(opts...)
-	}
-}
-
 // ----------------------------------------------------------------------------
 // Registry implements [service.Service]
 
@@ -197,8 +186,12 @@ func (reg *Registry) OnStart(ctx context.Context) error {
 		"timer", reg.CleanerInterval(),
 	)
 
-	if err := reg.connectionPool.Start(); err != nil {
-		return fmt.Errorf("failed to start ConnectionManager: %w", err)
+	if err := reg.discoveryPool.Start(); err != nil {
+		return fmt.Errorf("failed to start discovery ConnectionManager: %w", err)
+	}
+
+	if err := reg.cometbftPool.Start(); err != nil {
+		return fmt.Errorf("failed to start CometBFT ConnectionManager: %w", err)
 	}
 
 	if err := reg.runtimeComposer.Start(); err != nil {
@@ -227,8 +220,14 @@ func (reg *Registry) OnStop() {
 		)
 	}
 
-	if err := reg.connectionPool.Stop(); err != nil {
-		reg.logger.Error("failed to stop ConnectionManager",
+	if err := reg.discoveryPool.Stop(); err != nil {
+		reg.logger.Error("failed to stop discovery ConnectionManager",
+			"err", err,
+		)
+	}
+
+	if err := reg.cometbftPool.Stop(); err != nil {
+		reg.logger.Error("failed to stop CometBFT ConnectionManager",
 			"err", err,
 		)
 	}
@@ -260,8 +259,12 @@ func (reg *Registry) OnReset(ctx context.Context) error {
 		return fmt.Errorf("failed to reset RuntimeComposer: %w", err)
 	}
 
-	if err := reg.connectionPool.Reset(ctx); err != nil {
-		return fmt.Errorf("failed to reset ConnectionManager: %w", err)
+	if err := reg.discoveryPool.Reset(ctx); err != nil {
+		return fmt.Errorf("failed to reset discovery ConnectionManager: %w", err)
+	}
+
+	if err := reg.cometbftPool.Reset(ctx); err != nil {
+		return fmt.Errorf("failed to reset CometBFT ConnectionManager: %w", err)
 	}
 
 	if err := reg.consensusPool.Reset(ctx); err != nil {

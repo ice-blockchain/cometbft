@@ -91,6 +91,7 @@ var _ Pool = (*mockPool)(nil)
 func (*mockPool) Transport() Transport                                   { return nil }
 func (*mockPool) Connector() Connector                                   { return &mockConnector{} }
 func (*mockPool) Dispatcher() Dispatcher                                 { return &mockDispatcher{} }
+func (*mockPool) Handshaker() Handshaker                                 { return &mockHandshaker{} }
 func (*mockPool) NumPeers(_ ...string) (inbound, outbound, dialing int)  { return 0, 0, 0 }
 func (*mockPool) Peers(_ ...string) *PeerSet                             { return &PeerSet{} }
 func (*mockPool) AddPeer(peer *PeerImpl) error                           { return nil }
@@ -125,6 +126,18 @@ func (*mockConnector) Read(peerID ID, packet tmp2p.PacketMsg) (Envelope, error) 
 }
 func (*mockConnector) Send(e Envelope) error    { return nil }
 func (*mockConnector) TrySend(e Envelope) error { return nil }
+
+// ----------------------------------------------------------------------------
+
+type mockHandshaker struct {
+}
+
+var _ Handshaker = (*mockHandshaker)(nil)
+
+func (*mockHandshaker) NodeInfo() NodeInfo { return nil }
+func (*mockHandshaker) Handshake(c net.Conn, timeout time.Duration) (NodeInfo, error) {
+	return nil, nil
+}
 
 // ----------------------------------------------------------------------------
 
