@@ -52,6 +52,14 @@ func NewReactor(ctx context.Context, evpool *Pool, options ...func(*Reactor)) *R
 	return evR
 }
 
+// CAUTION: This method is used to determine a static list of channels
+// for the multiplex implementation. Do not use for consensus.
+func NewEmptyReactor(ctx context.Context) *Reactor {
+	evR := &Reactor{}
+	evR.BaseReactor = *p2p.NewBaseReactor(ctx, "Evidence", evR)
+	return evR
+}
+
 // WithChainID is an option helper to inject a custom ChainID.
 func WithChainID(
 	chainID string,

@@ -156,6 +156,14 @@ func NewReactor(ctx context.Context, b AddrBook, config *ReactorConfig, options 
 	return r
 }
 
+// CAUTION: This method is used to determine a static list of channels
+// for the multiplex implementation. Do not use for addresses.
+func NewEmptyReactor(ctx context.Context) *Reactor {
+	r := &Reactor{}
+	r.BaseReactor = *p2p.NewBaseReactor(ctx, "PEX", r)
+	return r
+}
+
 // WithChainID is an option helper to inject a custom ChainID.
 func WithChainID(
 	chainID string,

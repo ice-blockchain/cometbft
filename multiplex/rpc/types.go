@@ -40,10 +40,10 @@ type Backend interface {
 	// NOTE: For convenience, public keys should be hexadecimal format.
 	GetValidatorPubs() map[string]string
 
-	// InitValidators should initialize validators for networks and
+	// GetLocalNetworkValidators should initialize validators for networks and
 	// should return a map of public keys by ChainID.
 	// NOTE: For convenience, public keys should be hexadecimal format.
-	InitValidators(networks []string) (map[string]string, error)
+	GetLocalNetworkValidators(networks []string) (map[string]string, error)
 }
 
 // Client defines a RPC client implementation.

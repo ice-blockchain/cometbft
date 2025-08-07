@@ -50,14 +50,14 @@ type transport interface {
 }
 
 type peers interface {
-	AddPersistentPeers(peers []string) error
-	AddUnconditionalPeerIDs(peerIDs []string) error
-	AddPrivatePeerIDs(peerIDs []string) error
+	// AddPersistentPeers(peers []string) error
+	// AddUnconditionalPeerIDs(peerIDs []string) error
+	// AddPrivatePeerIDs(peerIDs []string) error
 	DialPeersAsync(peers []string) error
 
 	// NOTE(midas): We return a mutable PeerSet because every broadcast
 	// operation in a multiplex may require dialing/adding new relays.
-	Peers(chainID string) *p2p.PeerSet
+	Peers(chainIds ...string) *p2p.PeerSet
 }
 
 // A reactor that transitions from block sync or state sync to consensus mode.

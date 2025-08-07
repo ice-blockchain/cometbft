@@ -131,6 +131,14 @@ func NewReactor(
 	return bcR
 }
 
+// CAUTION: This method is used to determine a static list of channels
+// for the multiplex implementation. Do not use for block-syncing.
+func NewEmptyReactor(ctx context.Context) *Reactor {
+	bcR := &Reactor{}
+	bcR.BaseReactor = *p2p.NewBaseReactor(ctx, "Reactor", bcR)
+	return bcR
+}
+
 // WithChainID is an option helper to inject a custom ChainID.
 func WithChainID(
 	chainID string,

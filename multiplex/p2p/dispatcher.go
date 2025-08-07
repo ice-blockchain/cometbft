@@ -21,7 +21,7 @@ import (
 type packetDispatcher struct {
 	mtx *sync.Mutex
 
-	resourceManager types.ResourceManager
+	resourceMgr types.ResourceManager
 
 	multiplexReactor    cmtp2p.Reactor
 	reactorsByChIds     map[byte]string
@@ -42,14 +42,14 @@ type DispatcherOption func(*packetDispatcher)
 func NewDispatcher(
 	ctx context.Context,
 	nodeInfo *MultiNetworkNodeInfo,
-	resourceManager types.ResourceManager,
+	resourceMgr types.ResourceManager,
 	logger cmtlog.Logger,
 	options ...DispatcherOption,
 ) cmtp2p.Dispatcher {
 	router := &packetDispatcher{
 		mtx: new(sync.Mutex),
 
-		resourceManager: resourceManager,
+		resourceMgr:     resourceMgr,
 		reactorsByChIds: map[byte]string{},
 		reactorsServiceKeys: map[string]string{
 			"BLOCKSYNC": types.ServiceKeyBlockSyncReactor,
@@ -98,7 +98,7 @@ func (router *packetDispatcher) Target(packet tmp2p.PacketMsg) cmtp2p.Reactor {
 	skey := router.reactorsServiceKeys[name]
 
 	// Get the service instance from resources.
-	return router.resourceManager.Get(
+	return router.resourceMgr.Get(
 		packet.ChainID,
 		skey,
 	).(cmtp2p.Reactor)
@@ -155,7 +155,7 @@ func (router *packetDispatcher) Reactors(chainID string) map[string]cmtp2p.React
 
 	reactors := make(map[string]cmtp2p.Reactor, len(router.reactorsServiceKeys))
 	for name, serviceKey := range router.reactorsServiceKeys {
-		reactors[name] = router.resourceManager.Get(
+		reactors[name] = router.resourceMgr.Get(
 			chainID,
 			serviceKey,
 		).(cmtp2p.Reactor)
@@ -207,7 +207,8 @@ func (router *packetDispatcher) GetChannels() (channels []*cmtp2p.Channel) {
 		return // channels
 	}
 
-	chDescs := GetChannelDescriptors()
+	mxR := router.GetMultiplexReactor()
+	chDescs := GetChannelDescriptors(mxR)
 	router.channelsIndex = make(map[byte]*cmtp2p.Channel, len(chDescs))
 	for chID, chDesc := range chDescs {
 		router.channelsIndex[chID] = cmtconn.NewChannel(chDesc)

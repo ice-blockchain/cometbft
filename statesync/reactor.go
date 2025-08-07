@@ -74,6 +74,14 @@ func NewReactor(
 	return r
 }
 
+// CAUTION: This method is used to determine a static list of channels
+// for the multiplex implementation. Do not use for state-sync.
+func NewEmptyReactor(ctx context.Context) *Reactor {
+	r := &Reactor{}
+	r.BaseReactor = *p2p.NewBaseReactor(ctx, "StateSync", r)
+	return r
+}
+
 // ReactorWithChainID sets the ChainID of a statesync reactor.
 func ReactorWithChainID(chainID string) func(*Reactor) {
 	return func(r *Reactor) {

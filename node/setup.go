@@ -438,8 +438,7 @@ func createTransport(
 	[]p2p.PeerFilterFunc,
 ) {
 	var (
-		mConnConfig = p2p.MConnConfig(config.P2P)
-		transport   = p2p.NewMultiplexTransport(ctx, nodeInfo, *nodeKey, mConnConfig)
+		transport   = p2p.NewMultiplexTransport(ctx, nodeInfo, *nodeKey)
 		connFilters = []p2p.ConnFilterFunc{}
 		peerFilters = []p2p.PeerFilterFunc{}
 	)
@@ -515,11 +514,9 @@ func createSwitch(
 	sw := p2p.NewSwitch(
 		ctx,
 		config.P2P,
-		transport,
+		nil, // cmtp2p.Pool
 		p2p.WithMetrics(p2pMetrics),
-		p2p.SwitchPeerFilters(peerFilters...),
 	)
-	transport.SetSwitch(sw)
 	sw.SetLogger(p2pLogger)
 	if config.Mempool.Type != cfg.MempoolTypeNop {
 		sw.AddReactor("", "MEMPOOL", mempoolReactor)

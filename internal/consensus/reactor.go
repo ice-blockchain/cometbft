@@ -92,6 +92,14 @@ func NewReactor(ctx context.Context, consensusState *State, waitSync bool, optio
 	return conR
 }
 
+// CAUTION: This method is used to determine a static list of channels
+// for the multiplex implementation. Do not use for consensus.
+func NewEmptyReactor(ctx context.Context) *Reactor {
+	conR := &Reactor{}
+	conR.BaseReactor = *p2p.NewBaseReactor(ctx, "Consensus", conR)
+	return conR
+}
+
 // WithNodeKey is an option helper to inject a custom nodeKey.
 func WithNodeKey(
 	nodeKey *p2p.NodeKey,

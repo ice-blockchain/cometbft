@@ -509,15 +509,15 @@ func NewNodeWithCliParams(ctx context.Context,
 		stateSyncReactor, consensusReactor, evidenceReactor, nodeInfo, nodeKey, p2pLogger,
 	)
 
-	err = sw.AddPersistentPeers(splitAndTrimEmpty(config.P2P.PersistentPeers, ",", " "))
-	if err != nil {
-		return nil, fmt.Errorf("could not add peers from persistent_peers field: %w", err)
-	}
+	// err = sw.AddPersistentPeers(splitAndTrimEmpty(config.P2P.PersistentPeers, ",", " "))
+	// if err != nil {
+	// 	return nil, fmt.Errorf("could not add peers from persistent_peers field: %w", err)
+	// }
 
-	err = sw.AddUnconditionalPeerIDs(splitAndTrimEmpty(config.P2P.UnconditionalPeerIDs, ",", " "))
-	if err != nil {
-		return nil, fmt.Errorf("could not add peer ids from unconditional_peer_ids field: %w", err)
-	}
+	// err = sw.AddUnconditionalPeerIDs(splitAndTrimEmpty(config.P2P.UnconditionalPeerIDs, ",", " "))
+	// if err != nil {
+	// 	return nil, fmt.Errorf("could not add peer ids from unconditional_peer_ids field: %w", err)
+	// }
 
 	addrBook, err := createAddrBookAndSetOnSwitch(ctx, config, sw, p2pLogger, nodeKey)
 	if err != nil {

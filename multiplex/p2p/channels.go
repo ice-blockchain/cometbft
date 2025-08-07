@@ -8,7 +8,6 @@ import (
 	"github.com/ice-blockchain/cometbft/internal/evidence"
 	mempl "github.com/ice-blockchain/cometbft/mempool"
 	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
-	cmtmock "github.com/ice-blockchain/cometbft/p2p/mock"
 	"github.com/ice-blockchain/cometbft/p2p/pex"
 	"github.com/ice-blockchain/cometbft/statesync"
 
@@ -58,17 +57,15 @@ func GetChannelIds(channels map[string][]byte) []byte {
 }
 
 // GetChannelDescriptors returns a map of channel descriptors by channel ID.
-func GetChannelDescriptors() map[byte]*cmtp2p.ChannelDescriptor {
-	reactor := cmtmock.NewReactor(context.Background())
-
+func GetChannelDescriptors(mxR cmtp2p.Reactor) map[byte]*cmtp2p.ChannelDescriptor {
 	reactorImpls := map[string]cmtp2p.Reactor{
-		"BLOCKSYNC": reactor.(*bc.Reactor),
-		"CONSENSUS": reactor.(*cs.Reactor),
-		"MEMPOOL":   reactor.(*mempl.Reactor),
-		"EVIDENCE":  reactor.(*evidence.Reactor),
-		"STATESYNC": reactor.(*statesync.Reactor),
-		"PEX":       reactor.(*pex.Reactor),
-		// TODO(midas): missing MULTIPLEX
+		"BLOCKSYNC": bc.NewEmptyReactor(context.Background()),
+		"CONSENSUS": cs.NewEmptyReactor(context.Background()),
+		"MEMPOOL":   mempl.NewEmptyReactor(context.Background()),
+		"EVIDENCE":  evidence.NewEmptyReactor(context.Background()),
+		"STATESYNC": statesync.NewEmptyReactor(context.Background()),
+		"PEX":       pex.NewEmptyReactor(context.Background()),
+		"MULTIPLEX": mxR,
 	}
 
 	chDescs := map[byte]*cmtp2p.ChannelDescriptor{}

@@ -22,10 +22,10 @@ func (env *Environment) NetInfo(*rpctypes.Context) (*ctypes.ResultNetInfo, error
 			return
 		}
 		peers = append(peers, ctypes.Peer{
-			NodeInfo:         nodeInfo,
-			IsOutbound:       peer.IsOutbound(),
-			ConnectionStatus: peer.Status(),
-			RemoteIP:         peer.RemoteIP().String(),
+			NodeInfo:   nodeInfo,
+			IsOutbound: peer.IsOutbound(),
+			//ConnectionStatus: peer.Status(),
+			RemoteIP: peer.RemoteIP().String(),
 		})
 	})
 	if err != nil {
@@ -65,7 +65,8 @@ func (env *Environment) UnsafeDialPeers(
 		return &ctypes.ResultDialPeers{}, errors.New("no peers provided")
 	}
 
-	ids, err := getIDs(peers)
+	// ids, err := getIDs(peers)
+	_, err := getIDs(peers)
 	if err != nil {
 		return &ctypes.ResultDialPeers{}, err
 	}
@@ -73,23 +74,23 @@ func (env *Environment) UnsafeDialPeers(
 	env.Logger.Info("DialPeers", "peers", peers, "persistent",
 		persistent, "unconditional", unconditional, "private", private)
 
-	if persistent {
-		if err := env.P2PPeers.AddPersistentPeers(peers); err != nil {
-			return &ctypes.ResultDialPeers{}, err
-		}
-	}
+	// if persistent {
+	// 	if err := env.P2PPeers.AddPersistentPeers(peers); err != nil {
+	// 		return &ctypes.ResultDialPeers{}, err
+	// 	}
+	// }
 
-	if private {
-		if err := env.P2PPeers.AddPrivatePeerIDs(ids); err != nil {
-			return &ctypes.ResultDialPeers{}, err
-		}
-	}
+	// if private {
+	// 	if err := env.P2PPeers.AddPrivatePeerIDs(ids); err != nil {
+	// 		return &ctypes.ResultDialPeers{}, err
+	// 	}
+	// }
 
-	if unconditional {
-		if err := env.P2PPeers.AddUnconditionalPeerIDs(ids); err != nil {
-			return &ctypes.ResultDialPeers{}, err
-		}
-	}
+	// if unconditional {
+	// 	if err := env.P2PPeers.AddUnconditionalPeerIDs(ids); err != nil {
+	// 		return &ctypes.ResultDialPeers{}, err
+	// 	}
+	// }
 
 	if err := env.P2PPeers.DialPeersAsync(peers); err != nil {
 		return &ctypes.ResultDialPeers{}, err

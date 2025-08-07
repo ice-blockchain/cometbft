@@ -49,7 +49,7 @@ func (s *RPCServer) InitValidators(
 ) (*RPCResultInitValidators, error) {
 	// Start the backend initialization for networks,
 	// i.e. should call reactor.AllocateNetwork().
-	pubKeys, err := s.backend.InitValidators(networks)
+	pubKeys, err := s.backend.GetLocalNetworkValidators(networks)
 	if err != nil {
 		return nil, err
 	}

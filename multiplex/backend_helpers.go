@@ -18,10 +18,8 @@ import (
 // ----------------------------------------------------------------------------
 // types.RelayHelpers API implementation
 
-// getLocalNetworkHeights finds out about the last block height and determines
-// a list of networks that must be created. The list of networks that must be
-// created will also be present in the list of required networks.
-// GetLocalNetworkHeights implements [types.Backend].
+// GetLocalNetworkHeights returns a list of networks that must be created.
+// That list is always a subset of the list of required networks.
 func (b *MultiplexBackend) GetLocalNetworkHeights(
 	userAddress string,
 	transactions ...client.Transaction,
@@ -37,7 +35,7 @@ func (b *MultiplexBackend) GetLocalNetworkHeights(
 
 		// If we don't know this network, we either need a background-sync
 		// or we must create a new network if other relays also don't know it.
-		if !b.reactor.HasNetwork(chainID) {
+		if !b.HasNetwork(chainID) {
 			unknownNetworks[chainID] = true
 		}
 	}
@@ -54,12 +52,9 @@ func (b *MultiplexBackend) GetLocalNetworkHeights(
 	return requiredNetworks, mustCreateNetworks
 }
 
-// InitValidators initialize validators for networks and returns a map
-// of public keys per ChainID. It uses [Reactor.AllocateNetwork] to init
-// the missing [types.PrivValidator] instances.
-//
-// InitValidators implements [types.Backend].
-func (b *MultiplexBackend) InitValidators(
+// GetLocalNetworkValidators initializes validators for networks and returns a map
+// of public keys per ChainID.
+func (b *MultiplexBackend) GetLocalNetworkValidators(
 	networks []string,
 ) (pubKeysPerChainID map[string]string, err error) {
 	myValidatorPubKeys := b.GetValidatorPubs()
@@ -72,18 +67,17 @@ func (b *MultiplexBackend) InitValidators(
 		}
 
 		// Otherwise, pre-allocates priv validator instance.
-		if err = b.reactor.AllocateNetwork(chainID); err != nil {
+		if err = b.runtimeRegistry.InitRuntime(chainID, []string{}); err != nil {
 			b.logger.Error("Failed to allocate new priv validator",
-				// XXX requestId
+				// TODO(midas): requestId not available here.
 				"chainId", chainID,
 				"err", err,
 			)
 			return
 		}
 
-		// Retrieve pre-allocated resources for priv validator and fs
-		privValProvider := b.reactor.GetInstanceProvider(InstanceKeyPrivValidator)
-		privValidator := privValProvider(chainID).(types.PrivValidator)
+		// Retrieve pre-allocated resources for priv validator
+		privValidator := b.runtimeRegistry.Composer().Validator(chainID)
 
 		// Make sure we can access the priv validator
 		var privValPubKey crypto.PubKey
@@ -105,7 +99,8 @@ func (b *MultiplexBackend) InitValidators(
 // call if necessary. Given a correct response, we fill a map where keys contain
 // ChainID and values are slices of validator public keys.
 //
-// GetValidatorsByNetwork implements [types.Backend].
+// The relayAddresses parameter should use `DiscoveryPort` as this method
+// will map it to its corresponding RelayInfo port (`DiscoveryPort - 1`).
 func (b *MultiplexBackend) GetValidatorsByNetwork(
 	clientCtx context.Context,
 	relayAddresses []*helpers.RelayAddress,
@@ -189,7 +184,8 @@ func (b *MultiplexBackend) GetValidatorsByNetwork(
 // response, we use the [RPCResultRelayInfo] to fill the [RelayAddress#ID] and
 // the full address (with ID) is added to healthyRelays.
 //
-// GetRelaysByNetwork implements [types.Backend].
+// The relayAddresses parameter should use `DiscoveryPort` as this method
+// will map it to its corresponding RelayInfo port (`DiscoveryPort - 1`).
 func (b *MultiplexBackend) GetRelaysByNetwork(
 	clientCtx context.Context,
 	relayAddresses []*helpers.RelayAddress,
@@ -334,7 +330,7 @@ func (b *MultiplexBackend) CheckDialCompatibleRelay(
 // fills a relevantRelays slice that contains only relay IDs that must
 // be waited for during the AckTransaction process. In case a relay ID does not
 // appear in the resulting slice, it means that they must first handle a
-// replication and we should not wait for their acknowledgement.
+// replication and we should not wait for their tx acknowledgement.
 //
 // TODO(midas): TBI if more than 2/3 relays must replicate. Transactions won't
 // broadcast because of dependency on successfull remote replications by too
@@ -384,9 +380,7 @@ func (b *MultiplexBackend) ApplyFilterAckTransactionRelayIds(
 
 // ApplyFilterReplRequestRelays filters relays and returns a map of relays
 // by ChainID which contains only relays that need to catchup, i.e. it returns
-// relays that will receive a chain replication request.
-//
-// ApplyFilterReplRequestRelays implements [types.Backend].
+// relays that receive a chain replication request.
 func (b *MultiplexBackend) ApplyFilterReplRequestRelays(
 	requiredNetworks []string,
 	relays []*helpers.RelayAddress,
@@ -440,3 +434,15 @@ func (b *MultiplexBackend) ApplyFilterReplRequestRelays(
 
 	return catchupRelays
 }
+
+
+WaitForRelaysAckChainReplications(
+	ctx context.Context,
+	catchupRelays map[string][]*helpers.RelayAddress,
+	transactions ...client.Transaction,
+) (
+	relaysPerChain map[string][]string,
+	numExpected int,
+	numReceived int,
+	err error,
+)

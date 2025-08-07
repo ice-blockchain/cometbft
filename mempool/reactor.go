@@ -22,6 +22,10 @@ import (
 	"github.com/ice-blockchain/cometbft/types"
 )
 
+const (
+	defaultMaxTxBytes = 1024 * 1024 // 1MiB
+)
+
 // RelayDialerFn can be used to implement a custom dialing process for peers.
 type RelayDialerFn func(*p2p.Switch, *p2p.PeerImpl, string) (p2p.ID, error)
 
@@ -104,6 +108,24 @@ func NewReactor(
 	memR.activePersistentPeersSemaphore = semaphore.NewWeighted(int64(memR.config.ExperimentalMaxGossipConnectionsToPersistentPeers))
 	memR.activeNonPersistentPeersSemaphore = semaphore.NewWeighted(int64(memR.config.ExperimentalMaxGossipConnectionsToNonPersistentPeers))
 
+	return memR
+}
+
+// CAUTION: This method is used to determine a static list of channels
+// for the multiplex implementation. Do not use for transactions.
+func NewEmptyReactor(ctx context.Context) *Reactor {
+	memR := &Reactor{}
+	memR.BaseReactor = *p2p.NewBaseReactor(ctx, "Mempool", memR)
+
+	{
+		largestTx := make([]byte, defaultMaxTxBytes)
+		batchMsg := protomem.Message{
+			Sum: &protomem.Message_Txs{
+				Txs: &protomem.Txs{Txs: [][]byte{largestTx}},
+			},
+		}
+		memR.recvMessageCapacity = batchMsg.Size()
+	}
 	return memR
 }
 
