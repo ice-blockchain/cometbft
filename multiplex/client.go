@@ -2,19 +2,17 @@ package multiplex
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
-	"math"
 	"slices"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/ice-blockchain/cometbft/multiplex/client"
-	"github.com/ice-blockchain/cometbft/multiplex/runtime"
-	"github.com/ice-blockchain/cometbft/multiplex/server"
+	"github.com/ice-blockchain/cometbft/multiplex/helpers"
+	"github.com/ice-blockchain/cometbft/multiplex/types"
 )
 
 // MultiplexClient implements a multiplex client by providing an implementation
@@ -24,14 +22,14 @@ import (
 type MultiplexClient struct {
 	// A backend adapter instance is used to delegate communication
 	// with other relays and to execute local operations, e.g. persist data.
-	backend server.Backend
+	backend types.Backend
 }
 
 // Assert that our implementation satisfy the Client interface.
 var _ client.Client = (*MultiplexClient)(nil)
 
 // WithBackend is an option helper to overwrite the default adapter instance.
-func WithBackend(a server.Backend) func(*MultiplexClient) {
+func WithBackend(a types.Backend) func(*MultiplexClient) {
 	return func(c *MultiplexClient) {
 		c.backend = a
 	}
@@ -51,19 +49,19 @@ func NewClient(
 	return cli
 }
 
-// GetBackend returns the backend [server.Backend] implementation.
-func (c *MultiplexClient) GetBackend() server.Backend {
+// GetBackend returns the backend [types.Backend] implementation.
+func (c *MultiplexClient) GetBackend() types.Backend {
 	return c.backend
 }
 
-// SetBackend overwrite the backend [server.Backend] instance.
-func (c *MultiplexClient) SetBackend(a server.Backend) {
+// SetBackend overwrite the backend [types.Backend] instance.
+func (c *MultiplexClient) SetBackend(a types.Backend) {
 	c.backend = a
 }
 
-// GetRuntimeRegistry returns the reactor's [runtime.Registry] implementation.
-func (c *MultiplexClient) GetRuntimeRegistry() *runtime.Registry {
-	return c.backend.GetRuntimeRegistry().(*runtime.Registry)
+// IdleManager returns the reactor's [runtime.Registry] implementation.
+func (c *MultiplexClient) IdleManager() types.IdleManager {
+	return c.backend.IdleManager()
 }
 
 // BroadcastTx sends an error to a notifier if any of the transactions
@@ -101,7 +99,7 @@ func (c MultiplexClient) BroadcastTx(
 	transactions ...client.Transaction,
 ) {
 	// Can't broadcast without a multiplex backend
-	if c.GetBackend() == nil {
+	if c.backend == nil {
 		client.Error(notifyCh, errors.New(
 			"CLIENT ERROR: Failed to find a running multiplex backend"))
 		return // STOP here
@@ -109,9 +107,9 @@ func (c MultiplexClient) BroadcastTx(
 
 	// Format/parse relay addresses to validate each and permit
 	// working with the static multi-port convention for multiplex.
-	relayAddresses := make([]*server.RelayAddress, len(relays))
+	relayAddresses := make([]*helpers.RelayAddress, len(relays))
 	for i, relay := range relays {
-		relayAddr, err := server.NewRelayAddress(relay)
+		relayAddr, err := helpers.NewRelayAddress(relay)
 		if err != nil {
 			notifyCh <- client.BroadcastStatus{Error: err}
 			return // STOP here
@@ -121,7 +119,6 @@ func (c MultiplexClient) BroadcastTx(
 	}
 
 	acceptedTxHashes := make([][]byte, 0, len(transactions))
-	acceptedTxHashesStr := make([]string, 0, len(transactions))
 	transactionHashes := txHashesToHex(transactions...)
 	relevantChainIds := chainIdsFromTransactions(userAddress, transactions...)
 	broadcastID := client.GetBroadcastID(transactions...)
@@ -132,7 +129,7 @@ func (c MultiplexClient) BroadcastTx(
 	// as completed.
 	for _, activeChainID := range relevantChainIds {
 		// Marks the runtime active
-		c.GetRuntimeRegistry().OnActivate(activeChainID)
+		c.IdleManager().OnActivate(activeChainID)
 	}
 
 	// Find out how many relays will be necessary to reach consensus
@@ -174,7 +171,7 @@ func (c MultiplexClient) BroadcastTx(
 	// Determine required ChainIDs and unknown ChainIDs.
 	// The second return value is a subset of the first return value.
 	requiredNetworks,
-		mustCreateNetworks := c.GetBackend().GetLocalNetworkHeights(
+		mustCreateNetworks := c.backend.GetLocalNetworkHeights(
 		userAddress,
 		transactions...,
 	)
@@ -198,7 +195,7 @@ func (c MultiplexClient) BroadcastTx(
 	startRelaysByNetwork := time.Now()
 	healthyRelays,
 		chainRelays,
-		errorRelays := c.GetBackend().GetRelaysByNetwork(ctx, relayAddresses)
+		errorRelays := c.backend.GetRelaysByNetwork(ctx, relayAddresses)
 	durationRelaysByNetwork := time.Since(startRelaysByNetwork).Milliseconds()
 
 	// Now we know how many relays are actually healthy.
@@ -207,19 +204,19 @@ func (c MultiplexClient) BroadcastTx(
 	numHealthyRemote := numHealthyRelays
 
 	// Exclude undesired ChainID from chainRelays.
-	maps.DeleteFunc(chainRelays, func(network string, addresses []*server.RelayAddress) bool {
+	maps.DeleteFunc(chainRelays, func(network string, addresses []*helpers.RelayAddress) bool {
 		return !slices.Contains(requiredNetworks, network)
 	})
 
 	// Exclude self for upcoming remote operations (dial + broadcast).
 	relaysContainSelf := false
-	relaysWithoutSelf := slices.DeleteFunc(healthyRelays, func(a *server.RelayAddress) bool {
-		if a.ID() == c.GetBackend().GetRelayID() {
+	relaysWithoutSelf := slices.DeleteFunc(healthyRelays, func(a *helpers.RelayAddress) bool {
+		if a.ID() == c.backend.GetRelayID() {
 			numHealthyRemote = numHealthyRemote - 1
 			relaysContainSelf = true
 		}
 
-		return a.ID() == c.GetBackend().GetRelayID()
+		return a.ID() == c.backend.GetRelayID()
 	})
 
 	// When "self" is not present in relays, we set it healthy and we
@@ -274,7 +271,7 @@ func (c MultiplexClient) BroadcastTx(
 		"txBatch", transactionHashes)
 
 	startValidatorsInfo := time.Now()
-	validatorsByChain, _ := c.GetBackend().GetValidatorsByNetwork(ctx,
+	validatorsByChain, _ := c.backend.GetValidatorsByNetwork(ctx,
 		relaysWithoutSelf,
 		requiredNetworks,
 	)
@@ -309,10 +306,10 @@ func (c MultiplexClient) BroadcastTx(
 	discoveryWg.Add(len(relaysWithoutSelf))
 
 	// Track completion and failures individually for dialing process.
-	errorRelaysCh := make(chan server.RelayDialError, len(relaysWithoutSelf))
+	errorRelaysCh := make(chan types.RelayDialError, len(relaysWithoutSelf))
 
 	// Open connections to healthy relays to enable ReplicationChannel.
-	routineDiscoveryDialer := c.GetBackend().GetRoutines().DiscoveryDialer
+	routineDiscoveryDialer := c.backend.Routines().DiscoveryDialer
 	go routineDiscoveryDialer(ctx,
 		relaysWithoutSelf,
 		discoveryWg,
@@ -381,7 +378,7 @@ func (c MultiplexClient) BroadcastTx(
 		genesisWg.Add(len(mustCreateNetworks))
 
 		// Find networks or create new networks in background
-		routineNetworksCreator := c.GetBackend().GetRoutines().NetworksCreator
+		routineNetworksCreator := c.backend.Routines().NetworksCreator
 		go func() {
 			if err := routineNetworksCreator(ctx,
 				chainRelays,
@@ -423,7 +420,7 @@ func (c MultiplexClient) BroadcastTx(
 	// Step 5: Ask relays to replicate chains.
 	//
 	// catchupRelays contains relay addresses that will receive a message
-	// with a `ChainReplicationRequest` on [server.ReplicationChannel].
+	// with a `ChainReplicationRequest` on [types.ReplicationChannel].
 	//
 	// We should wait for all replication requests to be completed. Notably,
 	// the catchupRelays are expected to send a `ChainReplicationResponse`.
@@ -431,7 +428,7 @@ func (c MultiplexClient) BroadcastTx(
 
 	// As some relays may not know of all networks, we must ask
 	// to replicate required networks if they did not report some.
-	catchupRelays := c.GetBackend().ApplyFilterReplRequestRelays(
+	catchupRelays := c.backend.ApplyFilterReplRequestRelays(
 		requiredNetworks,
 		relaysWithoutSelf,
 		chainRelays,
@@ -460,7 +457,7 @@ func (c MultiplexClient) BroadcastTx(
 			"chainId", chainID,
 			"txBatch", transactionHashes)
 
-		routineNodeReplRequest := c.GetBackend().GetRoutines().NodeReplRequest
+		routineNodeReplRequest := c.backend.Routines().NodeReplRequest
 		go routineNodeReplRequest(ctx,
 			chainCatchupRelays,
 			chainID,
@@ -481,53 +478,28 @@ func (c MultiplexClient) BroadcastTx(
 
 	// The recipients send the relay ID in a ChainReplicationResponse.
 	// Blocks the broadcast thread all networks have been acknowledged by relays.
-	replRelaysPerChainID,
-		numExpectedResponses,
+	numExpectedResponses,
 		numReceivedResponses,
-		replErr := c.GetBackend().WaitForRelaysAckChainReplications(ctx, catchupRelays, transactions...)
+		replErr := c.backend.WaitForRelaysAckChainReplications(ctx, catchupRelays, transactions...)
 	if replErr != nil {
+		c.backend.GetLogger().Error("Relays did not accept chain replication",
+			"requestId", broadcastID,
+			"numRcvd", numReceivedResponses,
+			"numExpect", numExpectedResponses,
+			"txBatch", transactionHashes)
+
 		err := fmt.Errorf(
 			"CLIENT ERROR: failed to receive replication responses: %w", replErr)
 
 		c.backend.OnBroadcastError(err, userAddress, transactions...)
 		client.Error(notifyCh, err)
 		return // STOP here
-	}
-
-	if numReceivedResponses >= numExpectedResponses {
+	} else {
 		// Inform about the readiness of replication acceptance
 		c.backend.GetLogger().Info("Relays accepted chain replication",
 			"requestId", broadcastID,
 			"numRcvd", numReceivedResponses,
 			"txBatch", transactionHashes)
-	} else {
-		// Just log for now, report will be more precise
-		c.backend.GetLogger().Error("Relays did not accept chain replication",
-			"requestId", broadcastID,
-			"numRcvd", numReceivedResponses,
-			"numExpect", numExpectedResponses,
-			"txBatch", transactionHashes)
-	}
-
-	for chainID, replRelays := range replRelaysPerChainID {
-		// Make sure to have a minimum of healthy relays to accept.
-		minHealthyReplicators := int(math.Max(
-			float64(minHealthyRelays-1), // -self
-			float64(len(catchupRelays[chainID])),
-		))
-		minAcceptReplication := minHealthyReplicators * 2 / 3 // no + 1, because self doesn't ACK
-
-		// We must receive replication responses from at least minHealthyRelays.
-		if len(replRelays) < minAcceptReplication {
-			// Not all healthy relays replicated this ChainID.
-			err := fmt.Errorf(
-				"CLIENT ERROR: missing relays replication for %s, expected %d, got %d",
-				chainID, minAcceptReplication, len(replRelays))
-
-			c.backend.OnBroadcastError(err, userAddress, transactions...)
-			client.Error(notifyCh, err)
-			return // STOP here
-		}
 	}
 
 	// ------------------------------------------------------------------------
@@ -541,7 +513,7 @@ func (c MultiplexClient) BroadcastTx(
 	for _, chainID := range requiredNetworks {
 		// No-op in case the reactors are already running, i.e. this method
 		// calls [mempool.Reactor#IsRunning] before starting.
-		if err := c.backend.StartConsensusInstance(chainID); err != nil {
+		if err := c.backend.RuntimeManager().StartRuntime(chainID); err != nil {
 			reactErr := fmt.Errorf(
 				"CLIENT ERROR: failed to start reactors for %s: %w", chainID, err)
 
@@ -571,10 +543,10 @@ func (c MultiplexClient) BroadcastTx(
 	dialingWg.Add(len(relaysWithoutSelf) * len(relevantChainIds)) // each relay is dialed for each ChainID
 
 	// Track completion and failures individually for dialing process.
-	errorPeersCh := make(chan server.RelayDialError, len(relaysWithoutSelf))
+	errorPeersCh := make(chan types.RelayDialError, len(relaysWithoutSelf))
 
 	// Open connections to healthy relays to enable CometBFT messages.
-	routineCometBFTDialer := c.GetBackend().GetRoutines().CometBFTDialer
+	routineCometBFTDialer := c.backend.Routines().CometBFTDialer
 	go routineCometBFTDialer(ctx,
 		relaysWithoutSelf,
 		relevantChainIds,
@@ -631,7 +603,7 @@ func (c MultiplexClient) BroadcastTx(
 		"txBatch", transactionHashes)
 
 	// Add each transaction to the local mempool, an error stops the process.
-	if err := c.GetBackend().AddTransactions(userAddress, transactions...); err != nil {
+	if err := c.backend.AddTransactions(userAddress, transactions...); err != nil {
 		memplErr := fmt.Errorf(
 			"CLIENT ERROR: error adding txes to mempool: %w", err)
 
@@ -660,7 +632,7 @@ func (c MultiplexClient) BroadcastTx(
 	// Pushes the transaction to other relays mempool to trigger
 	// the call to client.AcceptBroadcastTx by the other relays.
 	// Uses the filtered list of relays (without self).
-	routineRelaysBroadcast := c.GetBackend().GetRoutines().RelaysBroadcast
+	routineRelaysBroadcast := c.backend.Routines().RelaysBroadcast
 	go routineRelaysBroadcast(ctx,
 		chainRelays,
 		catchupRelays,
@@ -680,7 +652,7 @@ func (c MultiplexClient) BroadcastTx(
 	// Step 10: Wait for remote transaction acceptance (ACK).
 	//
 	// Healthy relays are expected to send us back a message which contains
-	// a `AckTransactionBroadcast` on [server.AckBroadcastChannel].
+	// a `AckTransactionBroadcast` on [types.AckBroadcastChannel].
 	//
 	// If any of the healthy relays fails to ACK the transactions, a rollback
 	// will happen because we added the transactions to our local mempool.
@@ -696,10 +668,9 @@ func (c MultiplexClient) BroadcastTx(
 
 	// acceptErr will NOT be set for individual ACK errors because we may
 	// be able to reach consensus without ALL relays sending ACK responses.
-	_, ackedRelaysPerTx,
-		numExpectedAcks,
+	numExpectedAcks,
 		totalAckReceived,
-		acceptErr := c.GetBackend().WaitForRelaysAckTransactionBatch(ctx,
+		acceptErr := c.backend.WaitForRelaysAckTransactionBatch(ctx,
 		userAddress,
 		chainRelays,
 		catchupRelays,
@@ -708,6 +679,15 @@ func (c MultiplexClient) BroadcastTx(
 
 	// TODO(midas): Refactor cancel broadcast and evaluate all conditions at once.
 	if acceptErr != nil {
+		// Just log for now, report will be more precise
+		c.backend.GetLogger().Error("Relays did not accept transactions",
+			"requestId", broadcastID,
+			"numRelays", numHealthyRemote,
+			"numExpect", numExpectedAcks,
+			"numAcks", totalAckReceived,
+			"numTxes", len(transactions),
+			"txBatch", transactionHashes)
+
 		// Otherwise broadcast a rollback operation if some of the healthy
 		// relays does not accept this transaction.
 		c.backend.CancelBroadcastOperation(ctx,
@@ -721,9 +701,7 @@ func (c MultiplexClient) BroadcastTx(
 		c.backend.OnBroadcastError(err, userAddress, transactions...)
 		client.Error(notifyCh, err)
 		return // STOP here
-	}
-
-	if totalAckReceived >= numExpectedAcks {
+	} else {
 		// Inform about the readiness of transaction acceptance
 		c.backend.GetLogger().Info("Relays accepted transactions",
 			"requestId", broadcastID,
@@ -731,88 +709,10 @@ func (c MultiplexClient) BroadcastTx(
 			"numAcks", totalAckReceived,
 			"numTxes", len(transactions),
 			"txBatch", transactionHashes)
-	} else {
-		// Just log for now, report will be more precise
-		c.backend.GetLogger().Error("Relays did not accept transactions",
-			"requestId", broadcastID,
-			"numRelays", numHealthyRemote,
-			"numAcks", totalAckReceived,
-			"numTxes", len(transactions),
-			"txBatch", transactionHashes)
 	}
 
-	// In single-node network we don't expect acks from remotes, meaning the
-	// transactions should get accepted when this condition matches.
-	if numExpectedAcks == 0 {
-		for _, tx := range transactions {
-			acceptedTxHashes = append(acceptedTxHashes, tx.Hash())
-		}
-	}
-
-	for txHash, ackedRelays := range ackedRelaysPerTx {
-		// Make sure to have a minimum of 2/3 of relays to ACK the tx.
-		minAcceptTransaction := (numConsensusRelays - 1) * 2 / 3 // -1 for self
-		if numExpectedAcks == 0 {
-			minAcceptTransaction = 0
-		}
-
-		if len(ackedRelays) < minAcceptTransaction {
-			// Not all healthy relays acked this transaction.
-			// Broadcast a rollback operation because some of the healthy relays
-			// may have included (some) transactions in their mempool already.
-			c.backend.CancelBroadcastOperation(ctx,
-				userAddress,
-				transactions...,
-			)
-
-			// Just log for now, report will be more precise
-			c.backend.GetLogger().Error("Failed to receive required transactions ACK",
-				"requestId", broadcastID,
-				"numReceived", len(ackedRelays),
-				"numExpected", minAcceptTransaction,
-				"relayAcks", ackedRelays,
-				"txHash", txHash)
-
-			err := fmt.Errorf(
-				"CLIENT ERROR: missing transaction ACK for %s, expected %d, got %d",
-				txHash, minAcceptTransaction, len(ackedRelays))
-
-			c.backend.OnBroadcastError(err, userAddress, transactions...)
-			client.Error(notifyCh, err)
-			return // STOP here
-		}
-
-		// Will be added to BroadcastStatus.TxHashes in case of success.
-		if hashbz, err := hex.DecodeString(txHash); err == nil {
-			acceptedTxHashes = append(acceptedTxHashes, hashbz)
-			acceptedTxHashesStr = append(acceptedTxHashesStr, txHash)
-		}
-	}
-
-	if len(acceptedTxHashes) < len(transactions) {
-		// Relays did not accept *all* transactions.
-		// Broadcast a rollback operation because some of the healthy relays
-		// may have included transactions in their mempool already.
-		c.backend.CancelBroadcastOperation(ctx,
-			userAddress,
-			transactions...,
-		)
-
-		// Just log for now, report will be more precise
-		c.backend.GetLogger().Error("Failed to accept required transactions in batch",
-			"requestId", broadcastID,
-			"numAccepted", len(acceptedTxHashes),
-			"numExpected", len(transactions),
-			"txsAccepted", acceptedTxHashesStr,
-			"txBatch", transactionHashes)
-
-		err := fmt.Errorf(
-			"CLIENT ERROR: missing accepted transaction hashes, expected %d, got %d",
-			len(transactions), len(acceptedTxHashes))
-
-		c.backend.OnBroadcastError(err, userAddress, transactions...)
-		client.Error(notifyCh, err)
-		return // STOP here
+	for _, tx := range transactions {
+		acceptedTxHashes = append(acceptedTxHashes, tx.Hash())
 	}
 
 	// ------------------------------------------------------------------------

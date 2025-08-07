@@ -2,236 +2,48 @@ package multiplex
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"net"
-	"net/http"
-	"path/filepath"
-	"slices"
 	"strings"
-	"sync"
-	"sync/atomic"
-	"time"
 
-	"github.com/syndtr/goleveldb/leveldb"
-
-	dbm "github.com/cometbft/cometbft-db"
 	protomem "github.com/ice-blockchain/cometbft/api/cometbft/mempool/v1"
 	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
 	"github.com/ice-blockchain/cometbft/config"
-	"github.com/ice-blockchain/cometbft/crypto"
-	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	"github.com/ice-blockchain/cometbft/crypto/tmhash"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
-	"github.com/ice-blockchain/cometbft/libs/service"
-	cmtlibs "github.com/ice-blockchain/cometbft/libs/service"
 	mempl "github.com/ice-blockchain/cometbft/mempool"
-	"github.com/ice-blockchain/cometbft/node"
-	"github.com/ice-blockchain/cometbft/p2p"
-	"github.com/ice-blockchain/cometbft/privval"
-	"github.com/ice-blockchain/cometbft/proxy"
-	rpccore "github.com/ice-blockchain/cometbft/rpc/core"
-	rpcclient "github.com/ice-blockchain/cometbft/rpc/jsonrpc/client"
-	rpcserver "github.com/ice-blockchain/cometbft/rpc/jsonrpc/server"
-	sm "github.com/ice-blockchain/cometbft/state"
-	"github.com/ice-blockchain/cometbft/state/indexer"
-	blockidxkv "github.com/ice-blockchain/cometbft/state/indexer/block/kv"
-	blockidxnull "github.com/ice-blockchain/cometbft/state/indexer/block/null"
-	"github.com/ice-blockchain/cometbft/state/txindex"
-	txidxkv "github.com/ice-blockchain/cometbft/state/txindex/kv"
-	txidxnull "github.com/ice-blockchain/cometbft/state/txindex/null"
-	bs "github.com/ice-blockchain/cometbft/store"
-	"github.com/ice-blockchain/cometbft/types"
+	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
 
-	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/helpers"
-	"github.com/ice-blockchain/cometbft/multiplex/replay"
-	mxrpc "github.com/ice-blockchain/cometbft/multiplex/rpc"
+	"github.com/ice-blockchain/cometbft/multiplex/p2p"
 	"github.com/ice-blockchain/cometbft/multiplex/runtime"
-	"github.com/ice-blockchain/cometbft/multiplex/server"
-	"github.com/ice-blockchain/cometbft/multiplex/snapsapp"
+	"github.com/ice-blockchain/cometbft/multiplex/types"
 )
-
-const (
-	// Instance types.
-	InstanceKeyConfig        = "config"
-	InstanceKeyStorage       = "storage"
-	InstanceKeyState         = "state"
-	InstanceKeyStateStore    = "stateStore"
-	InstanceKeyBlockStore    = "blockStore"
-	InstanceKeyPrivValidator = "privValidator"
-	InstanceKeyP2PSwitch     = "p2p/switch"
-	InstanceKeyP2PTransport  = "p2p/transport"
-	InstanceKeyFlagBlockSync = "flag/blockSync"
-
-	// Services types.
-	ServiceKeyEventBus         = "eventBus"
-	ServiceKeyIndexers         = "indexers"
-	ServiceKeyPruner           = "pruner"
-	ServiceKeyDatabaseBlock    = "database/blockstore"
-	ServiceKeyDatabaseState    = "database/state"
-	ServiceKeyDatabaseIndex    = "database/txindex"
-	ServiceKeyDatabaseEvidence = "database/evidence"
-	ServiceKeyMempoolReactor   = "reactor/mempool"
-	ServiceKeyBlockSyncReactor = "reactor/blockSync"
-	ServiceKeyConsensusReactor = "reactor/consensus"
-	ServiceKeyEvidenceReactor  = "reactor/evidence"
-	ServiceKeyNodeRuntime      = "runtime/node"
-
-	// Network requests timeout configuration, e.g. [GetRemoteRelayInfo].
-	DefaultRequestTimeout = 5 * time.Second
-)
-
-// serviceProviderFn provides a [cmtlibs.Service] instance by name and ChainID.
-type serviceProviderFn func(string, string) cmtlibs.Service
-
-// multiplexProviderFn provides a [MultiplexMap] instance by name.
-type multiplexProviderFn func(string) MultiplexMap[any]
-
-// instanceProviderFn provides [any] instance by ChainID.
-type instanceProviderFn func(string) any
-
-// genesisDocProviderFn provides a [types.GenesisDoc] by ChainID.
-type genesisDocProviderFn func(string) (*types.GenesisDoc, error)
 
 // -----------------------------------------------------------------------------
 // Reactor
 
-// The Reactor implementation takes care of configuring node instances for the
-// correct replicated blockchain networks. The reactor starts multiple listeners
-// in parallel and sends messages on a channel to report about successful launch.
+// The Reactor implementation processes multiplex messages, about
+// chain replications and/or transaction broadcast operations.
 //
-// When a set of node listeners is ready, the multiplex reactor sends a message on
-// its channel `chainReadyCh` which contains a ChainID of the chain that is
-// being replicated. After this happened, the node is able to start syncing state
-// and/or blocks, as well as starting indexers, mempool, and other services.
-//
-// The [Reactor] structure implements [snapsapp.Reactor].
+// i.e. the [Reactor#Receive] method reacts to messages of types:
+// - [mxp2p.ChainReplicationStatus]
+// - [mxp2p.ChainReplicationRequest]
+// - [mxp2p.ChainReplicationResponse]
+// - [mxp2p.AckTransactionBroadcast]
 type Reactor struct {
-	p2p.BaseReactor // BaseService + p2p.Switch
+	cmtp2p.BaseReactor // BaseService + p2p.Switch
 
-	// Registries for node services and network
-	servicesProvider  func(string, string) cmtlibs.Service // service by name, e.g. "eventBus", and ChainID
-	multiplexProvider func(string) MultiplexMap[any]       // multiplex by name, e.g. "database", "state", etc.
+	// Resources
+	nodeKey *cmtp2p.NodeKey
+	nodeCfg *config.Config
 
-	genesisDocsMutex   sync.RWMutex
-	initialGenesisDocs *ChecksummedGenesisDocSet
-
-	// Node configuration
-	//
-	// The envMutex must be locked to access or modify environment resources.
-	envMutex     sync.RWMutex
-	nodeKey      *p2p.NodeKey
-	nodeConfig   *config.Config
-	userConfig   *config.MultiplexConfig
-	abciClient   proxy.ChainConns
-	snapsApp     *snapsapp.SnapsApp
-	acceptorImpl client.Acceptor
-
-	// Runtime(s) configuration
-	//
-	// The runtimesMutex must be locked to access or modify runtime configs.
-	runtimesMutex sync.RWMutex
-	chainRegistry ChainRegistry
-	storagePaths  MultiplexFS
-	configsPaths  MultiplexFS
-	// Registry defines a registry of active and inactive runtimes.
-	runtimeRegistry *runtime.Registry
-
-	// Networking layer
-	//
-	// The envMutex must be locked to access or modify environment resources.
-	networkMutex    sync.RWMutex
-	networks        []string
-	nodeInfo        *MultiNetworkNodeInfo
-	discoverySwitch *p2p.Switch
-	cometbftSwitch  *p2p.Switch
-	transport       *p2p.MultiplexTransport
-	rpcMultiplexer  *http.ServeMux
-	rpcRoutes       map[string]bool
-
-	// Defines the duration for network requests to timeout.
-	// Used in [Reactor#GetRemoteRelayInfo].
-	relayInfoTimeout time.Duration
-	knownRelayInfo   map[string]*mxrpc.RPCResultRelayInfo
-
-	// Mapping of mempool partners relay IDs by transaction hash.
-	poolRequestsMtx  sync.RWMutex
-	poolRequestsSent map[string][]string
-
-	// Services registry is a multiplex map which is searchable by service name
-	// and which contains other multiplex maps where keys are ChainID values.
-	//
-	// Services priority contains a slice of service names to keep track of the
-	// order of execution of services as used during the shutdown routine.
-	//
-	// To access this property, the mutex must be locked.
-	servicesMutex    sync.RWMutex
-	servicesRegistry NamedMultiplexMap[cmtlibs.Service]
-	servicesPriority map[string]uint32
-	servicesSequence []string
-
-	// Multiplex registry is a multiplex map which is searchable by service name
-	// and which contains other multiplex maps where keys are ChainID values.
-	//
-	// To access this property, the mutex must be locked.
-	multiplexMutex    sync.RWMutex
-	multiplexRegistry NamedMultiplexMap[any]
-	multiplexMetrics  NamedMultiplexMap[any]
-
-	// chainReadyChs contains channels that are opened when node instance
-	// is being started by ChainID. These channels are written on when node
-	// instances have started, inside the [OnStart] method.
-	// Channels are consumed by [InjectNewRuntime].
-	// This channel is closed by the [OnStop] method.
-	chainReadyMtx sync.RWMutex
-	chainReadyChs map[string]chan bool
-
-	// Mapping of ChainID for which we are executing blocksync. When a ChainID
-	// appears in this map, we shall send ChainReplicationComplete messages to
-	// peers for any incoming mempool.Tx, i.e. in mempool.Reactor#processTxs.
-	replRequestsMtx  sync.RWMutex
-	replRequestsRcvd map[string]*uint64
-
-	// ackReplResChs contains channels that are opened on-demand, when the
-	// application expects to receive [ChainReplicationResponse] messages from
-	// relevant relays, mapped by ChainID. Messages forwarded on this channel
-	// must contain a [mxp2p.ChainReplicationResponse].
-	// Channels are consumed by [MultiplexBackend#WaitForRelaysAckChainReplications].
-	// These channels are closed by the [OnStop] method in case they were not yet
-	// closed by the deferral process in [MultiplexBackend#WaitForRelaysAckChainReplications].
-	ackReplResMtx sync.RWMutex
-	ackReplResChs map[string]chan *mxp2p.ChainReplicationResponse
-
-	// ackAcceptTxChs contains channels that are opened on-demand, when the
-	// application expects to receive [AckTransactionBroadcast] messages from
-	// relevant relays. Keys are transaction hashes. Messages forwarded on this
-	// channel must contain a [mxp2p.AckTransactionBroadcast].
-	// Channels are consumed by [MultiplexBackend#WaitForRelaysAckTransactionBatch].
-	// These channels are closed by the [OnStop] method in case they were not yet
-	// closed by the deferral process in [MultiplexBackend#WaitForRelaysAckTransactionBatch].
-	ackAcceptTxMtx sync.RWMutex
-	ackAcceptTxChs map[string]chan *mxp2p.AckTransactionBroadcast
-
-	// doneAcceptTxHashes contains a map where keys are transaction hashes (hex)
-	// and the value is set to true when a AckTransactionBroadcast process
-	// closes the corresponding ackAcceptTxChs channel.
-	doneAcceptTxMtx    sync.RWMutex
-	doneAcceptTxHashes map[string]bool
-
-	doneRuntimeUpdatesMtx sync.RWMutex
-	doneRuntimeUpdates    map[string]bool
-
-	doneAckReplicationMtx sync.RWMutex
-	doneAckReplication    map[string]bool
-
-	runtimeUpdatesMtx sync.RWMutex
-	runtimeUpdatesChs map[string]chan *mxp2p.ChainReplicationComplete
-
-	// ReplayPool defines a pool for concurrent processing of transaction buckets,
-	// which consist of one or many batches of transactions by user address.
-	replayPoolMtx sync.RWMutex
-	replayPool    *replay.ReplayPool
+	// Services
+	resourceMgr    types.ResourceManager
+	replicationMgr types.ReplicationManager
+	broadcastMgr   types.BroadcastManager
+	runtimeMgr     *runtime.Registry
+	discoveryPool  *p2p.ConnectionPool
+	cometbftPool   *p2p.ConnectionPool
 
 	// Internal
 	logger cmtlog.Logger
@@ -244,84 +56,20 @@ type Reactor struct {
 
 type ReactorOption func(*Reactor)
 
-// Type assertion to make sure this structure is compatible with snapsapp.
-var _ snapsapp.Reactor = (*Reactor)(nil)
-
-// NewReactor creates a new multiplex reactor around a [p2p.NodeKey],
-// a global node configuration with [config.Config] and a [ChainRegistry].
-//
-// Note that the genesisDocsProvider must be passed as well but is being
-// used only at Start of the reactor, when the initial [sm.State] is loaded.
 func NewReactor(
 	ctx context.Context,
-	nodeKey *p2p.NodeKey,
+	nodeKey *cmtp2p.NodeKey,
 	nodeCfg *config.Config,
+	resourceMgr types.ResourceManager,
+	replicationMgr types.ReplicationManager,
+	broadcastMgr types.BroadcastManager,
 	logger cmtlog.Logger,
-	chainRegistry ChainRegistry,
-	genesisDocsProvider node.GenesisDocProvider,
 	options ...ReactorOption,
 ) *Reactor {
-	// CometBFT servers share ports amongst networks
-	p2pListenAddr := overwriteListenPort(
-		nodeCfg.P2P.ListenAddress,
-		int(nodeCfg.DiscoveryPort+1), // defaults to 30002
-	)
-	rpcListenAddr := overwriteListenPort(
-		nodeCfg.RPC.ListenAddress,
-		int(nodeCfg.DiscoveryPort+2), // defaults to 30003
-	)
-
-	// Make sure we always refer to the correct listen addresses:
-	// - P2P Discovery Port: discovery_port
-	// - RPC Discovery Port: discovery_port-1
-	// - P2P CometBFT Port:  discovery_port+1
-	// - RPC CometBFT Port:  discovery_port+2
-	// - Prometheus Port:    discovery_port+3
-	nodeCfg.P2P.ListenAddress = p2pListenAddr
-	nodeCfg.RPC.ListenAddress = rpcListenAddr
-
 	reactor := &Reactor{
-		// Provides the ChainRegistry interface
-		chainRegistry: chainRegistry,
-
-		// Provides node information and config
-		nodeKey:    nodeKey,
-		nodeConfig: nodeCfg,
-		userConfig: &nodeCfg.MultiplexConfig,
-
-		// Provides an *ordered* slice of ChainID
-		networks: chainRegistry.GetChains(),
-
-		// Provides a default acceptor implementation
-		acceptorImpl: &client.DefaultAcceptor{},
-
-		runtimeRegistry: runtime.NewRegistry(ctx,
-			logger.With("module", "idle-manager"),
-		),
-
-		// Allocations
-		servicesRegistry:  NamedMultiplexMap[cmtlibs.Service]{},
-		servicesPriority:  map[string]uint32{},
-		servicesSequence:  []string{},
-		multiplexRegistry: NamedMultiplexMap[any]{},
-		multiplexMetrics:  NamedMultiplexMap[any]{},
-		storagePaths:      MultiplexFS{},
-		configsPaths:      MultiplexFS{},
-		knownRelayInfo:    map[string]*mxrpc.RPCResultRelayInfo{},
-		rpcRoutes:         map[string]bool{},
-		replRequestsRcvd:  map[string]*uint64{},
-
-		// Internal channels
-		chainReadyChs:      make(map[string]chan bool),
-		ackReplResChs:      make(map[string]chan *mxp2p.ChainReplicationResponse),
-		doneAckReplication: make(map[string]bool),
-		ackAcceptTxChs:     make(map[string]chan *mxp2p.AckTransactionBroadcast),
-		doneAcceptTxHashes: make(map[string]bool),
-		runtimeUpdatesChs:  make(map[string]chan *mxp2p.ChainReplicationComplete),
-		doneRuntimeUpdates: make(map[string]bool),
-
-		// Internals
-		logger: logger,
+		resourceMgr: resourceMgr,
+		nodeKey:     nodeKey,
+		logger:      logger,
 	}
 
 	// Enable overwrite of some optional properties.
@@ -329,32 +77,322 @@ func NewReactor(
 		option(reactor)
 	}
 
-	reactor.BaseReactor = *p2p.NewBaseReactor(ctx, "Multiplex", reactor)
+	reactor.BaseReactor = *cmtp2p.NewBaseReactor(ctx, "Multiplex", reactor)
 
-	// Note that this expects the `genesis.json` to contain a GenesisDocSet.
-	// This call to the underlying provider Validates the GenesisDocSet or
-	// creates an empty genesis doc set with no checksum to verify.
-	icsGenesisDocSet, err := genesisDocsProvider()
-	if err != nil {
-		reactor.logger.Debug("CAUTION: Using empty GenesisDocSet (not an error)")
+	// Estimates max lengths for message payloads
+	reactor.computePayloadSizes()
+
+	return reactor
+}
+
+// ----------------------------------------------------------------------------
+
+func (reactor *Reactor) SetOptions(options ...ReactorOption) {
+	for _, option := range options {
+		option(reactor)
+	}
+}
+
+// GetLogger returns a [cmtlog.Logger] instance.
+func (reactor *Reactor) GetLogger() cmtlog.Logger {
+	return reactor.logger
+}
+
+// SetLogger sets a custom [cmtlog.Logger] instance.
+func (reactor *Reactor) SetLogger(logger cmtlog.Logger) {
+	reactor.logger = logger
+}
+
+// SetRuntimeManager sets a custom [*runtime.Registry] instance.
+func (reactor *Reactor) SetRuntimeManager(reg *runtime.Registry) {
+	reactor.runtimeMgr = reg
+}
+
+// SetDiscoveryPool sets a custom [*p2p.ConnectionPool] instance.
+func (reactor *Reactor) SetDiscoveryPool(pool *p2p.ConnectionPool) {
+	reactor.discoveryPool = pool
+}
+
+// SetRuntimePool sets a custom [*p2p.ConnectionPool] instance.
+func (reactor *Reactor) SetRuntimePool(pool *p2p.ConnectionPool) {
+	reactor.cometbftPool = pool
+}
+
+func (reactor *Reactor) IdleManager() types.IdleManager {
+	return reactor.runtimeMgr
+}
+
+// ----------------------------------------------------------------------------
+// Reactor implements cmtp2p.Reactor
+
+// GetChannels implements cmtp2p.Reactor.
+func (reactor *Reactor) GetChannels() []*cmtp2p.ChannelDescriptor {
+	return []*cmtp2p.ChannelDescriptor{
+		{
+			ID: types.ReplicationChannel,
+			// Lower priority than blocksync, evidence, mempool & consensus
+			// i.e. This channel has priority to be gossiped on.
+			Priority:    3,
+			MessageType: &mxp2p.Message{},
+		},
+		{
+			ID:          types.AckBroadcastChannel,
+			Priority:    2,
+			MessageType: &mxp2p.Receipt{},
+			//RecvMessageCapacity: reactor.broadcastRecvMessageCapacity,
+		},
+		{
+			ID:          types.RuntimeChannel,
+			Priority:    10, // This channel does not have priority.
+			MessageType: &mxp2p.Message{},
+			//RecvMessageCapacity: reactor.runtimeRecvMessageCapacity,
+		},
+		{
+			ID:                  mempl.MempoolChannel,
+			Priority:            5,
+			RecvMessageCapacity: reactor.recvMempoolTxMessageCapacity,
+			MessageType:         &protomem.Message{},
+		},
+	}
+}
+
+// AddPeer implements cmtp2p.Reactor.
+func (*Reactor) AddPeer(peer *cmtp2p.PeerImpl) {}
+
+// RemovePeer implements cmtp2p.Reactor.
+func (*Reactor) RemovePeer(peer *cmtp2p.PeerImpl, _ any) {}
+
+// Receive implements cmtp2p.Reactor.
+func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
+	reactor.logger.Debug("Receive", "src", e.Src, "chId", e.ChannelID, "chainID", e.ChainID)
+
+	// CAUTION:
+	//
+	// Due to the MempoolChannel also being added to multiplex Reactor,
+	// we must make sure that those messages are forwarded to running mempool.
+	//
+	// TODO(midas): refactor this with BaseReactor.ForwardMessage("MEMPOOL", e).
+	if e.ChannelID == mempl.MempoolChannel && len(e.ChainID) > 0 {
+		mempoolReactor, ok := reactor.resourceMgr.Get(
+			e.ChainID,
+			types.ServiceKeyMempoolReactor,
+		).(*mempl.Reactor)
+		if !ok || !mempoolReactor.IsRunning() {
+			reactor.runtimeMgr.InitRuntime(e.ChainID, []string{})
+			reactor.runtimeMgr.StartRuntime(e.ChainID)
+		}
+
+		// IMPORTANT:
+		//
+		// Forwards this message for processing to mempool.Reactor.
+		// servicesProvider := r.GetServicesProvider()
+		reactor.logger.Info("Forwarding Tx",
+			"memR", mempoolReactor,
+			"running", mempoolReactor.IsRunning(),
+			"msg", e.Message)
+		mempoolReactor.Receive(e)
+		return // Forwarded
 	}
 
-	// Locks the genesisDocsMutex for writing
-	reactor.SetChecksummedGenesisDocSet(icsGenesisDocSet.(*ChecksummedGenesisDocSet))
+	// Determine public source address from secret connection.
+	sourcePeer := e.Src
+	sourceAddr, err := sourcePeer.NodeInfo().NetAddress()
+	if err != nil {
+		reactor.logger.Error("ignoring message - failed to parse source address from message",
+			"msg", e, "err", err)
+		return
+	}
 
-	// Initializes instance providers (services, multiplex)
-	reactor.initMultiplexProviders(icsGenesisDocSet)
+	reactor.logger.Debug("Received from", "src", sourceAddr.String())
 
-	// TODO(midas): Write some more tests to determine correct threshold.
-	reactor.replayPoolMtx.Lock()
-	reactor.replayPool = replay.NewReplayPool(ctx,
-		reactor.logger.With("module", "replay"),
-		replay.ReplayPoolThreshold(10),
-		replay.ReplayPoolAcceptor(reactor.acceptorImpl),
+	switch extMsg := e.Message.(type) {
+	// TODO(midas): ChainReplicationStatus
+	// ChainReplicationRequest
+	// ChainReplicationResponse
+	// ChainReplicationComplete
+	case *mxp2p.Message:
+		// We shall track completeness of replications using a manager.
+		reactor.replicationMgr.Process(e)
+
+		msg := extMsg.GetSum()
+		switch msg.(type) {
+		// ChainReplicationRequest
+		// Received a request to replicate a (new) chain.
+		case *mxp2p.Message_ChainReplicationRequest:
+			replRequest := extMsg.GetChainReplicationRequest()
+			reactor.logger.Debug("Received ChainReplicationRequest", "msg", replRequest)
+
+			// Process the chain replication request.
+			if err := reactor.handleChainReplicationRequest(e); err != nil {
+				reactor.logger.Error(
+					"failed to process ChainReplicationRequest: error handling replication",
+					"chainId", replRequest.ChainID,
+					"err", err,
+				)
+				return
+			}
+
+			// Dial the peer for CometBFT to permit faster consensus building.
+			if _, err := reactor.cometbftPool.Connector().Dial(sourceAddr); err != nil {
+				reactor.logger.Error(
+					"failed to process ChainReplicationRequest: error dialing source peer",
+					"chainId", replRequest.ChainID,
+					"err", err,
+				)
+			}
+
+			// Start consensus reactors for newly injected runtime.
+			if err := reactor.runtimeMgr.StartRuntime(
+				replRequest.ChainID,
+			); err != nil {
+				reactor.logger.Error(
+					"failed to process ChainReplicationRequest: error starting consensus reactors",
+					"chainId", replRequest.ChainID,
+					"err", err,
+				)
+				return
+			}
+
+			// Activate this runtime in our runtime registry.
+			//
+			// In case of conR.WaitSync, OnComplete is called by conR.SwitchToConsensus,
+			// otherwise OnComplete is called by memR.sendChainReplicationComplete when
+			// transactions are successfully processed with memR.processTxs.
+			reactor.IdleManager().OnActivate(replRequest.ChainID)
+
+			// Dial the peer for Discovery as we will be sending a ChainReplicationResponse.
+			if _, err := reactor.discoveryPool.Connector().Dial(sourceAddr); err != nil {
+				reactor.logger.Error(
+					"failed to process ChainReplicationRequest: error dialing source peer",
+					"chainId", replRequest.ChainID,
+					"err", err,
+				)
+			}
+
+			// Now respond with a [ChainReplicationResponse].
+			// This serves as a receipt for a chain replication request.
+			if err = reactor.sendChainReplicationResponse(e.Src, replRequest.ChainID); err != nil {
+				reactor.logger.Error("failed to send ChainReplicationResponse",
+					"chainId", replRequest.ChainID,
+					"from", reactor.nodeKey.ID(),
+					"to", e.Src.ID(),
+					"err", err,
+				)
+			}
+
+			return
+
+		// ChainReplicationResponse
+		// Received a receipt of replication from one of the relays.
+		case *mxp2p.Message_ChainReplicationResponse:
+			replResponse := extMsg.GetChainReplicationResponse()
+			reactor.logger.Debug("Received ChainReplicationResponse", "msg", replResponse)
+
+			// Dial the peer for CometBFT to permit faster consensus building.
+			if _, err := reactor.cometbftPool.Connector().Dial(sourceAddr); err != nil {
+				reactor.logger.Error(
+					"failed to process ChainReplicationRequest: error dialing source peer",
+					"chainId", replResponse.ChainID,
+					"err", err,
+				)
+			}
+
+			return
+
+		// ChainReplicationComplete
+		// Received a receipt of replication completeness from a peer.
+		case *mxp2p.Message_ChainReplicationComplete:
+			replComplete := extMsg.GetChainReplicationComplete()
+			reactor.logger.Debug("Received ChainReplicationComplete", "msg", replComplete)
+
+			// NOTE: Don't dial back replication partner here, since we may
+			// approach runtime idling due to completion of the replication.
+			return
+
+		default:
+			reactor.logger.Error(
+				"Unknown internal message type",
+				"src", e.Src,
+				"chainId", e.ChainID,
+				"chId", e.ChannelID,
+				"msg", e.Message,
+			)
+			return
+		}
+
+	case *mxp2p.Receipt:
+		// We shall track completeness of broadcast operations using a manager.
+		reactor.broadcastMgr.Process(e)
+
+		msg := extMsg.GetSum()
+		switch msg.(type) {
+		// AckTransactionBroadcast
+		// Received a receipt of relay mempool inclusion for a transaction hash.
+		case *mxp2p.Receipt_AckTransactionBroadcast:
+			ackTxBroadcast := extMsg.GetAckTransactionBroadcast()
+			reactor.logger.Debug("Received AckTransactionBroadcast", "msg", ackTxBroadcast)
+
+			return
+
+		default:
+			reactor.logger.Error(
+				"Unknown internal receipt type",
+				"src", e.Src,
+				"chainId", e.ChainID,
+				"chId", e.ChannelID,
+				"msg", e.Message,
+			)
+			return
+		}
+
+	default:
+		reactor.logger.Error(
+			"Unknown message type",
+			"src", e.Src,
+			"chainId", e.ChainID,
+			"chId", e.ChannelID,
+			"msg", e.Message,
+		)
+		return
+	}
+}
+
+// ----------------------------------------------------------------------------
+// Reactor implements [cmtlibs.Service]
+
+// OnStart starts the multiplex reactor.
+func (reactor *Reactor) OnStart(ctx context.Context) error {
+	// TODO(midas): remove debug logs
+	reactor.logger.Debug("Starting multiplex reactor",
+		"nodeId", reactor.nodeKey.ID(),
 	)
-	reactor.replayPoolMtx.Unlock()
 
-	allocNodeId := make([]byte, p2p.IDByteLength)
+	return nil
+}
+
+// OnStop stops the multiplex reactor.
+func (reactor *Reactor) OnStop() {
+	// TODO(midas): remove debug logs
+	reactor.logger.Debug("Stopping multiplex reactor",
+		"nodeId", reactor.nodeKey.ID(),
+	)
+}
+
+// OnReset resets the multiplex reactor.
+func (reactor *Reactor) OnReset(ctx context.Context) error {
+	// TODO(midas): remove debug logs
+	reactor.logger.Debug("Reset multiplex reactor",
+		"nodeId", reactor.nodeKey.ID(),
+	)
+	return nil
+}
+
+// ----------------------------------------------------------------------------
+
+// computePayloadSizes computes the max payload lengths for messages received
+// with this reactor implementation.
+func (reactor *Reactor) computePayloadSizes() {
+	allocNodeId := make([]byte, cmtp2p.IDByteLength)
 	allocChainID := strings.Join([]string{
 		helpers.DefaultMultiplexPrefix,
 		helpers.MakeAddress().String(),
@@ -364,13 +402,13 @@ func NewReactor(
 	// Pre-allocate an example AckTransactionBroadcast message to realistically
 	// estimate the message capacity needed for AckBroadcastChannel.
 	{
-		allocTxHash := [][]byte{make([]byte, tmhash.Size)}
+		allocTxHash := make([]byte, tmhash.Size)
 		ackTxMsg := mxp2p.Receipt{
 			Sum: &mxp2p.Receipt_AckTransactionBroadcast{
 				AckTransactionBroadcast: &mxp2p.AckTransactionBroadcast{
-					ChainID:  allocChainID,
-					NodeId:   string(allocNodeId),
-					TxHashes: allocTxHash,
+					ChainID: allocChainID,
+					NodeId:  string(allocNodeId),
+					TxHash:  allocTxHash,
 				},
 			},
 		}
@@ -392,7 +430,7 @@ func NewReactor(
 	}
 
 	{
-		largestTx := make([]byte, nodeCfg.Mempool.MaxTxBytes)
+		largestTx := make([]byte, reactor.nodeCfg.Mempool.MaxTxBytes)
 		batchMsg := protomem.Message{
 			Sum: &protomem.Message_Txs{
 				Txs: &protomem.Txs{Txs: [][]byte{largestTx}},
@@ -400,2308 +438,6 @@ func NewReactor(
 		}
 		reactor.recvMempoolTxMessageCapacity = batchMsg.Size()
 	}
-
-	return reactor
-}
-
-func (reactor *Reactor) GetRelayDialerForCometBFT() mempl.RelayDialerFn {
-	return func(
-		sw *p2p.Switch,
-		peer *p2p.PeerImpl,
-		chainID string,
-	) (id p2p.ID, err error) {
-		sourceAddr, err := peer.NodeInfo().NetAddress()
-		if err != nil {
-			return p2p.ID(""), fmt.Errorf(
-				"ignoring dial attempt - failed to parse source address from peer#%s: %w",
-				peer.ID(), err,
-			)
-		}
-
-		// Determine "remote relay address" for discovery, this address is used
-		// to determine the correct relay address for Discovery & CometBFT.
-		// We store the result in `r.knownRelayInfo` to fetch only once per relay ID.
-		discoveryAddr, err := reactor.GetRemoteDiscoveryAddress(peer)
-		if err != nil {
-			return p2p.ID(""), fmt.Errorf(
-				"ignoring dial attempt - failed to fetch discovery address from source for %s: %w",
-				sourceAddr.String(), err,
-			)
-		}
-
-		// Dials the CometBFT relay to permit faster consensus startup.
-		// Due to secret conn wrapping, we may need to call the RelayInfo RPC first.
-		if err := reactor.DialRelayForCometBFT(discoveryAddr, chainID); err != nil {
-			return p2p.ID(""), fmt.Errorf(
-				"dialing error - failed to connect to relay for %s: %w",
-				discoveryAddr.String(), err,
-			)
-		}
-
-		return discoveryAddr.ID(), nil
-	}
-}
-
-// WithAcceptor is an option helper to inject a custom acceptor implementation
-// which accepts a user address and an acceptor.
-func WithAcceptor(
-	acceptor client.Acceptor,
-) func(*Reactor) {
-	return func(r *Reactor) {
-		r.SetAcceptor(acceptor)
-	}
-}
-
-func WithRelayInfoTimeout(t time.Duration) func(*Reactor) {
-	return func(r *Reactor) {
-		r.relayInfoTimeout = t
-	}
-}
-
-func ReactorWithActiveRuntimes(
-	ctx context.Context,
-	chainIds []string,
-	otherValidatorsPerChainID map[string][]string,
-) func(*Reactor) {
-	return func(r *Reactor) {
-		// Also setup node listeners, this mimics a runtime allocation.
-		for _, chainID := range chainIds {
-			otherValidators := []string{}
-			if _, ok := otherValidatorsPerChainID[chainID]; ok {
-				otherValidators = otherValidatorsPerChainID[chainID][:]
-			}
-
-			r.AllocateNetwork(chainID)                   // db, fs, privval
-			r.InjectNewNetwork(chainID, otherValidators) // config, genesis, state
-			r.InjectNewRuntime(ctx, chainID)             // event bus, indexer, p2p
-		}
-	}
-}
-
-// ----------------------------------------------------------------------------
-// Reactor public implementation
-
-func (reactor *Reactor) SetOptions(options ...ReactorOption) {
-	for _, option := range options {
-		option(reactor)
-	}
-}
-
-func (reactor *Reactor) SetRegistryOptions(options ...runtime.RegistryOption) {
-	for _, option := range options {
-		option(reactor.runtimeRegistry)
-	}
-}
-
-// GetLogger returns a [cmtlog.Logger] instance.
-func (reactor *Reactor) GetLogger() cmtlog.Logger {
-	return reactor.logger
-}
-
-// SetLogger sets a custom [cmtlog.Logger] instance.
-func (reactor *Reactor) SetLogger(logger cmtlog.Logger) {
-	reactor.logger = logger
-}
-
-// GetNodeKey returns the [p2p.NodeKey] instance.
-// Internal mutex envMutex is locked for read.
-func (reactor *Reactor) GetNodeKey() *p2p.NodeKey {
-	reactor.envMutex.RLock()
-	defer reactor.envMutex.RUnlock()
-	return reactor.nodeKey
-}
-
-// GetNodeConfig returns a [config.Config] instance.
-// Internal mutex envMutex is locked for read.
-func (reactor *Reactor) GetNodeConfig() *config.Config {
-	reactor.envMutex.RLock()
-	defer reactor.envMutex.RUnlock()
-	return reactor.nodeConfig
-}
-
-// GetMultiplexConfig returns a [config.MultiplexConfig] instance.
-// Internal mutex envMutex is locked for read.
-func (reactor *Reactor) GetMultiplexConfig() *config.MultiplexConfig {
-	reactor.envMutex.RLock()
-	defer reactor.envMutex.RUnlock()
-	return reactor.userConfig
-}
-
-// GetABCIClient returns a [proxy.ChainConns] ABCI client.
-// The ABCI, or "application-blockchain client interface"
-// creates blocks proposals locally and includes transactions.
-// Internal mutex envMutex is locked for read.
-func (reactor *Reactor) GetABCIClient() proxy.ChainConns {
-	reactor.envMutex.RLock()
-	defer reactor.envMutex.RUnlock()
-	return reactor.abciClient
-}
-
-// SetABCIClient sets a custom [proxy.ChainConns] ABCI client.
-// Note that this method is only used in tests for now.
-// Internal mutex envMutex is locked for write.
-func (reactor *Reactor) SetABCIClient(abciClient proxy.ChainConns) {
-	reactor.envMutex.Lock()
-	defer reactor.envMutex.Unlock()
-	reactor.abciClient = abciClient
-}
-
-// GetSnapsApp returns a [snapsapp.SnapsApp] instance.
-// Internal mutex envMutex is locked for read.
-func (reactor *Reactor) GetSnapsApp() *snapsapp.SnapsApp {
-	reactor.envMutex.RLock()
-	defer reactor.envMutex.RUnlock()
-	return reactor.snapsApp
-}
-
-// SetSnapsApp returns a [snapsapp.SnapsApp] instance.
-// Internal mutex envMutex is locked for read.
-func (reactor *Reactor) SetSnapsApp(app *snapsapp.SnapsApp) {
-	reactor.envMutex.Lock()
-	defer reactor.envMutex.Unlock()
-	reactor.snapsApp = app
-}
-
-// DiscoveryPort returns the configured DiscoveryPort.
-// Internal mutex envMutex is locked for read.
-func (reactor *Reactor) DiscoveryPort() uint16 {
-	reactor.envMutex.RLock()
-	defer reactor.envMutex.RUnlock()
-	return reactor.nodeConfig.DiscoveryPort
-}
-
-// GetAcceptor returns a [client.Acceptor] instance.
-// Internal mutex envMutex is locked for read.
-// See also: [WithAcceptor], [SetAcceptor]
-func (reactor *Reactor) GetAcceptor() client.Acceptor {
-	reactor.envMutex.RLock()
-	defer reactor.envMutex.RUnlock()
-	return reactor.acceptorImpl
-}
-
-// SetAcceptor sets a custom [client.Acceptor] acceptor implementation
-// Internal mutex envMutex is locked for write.
-func (reactor *Reactor) SetAcceptor(acceptor client.Acceptor) {
-	reactor.envMutex.Lock()
-	defer reactor.envMutex.Unlock()
-	reactor.acceptorImpl = acceptor
-
-	if reactor.snapsApp != nil {
-		reactor.snapsApp.SetAcceptor(acceptor)
-	}
-
-	serviceProvider := reactor.GetServicesProvider()
-	if serviceProvider == nil {
-		// Acceptor will be set when first mempool reactor is created
-		// i.e. Nothing to do.
-		return
-	}
-
-	relevantChainIds := reactor.GetNetworks()
-	for _, chainID := range relevantChainIds {
-		if memR := serviceProvider(ServiceKeyMempoolReactor, chainID); memR != nil {
-			memR.(*mempl.Reactor).SetAcceptor(acceptor)
-		}
-	}
-}
-
-// GetStoragePaths returns a [MultiplexFS] instance.
-// Internal mutex runtimesMutex is locked for read.
-//
-// GetStoragePaths implements [snapsapp.Reactor].
-func (reactor *Reactor) GetStoragePaths() map[string]string {
-	reactor.runtimesMutex.RLock()
-	defer reactor.runtimesMutex.RUnlock()
-	return reactor.storagePaths
-}
-
-// SetStoragePaths sets a custom [MultiplexFS] map of storage paths.
-// Internal mutex runtimesMutex is locked for write.
-func (reactor *Reactor) SetStoragePaths(fs MultiplexFS) {
-	reactor.runtimesMutex.Lock()
-	defer reactor.runtimesMutex.Unlock()
-	reactor.storagePaths = fs
-}
-
-// GetConfigsPaths returns a [MultiplexFS] instance.
-// Internal mutex runtimesMutex is locked for read.
-func (reactor *Reactor) GetConfigsPaths() map[string]string {
-	reactor.runtimesMutex.RLock()
-	defer reactor.runtimesMutex.RUnlock()
-	return reactor.configsPaths
-}
-
-// SetConfigsPaths sets a custom [MultiplexFS] map of configs paths.
-// Internal mutex runtimesMutex is locked for write.
-func (reactor *Reactor) SetConfigsPaths(fs MultiplexFS) {
-	reactor.runtimesMutex.Lock()
-	defer reactor.runtimesMutex.Unlock()
-	reactor.configsPaths = fs
-}
-
-// GetChainRegistry returns a [ChainRegistry] instance.
-// Internal mutex runtimesMutex is locked for read.
-func (reactor *Reactor) GetChainRegistry() ChainRegistry {
-	reactor.runtimesMutex.RLock()
-	defer reactor.runtimesMutex.RUnlock()
-	return reactor.chainRegistry
-}
-
-// GetRuntimeRegistry returns the active node runtime manager.
-func (reactor *Reactor) GetRuntimeRegistry() *runtime.Registry {
-	reactor.runtimesMutex.Lock()
-	defer reactor.runtimesMutex.Unlock()
-
-	return reactor.runtimeRegistry
-}
-
-// SetRuntimeRegistry returns the active node runtime manager.
-func (reactor *Reactor) SetRuntimeRegistry(r *runtime.Registry) {
-	reactor.runtimesMutex.Lock()
-	defer reactor.runtimesMutex.Unlock()
-
-	reactor.runtimeRegistry = r
-}
-
-// GetChecksummedGenesisDocSet returns a [ChecksummedGenesisDocSet] instance.
-// Internal mutex genesisDocsMutex is locked for read.
-func (reactor *Reactor) GetChecksummedGenesisDocSet() *ChecksummedGenesisDocSet {
-	reactor.genesisDocsMutex.RLock()
-	defer reactor.genesisDocsMutex.RUnlock()
-	return reactor.initialGenesisDocs
-}
-
-// SetChecksummedGenesisDocSet sets a custom [*ChecksummedGenesisDocSet].
-// Internal mutex genesisDocsMutex is locked for read.
-func (reactor *Reactor) SetChecksummedGenesisDocSet(ds *ChecksummedGenesisDocSet) {
-	reactor.genesisDocsMutex.Lock()
-	defer reactor.genesisDocsMutex.Unlock()
-	reactor.initialGenesisDocs = ds
-}
-
-// GetMultiNetworkNodeInfo returns a [MultiNetworkNodeInfo] pointer.
-// Internal mutex networkMutex is locked for read.
-func (reactor *Reactor) GetMultiNetworkNodeInfo() *MultiNetworkNodeInfo {
-	reactor.networkMutex.RLock()
-	defer reactor.networkMutex.RUnlock()
-	return reactor.nodeInfo
-}
-
-// SetNodeInfo sets a custom [MultiNetworkNodeInfo] instance.
-// Note that this method is only used in tests for now.
-// Internal mutex networkMutex is locked for write.
-func (reactor *Reactor) SetNodeInfo(nodeInfo *MultiNetworkNodeInfo) {
-	reactor.networkMutex.Lock()
-	defer reactor.networkMutex.Unlock()
-	reactor.nodeInfo = nodeInfo
-}
-
-// GetEventSwitchForDiscovery returns the [p2p.Switch] instance
-// used to communicate [ChainReplicationRequest] messages.
-// This switch must be used to send messages on `DiscoveryPort`.
-// Internal mutex networkMutex is locked for read.
-func (reactor *Reactor) GetEventSwitchForDiscovery() *p2p.Switch {
-	reactor.networkMutex.RLock()
-	defer reactor.networkMutex.RUnlock()
-	return reactor.discoverySwitch
-}
-
-// SetEventSwitchForDiscovery sets a custom [p2p.Switch] instance.
-// Internal mutex networkMutex is locked for write.
-func (reactor *Reactor) SetEventSwitchForDiscovery(sw *p2p.Switch) {
-	reactor.networkMutex.Lock()
-	defer reactor.networkMutex.Unlock()
-	reactor.discoverySwitch = sw
-}
-
-// GetEventSwitchForCometBFT returns the [p2p.Switch] instance
-// used to communicate CometBFT messages, including block-sync.
-// This switch must be used to send messages on `DiscoveryPort+1`.
-// Internal mutex networkMutex is locked for read.
-func (reactor *Reactor) GetEventSwitchForCometBFT() *p2p.Switch {
-	reactor.networkMutex.RLock()
-	defer reactor.networkMutex.RUnlock()
-	return reactor.cometbftSwitch
-}
-
-// SetEventSwitchForCometBFT sets a custom [p2p.Switch] instance.
-// Internal mutex networkMutex is locked for write.
-func (reactor *Reactor) SetEventSwitchForCometBFT(sw *p2p.Switch) {
-	reactor.networkMutex.Lock()
-	defer reactor.networkMutex.Unlock()
-	reactor.cometbftSwitch = sw
-}
-
-// GetTransportForCometBFT returns the [p2p.MultiplexTransport] instance.
-// Internal mutex networkMutex is locked for read.
-func (reactor *Reactor) GetTransportForCometBFT() *p2p.MultiplexTransport {
-	reactor.networkMutex.RLock()
-	defer reactor.networkMutex.RUnlock()
-	return reactor.transport
-}
-
-// SetTransportForCometBFT sets a custom [p2p.MultiplexTransport] instance.
-// Internal mutex networkMutex is locked for write.
-func (reactor *Reactor) SetTransportForCometBFT(t *p2p.MultiplexTransport) {
-	reactor.networkMutex.Lock()
-	defer reactor.networkMutex.Unlock()
-	reactor.transport = t
-}
-
-// GetRPCMultiplexer returns a [http.ServeMux] instance.
-// Internal mutex networkMutex is locked for read.
-func (reactor *Reactor) GetRPCMultiplexer() *http.ServeMux {
-	reactor.networkMutex.RLock()
-	defer reactor.networkMutex.RUnlock()
-	return reactor.rpcMultiplexer
-}
-
-// SetRPCMultiplexer sets a custom [http.ServeMux] instance.
-// Internal mutex networkMutex is locked for write.
-func (reactor *Reactor) SetRPCMultiplexer(mux *http.ServeMux) {
-	reactor.networkMutex.Lock()
-	defer reactor.networkMutex.Unlock()
-	reactor.rpcMultiplexer = mux
-}
-
-// ShouldAnnounceReplication returns true if a ChainID appears in
-// replRequestsRcvd, meaning if we received a ChainReplicationRequest.
-//
-// We use an atomic counter to make sure that concurrent broadcasts to the
-// same ChainID currently synchronizing will all be announced individually.
-func (reactor *Reactor) ShouldAnnounceReplication(chainID string) bool {
-	reactor.replRequestsMtx.RLock()
-	defer reactor.replRequestsMtx.RUnlock()
-
-	if cntSync, isSync := reactor.replRequestsRcvd[chainID]; isSync {
-		return atomic.LoadUint64(cntSync) > 0
-	}
-
-	return false
-}
-
-// SetAnnounceReplication increments the atomic counter for chainID.
-func (reactor *Reactor) SetAnnounceReplication(chainID string) {
-	reactor.replRequestsMtx.RLock()
-	cntChainSync, hasChainSync := reactor.replRequestsRcvd[chainID]
-	reactor.replRequestsMtx.RUnlock()
-
-	if !hasChainSync {
-		cntChainSync = new(uint64)
-
-		reactor.replRequestsMtx.Lock()
-		reactor.replRequestsRcvd[chainID] = cntChainSync
-		reactor.replRequestsMtx.Unlock()
-	}
-
-	atomic.AddUint64(cntChainSync, uint64(1))
-}
-
-// UnsetAnnounceReplication decrements the atomic counter for chainID.
-func (reactor *Reactor) UnsetAnnounceReplication(chainID string) {
-	reactor.replRequestsMtx.RLock()
-	cntChainSync, hasChainSync := reactor.replRequestsRcvd[chainID]
-	reactor.replRequestsMtx.RUnlock()
-
-	if hasChainSync && atomic.LoadUint64(cntChainSync) > 0 {
-		atomic.AddUint64(cntChainSync, ^uint64(0)) // -1
-	}
-}
-
-// ChannelForAckReplication creates or returns an unbuffered channel that accepts
-// ChainReplicationResponse messages for chainID.
-//
-// ackReplResChs contains channels that are opened on-demand, when the
-// application expects to receive [ChainReplicationResponse] messages from
-// relevant relays, about one chainID.
-func (reactor *Reactor) ChannelForAckReplication(chainID string) chan *mxp2p.ChainReplicationResponse {
-	reactor.ackReplResMtx.RLock()
-	replResChForChainID, hasChannel := reactor.ackReplResChs[chainID]
-	reactor.ackReplResMtx.RUnlock()
-
-	if !hasChannel {
-		replResChForChainID = make(chan *mxp2p.ChainReplicationResponse)
-
-		reactor.ackReplResMtx.Lock()
-		reactor.ackReplResChs[chainID] = replResChForChainID
-		reactor.ackReplResMtx.Unlock()
-	}
-
-	reactor.doneAckReplicationMtx.Lock()
-	reactor.doneAckReplication[chainID] = false
-	reactor.doneAckReplicationMtx.Unlock()
-
-	return replResChForChainID
-}
-
-// CloseAckReplicationChannel closes the replication acceptance channel
-// for chainID and deletes it gracefully from the registry.
-func (reactor *Reactor) CloseAckReplicationChannel(chainID string) {
-	reactor.ackReplResMtx.RLock()
-	ackReplResCh, hasChannel := reactor.ackReplResChs[chainID]
-	reactor.ackReplResMtx.RUnlock()
-
-	defer func() {
-		reactor.doneAckReplicationMtx.Lock()
-		reactor.doneAckReplication[chainID] = true
-		reactor.doneAckReplicationMtx.Unlock()
-	}()
-
-	if !hasChannel {
-		return
-	}
-
-	// Close the channel first
-	close(ackReplResCh)
-
-	// And free memory space
-	reactor.ackReplResMtx.Lock()
-	delete(reactor.ackReplResChs, chainID)
-	reactor.ackReplResMtx.Unlock()
-
-}
-
-// ChannelForAckTransaction creates or returns an unbuffered channel that accepts
-// AckTransactionBroadcast messages for txHash.
-//
-// ackAcceptTxChs contains channels that are opened on-demand, when the
-// application expects to receive [AckTransactionBroadcast] messages from
-// relevant relays, about one transaction hash.
-func (reactor *Reactor) ChannelForAckTransaction(txHash string) chan *mxp2p.AckTransactionBroadcast {
-	reactor.ackAcceptTxMtx.RLock()
-	acceptChForTxHash, hasChannel := reactor.ackAcceptTxChs[txHash]
-	reactor.ackAcceptTxMtx.RUnlock()
-
-	if !hasChannel {
-		acceptChForTxHash = make(chan *mxp2p.AckTransactionBroadcast)
-
-		reactor.ackAcceptTxMtx.Lock()
-		reactor.ackAcceptTxChs[txHash] = acceptChForTxHash
-		reactor.ackAcceptTxMtx.Unlock()
-	}
-
-	reactor.doneAcceptTxMtx.Lock()
-	reactor.doneAcceptTxHashes[txHash] = false
-	reactor.doneAcceptTxMtx.Unlock()
-
-	return acceptChForTxHash
-}
-
-// CloseAckTransactionChannel closes the transaction acceptance channel
-// for txHash and deletes it gracefully from the registry.
-func (reactor *Reactor) CloseAckTransactionChannel(txHash string) {
-	reactor.ackAcceptTxMtx.RLock()
-	acceptCh, hasChannel := reactor.ackAcceptTxChs[txHash]
-	reactor.ackAcceptTxMtx.RUnlock()
-
-	defer func() {
-		reactor.doneAcceptTxMtx.Lock()
-		reactor.doneAcceptTxHashes[txHash] = true
-		reactor.doneAcceptTxMtx.Unlock()
-	}()
-
-	if !hasChannel {
-		return
-	}
-
-	// Close the channel first
-	close(acceptCh)
-
-	// And free memory space
-	reactor.ackAcceptTxMtx.Lock()
-	delete(reactor.ackAcceptTxChs, txHash)
-	reactor.ackAcceptTxMtx.Unlock()
-
-}
-
-// ChannelForRuntimeUpdates creates or returns an unbuffered channel that accepts
-// ChainReplicationComplete messages for chainID.
-//
-// runtimeUpdatesChs contains channels that are opened on-demand, when the
-// application expects to receive [ChainReplicationComplete] messages from
-// relevant relays, about one chainID.
-func (reactor *Reactor) ChannelForRuntimeUpdates(chainID string) chan *mxp2p.ChainReplicationComplete {
-	reactor.runtimeUpdatesMtx.RLock()
-	runtimeUpdatesChForChainID, hasChannel := reactor.runtimeUpdatesChs[chainID]
-	reactor.runtimeUpdatesMtx.RUnlock()
-
-	if !hasChannel {
-		runtimeUpdatesChForChainID = make(chan *mxp2p.ChainReplicationComplete)
-
-		reactor.runtimeUpdatesMtx.Lock()
-		reactor.runtimeUpdatesChs[chainID] = runtimeUpdatesChForChainID
-		reactor.runtimeUpdatesMtx.Unlock()
-	}
-
-	reactor.doneRuntimeUpdatesMtx.Lock()
-	reactor.doneRuntimeUpdates[chainID] = false
-	reactor.doneRuntimeUpdatesMtx.Unlock()
-
-	return runtimeUpdatesChForChainID
-}
-
-// CloseRuntimeUpdatesChannel closes the runtime updates channel
-// for chainID and deletes it gracefully from the registry.
-func (reactor *Reactor) CloseRuntimeUpdatesChannel(chainID string) {
-	reactor.runtimeUpdatesMtx.RLock()
-	runtimeUpdatesCh, hasChannel := reactor.runtimeUpdatesChs[chainID]
-	reactor.runtimeUpdatesMtx.RUnlock()
-
-	defer func() {
-		reactor.doneRuntimeUpdatesMtx.Lock()
-		reactor.doneRuntimeUpdates[chainID] = true
-		reactor.doneRuntimeUpdatesMtx.Unlock()
-	}()
-
-	if !hasChannel {
-		return
-	}
-
-	// Close the channel first
-	close(runtimeUpdatesCh)
-
-	// And free memory space
-	reactor.runtimeUpdatesMtx.Lock()
-	delete(reactor.runtimeUpdatesChs, chainID)
-	reactor.runtimeUpdatesMtx.Unlock()
-}
-
-// SaveRelayInfo stores the RPC call response with information about the
-// relay in a map where keys are CometBFT Node IDs.
-func (reactor *Reactor) SaveRelayInfo(relayInfo *mxrpc.RPCResultRelayInfo) {
-	reactor.networkMutex.Lock()
-	defer reactor.networkMutex.Unlock()
-
-	relayID := string(relayInfo.DefaultNodeID)
-	reactor.knownRelayInfo[relayID] = relayInfo
-}
-
-func (reactor *Reactor) GetRelayInfo(relayID p2p.ID) *mxrpc.RPCResultRelayInfo {
-	reactor.networkMutex.Lock()
-	defer reactor.networkMutex.Unlock()
-
-	relayInfo, ok := reactor.knownRelayInfo[string(relayID)]
-	if !ok {
-		return nil
-	}
-	return relayInfo
-}
-
-// ----------------------------------------------------------------------------
-// Service providers implementation
-
-// GetGenesisProvider returns a genesisDocProviderFn instance.
-func (reactor *Reactor) GetGenesisProvider() genesisDocProviderFn {
-	// NOTE(midas): We don't need a functor to get an up-to-date genesisDocSet,
-	// we now point to an updated genesisDocSet here, another iteration must
-	// remove the need for a functor that returns the genesisDocProvider.
-	icsGenesisDocSet := reactor.GetChecksummedGenesisDocSet() // locks genesisDocsMutex
-	return func(chainId string) (*types.GenesisDoc, error) {
-		genDoc, err := icsGenesisDocSet.GenesisDocByChainID(chainId)
-		if err != nil {
-			return nil, fmt.Errorf("could not load genesis doc for ChainID %s: %w", chainId, err)
-		}
-
-		return genDoc, nil
-	}
-}
-
-// GetServicesProvider returns a [ServiceProvider] providereactor.
-func (reactor *Reactor) GetServicesProvider() serviceProviderFn {
-	return reactor.servicesProvider // locks servicesMutex
-}
-
-// GetMultiplexProvider returns a [MultiplexProvider] providereactor.
-func (reactor *Reactor) GetMultiplexProvider() multiplexProviderFn {
-	return reactor.multiplexProvider // locks multiplexMutex
-}
-
-// GetInstanceProvider returns a [InstanceProvider] providereactor.
-func (reactor *Reactor) GetInstanceProvider(multiplexName string) instanceProviderFn {
-	// Uses one of the multiplexRegistry entries
-	multiplex := reactor.multiplexProvider(multiplexName)
-	return func(chainId string) any {
-		reactor.multiplexMutex.RLock()
-		defer reactor.multiplexMutex.RUnlock()
-
-		if _, ok := multiplex[chainId]; !ok {
-			return nil
-		}
-
-		// Returns the underlying instance (castable)
-		return multiplex[chainId].GetInstance()
-	}
-}
-
-// ----------------------------------------------------------------------------
-// Service, instance and networks registry implementations
-
-// RegisterService inserts a [cmtlibs.Service] instance in the registry
-// by a given name and ChainID.
-//
-// The servicesMutex is RW-locked during the time this function takes to run.
-func (reactor *Reactor) RegisterService(
-	serviceName string,
-	chainID string,
-	service cmtlibs.Service,
-) {
-	reactor.servicesMutex.Lock()
-	defer reactor.servicesMutex.Unlock()
-
-	// Allocate namespace if necessary
-	if _, ok := reactor.servicesRegistry[serviceName]; !ok {
-		reactor.servicesRegistry[serviceName] = MultiplexMap[cmtlibs.Service]{}
-	}
-
-	// Store a service by name and ChainID
-	reactor.servicesRegistry[serviceName][chainID] = NewChainInstance[cmtlibs.Service](
-		chainID,
-		service,
-	)
-
-	// Add service to priorities list once
-	if _, ok := reactor.servicesPriority[serviceName]; !ok {
-		nextIndex := len(reactor.servicesPriority) + 1
-		reactor.servicesPriority[serviceName] = uint32(nextIndex)
-		reactor.servicesSequence = append(reactor.servicesSequence, serviceName)
-	}
-}
-
-// RegisterInstance inserts a generic instance in the multiplexRegistry,
-// by a given multiplexName and ChainID.
-//
-// The multiplexMutex is RW-locked during the time this function takes to run.
-func (reactor *Reactor) RegisterInstance(
-	multiplexName string,
-	chainID string,
-	instance any,
-) {
-	reactor.multiplexMutex.Lock()
-	defer reactor.multiplexMutex.Unlock()
-
-	// Allocate namespace if necessary
-	if _, ok := reactor.multiplexRegistry[multiplexName]; !ok {
-		reactor.multiplexRegistry[multiplexName] = MultiplexMap[any]{}
-	}
-
-	// Store a generic instance by name and ChainID in a multiplex
-	reactor.multiplexRegistry[multiplexName][chainID] = NewChainInstance[any](
-		chainID,
-		instance,
-	)
-}
-
-// RegisterMetrics inserts a generic metrics instance in the multiplexMetrics,
-// by a given metricsName and ChainID.
-//
-// The multiplexMutex is RW-locked during the time this function takes to run.
-func (reactor *Reactor) RegisterMetrics(
-	moduleName string,
-	metricsName string,
-	providerFn func() interface{},
-) interface{} {
-	reactor.multiplexMutex.Lock()
-	defer reactor.multiplexMutex.Unlock()
-
-	// Allocate namespace if necessary
-	if _, ok := reactor.multiplexMetrics[moduleName]; !ok {
-		reactor.multiplexMetrics[moduleName] = MultiplexMap[interface{}]{}
-	}
-
-	if _, ok := reactor.multiplexMetrics[moduleName][metricsName]; !ok {
-		// Store a generic instance by name and ChainID in a multiplex
-		reactor.multiplexMetrics[moduleName][metricsName] = NewChainInstance[any](
-			metricsName,
-			providerFn(),
-		)
-	}
-
-	return reactor.multiplexMetrics[moduleName][metricsName].GetInstance()
-}
-
-// RegisterNetwork updates the necessary resources to permit executing a
-// new network node runtime for userAddress and chainID.
-//
-// This method notably mutates the chainRegistry, the networks list,
-// the ABCI client and the MultiNetworkNodeInfo instance of the reactor.
-//
-// Subsequent dialing of this relay will include the new network.
-func (reactor *Reactor) RegisterNetwork(
-	userAddress string,
-	chainID string,
-) error {
-	// Nothing to do if the ChainID is known.
-	if reactor.HasNetwork(chainID) {
-		return nil
-	}
-
-	// First things first, ChainRegistry must be updated.
-	reactor.runtimesMutex.Lock()
-	reactor.chainRegistry.AddChain(
-		userAddress,
-		chainID,
-	)
-	reactor.runtimesMutex.Unlock()
-
-	// .. because it must reflect on our list of networks.
-	reactor.SetNetworks(reactor.chainRegistry.GetChains())
-
-	abciClient := reactor.GetABCIClient()
-
-	// Injects new AppConns in MultiplexAppConn for ABCI.
-	if abciClient != nil {
-		reactor.envMutex.Lock()
-		reactor.abciClient.AddNetwork(chainID)
-		reactor.envMutex.Unlock()
-	}
-
-	// Update the MultiNetworkNodeInfo instance (just a re-make and set).
-	_, err := reactor.MakeMultiNetworkNodeInfo()
-	if err != nil {
-		return fmt.Errorf("could not update multi network node info: %w", err)
-	}
-
-	return nil
-}
-
-// ----------------------------------------------------------------------------
-// Reactor implements snapsapp.Reactor
-
-// GetNetworks returns an ordered slice of ChainID values.
-// Internal mutex networkMutex is locked for read.
-//
-// GetNetworks implements [snapsapp.Reactor].
-func (reactor *Reactor) GetNetworks() []string {
-	reactor.networkMutex.RLock()
-	defer reactor.networkMutex.RUnlock()
-	return reactor.networks
-}
-
-// SetNetworks sets a custom slice of ChainIDs.
-// Internal mutex networkMutex is locked for write.
-func (reactor *Reactor) SetNetworks(ns []string) {
-	reactor.networkMutex.Lock()
-	defer reactor.networkMutex.Unlock()
-	reactor.networks = make([]string, len(ns))
-	copy(reactor.networks, ns)
-}
-
-// HasNetwork returns true if the ChainID can be found.
-// Internal mutex networkMutex is locked for read.
-//
-// HasNetwork implements [snapsapp.Reactor].
-func (reactor *Reactor) HasNetwork(chainID string) bool {
-	reactor.networkMutex.RLock()
-	defer reactor.networkMutex.RUnlock()
-	return slices.Contains(reactor.networks, chainID)
-}
-
-// HasNetworks returns true if the networks registry is not empty.
-func (reactor *Reactor) HasNetworks() bool {
-	return reactor.Size() > 0
-}
-
-// Size returns the number of ChainIDs in networks registry.
-func (reactor *Reactor) Size() int {
-	reactor.networkMutex.RLock()
-	defer reactor.networkMutex.RUnlock()
-	return len(reactor.networks)
-}
-
-// GetStateStore returns a [sm.Store].
-//
-// GetStateStore implements [snapsapp.Reactor].
-func (reactor *Reactor) GetStateStore(chainID string) sm.Store {
-	// Retrieves the "stateStore" instance map
-	stateStoreProvider := reactor.GetInstanceProvider(InstanceKeyStateStore)
-
-	// Try to inject if we don't have this state store yet.
-	if s := stateStoreProvider(chainID); s == nil {
-		ReactorWithActiveRuntimes(
-			reactor.Context(),
-			[]string{chainID},
-			map[string][]string{}, // otherValidators
-		)(reactor)
-	}
-
-	// Returns the instance mapped by ChainID
-	return stateStoreProvider(chainID).(sm.Store)
-}
-
-// GetMempool returns the [mempl.Reactor] instance by chainID or nil.
-func (reactor *Reactor) GetMempool(chainID string) mempl.TxAcceptor {
-	reactorsProvider := reactor.GetServicesProvider()
-	if memR := reactorsProvider(ServiceKeyMempoolReactor, chainID); memR != nil {
-		memplReactor := memR.(*mempl.Reactor)
-		return memplReactor.GetMempoolPtr()
-	}
-
-	return nil
-}
-
-// GetReplayPool returns a [replay.ReplayPool] which contains transactions
-// batches to be replayed. These batches may contain one or many txes
-// that will be forwarded to [Acceptor#ReplayBroadcastTxBatch].
-//
-// GetReplayPool implements [snapsapp.Reactor].
-func (reactor *Reactor) GetReplayPool() *replay.ReplayPool {
-	reactor.replayPoolMtx.RLock()
-	defer reactor.replayPoolMtx.RUnlock()
-
-	return reactor.replayPool
-}
-
-// OnActivateRuntime executes the OnActivate callback to register chainID
-// in our runtime registry.
-func (reactor *Reactor) OnActivateRuntime(chainID string) {
-	// Activate this runtime in our runtime registry.
-	idleManager := reactor.GetRuntimeRegistry()
-	idleManager.OnActivate(chainID)
-}
-
-// OnCompleteRuntime waits for all transactions to be indexed before it executes
-// the OnComplete callback to mark chainID completed in our runtime registry.
-//
-// CAUTION: We use a fallback completer after too many attempts (12) (+- 1min).
-// TODO(midas): Instead of using a fallback completer, use the service context.
-func (reactor *Reactor) OnCompleteRuntime(chainID string, protoTxs [][]byte) {
-	transactionHashes := []string{}
-	for _, bzTx := range protoTxs {
-		transactionHashes = append(transactionHashes, fmt.Sprintf("%X", types.Tx(bzTx).Hash()))
-	}
-
-	// Whether success or error, we want the runtime completed afterwards.
-	defer func() {
-		// Complete the runtime in our runtime registry.
-		idleManager := reactor.GetRuntimeRegistry()
-		idleManager.OnComplete(chainID)
-	}()
-
-	// Retrieve the tx indexer for this ChainID.
-	indexerProvider := reactor.GetServicesProvider()
-	if idxS := indexerProvider(ServiceKeyIndexers, chainID); idxS == nil {
-		reactor.logger.Error("Failed to index transactions; indexer is not available",
-			"chainId", chainID,
-			"txBatch", transactionHashes,
-		)
-	}
-
-	indexerService := indexerProvider(ServiceKeyIndexers, chainID).(*txindex.IndexerService)
-
-	// Every iteration, we read from indexer service to find all transaction
-	// hashes, then we wait 5 seconds for next evaluation (or shutdown).
-	maxTries := 12 // 12x5s=1min
-	attempts := 0
-	for reactor.Context().Err() == nil {
-		// Read transaction hashes from indexer.
-		missingHashes := []string{}
-		for _, rawTx := range protoTxs {
-			txHash := types.Tx(rawTx).Hash()
-			if idxTx, err := indexerService.GetTxIndexer().Get(
-				txHash,
-			); idxTx == nil || err != nil {
-				if errors.Is(err, leveldb.ErrClosed) {
-					indexerService.Stop()
-					return
-				}
-				missingHashes = append(missingHashes, string(txHash))
-			}
-		}
-
-		// When all transactions are indexed, we may execute `OnComplete`.
-		if len(missingHashes) == 0 {
-			// Transaction is not yet indexed
-			reactor.logger.Debug("Found all indexed transactions",
-				"chainId", chainID,
-				"txBatch", transactionHashes,
-			)
-			return
-		}
-
-		attempts++
-
-		// CAUTION:
-		//
-		// Fallback completer after too many attempts (+- 1min).
-		if attempts == maxTries {
-			// Transaction is not yet indexed
-			reactor.logger.Error("Failed to index transactions; exceeded max inclusion time",
-				"chainId", chainID,
-				"txBatch", transactionHashes,
-			)
-			return
-		}
-
-		// Give the runtime some more time to index the transaction(s).
-		if ok := reactor.waitForInterval(5 * time.Second); !ok {
-			// TODO(midas): remove debug logs
-			reactor.logger.Error("Failed to index transactions; interrupted by shutdown",
-				"chainId", chainID,
-				"txBatch", transactionHashes,
-			)
-			return
-		}
-	}
-}
-
-// ----------------------------------------------------------------------------
-// Reactor implements p2p.Reactor
-
-// GetChannels implements p2p.Reactor.
-func (mxR *Reactor) GetChannels() []*p2p.ChannelDescriptor {
-	return []*p2p.ChannelDescriptor{
-		{
-			ID: server.ReplicationChannel,
-			// Lower priority than blocksync, evidence, mempool & consensus
-			// i.e. This channel has priority to be gossiped on.
-			Priority:    3,
-			MessageType: &mxp2p.Message{},
-		},
-		{
-			ID:          server.AckBroadcastChannel,
-			Priority:    2,
-			MessageType: &mxp2p.Receipt{},
-			//RecvMessageCapacity: mxR.broadcastRecvMessageCapacity,
-		},
-		{
-			ID:          server.RuntimeChannel,
-			Priority:    10, // This channel does not have priority.
-			MessageType: &mxp2p.Message{},
-			//RecvMessageCapacity: mxR.runtimeRecvMessageCapacity,
-		},
-		{
-			ID:                  mempl.MempoolChannel,
-			Priority:            5,
-			RecvMessageCapacity: mxR.recvMempoolTxMessageCapacity,
-			MessageType:         &protomem.Message{},
-		},
-	}
-}
-
-// AddPeer implements p2p.Reactor.
-func (r *Reactor) AddPeer(peer *p2p.PeerImpl) {}
-
-// RemovePeer implements p2p.Reactor.
-func (r *Reactor) RemovePeer(peer *p2p.PeerImpl, _ any) {}
-
-// Receive implements p2p.Reactor.
-func (r *Reactor) Receive(e p2p.Envelope) {
-	r.logger.Debug("Receive", "src", e.Src, "chId", e.ChannelID, "chainID", e.ChainID)
-
-	// CAUTION:
-	//
-	// Due to the MempoolChannel also being added to multiplex Reactor,
-	// we must make sure that those messages are forwarded to running mempool.
-	//
-	// TODO(midas): refactor this with BaseReactor.ForwardMessage("MEMPOOL", e).
-	if e.ChannelID == mempl.MempoolChannel && len(e.ChainID) > 0 {
-		r.chainReadyMtx.RLock()
-		_, hasConfiguredChainID := r.chainReadyChs[e.ChainID]
-		r.chainReadyMtx.RUnlock()
-
-		// In case this ChainID has not been activated yet, we need to do it
-		// here so that we may proceed with forwarding the message to mempool.
-		if !hasConfiguredChainID {
-			// calls AllocateNetwork, InjectNewNetwork, InjectNewRuntime
-			ReactorWithActiveRuntimes(r.Context(), []string{e.ChainID}, map[string][]string{})(
-				r,
-			)
-		}
-
-		// Then, start the consensus reactors.
-		// TODO(midas): We only need MEMPOOL reactor to be started here.
-		if err := r.StartConsensusInstanceReactors(
-			context.Background(),
-			e.ChainID,
-			false,
-		); err != nil {
-			r.logger.Error(
-				"failed to start consensus reactors upon receiving mempool.Tx",
-				"chainId", e.ChainID,
-				"peerIn", e.Src,
-				"err", err,
-			)
-		}
-
-		// IMPORTANT:
-		//
-		// Forwards this message for processing to mempool.Reactor.
-		servicesProvider := r.GetServicesProvider()
-		mempoolReactor := servicesProvider(ServiceKeyMempoolReactor, e.ChainID)
-		if mempoolReactor != nil && mempoolReactor.IsRunning() {
-			memR := mempoolReactor.(*mempl.Reactor)
-
-			// TODO(midas): remove debug logs
-			r.logger.Debug("Forwarding Tx",
-				"memR", memR,
-				"running", memR.IsRunning(),
-				"msg", e.Message)
-			memR.Receive(e)
-		}
-		return // Forwarded
-	}
-
-	// Determine public source address from secret connection.
-	sourcePeer := e.Src
-	sourceAddr, err := sourcePeer.NodeInfo().NetAddress()
-	if err != nil {
-		r.logger.Error("ignoring message - failed to parse source address from message",
-			"msg", e, "err", err)
-		return
-	}
-
-	// Determine "remote relay address" for discovery, this address is used
-	// to determine the correct relay address for Discovery & CometBFT.
-	// We store the result in `r.knownRelayInfo` to fetch only once per relay ID.
-	var discoveryAddr *server.RelayAddress
-	if discoveryAddr, err = r.GetRemoteDiscoveryAddress(sourcePeer); err != nil {
-		discoveryAddr, _ = server.NewRelayAddress(sourceAddr.String())
-	}
-
-	switch extMsg := e.Message.(type) {
-	// ChainReplicationRequest
-	// ChainReplicationResponse
-	// ChainReplicationComplete
-	case *mxp2p.Message:
-		msg := extMsg.GetSum()
-
-		r.logger.Debug("Received from", "src", sourceAddr.String(), "daddr", discoveryAddr.String())
-
-		switch msg.(type) {
-		// ChainReplicationRequest
-		// Received a request to replicate a (new) chain.
-		case *mxp2p.Message_ChainReplicationRequest:
-			r.logger.Debug("Received ChainReplicationRequest", "msg", msg)
-			replRequest := extMsg.GetChainReplicationRequest()
-
-			// After having acknowledged the chain replication, process it.
-			//
-			// CAUTION: This modifies the runtime and allocates the necessary resources
-			// for the newly replicated ChainID, calls InjectNewRuntime.
-			if err := r.handleChainReplicationRequest(replRequest); err != nil {
-				r.logger.Error(
-					"failed to process ChainReplicationRequest: error handling replication",
-					"chainId", replRequest.ChainID,
-					"err", err,
-				)
-				return
-			}
-
-			// Register this ChainID in replRequestsRcvd
-			r.SetAnnounceReplication(replRequest.ChainID)
-
-			// TODO(midas): dialing MAY be concurrent for both scopes
-
-			// Dials the CometBFT relay to permit faster consensus startup.
-			// Due to secret conn wrapping, we may need to call the RelayInfo RPC first.
-			if err := r.DialRelayForCometBFT(discoveryAddr, replRequest.ChainID); err != nil {
-				r.logger.Error(
-					"failed to process ChainReplicationRequest: error dialing replication partner",
-					"chainId", replRequest.ChainID,
-					"err", err,
-				)
-				return
-			}
-
-			// Start consensus reactors for newly injected runtime.
-			if err := r.StartConsensusInstanceReactors(
-				r.Context(),
-				replRequest.ChainID,
-				true, // enable status updates to peers about replication (ChainReplicationComplete)
-			); err != nil {
-				r.logger.Error(
-					"failed to process ChainReplicationRequest: error starting consensus reactors",
-					"chainId", replRequest.ChainID,
-					"err", err,
-				)
-				return
-			}
-
-			// Activate this runtime in our runtime registry.
-			//
-			// In case of conR.WaitSync, OnComplete is called by conR.SwitchToConsensus,
-			// otherwise OnComplete is called by memR.sendChainReplicationComplete when
-			// transactions are successfully processed with memR.processTxs.
-			r.OnActivateRuntime(replRequest.ChainID)
-
-			// A ChainReplicationResponse will be sent to the source peer.
-			//
-			// NOTE(midas): A outbound connection with the peer *must* exist,
-			// this dials only if necessary.
-			if err := r.DialRelayForDiscovery(discoveryAddr); err != nil {
-				r.logger.Error(
-					"failed to process ChainReplicationRequest: error dialing for response",
-					"chainId", replRequest.ChainID,
-					"err", err,
-				)
-				return
-			}
-
-			// Now respond with a [ChainReplicationResponse].
-			// This serves as a receipt for a chain replication request.
-			if err = r.sendChainReplicationResponse(e.Src, replRequest.ChainID); err != nil {
-				r.logger.Error("failed to send ChainReplicationResponse",
-					"chainId", replRequest.ChainID,
-					"from", r.GetNodeKey().ID(),
-					"to", e.Src.ID(),
-					"err", err,
-				)
-			}
-
-			// Done.
-			r.logger.Debug("This relay now replicates a new chain", "chainId", replRequest.ChainID)
-			return
-
-		// ChainReplicationResponse
-		// Received a receipt of replication from one of the relays.
-		case *mxp2p.Message_ChainReplicationResponse:
-			r.logger.Debug("Received ChainReplicationResponse", "msg", msg)
-			replResponse := extMsg.GetChainReplicationResponse()
-
-			// Fixes sending on closed channel when rcving too many ChainReplicationResponse.
-			r.doneAckReplicationMtx.RLock()
-			valIsDone, ok := r.doneAckReplication[replResponse.ChainID]
-			r.doneAckReplicationMtx.RUnlock()
-			doneProcessingChainID := false
-			if ok && valIsDone {
-				doneProcessingChainID = true
-			}
-
-			if doneProcessingChainID {
-				return
-			}
-
-			// Dials the CometBFT relay (OUTBOUND) to permit faster consensus startup.
-			// Due to secret conn wrapping, we may need to call the RelayInfo RPC first.
-			if err := r.DialRelayForCometBFT(discoveryAddr, replResponse.ChainID); err != nil {
-				r.logger.Error(
-					"failed to process ChainReplicationResponse: error dialing replication partner",
-					"chainId", replResponse.ChainID,
-					"err", err,
-				)
-				return
-			}
-
-			// Channel is mapped by transaction hash
-			replResChForChainID := r.ChannelForAckReplication(replResponse.ChainID)
-			replResChForChainID <- replResponse
-
-			// Done.
-			return
-
-		// ChainReplicationComplete
-		// Received a receipt of replication completeness from a peer.
-		case *mxp2p.Message_ChainReplicationComplete:
-			r.logger.Debug("Received ChainReplicationComplete", "msg", msg)
-			replComplete := extMsg.GetChainReplicationComplete()
-
-			// NOTE: Don't dial back replication partner here, since we may
-			// approach runtime idling due to completion of the replication.
-
-			// Fixes sending on closed channel when rcving too many ChainReplicationComplete.
-			r.doneRuntimeUpdatesMtx.RLock()
-			valIsDone, ok := r.doneRuntimeUpdates[replComplete.ChainID]
-			r.doneRuntimeUpdatesMtx.RUnlock()
-			doneProcessingChainID := false
-			if ok && valIsDone {
-				doneProcessingChainID = true
-			}
-
-			if !doneProcessingChainID {
-				// Channel is mapped by transaction hash
-				runtimeUpdatesChForChainID := r.ChannelForRuntimeUpdates(replComplete.ChainID)
-
-				r.runtimeUpdatesMtx.Lock()
-				runtimeUpdatesChForChainID <- replComplete
-				r.runtimeUpdatesMtx.Unlock()
-			}
-
-		default:
-			r.logger.Error(
-				"Unknown internal message type",
-				"src", e.Src,
-				"chId", e.ChannelID,
-				"msg", e.Message,
-			)
-			return
-		}
-
-	case *mxp2p.Receipt:
-		msg := extMsg.GetSum()
-
-		// Determine public source address from secret connection.
-		sourceAddr, err := e.Src.NodeInfo().NetAddress()
-		if err != nil {
-			r.logger.Error("couldn't determine source address from receipt",
-				"msg", msg, "err", err)
-			return
-		}
-
-		switch msg.(type) {
-		// AckTransactionBroadcast
-		// Received a receipt of relay mempool inclusion for a transaction hash.
-		case *mxp2p.Receipt_AckTransactionBroadcast:
-			// r.logger.Debug("Now processing AckTransactionBroadcast", "msg", msg)
-			ackTxBroadcast := extMsg.GetAckTransactionBroadcast()
-			txHashes := []string{}
-			for _, bzHash := range ackTxBroadcast.TxHashes {
-				txHashes = append(txHashes, fmt.Sprintf("%X", bzHash))
-			}
-
-			relayId := ackTxBroadcast.NodeId
-
-			// AckTransactionBroadcast is sent from mempool which always
-			// processes transactions singularly.
-			// TODO(midas): define AckTransactionBroadcast.TxHash instead
-			txHash := fmt.Sprintf("%X", ackTxBroadcast.TxHashes[0])
-			shouldProcessAckTx := false
-
-			// If request was already noted for this tx, we should not wait.
-			r.poolRequestsMtx.Lock()
-			if peers, ok := r.poolRequestsSent[txHash]; ok {
-				shouldProcessAckTx = slices.Contains(peers, relayId)
-				r.poolRequestsSent[txHash] = slices.DeleteFunc(peers, func(s string) bool {
-					return s == relayId
-				})
-			} else {
-				// If txHash is not in poolRequestsSent, it might be a new ChainID
-				// that was created after the transaction was sent. In this case,
-				// we should still accept ACK from valid peers for this ChainID.
-				cometbftSwitch := r.GetEventSwitchForCometBFT()
-
-				// Check if this peer is connected to any of our networks
-				// It's ok to query by ID here because in/out doesn't matter.
-				if ok, chainID := cometbftSwitch.HasPeerInOrOut(e.Src.ID()); ok {
-					shouldProcessAckTx = true
-					r.logger.Debug("Accepting ACK from peer not in poolRequestsSent",
-						"relayId", relayId,
-						"txHash", txHash,
-						"otherChainId", chainID,
-						"reason", "peer_connected_chainid")
-				}
-			}
-			r.poolRequestsMtx.Unlock()
-
-			// Fixes sending on closed channel when rcving too many ACKs.
-			r.doneAcceptTxMtx.RLock()
-			valIsDone, ok := r.doneAcceptTxHashes[txHash]
-			r.doneAcceptTxMtx.RUnlock()
-			doneProcessingTxHash := false
-			if ok && valIsDone {
-				doneProcessingTxHash = true
-			}
-
-			if shouldProcessAckTx && !doneProcessingTxHash {
-				// TODO(midas): remove debug logs
-				r.logger.Debug("Received AckTransactionBroadcast from remote relay",
-					"relayId", ackTxBroadcast.NodeId,
-					"numTxes", len(txHashes),
-					"txes", txHashes,
-					"nodeSelf", r.nodeKey.ID(),
-					"fromPeer", sourceAddr,
-				)
-
-				// Channel is mapped by transaction hash
-				acceptChForTxHash := r.ChannelForAckTransaction(txHash)
-
-				r.ackAcceptTxMtx.Lock()
-				acceptChForTxHash <- ackTxBroadcast
-				r.ackAcceptTxMtx.Unlock()
-			} else {
-				// TODO(midas): remove debug logs
-				r.logger.Debug("Skipping already processed AckTransactionBroadcast",
-					"numTxs", len(txHashes),
-					"relayId", ackTxBroadcast.NodeId,
-					"txes", txHashes,
-					"node", r.nodeKey.ID(),
-					"from", sourceAddr,
-				)
-			}
-			// Done.
-			return
-
-		default:
-			r.logger.Error(
-				"Unknown internal receipt type",
-				"src", e.Src,
-				"chId", e.ChannelID,
-				"msg", e.Message,
-			)
-			return
-		}
-
-	default:
-		r.logger.Error(
-			"Unknown message type",
-			"src", e.Src,
-			"chId", e.ChannelID,
-			"msg", e.Message,
-		)
-		return
-	}
-}
-
-func (r *Reactor) DialRelayForScope(
-	dialWithSw *p2p.Switch,
-	partnerAddr *server.RelayAddress,
-	partnerScope string,
-) (err error) {
-	// Parse the address into a NetAddress
-	peerAddr, err := partnerAddr.NetAddress()
-	if err != nil {
-		return fmt.Errorf(
-			"invalid partner relay address %s: %w", partnerAddr.String(), err)
-	}
-
-	defer func() {
-		if r := recover(); r != nil {
-			// do not panic when dialing fails.
-			err = fmt.Errorf(
-				"dialing relay panicked %s: %w", partnerAddr.String(), r.(error))
-			return
-		}
-	}()
-
-	// scopedPeerSet is *PeerSet
-	scopedPeerSet := dialWithSw.Peers(partnerScope)
-
-	// Storage/transports of switches are protected by networkMutex.
-	var peerOutbound *p2p.PeerImpl
-	peerOutbound = scopedPeerSet.Get(peerAddr.ID)
-
-	dialWithSw.Logger.Debug("Dialing relay",
-		"relay", partnerAddr.String(),
-		"scope", partnerScope,
-		"addr", peerAddr.String(),
-		"size", scopedPeerSet.Size(),
-	)
-
-	peerIsRunning := peerOutbound != nil && peerOutbound.IsRunning()
-	peerIsStopped := peerOutbound != nil && peerOutbound.IsStopped()
-
-	// If the peer exists but is not running, cleanup before dialing.
-	if peerOutbound != nil && !peerIsRunning && !peerIsStopped {
-		dialWithSw.Logger.Debug("Stopping peer - connection expired",
-			"relay", partnerAddr.String(),
-			"scope", partnerScope,
-			"peer", peerOutbound,
-		)
-
-		dialWithSw.StopPeerGracefully(peerOutbound)
-	} else if peerOutbound != nil && peerIsRunning {
-		dialWithSw.Logger.Debug("Peer is already running - adding to reactors",
-			"relay", partnerAddr.String(),
-			"scope", partnerScope,
-			"peer", peerOutbound,
-		)
-
-		// Outbound peer is ready, no dialing necessary here.
-		// Manually add peers to reactors, when switch was running.
-		dialWithSw.InitPeerForScope(peerOutbound, partnerScope)
-		dialWithSw.AddPeerForScope(peerOutbound, partnerScope)
-		return nil
-	}
-
-	// Dial the peer by address
-	if err = dialWithSw.DialPeerWithAddress(peerAddr); err != nil {
-		if r.IsDialError(err) {
-			return fmt.Errorf(
-				"could not dial relay %s: %w", peerAddr.DialString(), err)
-		}
-		err = nil
-	}
-
-	// The PeerSet object at scopedPeerSet may have been modified.
-	peerOutbound = scopedPeerSet.Get(peerAddr.ID)
-	if peerOutbound == nil && dialWithSw.IsDialingOrExistingAddress(peerAddr) {
-		// The Peer is still dialing. Try to find a matching outbound peer.
-
-		// Find outbound connection to peer ID.
-		if dialWithSw.HasPeerID(peerAddr.ID, true) {
-			peerOutbound = dialWithSw.FindMatchingPeerByID(peerAddr.ID, true)
-		} else {
-			// Find outbound connection to external address.
-			externalAddr, err := net.ResolveTCPAddr("", peerAddr.DialString())
-			if err != nil {
-				return fmt.Errorf(
-					"failed to resolve connection to relay %s: %w", peerAddr.DialString(), err)
-			}
-			peerOutbound = dialWithSw.FindMatchingPeerByRemoteAddress(externalAddr, true)
-		}
-	}
-
-	if peerOutbound != nil {
-		dialWithSw.Logger.Debug("Outbound peer is available - adding to reactors",
-			"relay", partnerAddr.String(),
-			"scope", partnerScope,
-			"peer", peerOutbound,
-		)
-		// Outbound peer is ready, no dialing necessary here.
-		// Manually add peers to reactors, when switch was running.
-		dialWithSw.InitPeerForScope(peerOutbound, partnerScope)
-		dialWithSw.AddPeerForScope(peerOutbound, partnerScope)
-	}
-
-	return
-}
-
-// DialRelayForDiscovery dials uusing discoveryAddr,
-// i.e. `DiscoveryPort`.
-func (r *Reactor) DialRelayForDiscovery(
-	discoveryAddr *server.RelayAddress,
-) error {
-	// Uses `DiscoveryPort`
-	discoverySwitch := r.GetEventSwitchForDiscovery()
-	return r.DialRelayForScope(discoverySwitch, discoveryAddr, p2p.ScopeForDiscovery)
-}
-
-// DialRelayForCometBFT dials using the NetAddressForCometBFT,
-// i.e. `DiscoveryPort+1`.
-//
-// Parses the remote relay address, i.e. the source of a replication
-// request, and dials their CometBFT P2P address for block-sync.
-func (r *Reactor) DialRelayForCometBFT(
-	discoveryAddr *server.RelayAddress,
-	chainID string,
-) error {
-	// We can now safely use discoveryAddr as it contains `DiscoveryPort`
-	// of the relay and we need `DiscoveryPort+1` to interact with CometBFT.
-	cometbftAddr, err := server.NewRelayAddress(discoveryAddr.AddressForCometBFT())
-	if err != nil {
-		return fmt.Errorf(
-			"invalid cometbft relay address %s: %w", discoveryAddr.AddressForCometBFT(), err)
-	}
-
-	// Uses `DiscoveryPort+1`
-	cometbftSwitch := r.GetEventSwitchForCometBFT()
-	return r.DialRelayForScope(cometbftSwitch, cometbftAddr, chainID)
-}
-
-func (r *Reactor) IsDialError(err error) bool {
-	return p2p.IsDialError(err)
-}
-
-// GetRemoteValidatorsInfo connects to relayAddress using a JSONRPC client,
-// and calls the InitValidators remote procedure to retrieve public keys
-// of remote validators instances for requiredNetworks.
-//
-// The relayAddress parameter should use `DiscoveryPort` as this method
-// will map it to its corresponding RelayInfo port (`DiscoveryPort-1`).
-func (r *Reactor) GetRemoteValidatorsInfo(
-	clientCtx context.Context,
-	relayAddress *server.RelayAddress,
-	requiredNetworks []string,
-	requestTimeout time.Duration,
-) (*mxrpc.RPCResultInitValidators, *http.Client, error) {
-	// TODO(midas): should re-use this http client in GetRemoteRelayInfo.
-	c, connectErr := rpcclient.New(relayAddress.AddressForRelayInfo())
-	if connectErr != nil {
-		return nil, nil, connectErr
-	}
-
-	deadline := time.Now().Add(requestTimeout)
-	timeoutCtx, cancelFn := context.WithDeadline(context.Background(), deadline)
-	defer cancelFn()
-
-	result := &mxrpc.RPCResultInitValidators{}
-	params := map[string]any{
-		"networks": requiredNetworks,
-	}
-	_, callErr := c.Call(timeoutCtx, "validators", params, result)
-
-	select {
-	// cancelled by caller
-	case <-clientCtx.Done():
-		cancelledErr := fmt.Errorf(
-			"InitValidators cancelled with %s", relayAddress.AddressForRelayInfo())
-		r.logger.Error(cancelledErr.Error())
-		return nil, nil, cancelledErr
-	// context timeout (request took too long)
-	case <-timeoutCtx.Done():
-		timeoutErr := fmt.Errorf(
-			"InitValidators timed out with %s", relayAddress.AddressForRelayInfo())
-		r.logger.Error(timeoutErr.Error())
-		return nil, nil, timeoutErr
-	default:
-	}
-
-	if callErr != nil {
-		return nil, nil, callErr
-	}
-
-	return result, c.GetHTTPClient(), nil
-}
-
-// GetRemoteRelayInfo connects to relayAddress using a JSONRPC client,
-// and calls the GetRelayInfo remote procedure to retrieve the Relay ID,
-// the supported networks and the listen address for the remote relay.
-//
-// The relayAddress parameter should use `DiscoveryPort` as this method
-// will map it to its corresponding RelayInfo port (`DiscoveryPort - 1`).
-func (r *Reactor) GetRemoteRelayInfo(
-	clientCtx context.Context,
-	relayAddress *server.RelayAddress,
-	requestTimeout time.Duration,
-) (*mxrpc.RPCResultRelayInfo, *http.Client, error) {
-	// TODO(midas): re-use client from GetRemoteValidatorsInfo.
-	c, connectErr := rpcclient.New(relayAddress.AddressForRelayInfo())
-	if connectErr != nil {
-		return nil, nil, connectErr
-	}
-
-	deadline := time.Now().Add(requestTimeout)
-	timeoutCtx, cancelFn := context.WithDeadline(context.Background(), deadline)
-	defer cancelFn()
-
-	result := &mxrpc.RPCResultRelayInfo{}
-	params := map[string]any{}
-	_, callErr := c.Call(timeoutCtx, "info", params, result)
-
-	select {
-	// cancelled by caller
-	case <-clientCtx.Done():
-		cancelledErr := fmt.Errorf(
-			"RelayInfo cancelled with %s", relayAddress.AddressForRelayInfo())
-		r.logger.Error(cancelledErr.Error())
-		return nil, nil, cancelledErr
-	// context timeout (request took too long)
-	case <-timeoutCtx.Done():
-		timeoutErr := fmt.Errorf(
-			"RelayInfo timed out with %s", relayAddress.AddressForRelayInfo())
-		r.logger.Error(timeoutErr.Error())
-		return nil, nil, timeoutErr
-	default:
-	}
-
-	if callErr != nil {
-		return nil, nil, callErr
-	}
-
-	return result, c.GetHTTPClient(), nil
-}
-
-// GetRemoteDiscoveryAddress calls the RelayInfo remote procedure for sourcePeer
-// to determine its' discovery address and networks information.
-func (r *Reactor) GetRemoteDiscoveryAddress(
-	sourcePeer *p2p.PeerImpl,
-) (*server.RelayAddress, error) {
-	// Note that publicAddr may contain a secret connection port and must
-	// not be used as the DiscoveryPort to determine CometBFT ports.
-	publicAddr, err := sourcePeer.NodeInfo().NetAddress()
-	if err != nil {
-		return nil, fmt.Errorf(
-			"invalid replication source address %s: %w", sourcePeer.SocketAddr(), err)
-	}
-	// CAUTION: do not use as `DiscoveryPort`, may contain secret conn port.
-	sourceAddr, err := server.NewRelayAddress(publicAddr.String())
-	if err != nil {
-		return nil, fmt.Errorf(
-			"invalid replication source relay address %s: %w", publicAddr.String(), err)
-	}
-
-	// Check if we have a RelayInfo and already know this peer by ID.
-	r.networkMutex.RLock()
-	partnerRelayInfo, hasRelayInfo := r.knownRelayInfo[string(sourceAddr.ID())]
-	r.networkMutex.RUnlock()
-
-	var discoveryPort uint16
-
-	// We may first need to call the RelayInfo RPC, to find DiscoveryPort.
-	if !hasRelayInfo {
-		relayInfoStr := sourceAddr.AddressForRelayInfo()
-		rpcAddr, _ := server.NewRelayAddress(relayInfoStr) // DiscoveryPort-1
-		relayInfo, _, infoErr := r.GetRemoteRelayInfo(
-			context.TODO(),
-			rpcAddr,
-			r.relayInfoTimeout,
-		)
-		if infoErr != nil {
-			return nil, infoErr
-		}
-
-		r.networkMutex.Lock()
-		r.knownRelayInfo[string(sourceAddr.ID())] = relayInfo
-		r.networkMutex.Unlock()
-
-		discoveryPort = relayInfo.DiscoveryPort
-	} else {
-		discoveryPort = partnerRelayInfo.DiscoveryPort
-	}
-
-	// Now we know which port is the discovery port on this relay.
-	sourceAddr.SetPort(discoveryPort)
-
-	// We can now safely use sourceAddr as it contains `DiscoveryPort` of the relay.
-	discoveryAddr, err := server.NewRelayAddress(sourceAddr.String())
-	if err != nil {
-		return nil, fmt.Errorf(
-			"invalid discovery relay address %s: %w", publicAddr.String(), err)
-	}
-
-	return discoveryAddr, nil
-}
-
-// ----------------------------------------------------------------------------
-// Reactor implements [cmtlibs.Service]
-
-// OnStart starts the multiplex reactor and initializes active node runtimes.
-// A custom deep-copied [*config.Config] is also created here.
-//
-// CAUTION: This method spawns one new goroutine for every active runtime
-// through the use of [Reactor#InjectNewRuntime]. It will notably start the
-// indexer service, event bus and private validator instances for nodes.
-func (reactor *Reactor) OnStart(ctx context.Context) error {
-	reactor.logger.Debug("Starting multiplex reactor",
-		"num_networks", reactor.Size(),
-	)
-	nodeConfig := reactor.GetNodeConfig()
-	chainRegistry := reactor.GetChainRegistry()
-	availableChainIds := chainRegistry.GetChains()
-
-	// ANY AVAILABLE ChainID
-	//
-	// For any available ChainID, ensure the filesystem is available,
-	// and create a PrivValidator instance for each network.
-
-	multiplexFS, err := NewMultiplexFS(nodeConfig, availableChainIds)
-	if err != nil {
-		return fmt.Errorf("failed to start multiplex reactor; filesystem error: %w", err)
-	}
-
-	// Update the internal storagePaths
-	reactor.SetStoragePaths(multiplexFS)
-
-	// Create databases and priv validator for all available ChainIDs.
-	for _, chainID := range availableChainIds {
-		// keepAliveDB=false
-		if err = reactor.AllocateNetwork(chainID); err != nil {
-			reactor.logger.Error("failed to start multiplex reactor; allocation error",
-				"chainId", chainID,
-				"err", err,
-			)
-		}
-	}
-
-	// Starts the runtimes registry (active runtimes idle manager).
-	reactor.runtimesMutex.Lock()
-	if err := reactor.runtimeRegistry.Start(); err != nil {
-		reactor.logger.Error(
-			"Error starting runtimes registry", "err", err)
-	}
-	reactor.runtimesMutex.Unlock()
-
-	// ACTIVE RUNTIMES ONLY
-	//
-	// The following initialization happens only for *active runtimes*.
-	//
-	// We should initialize a state machine and inject a node runtime
-	// only for currently ACTIVE runtimes.
-	//
-	// TODO(midas): Registry to persist active runtimes on shutdown.
-
-	activeRuntimes := reactor.runtimeRegistry.ActiveRuntimes()
-	activeChainIds := []string{}
-	for chainID := range activeRuntimes {
-		activeChainIds = append(activeChainIds, chainID)
-	}
-
-	// Open databases for: state, blockstore, txindex, evidence
-	// Then load state machines from database or genesis doc
-	// And initialize block stores for active runtimes.
-	if err := reactor.loadMultiplexState(activeChainIds); err != nil {
-		return fmt.Errorf("failed to start multiplex reactor; database error: %w", err)
-	}
-
-	for _, chainID := range activeChainIds {
-		configOverwrite, err := NewConfigOverwrite(
-			nodeConfig,
-			chainRegistry,
-			chainID,
-		)
-		if err != nil {
-			return err
-		}
-
-		reactor.RegisterInstance(InstanceKeyConfig, chainID, configOverwrite)
-		reactor.RegisterInstance(InstanceKeyStorage, chainID, multiplexFS[chainID])
-
-		// Starts the node listeners, i.e. event bus, indexer.
-		// Prepares P2P communication transport and address book.
-		if err := reactor.InjectNewRuntime(reactor.Context(), chainID); err != nil {
-			// Log but don't STOP!
-			reactor.logger.Error("failed to start multiplex reactor; runtime error",
-				"chainId", chainID,
-				"err", err,
-			)
-		}
-	}
-
-	return nil
-}
-
-// OnStop stops the multiplex reactor and all the registered services that
-// are running, including the ABCI client if it is running.
-//
-// A *reversed* services sequence is used to implement the LIFO strategy when
-// shutting down services as it is usual for services that are started last
-// to be using previously created instances of other services.
-//
-// As for the database multiplexes, they are used in an unordered format and
-// no specific order is used to close the database connection because every
-// database connection is independent of other database connections.
-func (reactor *Reactor) OnStop() {
-	// At first, stop the runtimes registry as it shouldn't interfere with shutdown.
-	reactor.runtimesMutex.Lock()
-	if reactor.runtimeRegistry != nil && reactor.runtimeRegistry.IsRunning() {
-		// Try to shutdown gracefully (each ChainID individually).
-		restNodeRuntimes := reactor.runtimeRegistry.ActiveRuntimes()
-		if len(restNodeRuntimes) > 0 {
-			// TODO(midas): remove debug logs
-			reactor.logger.Debug("Shutting down remaining node runtimes",
-				"networks", restNodeRuntimes,
-			)
-
-			for chainID, _ := range restNodeRuntimes {
-				reactor.runtimeRegistry.OnIdle(chainID)
-			}
-		}
-
-		if err := reactor.runtimeRegistry.Stop(); err != nil {
-			reactor.logger.Error(
-				"Error stopping the runtimes registry (idle-manager)", "err", err)
-		}
-	}
-	reactor.runtimesMutex.Unlock()
-
-	// Shutdown all network resources atomically
-	reactor.networkMutex.RLock()
-	discoverySwitch := reactor.discoverySwitch
-	reactor.networkMutex.RUnlock()
-
-	// Stop the P2P Discovery Server that is injected
-	if discoverySwitch != nil {
-		reactor.networkMutex.Lock()
-		// First, kill any remaining peer connections, including
-		// channels and ping timers, and the MultiplexTransport.
-		if err := discoverySwitch.StopAllPeersAndCleanup(); err != nil {
-			reactor.logger.Error(
-				"Error cleaning up discovery peers", "err", err)
-		}
-		reactor.networkMutex.Unlock()
-
-		// Must stop reactors and listener channels
-		discoverySwitch.Stop()
-
-		reactor.networkMutex.Lock()
-		reactor.discoverySwitch = nil
-		reactor.networkMutex.Unlock()
-	}
-
-	reactor.networkMutex.RLock()
-	cometbftSwitch := reactor.cometbftSwitch
-	reactor.networkMutex.RUnlock()
-
-	// Stop the P2P CometBFT Server that is injected
-	if cometbftSwitch != nil {
-		reactor.networkMutex.Lock()
-		// First, kill any remaining peer connections, including
-		// channels and ping timers, and the MultiplexTransport.
-		if err := cometbftSwitch.StopAllPeersAndCleanup(); err != nil {
-			reactor.logger.Error(
-				"Error cleaning up cometbft peers", "err", err)
-		}
-		reactor.networkMutex.Unlock()
-
-		// Must stop reactors and listener channels
-		cometbftSwitch.Stop()
-
-		reactor.networkMutex.Lock()
-		reactor.cometbftSwitch = nil
-		reactor.networkMutex.Unlock()
-	}
-
-	// Shutdown all registered services atomically
-	reactor.servicesMutex.Lock()
-
-	// Uses LIFO strategy to shutdown registered services
-	// This includes stopping database services as well.
-	servicesLIFO := reactor.servicesSequence[:]
-	for _, serviceName := range servicesLIFO {
-		// Services multiplex contains one instance per ChainID
-		servicesMultiplex := reactor.servicesRegistry[serviceName]
-
-		// Every service instance must be stopped if running
-		for _, chainService := range servicesMultiplex {
-			service := chainService.GetInstance().(cmtlibs.Service)
-			if service.IsRunning() {
-				service.Stop()
-			}
-		}
-
-		delete(reactor.servicesRegistry, serviceName)
-	}
-	reactor.servicesMutex.Unlock()
-
-	// Removes services instances
-	reactor.servicesMutex.Lock()
-	reactor.servicesSequence = []string{}
-	reactor.servicesPriority = map[string]uint32{}
-	reactor.servicesRegistry = NamedMultiplexMap[cmtlibs.Service]{}
-	reactor.servicesMutex.Unlock()
-
-	// Now nothing may perturb shutting down ABCI anymore.
-	// Shutdown the ABCI client if running
-	reactor.envMutex.Lock()
-	if reactor.abciClient != nil && reactor.abciClient.IsRunning() {
-		if err := reactor.abciClient.Stop(); err != nil {
-			reactor.logger.Error(
-				"Error stopping the ABCI client", "err", err)
-		}
-	}
-	reactor.envMutex.Unlock()
-
-	// ABCI is shutdown, we can safely close the replay pool.
-	reactor.replayPoolMtx.Lock()
-	if reactor.replayPool != nil && reactor.replayPool.IsRunning() {
-		if err := reactor.replayPool.Stop(); err != nil {
-			reactor.logger.Error(
-				"Error stopping the replay pool", "err", err)
-		}
-	}
-	reactor.replayPoolMtx.Unlock()
-
-	// and close internal channels
-	reactor.chainReadyMtx.RLock()
-	restChainReadyChs := reactor.chainReadyChs
-	reactor.chainReadyMtx.RUnlock()
-
-	for chainID, chainReadyCh := range restChainReadyChs {
-		close(chainReadyCh)
-
-		reactor.chainReadyMtx.Lock()
-		delete(reactor.chainReadyChs, chainID)
-		reactor.chainReadyMtx.Unlock()
-	}
-
-	reactor.ackReplResMtx.RLock()
-	restAckReplResChs := reactor.ackReplResChs
-	reactor.ackReplResMtx.RUnlock()
-
-	for chainID, _ := range restAckReplResChs {
-		reactor.CloseAckReplicationChannel(chainID)
-	}
-
-	reactor.ackAcceptTxMtx.RLock()
-	restAckAcceptTxChs := reactor.ackAcceptTxChs
-	reactor.ackAcceptTxMtx.RUnlock()
-
-	for txHash, _ := range restAckAcceptTxChs {
-		reactor.CloseAckTransactionChannel(txHash)
-	}
-
-	reactor.runtimeUpdatesMtx.RLock()
-	restRuntimeUpdatesChs := reactor.runtimeUpdatesChs
-	reactor.runtimeUpdatesMtx.RUnlock()
-
-	for chainID, _ := range restRuntimeUpdatesChs {
-		reactor.CloseRuntimeUpdatesChannel(chainID)
-	}
-}
-
-func (reactor *Reactor) removeInternalChannels(chainID string) {
-	reactor.chainReadyMtx.RLock()
-	chainReadyCh, hasChainReady := reactor.chainReadyChs[chainID]
-	reactor.chainReadyMtx.RUnlock()
-
-	if hasChainReady {
-		close(chainReadyCh)
-
-		reactor.chainReadyMtx.Lock()
-		delete(reactor.chainReadyChs, chainID)
-		reactor.chainReadyMtx.Unlock()
-	}
-
-	reactor.ackReplResMtx.RLock()
-	_, hasReplRes := reactor.ackReplResChs[chainID]
-	reactor.ackReplResMtx.RUnlock()
-
-	if hasReplRes {
-		reactor.CloseAckReplicationChannel(chainID)
-	}
-
-	reactor.runtimeUpdatesMtx.RLock()
-	_, hasRuntimeUpdate := reactor.runtimeUpdatesChs[chainID]
-	reactor.runtimeUpdatesMtx.RUnlock()
-
-	if hasRuntimeUpdate {
-		reactor.CloseRuntimeUpdatesChannel(chainID)
-	}
-}
-
-// OnReset implements Service.
-func (reactor *Reactor) OnReset(ctx context.Context) error {
-	reactor.logger.Debug("Reset multiplex reactor")
-
-	// NOTE:
-	// reactor.discoverySwitch is nil-ified by OnStop.
-	// reactor.cometbftSwitch is nil-ified by OnStop.
-
-	// Reset all registered services atomically.
-	reactor.servicesMutex.Lock()
-
-	// Uses FIFO strategy to reset registered services
-	// This includes database services.
-	servicesFIFO := reactor.servicesSequence[:]
-	for _, serviceName := range servicesFIFO {
-		// Services multiplex contains one instance per ChainID
-		servicesMultiplex := reactor.servicesRegistry[serviceName]
-
-		// Every service instance must be reset if it was stopped
-		for _, chainService := range servicesMultiplex {
-			service := chainService.GetInstance().(cmtlibs.Service)
-			if service.IsStopped() {
-				service.Reset(ctx)
-			}
-		}
-	}
-	reactor.servicesMutex.Unlock()
-
-	// Reset the ABCI client if stopped.
-	reactor.envMutex.Lock()
-	if reactor.abciClient != nil && reactor.abciClient.IsStopped() {
-		if err := reactor.abciClient.Reset(ctx); err != nil {
-			reactor.logger.Error(
-				"Error resetting the ABCI client", "err", err)
-		}
-	}
-	reactor.envMutex.Unlock()
-
-	// Reset the replay pool service.
-	reactor.replayPoolMtx.Lock()
-	if reactor.replayPool != nil && reactor.replayPool.IsStopped() {
-		if err := reactor.replayPool.Reset(ctx); err != nil {
-			reactor.logger.Error(
-				"Error resetting the replay pool", "err", err)
-		}
-	}
-	reactor.replayPoolMtx.Unlock()
-
-	// Reset the runtime registry service.
-	reactor.runtimesMutex.Lock()
-	if reactor.runtimeRegistry != nil && reactor.runtimeRegistry.IsStopped() {
-		if err := reactor.runtimeRegistry.Reset(ctx); err != nil {
-			reactor.logger.Error(
-				"Error resetting the runtime registry", "err", err)
-		}
-	}
-	reactor.runtimesMutex.Unlock()
-
-	reactor.logger.Debug("Done resetting multiplex reactor")
-	return nil
-}
-
-// -----------------------------------------------------------------------------
-// Reactor private implementation
-
-// waitForInterval waits for i using time.After, or shutdown channels.
-func (reactor *Reactor) waitForInterval(i time.Duration) (waited bool) {
-	for reactor.Context().Err() == nil {
-		select {
-		case <-time.After(i):
-			return true
-		case <-reactor.Quit():
-			return false
-		}
-	}
-
-	return false
-}
-
-// initMultiplexProviders initializes the genesisDocProvider around icsGenesisDocSet,
-// and further initializes the services provider and multiplex providereactor.
-//
-// Note that providers always use *read-only locks* for the respective mutexes.
-// Note also, that registries must be allocated separately.
-func (reactor *Reactor) initMultiplexProviders(
-	icsGenesisDocSet node.IChecksummedGenesisDoc,
-) {
-	// Use the services registry to load node services
-	reactor.servicesProvider = func(serviceName string, chainID string) cmtlibs.Service {
-		reactor.servicesMutex.RLock()
-		_, hasAnyOfService := reactor.servicesRegistry[serviceName]
-		reactor.servicesMutex.RUnlock()
-
-		if !hasAnyOfService {
-			// allocate in-place
-			reactor.servicesMutex.Lock()
-			reactor.servicesRegistry[serviceName] = MultiplexMap[cmtlibs.Service]{}
-			reactor.servicesMutex.Unlock()
-		}
-
-		reactor.servicesMutex.RLock()
-		serviceForChainID, hasServiceByChainID := reactor.servicesRegistry[serviceName][chainID]
-		reactor.servicesMutex.RUnlock()
-
-		if !hasServiceByChainID {
-			return nil
-		}
-
-		return serviceForChainID.GetInstance().(cmtlibs.Service)
-	}
-
-	// Use the multiplex registry to load node services
-	reactor.multiplexProvider = func(multiplexName string) MultiplexMap[any] {
-		reactor.multiplexMutex.RLock()
-		multiplexByName, hasMultiplex := reactor.multiplexRegistry[multiplexName]
-		reactor.multiplexMutex.RUnlock()
-
-		if !hasMultiplex {
-			multiplexByName = MultiplexMap[any]{}
-
-			reactor.multiplexMutex.Lock()
-			// allocate in-place
-			reactor.multiplexRegistry[multiplexName] = multiplexByName
-			reactor.multiplexMutex.Unlock()
-		}
-
-		return multiplexByName
-	}
-}
-
-// loadMultiplexState opens the multiplex databases for multiple
-// contexts: state, blockstore, indexer and evidence. Then loads state
-// machines from database, config or genesis doc and initialize stores.
-//
-// This method registers instances in the multiplexRegistry:
-// - `state`: the [sm.State] state machine instances.
-// - `stateStore`: the [sm.Store] instance attached to the database.
-// - `blockstore`: the created/opened block stores.
-//
-// TODO(midas): add multiplex metric "MultiplexStateLoadDurationSeconds".
-// TODO(midas): refactoring with MakeNetworkStateMachine.
-func (reactor *Reactor) loadMultiplexState(chainIds []string) (err error) {
-	// Load initial state multiplex from database or from genesis docs
-	// Uses "database/state" instances
-	err = reactor.InitMultiplexStates(chainIds)
-	if err != nil {
-		return err
-	}
-
-	// Create a blockstore multiplex around "database/blockstore" instances
-	// Uses "database/blockStore" instances
-	err = reactor.InitMultiplexBlockStores(chainIds)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// startNodeListeners is called in a newly spawned goroutine and is responsible
-// for starting the following node listeners:
-//
-// - the event bus for block events [types.EventBus] ;
-// - the transaction- and block indexers [txindex.IndexerService] ;
-// - the priv validator (signer) instance [types.PrivValidator] ;
-//
-// This method registers instances in the multiplexRegistry:
-// - `privValidator`: the PrivValidator instance.
-//
-// This method registers services in the servicesRegistry:
-// - `eventBus`: the event bus for block events.
-// - `indexers`: the transaction- and block indexers service.
-//
-// The caller must make sure about thread-safety of filesystem operations,
-// i.e. caller should always lock runtimesMutex during call.
-func (reactor *Reactor) startNodeListeners(ctx context.Context, chainID string) error {
-	clogger := reactor.logger.With("chainId", chainID)
-	nodeKey := reactor.GetNodeKey()
-
-	// TODO(midas): remove debug logs
-	clogger.Debug("startNodeListeners",
-		"nodeId", string(nodeKey.ID()),
-	)
-
-	// Retrieve the node's config overwrite object
-	servicesProvider := reactor.GetServicesProvider()
-	configProvider := reactor.GetInstanceProvider(InstanceKeyConfig)
-	stateStoreProvider := reactor.GetInstanceProvider(InstanceKeyStateStore)
-	blockStoreProvider := reactor.GetInstanceProvider(InstanceKeyBlockStore)
-	indexDbService := servicesProvider(ServiceKeyDatabaseIndex, chainID)
-	stateDbService := servicesProvider(ServiceKeyDatabaseState, chainID)
-
-	// Make sure required instances have been initialized,
-	// i.e. verifies that InitMultiplexStates was called.
-	switch {
-	case configProvider(chainID) == nil:
-		return errors.New("failed to get node config; missing call to Reactor.Start()?")
-	case stateStoreProvider(chainID) == nil:
-		return errors.New("failed to get state store; missing call to Reactor.InitMultiplexStates()?")
-	case blockStoreProvider(chainID) == nil:
-		return errors.New("failed to get block store; missing call to Reactor.InitMultiplexBlockStores()?")
-	case indexDbService == nil:
-		return errors.New("failed to get database; missing call to MakeNetworkDatabases()?")
-	default:
-	}
-
-	// Casting to ChainInstance before is required because the *instanceProviderFn*
-	// implementation provides a `any` typed variable which is not an interface.
-	nodeConfig := configProvider(chainID).(*config.Config)
-	stateStore := stateStoreProvider(chainID).(sm.Store)
-	blockStore := blockStoreProvider(chainID).(*bs.BlockStore)
-
-	// We can safely ignore the error as we know an address is available.
-	userAddress, _ := reactor.chainRegistry.GetAddress(chainID)
-	userConfDir := filepath.Join(nodeConfig.RootDir, config.DefaultConfigDir, userAddress)
-	userDataDir := filepath.Join(nodeConfig.RootDir, config.DefaultDataDir, userAddress)
-
-	// Prometheus does not allow hyphens in metrics names, it must match
-	// following regexp: [a-zA-Z_:][a-zA-Z0-9_:]*
-	// see also: https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels
-	metricsNames := nodeConfig.Instrumentation.Namespace + "_" + string(nodeKey.ID()) + ":" + strings.ReplaceAll(chainID, "-", "_")
-	stateMetricsProvider := reactor.RegisterMetrics("state", metricsNames, func() interface{} {
-		return sm.PrometheusMetrics(metricsNames, "chain_id", chainID)
-	}).(*sm.Metrics)
-
-	// 1) Event Bus Service
-	var eventBus *types.EventBus
-	if ok := servicesProvider(ServiceKeyEventBus, chainID); ok == nil {
-		eventBus = types.NewEventBus(ctx)
-		eventBus.SetLogger(clogger.With("module", "events"))
-		if err := eventBus.Start(); err != nil {
-			return fmt.Errorf("error starting event bus: %w", err)
-		}
-
-		reactor.RegisterService(ServiceKeyEventBus, chainID, eventBus)
-	} else {
-		eventBus = servicesProvider(ServiceKeyEventBus, chainID).(*types.EventBus)
-		if !eventBus.IsRunning() {
-			if eventBus.IsStopped() {
-				eventBus.Reset(ctx) // permit re-start
-			}
-
-			if err := eventBus.Start(); err != nil && err != service.ErrAlreadyStarted {
-				return fmt.Errorf("error starting event bus: %w", err)
-			}
-		}
-	}
-
-	// 2) Priv Validator Service
-	//
-	// Uses a separate priv validator for each supported network to prevent
-	// signing blocks with the same private key multiple times.
-	//
-	// TODO(midas): Add compatibility for PrivValidator as external socket client.
-	// Currently it's not possible to use external socket client as
-	// PrivValidator and we ignore Config.PrivValidatorListenAddr
-	privValKeyDir := filepath.Join(userConfDir, chainID)   // config/
-	privValStateDir := filepath.Join(userDataDir, chainID) // data/
-	privValidator, err := privval.LoadOrGenFilePV(
-		filepath.Join(privValKeyDir, filepath.Base(nodeConfig.PrivValidatorKeyFile())),
-		filepath.Join(privValStateDir, filepath.Base(nodeConfig.PrivValidatorStateFile())),
-		func() (crypto.PrivKey, error) {
-			return ed25519.GenPrivKey(), nil
-		},
-	)
-	if err != nil {
-		return err
-	}
-
-	reactor.RegisterInstance(InstanceKeyPrivValidator, chainID, privValidator)
-
-	// 3) Blocks and Transactions Indexers
-	//
-	// TODO(midas): Add per-chain postgresql indexer compatibility, currently only support kv.
-	// The scoped indexer functionality is compatible only with the `kv` indexer for now,
-	// postgresql compatibility must be added. Appending the scope hash to the chainID
-	// in the NewEventSink() call may be enough to allow multiple indexers instances.
-	var (
-		txIndexer    txindex.TxIndexer
-		blockIndexer indexer.BlockIndexer
-	)
-	if ok := servicesProvider(ServiceKeyIndexers, chainID); ok == nil {
-		if nodeConfig.TxIndex.Indexer == "kv" {
-			if err := EnsureStartDBService(ctx, indexDbService); err != nil {
-				return fmt.Errorf(
-					"failed to open indexer database for %s: %w", chainID, err)
-			}
-
-			indexerDatabase := indexDbService.(*DBService).DB()
-			txIndexer = txidxkv.NewTxIndex(indexerDatabase)
-			blockIndexer = blockidxkv.New(
-				dbm.NewPrefixDB(indexerDatabase, []byte("block_events")),
-				blockidxkv.WithCompaction(nodeConfig.Storage.Compact, nodeConfig.Storage.CompactionInterval),
-			)
-		} else {
-			txIndexer = &txidxnull.TxIndex{}
-			blockIndexer = &blockidxnull.BlockerIndexer{}
-		}
-
-		indexerService := txindex.NewIndexerService(ctx, txIndexer, blockIndexer, eventBus, false) // stopOnError
-		indexerService.SetLogger(clogger.With("module", "txindex"))
-		if err := indexerService.Start(); err != nil {
-			return fmt.Errorf("error starting indexers: %w", err)
-		}
-
-		reactor.RegisterService(ServiceKeyIndexers, chainID, indexerService)
-	} else {
-		// If indexer service already exists, just make sure it's DB is open.
-		if err := EnsureStartDBService(ctx, indexDbService); err != nil {
-			return fmt.Errorf(
-				"failed to open indexer database for %s: %w", chainID, err)
-		}
-
-		indexerService := servicesProvider(ServiceKeyIndexers, chainID).(*txindex.IndexerService)
-		txIndexer = indexerService.GetTxIndexer()
-		blockIndexer = indexerService.GetBlockIndexer()
-
-		if !indexerService.IsRunning() {
-			if indexerService.IsStopped() {
-				indexerService.Reset(ctx) // permit re-start
-			}
-
-			if err := indexerService.Start(); err != nil && err != service.ErrAlreadyStarted {
-				return fmt.Errorf("error starting indexers: %w", err)
-			}
-		}
-	}
-
-	// Make sure the stateStore.db is open for next operation.
-	if err := EnsureStartDBService(ctx, stateDbService); err != nil {
-		return fmt.Errorf(
-			"failed to open state database for %s: %w", chainID, err)
-	}
-
-	// 4) Storage pruner
-	//
-	// Creates a pruner with interval. Note that ABCI responses are not pruned
-	// due to the multiplex features disabling the data companion all along.
-	//
-	// More generally, the multiplex features *do not permit* pruning of blocks
-	// and this implementation disables pruning by setting a retain height of 0.
-	if err := stateStore.SaveApplicationRetainHeight(0); err != nil {
-		return fmt.Errorf("could not save application retain height: %w", err)
-	}
-
-	if ok := servicesProvider(ServiceKeyPruner, chainID); ok == nil {
-		prunerOpts := []sm.PrunerOption{
-			sm.WithPrunerInterval(nodeConfig.Storage.Pruning.Interval),
-			sm.WithPrunerMetrics(stateMetricsProvider),
-		}
-		pruner := sm.NewPruner(
-			ctx,
-			stateStore,
-			blockStore,
-			blockIndexer,
-			txIndexer,
-			clogger.With("module", "state"),
-			prunerOpts...,
-		)
-
-		reactor.RegisterService(ServiceKeyPruner, chainID, pruner)
-	}
-
-	return nil
 }
 
 // sendChainReplicationResponse sends a ChainReplicationResponse.
@@ -2710,16 +446,16 @@ func (reactor *Reactor) startNodeListeners(ctx context.Context, chainID string) 
 //
 // IMPORTANT: sourcePeerOut must be an outbound peer, otherwise errors.
 func (reactor *Reactor) sendChainReplicationResponse(
-	sourcePeerOut *p2p.PeerImpl,
+	sourcePeerOut *cmtp2p.PeerImpl,
 	chainID string,
 ) error {
-	myPeerID := reactor.GetNodeKey().ID()
+	myPeerID := reactor.nodeKey.ID()
 
 	// sendResponseToPeer is an internal helper to send a message on
-	// ReplicationChannel with content ChainReplicationMessage.
-	sendResponseToPeer := func(fromID p2p.ID, toPeer *p2p.PeerImpl, withChainID string) error {
-		if success := toPeer.Send(withChainID, p2p.Envelope{
-			ChannelID: server.ReplicationChannel,
+	// ReplicationChannel with body ChainReplicationResponse.
+	sendResponseToPeer := func(fromID cmtp2p.ID, toPeer *cmtp2p.PeerImpl, withChainID string) error {
+		if success := toPeer.Send(withChainID, cmtp2p.Envelope{
+			ChannelID: types.ReplicationChannel,
 			Message: &mxp2p.Message{
 				Sum: &mxp2p.Message_ChainReplicationResponse{
 					ChainReplicationResponse: &mxp2p.ChainReplicationResponse{
@@ -2736,10 +472,6 @@ func (reactor *Reactor) sendChainReplicationResponse(
 		return nil
 	}
 
-	// if !sourcePeerOut.IsOutbound() {
-	// 	return errors.New("failed to use source peer as outbound")
-	// }
-
 	// TODO(midas): remove debug logs
 	reactor.logger.Debug("Sending ChainReplicationResponse to peer",
 		"fromId", myPeerID,
@@ -2747,8 +479,7 @@ func (reactor *Reactor) sendChainReplicationResponse(
 		"chainId", chainID,
 	)
 
-	// We send the response using the discovery switch. Note that dialing
-	// the peer *must* have happened before.
+	// Note that dialing the peer *must* have happened before.
 	if err := sendResponseToPeer(myPeerID, sourcePeerOut, chainID); err != nil {
 		return err
 	}
@@ -2757,162 +488,43 @@ func (reactor *Reactor) sendChainReplicationResponse(
 }
 
 // handleChainReplicationRequest processes a ChainReplicationRequest.
-// This method allocates the resources necessary to spawn a NEW thread which
-// consists of running a complete node runtime. It will inject the parameters
-// necessary for blocks production and it will spawn a parallel goroutine with
-// a call to [node.Node#Start].
-//
-// Note that the source peer will be dialed to accelerate the activation
-// of the block-sync process with this peer.
-//
-// TODO(midas): Refactoring, should be consistent with ReactorWithActiveRuntimes.
 func (reactor *Reactor) handleChainReplicationRequest(
-	req *mxp2p.ChainReplicationRequest,
+	e cmtp2p.Envelope,
 ) error {
-	// Build the ExtendedChainID to retrieve user address from ChainID.
-	extChainID := helpers.NewExtendedChainIDFromString(req.ChainID)
-	if extChainID == nil {
+	var replRequest *mxp2p.ChainReplicationRequest
+	switch extMsg := e.Message.(type) {
+	case *mxp2p.Message:
+		msg := extMsg.GetSum()
+		switch msg.(type) {
+		case *mxp2p.Message_ChainReplicationRequest:
+			replRequest = extMsg.GetChainReplicationRequest()
+		default:
+			return fmt.Errorf(
+				"invalid message, expected ChainReplicationRequest, got %v", extMsg)
+		}
+	default:
 		return fmt.Errorf(
-			"invalid ChainID %s", req.ChainID)
-	}
-	userAddress := extChainID.GetUserAddress()
-
-	// Make sure database connections are open for this ChainID.
-	if err := reactor.MakeNetworkDatabases(extChainID, []string{
-		"blockstore",
-		"state",
-		"txindex",
-		"evidence",
-	}, true); err != nil {
-		return fmt.Errorf(
-			"database error for %s - %w", req.ChainID, err)
+			"invalid message, expected ChainReplicationRequest, got %v", extMsg)
 	}
 
-	// CAUTION:
-	// We do not need the AllocateNetwork call anymore as it is now
-	// always being with GetRemoteValidatorsInfo, initiated by the
-	// replication partner, before sending a ChainReplicationRequest.
-
-	// Initialize the network genesis parameters
-	genesisDoc, err := GenesisDocFromChainParams(req.GetChainParams())
+	// Parse the network genesis parameters from request.
+	genesisDoc, err := helpers.GenesisDocFromChainParams(replRequest.GetChainParams())
 	if err != nil {
 		return fmt.Errorf(
 			"invalid genesis parameters: %w", err)
 	}
 
-	// Config folder is created in AllocateNetwork
-	reactor.runtimesMutex.RLock()
-	newConfDir := reactor.configsPaths[req.ChainID]
-	reactor.runtimesMutex.RUnlock()
+	// Inject genesis doc for runtime initialization.
+	reactor.runtimeMgr.AddRuntime(replRequest.ChainID, genesisDoc)
 
-	icsGenesisDocSet, err := reactor.InjectGenesisDoc(req.ChainID, newConfDir, genesisDoc)
-	if err != nil {
-		return fmt.Errorf(
-			"could not inject genesis doc: %w", err)
+	// Extract validator public keys.
+	validatorPubKeys := make([]string, 0, len(genesisDoc.Validators))
+	for _, validator := range genesisDoc.Validators {
+		validatorPubKeys = append(validatorPubKeys, pubKeyToHex(validator.PubKey))
 	}
 
-	// Initialize the state machine and block store
-	if err := reactor.InjectStateMachine(req.ChainID, icsGenesisDocSet); err != nil {
-		return fmt.Errorf(
-			"could not inject state machine: %w", err)
-	}
-
-	// Initialize custom configuration overwrites (ports, fs, etc.)
-	configOverwrite, err := reactor.MakeNetworkConfigOverwrite(extChainID)
-	if err != nil {
-		return fmt.Errorf(
-			"could not create config overwrite: %w", err)
-	}
-
-	// Inject the new ChainID in the running reactor.
-	reactor.RegisterInstance(InstanceKeyConfig, req.ChainID, configOverwrite)
-
-	// This call updates the internal chainRegistry, nodeInfo and ABCI.
-	if err = reactor.RegisterNetwork(userAddress, req.ChainID); err != nil {
-		return fmt.Errorf(
-			"could not register new ChainID: %w", err)
-	}
-
-	// Inject a *running* node.Node for the new network.
-	// TODO(midas): currently not passing any node options.
-	if err = reactor.InjectNewRuntime(reactor.Context(), req.ChainID); err != nil {
-		return fmt.Errorf(
-			"could not spawn node runtime: %w", err)
-	}
-
-	return nil
-}
-
-// EnableNewRuntimeRPC adds RPC routes for networks in a running
-// http request multiplexer.
-func (reactor *Reactor) EnableNewRuntimeRPC(networks []string) error {
-	reactor.networkMutex.RLock()
-	rpcMultiplexer := reactor.rpcMultiplexer
-	reactor.networkMutex.RUnlock()
-	if rpcMultiplexer == nil {
-		return errors.New(
-			"could not enable RPC runtime, missing multiplexer")
-	}
-
-	reactor.envMutex.RLock()
-	nodeCfg := reactor.nodeConfig
-	reactor.envMutex.RUnlock()
-
-	// We configure one RPC environment per running network,
-	// i.e. contains reactors, stores and genesis.
-	nodesProvider := reactor.GetServicesProvider()
-	chainRoutes := map[string]rpccore.RoutesMap{}
-	for _, chainID := range networks {
-		nodeRuntime, ok := nodesProvider(ServiceKeyNodeRuntime, chainID).(*node.Node)
-		if !ok {
-			return fmt.Errorf(
-				"could not get node runtime in EnableNewRuntimeRPC with ChainID %s", chainID)
-		}
-
-		env, err := nodeRuntime.ConfigureRPC()
-		if err != nil {
-			return fmt.Errorf(
-				"could not create RPC environment with ChainID %s: %w", chainID, err)
-		}
-
-		nodeRoutes := env.GetRoutes()
-		if nodeCfg.RPC.Unsafe {
-			env.AddUnsafeRoutes(nodeRoutes)
-		}
-
-		chainRoutes[chainID] = nodeRoutes
-	}
-
-	// Each network's ChainID is appended to the route name.
-	// i.e. `/broadcast_tx_commit/%CHAIN_ID%`.
-	newRoutes := rpccore.RoutesMap{}
-	for chainID, nodeRoutes := range chainRoutes {
-		for route, rpcFunc := range nodeRoutes {
-			routeKey := route + "/" + chainID
-
-			reactor.networkMutex.RLock()
-			_, hasRoute := reactor.rpcRoutes[routeKey]
-			reactor.networkMutex.RUnlock()
-
-			if hasRoute {
-				continue
-			}
-
-			newRoutes[routeKey] = rpcFunc
-
-			reactor.networkMutex.Lock()
-			reactor.rpcRoutes[routeKey] = true
-			reactor.networkMutex.Unlock()
-		}
-	}
-
-	reactor.networkMutex.Lock()
-	defer reactor.networkMutex.Unlock()
-	rpcserver.RegisterAddedRPCFuncs(
-		rpcMultiplexer,
-		newRoutes,
-		reactor.logger.With("module", "rpc-server"),
-	)
+	// Initializes the runtime services (not starting).
+	reactor.runtimeMgr.InitRuntime(replRequest.ChainID, validatorPubKeys)
 
 	return nil
 }
