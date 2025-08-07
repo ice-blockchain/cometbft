@@ -67,9 +67,14 @@ func NewReactor(
 	options ...ReactorOption,
 ) *Reactor {
 	reactor := &Reactor{
-		resourceMgr: resourceMgr,
-		nodeKey:     nodeKey,
-		logger:      logger,
+		nodeKey: nodeKey,
+		nodeCfg: nodeCfg,
+
+		resourceMgr:    resourceMgr,
+		replicationMgr: replicationMgr,
+		broadcastMgr:   broadcastMgr,
+
+		logger: logger,
 	}
 
 	// Enable overwrite of some optional properties.

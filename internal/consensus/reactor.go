@@ -109,8 +109,8 @@ func WithNodeKey(
 	}
 }
 
-// WithRuntimeRegistry is an option helper to inject a custom runtime registry.
-func WithRuntimeRegistry(
+// WithIdleManager is an option helper to inject a custom runtime registry.
+func WithIdleManager(
 	reg mxtypes.IdleManager,
 ) func(*Reactor) {
 	return func(r *Reactor) {

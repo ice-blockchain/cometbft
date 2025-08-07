@@ -159,7 +159,7 @@ func (b *MultiplexBackend) OnBroadcastError(
 
 	// Completes the runtimes activated by client.BroadcastTx.
 	for _, chainID := range relevantChainIds {
-		b.RuntimeRegistry().OnComplete(chainID)
+		b.IdleManager().OnComplete(chainID)
 	}
 
 	return reason
@@ -289,7 +289,7 @@ func (b *MultiplexBackend) waitForIndexedTransactions(
 		go func() {
 			defer chainsWg.Done()
 			defer func() {
-				b.RuntimeRegistry().OnComplete(chainID)
+				b.IdleManager().OnComplete(chainID)
 			}()
 
 			txesWg := new(sync.WaitGroup)

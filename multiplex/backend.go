@@ -177,6 +177,12 @@ func NewServer(
 	nodeConfig.Consensus.TimeoutCommit = 0         // Make progress as soon as the node has all the precommits.
 	nodeConfig.P2P.AllowDuplicateIP = true
 
+	// Creates or re-use config/ and data/ folders.
+	if _, _, err := helpers.EnsureBackendFS(nodeConfig); err != nil {
+		return nil, fmt.Errorf(
+			"failed to initialize filesystem: %w", err)
+	}
+
 	// Creates one [cmtp2p.NodeKey] instance per backend.
 	nodeKey, err := cmtp2p.LoadOrGenNodeKey(nodeConfig.NodeKeyFile())
 	if err != nil {
@@ -216,7 +222,7 @@ func NewServer(
 		knownRPCRoutes: map[string]*rpcserver.RPCFunc{},
 		knownRelayInfo: map[string]*mxrpc.RPCResultRelayInfo{},
 
-		logger:     nodeLogger,
+		logger:     nodeLogger.With("module", "multiplex"),
 		backendCfg: nodeConfig,
 	}
 
@@ -225,7 +231,11 @@ func NewServer(
 		option(backend)
 	}
 
-	backend.BaseService = service.NewBaseService(ctx, backend.logger, "MultiplexBackend", backend)
+	backend.BaseService = service.NewBaseService(ctx,
+		backend.logger,
+		"MultiplexBackend",
+		backend,
+	)
 
 	if backend.acceptor == nil {
 		backend.acceptor = &client.DefaultAcceptor{}
@@ -261,11 +271,20 @@ func NewServer(
 		defer addTimeSample(backend.metrics.InitDurationSeconds, initTime)()
 	}
 
+	backend.logger.Info("NewServer",
+		"addr", backend.relayAddr.String(),
+		"took", time.Since(initTime).String(),
+	)
 	return backend, nil
 }
 
 // ----------------------------------------------------------------------------
 // types.Server API implementation
+
+// Config returns a [config.Config] instance.
+func (b *MultiplexBackend) Config() *config.Config {
+	return b.backendCfg
+}
 
 // GetLogger returns a [cmtlog.Logger].
 func (b *MultiplexBackend) GetLogger() cmtlog.Logger {
@@ -285,11 +304,6 @@ func (b *MultiplexBackend) Acceptor() client.Acceptor {
 // SetAcceptor sets a custom [client.Acceptor] implementation.
 func (b *MultiplexBackend) SetAcceptor(acceptorImpl client.Acceptor) {
 	b.acceptor = acceptorImpl
-}
-
-// RuntimeRegistry should return the active node runtime manager.
-func (b *MultiplexBackend) RuntimeRegistry() *runtime.Registry {
-	return b.runtimeRegistry
 }
 
 // RuntimeManager should return the runtime manager's idler implementation.

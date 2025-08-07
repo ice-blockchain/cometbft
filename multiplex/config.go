@@ -45,12 +45,6 @@ const (
 // -----------------------------------------------------------------------------
 // ReplicationStrategy
 
-// HistoryReplicationStrategy() returns the historical node type which uses a mode of
-// "History", i.e. it does not synchronize with replicated chains.
-func HistoryReplicationStrategy() config.ReplicationStrategy {
-	return config.NewReplicationStrategy("History")
-}
-
 // NetworkReplicationStrategy() returns the replicator node type which uses a mode of
 // "Network", i.e. it does synchronize with replicated chains.
 func NetworkReplicationStrategy() config.ReplicationStrategy {

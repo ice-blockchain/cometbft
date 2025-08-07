@@ -137,6 +137,9 @@ func NewRegistry(
 
 	reg.BaseService = *service.NewBaseService(ctx, nil, "Registry", reg)
 
+	// The consensus pool requires an idle manager for mempool and consensus.
+	reg.consensusPool.SetIdleManager(reg)
+
 	return reg
 }
 

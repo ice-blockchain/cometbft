@@ -36,6 +36,7 @@ type ConsensusPool struct {
 
 	acceptorImpl    client.Acceptor
 	abciClient      proxy.ChainConns
+	runtimeMgr      types.IdleManager
 	runtimeComposer *runtimeComposer
 	resourceMgr     types.ResourceManager
 
@@ -436,7 +437,7 @@ func (pool *ConsensusPool) makeNetworkMempoolReactor(
 		),
 		mempl.WithChainID(chainID),
 		mempl.WithNodeKey(pool.nodeKey),
-		//XXX mempl.WithRuntimeRegistry()
+		mempl.WithIdleManager(pool.runtimeMgr),
 	)
 	if runtimeConfig.Consensus.WaitForTxs() {
 		mempool.EnableTxsAvailable()
@@ -563,7 +564,7 @@ func (pool *ConsensusPool) makeNetworkConsensusReactor(
 			consensusState,
 			shouldBlockSync, // "waitSync"
 			cs.WithNodeKey(pool.nodeKey),
-			//XXX cs.WithRuntimeRegistry()
+			cs.WithIdleManager(pool.runtimeMgr),
 		)
 		consensusReactor.SetLogger(pool.logger.With("module", "consensus"))
 
@@ -590,4 +591,14 @@ func (pool *ConsensusPool) SetOptions(options ...ConsensusPoolOption) {
 // Logger returns the logger instance.
 func (pool *ConsensusPool) Logger() cmtlog.Logger {
 	return pool.logger
+}
+
+// SetIdleManager sets a custom idle manager instance.
+func (pool *ConsensusPool) SetIdleManager(mgr types.IdleManager) {
+	pool.runtimeMgr = mgr
+}
+
+// IdleManager returns the idle manager instance.
+func (pool *ConsensusPool) IdleManager() types.IdleManager {
+	return pool.runtimeMgr
 }

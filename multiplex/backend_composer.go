@@ -71,12 +71,6 @@ func (b *MultiplexBackend) Init() error {
 		return err.(ErrSetupCometBFT)
 	}
 
-	// TODO(midas): remove debug logs
-	b.logger.Debug("Done initializing multiplex backend",
-		"addr", b.relayAddr.String(),
-		"size", len(b.GetNetworks()),
-		"nodeId", b.nodeKey.ID(),
-	)
 	return nil
 }
 

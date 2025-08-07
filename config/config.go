@@ -292,7 +292,7 @@ func DefaultBaseConfig() BaseConfig {
 		FilterPeers:        false,
 		DBBackend:          "pebbledb",
 		DBPath:             DefaultDataDir,
-		MultiplexConfig:    EmptyMultiplexConfig(), // by default, disable multiplex
+		MultiplexConfig:    EmptyMultiplexConfig(), // by default, enable multiplex
 	}
 }
 
@@ -346,8 +346,7 @@ func MultiplexTestBaseConfig(
 	return cfg
 }
 
-// EmptyMultiplexConfig returns a disabled multiplex configuration for a CometBFT node.
-// Note: the multiplex features are *disabled* using this configuration object.
+// EmptyMultiplexConfig returns a enabled-but-empty multiplex configuration for a CometBFT node.
 func EmptyMultiplexConfig() MultiplexConfig {
 	return MultiplexConfig{
 		Strategy:      DefaultReplicationStrategy(),
@@ -1694,9 +1693,9 @@ func (m replMode) String() string {
 }
 
 // DefaultReplicationStrategy() returns the default replication strategy used.
-// Note that by default, the multiplex features are *disabled*.
+// Note that by default, the multiplex features are *enabled*.
 func DefaultReplicationStrategy() ReplicationStrategy {
-	return NewReplicationStrategy("Disable")
+	return NewReplicationStrategy("Network")
 }
 
 // NewReplicationStrategy creates a ReplicationStrategy by name.

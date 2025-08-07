@@ -38,7 +38,7 @@ func (b *MultiplexBackend) GetDiscoveryPort() uint16 {
 
 // GetNetworks should return a slice of supported ChainID values.
 func (b *MultiplexBackend) GetNetworks() []string {
-	return b.GetNetworks()
+	return b.chainRegistry.GetChains()
 }
 
 // GetValidatorPubs returns all validator pubkeys available per ChainID.
