@@ -245,22 +245,21 @@ func (pool *ConnectionPool) Peers(chainIds ...string) *cmtp2p.PeerSet {
 
 // AddPeer registers a new peer in the peerset.
 func (pool *ConnectionPool) AddPeer(peer *cmtp2p.PeerImpl) error {
-	// TODO(midas): remove debug logs
-	pool.logger.Debug("Adding peer", "peer", peer)
-
 	pool.mtx.Lock()
 	defer pool.mtx.Unlock()
 
-	// In case this peer got stopped before, we must reset it.`
-	if peer.IsStopped() {
-		peer.Reset(pool.Context())
+	if pool.peers.Has(peer.ID()) {
+		return nil
 	}
 
+	pool.logger.Info("Adding peer", "peer", peer)
 	pool.peers.Add(peer)
 
 	// TODO(midas): do we still need reactor.InitPeer here?
 
 	if !peer.IsRunning() {
+		// peer.Start does *not* start a MConnection anymore,
+		// instead the connection is started with peerConnector.
 		if err := peer.Start(); err != nil {
 			pool.logger.Error("Error starting peer", "err", err, "peer", peer)
 			return err

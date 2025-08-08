@@ -424,17 +424,13 @@ func (c *runtimeComposer) Unload(chainID string) error {
 		}
 	}
 
-	if indexerService := c.resourceMgr.Get(chainID,
-		types.ServiceKeyIndexers,
-	).(*txindex.IndexerService); indexerService != nil {
+	if indexerService := c.IndexerService(chainID); indexerService != nil {
 		if indexerService.IsRunning() {
 			indexerService.Stop()
 		}
 	}
 
-	if blocksPruner := c.resourceMgr.Get(chainID,
-		types.ServiceKeyPruner,
-	).(*sm.Pruner); blocksPruner != nil {
+	if blocksPruner := c.BlockPruner(chainID); blocksPruner != nil {
 		if blocksPruner.IsRunning() {
 			blocksPruner.Stop()
 		}
@@ -445,6 +441,10 @@ func (c *runtimeComposer) Unload(chainID string) error {
 
 // ConfPath returns the filesystem path to config for chainID.
 func (c *runtimeComposer) ConfPath(chainID string) string {
+	if !c.resourceMgr.Has(chainID, types.InstanceKeyPathConf) {
+		return ""
+	}
+
 	return c.resourceMgr.Get(
 		chainID,
 		types.InstanceKeyPathConf,
@@ -453,6 +453,10 @@ func (c *runtimeComposer) ConfPath(chainID string) string {
 
 // DataPath returns the filesystem path to data for chainID.
 func (c *runtimeComposer) DataPath(chainID string) string {
+	if !c.resourceMgr.Has(chainID, types.InstanceKeyPathData) {
+		return ""
+	}
+
 	return c.resourceMgr.Get(
 		chainID,
 		types.InstanceKeyPathData,
@@ -461,6 +465,10 @@ func (c *runtimeComposer) DataPath(chainID string) string {
 
 // Config returns the configuration instance for chainID.
 func (c *runtimeComposer) Config(chainID string) *config.Config {
+	if !c.resourceMgr.Has(chainID, types.InstanceKeyConfig) {
+		return nil
+	}
+
 	return c.resourceMgr.Get(
 		chainID,
 		types.InstanceKeyConfig,
@@ -469,6 +477,10 @@ func (c *runtimeComposer) Config(chainID string) *config.Config {
 
 // GenesisDoc returns the genesis configuration for chainID.
 func (c *runtimeComposer) GenesisDoc(chainID string) cmttypes.GenesisDoc {
+	if !c.resourceMgr.Has(chainID, types.InstanceKeyGenesisDoc) {
+		return cmttypes.GenesisDoc{}
+	}
+
 	return c.resourceMgr.Get(
 		chainID,
 		types.InstanceKeyGenesisDoc,
@@ -478,6 +490,10 @@ func (c *runtimeComposer) GenesisDoc(chainID string) cmttypes.GenesisDoc {
 // Database returns a database for chainID.
 // Uses dbServiceKey as registered service key.
 func (c *runtimeComposer) Database(chainID, dbServiceKey string) *helpers.DBService {
+	if !c.resourceMgr.Has(chainID, dbServiceKey) {
+		return nil
+	}
+
 	return c.resourceMgr.Get(
 		chainID,
 		dbServiceKey,
@@ -486,6 +502,10 @@ func (c *runtimeComposer) Database(chainID, dbServiceKey string) *helpers.DBServ
 
 // Validator returns the priv validator for chainID.
 func (c *runtimeComposer) Validator(chainID string) cmttypes.PrivValidator {
+	if !c.resourceMgr.Has(chainID, types.InstanceKeyPrivValidator) {
+		return nil
+	}
+
 	return c.resourceMgr.Get(
 		chainID,
 		types.InstanceKeyPrivValidator,
@@ -494,14 +514,34 @@ func (c *runtimeComposer) Validator(chainID string) cmttypes.PrivValidator {
 
 // EventBus returns the event bus for chainID.
 func (c *runtimeComposer) EventBus(chainID string) *cmttypes.EventBus {
+	if !c.resourceMgr.Has(chainID, types.ServiceKeyEventBus) {
+		return nil
+	}
+
 	return c.resourceMgr.Get(
 		chainID,
 		types.ServiceKeyEventBus,
 	).(*cmttypes.EventBus)
 }
 
+// IndexerService returns the tx indexer for chainID.
+func (c *runtimeComposer) IndexerService(chainID string) *txindex.IndexerService {
+	if !c.resourceMgr.Has(chainID, types.ServiceKeyIndexers) {
+		return nil
+	}
+
+	return c.resourceMgr.Get(
+		chainID,
+		types.ServiceKeyIndexers,
+	).(*txindex.IndexerService)
+}
+
 // StateMachine returns the state machine for chainID.
 func (c *runtimeComposer) StateMachine(chainID string) sm.State {
+	if !c.resourceMgr.Has(chainID, types.InstanceKeyStateMachine) {
+		return sm.State{}
+	}
+
 	statePtr := c.resourceMgr.Get(
 		chainID,
 		types.InstanceKeyStateMachine,
@@ -511,6 +551,10 @@ func (c *runtimeComposer) StateMachine(chainID string) sm.State {
 
 // StateStore returns the state store for chainID.
 func (c *runtimeComposer) StateStore(chainID string) sm.Store {
+	if !c.resourceMgr.Has(chainID, types.InstanceKeyStateStore) {
+		return nil
+	}
+
 	return c.resourceMgr.Get(
 		chainID,
 		types.InstanceKeyStateStore,
@@ -519,14 +563,34 @@ func (c *runtimeComposer) StateStore(chainID string) sm.Store {
 
 // BlockStore returns the blocks store for chainID.
 func (c *runtimeComposer) BlockStore(chainID string) *bs.BlockStore {
+	if !c.resourceMgr.Has(chainID, types.InstanceKeyBlockStore) {
+		return nil
+	}
+
 	return c.resourceMgr.Get(
 		chainID,
 		types.InstanceKeyBlockStore,
 	).(*bs.BlockStore)
 }
 
+// BlockPruner returns the blocks store for chainID.
+func (c *runtimeComposer) BlockPruner(chainID string) *sm.Pruner {
+	if !c.resourceMgr.Has(chainID, types.ServiceKeyPruner) {
+		return nil
+	}
+
+	return c.resourceMgr.Get(
+		chainID,
+		types.ServiceKeyPruner,
+	).(*sm.Pruner)
+}
+
 // Mempool returns the mempool for chainID.
 func (c *runtimeComposer) Mempool(chainID string) mempl.Mempool {
+	if !c.resourceMgr.Has(chainID, types.ServiceKeyMempoolReactor) {
+		return nil
+	}
+
 	mempoolReactor := c.resourceMgr.Get(
 		chainID,
 		types.ServiceKeyMempoolReactor,
@@ -536,6 +600,10 @@ func (c *runtimeComposer) Mempool(chainID string) mempl.Mempool {
 
 // EvidencePool returns the evidence pool for chainID.
 func (c *runtimeComposer) EvidencePool(chainID string) *evidence.Pool {
+	if !c.resourceMgr.Has(chainID, types.ServiceKeyEvidenceReactor) {
+		return nil
+	}
+
 	evidenceReactor := c.resourceMgr.Get(
 		chainID,
 		types.ServiceKeyEvidenceReactor,
@@ -545,6 +613,10 @@ func (c *runtimeComposer) EvidencePool(chainID string) *evidence.Pool {
 
 // BlockExecutor returns the blocks executor for chainID.
 func (c *runtimeComposer) BlockExecutor(chainID string) *sm.BlockExecutor {
+	if !c.resourceMgr.Has(chainID, types.InstanceKeyBlockExecutor) {
+		return nil
+	}
+
 	return c.resourceMgr.Get(
 		chainID,
 		types.InstanceKeyBlockExecutor,
@@ -553,6 +625,10 @@ func (c *runtimeComposer) BlockExecutor(chainID string) *sm.BlockExecutor {
 
 // Node returns the node service for chainID.
 func (c *runtimeComposer) Node(chainID string) *node.Node {
+	if !c.resourceMgr.Has(chainID, types.ServiceKeyNodeRuntime) {
+		return nil
+	}
+
 	return c.resourceMgr.Get(
 		chainID,
 		types.ServiceKeyNodeRuntime,

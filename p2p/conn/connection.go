@@ -268,12 +268,6 @@ func (c *MConnection) startServices(ctx context.Context) error {
 			"msg", log.NewLazySprintf("Starting %v routines", c.Name()),
 			"impl", c.String())
 
-		// IMPORTANT:
-		// Starting flush timer, stats, send/recv routines
-		if err := c.BaseService.OnStart(ctx); err != nil {
-			return err
-		}
-
 		// Re-initialize all channels in case this conn is reset.
 		c.send = make(chan struct{}, 1)
 		c.pong = make(chan struct{}, 1)

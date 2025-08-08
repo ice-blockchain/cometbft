@@ -55,6 +55,7 @@ type peerSetItem struct {
 func NewPeerSet() *PeerSet {
 	return &PeerSet{
 		lookup: make(map[string]*peerSetItem),
+		addrs:  make(map[string]*peerSetItem),
 		list:   make([]*PeerImpl, 0, 256),
 	}
 }

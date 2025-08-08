@@ -139,8 +139,7 @@ func (c MultiplexClient) BroadcastTx(
 	minHealthyRelays := numConsensusRelays*2/3 + 1
 	maxFailingRelays := numConsensusRelays - minHealthyRelays
 
-	// TODO(midas): remove debug logs
-	c.backend.GetLogger().Debug("Starting consensus instance",
+	c.backend.GetLogger().Info("CONSENSUS START",
 		"address", userAddress,
 		"requestId", broadcastID,
 		"numRelays", numConsensusRelays,

@@ -262,11 +262,7 @@ func (conn *peerConnector) Logger() cmtlog.Logger {
 
 // startRoutines starts the send and receive routines for peer.
 func (conn *peerConnector) startRoutines(peer *cmtp2p.PeerImpl) error {
-	conn.mtx.Lock()
-	defer conn.mtx.Unlock()
-
-	// Re-initialize all channels in case this conn is reset.
-	conn.mconns[peer.ID()] = cmtconn.NewMConnection(conn.Context(),
+	mconn := cmtconn.NewMConnection(conn.Context(),
 		peer.Conn(),
 		conn.dispatcher,
 		func(chainID string, chID byte, msgBytes []byte) {
@@ -280,12 +276,19 @@ func (conn *peerConnector) startRoutines(peer *cmtp2p.PeerImpl) error {
 			conn.stopPeerForError(peer, reason)
 		},
 	)
+	mconn.SetLogger(conn.logger)
 
-	if err := conn.mconns[peer.ID()].Start(); err != nil {
-		conn.logger.Error("failed to start routines",
-			"peer", peer,
-			"err", err,
-		)
+	conn.mtx.Lock()
+	conn.mconns[peer.ID()] = mconn
+	conn.mtx.Unlock()
+
+	if !mconn.IsRunning() {
+		if err := mconn.Start(); err != nil {
+			conn.logger.Error("failed to start routines",
+				"peer", peer,
+				"err", err,
+			)
+		}
 	}
 
 	return nil
