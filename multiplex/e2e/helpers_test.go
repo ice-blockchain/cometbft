@@ -120,6 +120,7 @@ func waitForClientBroadcastStatus(
 
 	// Waits for a status update or timeout
 	wg.Wait()
+
 	return resultStatusMsg
 }
 
@@ -152,9 +153,9 @@ func requireCompleteClientBroadcastTx(
 		notifyCh,
 	)
 	require.NotNil(tb, resultStatusMsg)
-	require.NoError(tb, resultStatusMsg.Error,
+	assert.NoError(tb, resultStatusMsg.Error,
 		fmt.Sprintf("should not contain error status for transactions on: %s", withChainID))
-	require.Len(tb, resultStatusMsg.TxHashes, numTransactions,
+	assert.Len(tb, resultStatusMsg.TxHashes, numTransactions,
 		fmt.Sprintf("should contain all accepted transaction hashes on: %s", withChainID))
 	close(notifyCh)
 }

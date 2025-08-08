@@ -462,7 +462,7 @@ func (mt *MultiplexTransport) IsClosing() bool {
 // closes the connection.
 func (mt *MultiplexTransport) Cleanup(p *PeerImpl) {
 	mt.conns.RemoveAddr(p.RemoteAddr())
-	// _ = p.CloseConn()
+	p.CloseConn()
 }
 
 func (mt *MultiplexTransport) cleanup(c net.Conn) error {

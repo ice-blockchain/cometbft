@@ -259,6 +259,9 @@ func NewServer(
 	// The registry's composer needs a switch to create [node.Node].
 	backend.runtimeRegistry.Composer().SetSwitch(backend.cometbftSwitch)
 
+	// The registry's consensus pool needs a switch for consensus reactors.
+	backend.runtimeRegistry.ConsensusPool().SetSwitch(backend.cometbftSwitch)
+
 	// The multiplex reactor needs the runtime manager when it intercepts
 	// mempool messages that must be forwarded to a *running* mempool.
 	backend.reactor.SetRuntimeManager(backend.runtimeRegistry)

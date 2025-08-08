@@ -290,7 +290,7 @@ func (c *MConnection) startServices(ctx context.Context) error {
 	c.Logger.Debug("routines start",
 		"msg", log.NewLazySprintf("Not starting %v routines -- already started", c.Name()),
 		"impl", c.String())
-	return service.ErrAlreadyStarted
+	return nil // continue BaseService.Start()
 }
 
 // stopServices stops the BaseService and timers and closes the quitSendRoutine.
@@ -446,7 +446,8 @@ func (c *MConnection) Send(chainID string, chID byte, msgBytes []byte) bool {
 
 	c.Logger.Debug("Send", "chain_id", chainID, "channel", chID, "conn", c, "msgBytes", log.NewLazySprintf("%X", msgBytes))
 
-	channel := c.channelProvider.GetChannel(chID)
+	var channel *Channel
+	channel = c.channelProvider.GetChannel(chID)
 
 	// Send message to channel.
 	success := channel.sendBytes(chainID, msgBytes)
@@ -594,8 +595,9 @@ func (c *MConnection) sendBatchPacketMsgs(w protoio.Writer, batchSize int) bool 
 			c.sendMonitor.Update(totalBytesWritten)
 		}
 	}()
+	channels := c.channelProvider.GetChannels()
 	for i := 0; i < batchSize; i++ {
-		channel := selectChannelToGossipOn(c.channelProvider.GetChannels())
+		channel := selectChannelToGossipOn(channels)
 		// nothing to send across any channel.
 		if channel == nil {
 			return true
@@ -951,7 +953,7 @@ func (ch *Channel) canSend() bool {
 // Call before calling updateNextPacket
 // Goroutine-safe.
 func (ch *Channel) isSendPending() bool {
-	if ch.sending == nil {
+	if ch == nil || ch.sending == nil {
 		return false
 	}
 

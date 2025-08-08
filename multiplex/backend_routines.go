@@ -176,7 +176,6 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() types.NodeReplRequest
 			"relays", relays,
 			"numValidators", len(genesisDoc.Validators),
 			"numPeers", discoveryPeers.Size(),
-			"replicationReq", replicationReq,
 		)
 
 		requestsWg := sync.WaitGroup{}
@@ -206,7 +205,7 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() types.NodeReplRequest
 					},
 				}
 				peer.Send(chainID, e)
-				b.replicationMgr.Process(e)
+				b.replicationMgr.Process(addr.ID(), e)
 
 				requestSentPeerIds = append(requestSentPeerIds, peerID)
 			}(relay)

@@ -173,6 +173,11 @@ func WithChainID(
 	}
 }
 
+// AddrBook returns the injected address book.
+func (r *Reactor) AddrBook() AddrBook {
+	return r.book
+}
+
 // OnStart implements BaseService.
 func (r *Reactor) OnStart(ctx context.Context) error {
 	if !r.book.IsRunning() {
@@ -399,6 +404,7 @@ func (r *Reactor) RequestAddrs(p *p2p.PeerImpl) {
 	r.Logger.Debug("Request addrs", "from", p)
 	r.requestsSent.Set(id+"_"+dir, struct{}{})
 	p.Send(r.ChainID, p2p.Envelope{
+		ChainID:   r.ChainID,
 		ChannelID: PexChannel,
 		Message:   &tmp2p.PexRequest{},
 	})
@@ -446,7 +452,7 @@ func (r *Reactor) ReceiveAddrs(addrs []*p2p.NetAddress, src *p2p.PeerImpl) error
 // SendAddrs sends addrs to the peer.
 func (r *Reactor) SendAddrs(p *p2p.PeerImpl, netAddrs []*p2p.NetAddress) {
 	e := p2p.Envelope{
-		//ChainID:   r.chainID,
+		ChainID:   r.ChainID,
 		ChannelID: PexChannel,
 		Message:   &tmp2p.PexAddrs{Addrs: p2p.NetAddressesToProto(netAddrs)},
 	}

@@ -135,6 +135,10 @@ func NewRegistry(
 	// The consensus pool requires an idle manager for mempool and consensus.
 	reg.consensusPool.SetIdleManager(reg)
 
+	// The connection managers require a runtime manager to start runtimes.
+	reg.discoveryPool.SetRuntimeManager(reg)
+	reg.cometbftPool.SetRuntimeManager(reg)
+
 	return reg
 }
 
@@ -431,6 +435,11 @@ func (reg *Registry) Validators() (out map[string]cmttypes.PrivValidator) {
 // Composer returns the runtime composer instance.
 func (reg *Registry) Composer() types.RuntimeComposer {
 	return reg.runtimeComposer
+}
+
+// ConsensusPool returns the consensus pool.
+func (reg *Registry) ConsensusPool() types.ConsensusHandler {
+	return reg.consensusPool
 }
 
 // AddRuntime should add a genesisDoc for chainID.

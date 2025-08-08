@@ -42,6 +42,8 @@ type RuntimeManager interface {
 	Validators() map[string]cmttypes.PrivValidator
 	// Composer returns the runtime composer instance.
 	Composer() RuntimeComposer
+	// ConsensusPool returns the consensus pool.
+	ConsensusPool() ConsensusHandler
 
 	// AddRuntime should add a genesisDoc for chainID.
 	AddRuntime(chainID string, genesisDoc cmttypes.GenesisDoc) error
@@ -92,6 +94,11 @@ type RuntimeComposer interface {
 type ConsensusHandler interface {
 	service.Service
 
+	// SetSwitch is used to set a cmtp2p.Switch for CometBFT.
+	SetSwitch(sw *cmtp2p.Switch)
+	// Switch returns the cmtp2p.Switch instance for CometBFT.
+	Switch() *cmtp2p.Switch
+
 	// ABCI returns the "application-blockchain client interface".
 	ABCI() proxy.ChainConns
 
@@ -127,7 +134,7 @@ type MessageManager interface {
 	// AddIncoming adds a received message to the pool.
 	AddIncoming(e cmtp2p.Envelope) error
 	// AddOutgoing adds a sent message to the pool.
-	AddOutgoing(e cmtp2p.Envelope) error
+	AddOutgoing(dest cmtp2p.ID, e cmtp2p.Envelope) error
 }
 
 // ReplicationManager defines the contract for the replications manager.
@@ -136,8 +143,8 @@ type ReplicationManager interface {
 
 	// Init initializes a replication processor for chainID with relays.
 	Init(chainID string, relays []*helpers.RelayAddress) error
-	// Process processes a received message e with the replication pool.
-	Process(e cmtp2p.Envelope) error
+	// Process processes a message e with the replication pool.
+	Process(peerID cmtp2p.ID, e cmtp2p.Envelope) error
 
 	// Partners returns a list of relay ID from replication partners.
 	Partners(chainID string) []cmtp2p.ID

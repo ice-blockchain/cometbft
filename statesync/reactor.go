@@ -168,6 +168,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 				r.Logger.Debug("Advertising snapshot", "height", snapshot.Height,
 					"format", snapshot.Format, "peer", e.Src.ID())
 				e.Src.Send(r.ChainID, p2p.Envelope{
+					ChainID:   r.ChainID,
 					ChannelID: e.ChannelID,
 					Message: &ssproto.SnapshotsResponse{
 						Height:   snapshot.Height,
@@ -228,6 +229,7 @@ func (r *Reactor) Receive(e p2p.Envelope) {
 			r.Logger.Debug("Sending chunk", "height", msg.Height, "format", msg.Format,
 				"chunk", msg.Index, "peer", e.Src.ID())
 			e.Src.Send(r.ChainID, p2p.Envelope{
+				ChainID:   r.ChainID,
 				ChannelID: ChunkChannel,
 				Message: &ssproto.ChunkResponse{
 					Height:  msg.Height,
@@ -324,6 +326,7 @@ func (r *Reactor) Sync(stateProvider StateProvider, discoveryTime time.Duration)
 		// Request snapshots from all currently connected peers
 
 		r.Switch.Broadcast(r.ChainID, p2p.Envelope{
+			ChainID:   r.ChainID,
 			ChannelID: SnapshotChannel,
 			Message:   &ssproto.SnapshotsRequest{},
 		})

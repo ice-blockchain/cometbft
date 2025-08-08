@@ -339,6 +339,7 @@ func (c *runtimeComposer) Build(
 	pruner := c.resourceMgr.Get(chainID, types.ServiceKeyPruner).(*sm.Pruner)
 	indexerService := c.resourceMgr.Get(chainID, types.ServiceKeyIndexers).(*txindex.IndexerService)
 	consensusReactor := c.resourceMgr.Get(chainID, types.ServiceKeyConsensusReactor).(*cs.Reactor)
+	pexAddrBook := c.resourceMgr.Get(chainID, types.ServiceKeyAddressesReactor).(*pex.Reactor).AddrBook()
 	proxyApp := abciClient.ToAppConns(chainID)
 
 	// Connections
@@ -346,7 +347,8 @@ func (c *runtimeComposer) Build(
 	withNodeKey := c.connectionPool.NodeKey()
 	eventSwitch := c.Switch()
 	connTransport := eventSwitch.Transport()
-	pexAddrBook := eventSwitch.GetAddrBook().(pex.AddrBook)
+
+	eventSwitch.SetAddrBook(pexAddrBook)
 
 	// Create the [node.Node] instance.
 	nodeInstance := node.NewNodeWithServices(
@@ -542,11 +544,10 @@ func (c *runtimeComposer) StateMachine(chainID string) sm.State {
 		return sm.State{}
 	}
 
-	statePtr := c.resourceMgr.Get(
+	return c.resourceMgr.Get(
 		chainID,
 		types.InstanceKeyStateMachine,
-	).(*sm.State)
-	return *statePtr
+	).(sm.State)
 }
 
 // StateStore returns the state store for chainID.
@@ -885,7 +886,7 @@ func (c *runtimeComposer) startNetworkStateMachine(
 		bs.WithDBKeyLayout(dbKeyLayoutVersion),
 	)
 
-	c.resourceMgr.Set(chainID, types.InstanceKeyStateMachine, &stateMachine) // *sm.State
+	c.resourceMgr.Set(chainID, types.InstanceKeyStateMachine, stateMachine) // *sm.State
 	c.resourceMgr.Set(chainID, types.InstanceKeyStateStore, stateStore)
 	c.resourceMgr.Set(chainID, types.InstanceKeyBlockStore, blockStore)
 	return nil

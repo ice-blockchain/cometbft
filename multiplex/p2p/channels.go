@@ -31,6 +31,8 @@ func GetRuntimeChannels() map[string][]byte {
 		"PEX":       []byte{pex.PexChannel},
 
 		"MULTIPLEX": []byte{
+			// ReplicationChannel may be used to send ChainReplicationRequest messages.
+			types.ReplicationChannel,
 			// AckBroadcastChannel may be used to send AckTransactionBroadcast messages.
 			types.AckBroadcastChannel,
 			// RuntimeChannel may be used to send ChainReplicationComplete messages.

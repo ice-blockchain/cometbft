@@ -182,6 +182,7 @@ func (evR *Reactor) broadcastEvidenceRoutine(peer *p2p.PeerImpl) {
 			}
 
 			success := peer.Send(evR.ChainID, p2p.Envelope{
+				ChainID:   evR.ChainID,
 				ChannelID: EvidenceChannel,
 				Message:   evp,
 			})

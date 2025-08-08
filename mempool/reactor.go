@@ -760,6 +760,7 @@ func (memR *Reactor) sendAckTransactionBroadcast(
 
 	sendToPeer := func(fromID p2p.ID, toPeer *p2p.PeerImpl) error {
 		if success := toPeer.Send(memR.ChainID, p2p.Envelope{
+			ChainID:   memR.ChainID,
 			ChannelID: mxtypes.AckBroadcastChannel,
 			Message: &mxp2p.Receipt{
 				Sum: &mxp2p.Receipt_AckTransactionBroadcast{

@@ -19,6 +19,15 @@ type MessageStore struct {
 	msgs map[string][]cmtp2p.Envelope
 }
 
+// NewMessageStore creates a new message store.
+func NewMessageStore() *MessageStore {
+	s := &MessageStore{
+		msgs: map[string][]cmtp2p.Envelope{},
+	}
+
+	return s
+}
+
 // MessagePool defines a chain replication pool.
 type MessagePool struct {
 	service.BaseService
@@ -51,14 +60,14 @@ func NewMessageManager(
 	pool := &MessagePool{
 		mtx: new(sync.Mutex),
 
-		incoming: new(MessageStore),
-		outgoing: new(MessageStore),
+		incoming: NewMessageStore(),
+		outgoing: NewMessageStore(),
 
-		incomingByType: new(MessageStore),
-		outgoingByType: new(MessageStore),
+		incomingByType: NewMessageStore(),
+		outgoingByType: NewMessageStore(),
 
-		incomingByChainID: new(MessageStore),
-		outgoingByChainID: new(MessageStore),
+		incomingByChainID: NewMessageStore(),
+		outgoingByChainID: NewMessageStore(),
 
 		// Options
 		logger: logger,
@@ -99,12 +108,12 @@ func (pool *MessagePool) AddIncoming(e cmtp2p.Envelope) error {
 }
 
 // AddOutgoing adds a sent message to the pool.
-func (pool *MessagePool) AddOutgoing(e cmtp2p.Envelope) error {
+func (pool *MessagePool) AddOutgoing(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 	pool.mtx.Lock()
 	defer pool.mtx.Unlock()
 
 	// Store message by source peer ID.
-	pool.addMessage(string(e.Src.ID()), pool.outgoing, e)
+	pool.addMessage(string(dest), pool.outgoing, e)
 
 	// Also store by parsed message type.
 	msgType := pool.getMsgType(e.Message)

@@ -170,6 +170,11 @@ func ResetTestMultiplexRelays(
 	require.NoError(tb, err)
 
 	relayConf1 := MakeConfig(tb, tmpRootDir)
+	relayConf1.DiscoveryPort = 30001
+	relayConf1.P2P.ListenAddress = fmt.Sprintf("tcp://0.0.0.0:%v", 30002)
+	relayConf1.P2P.ExternalAddress = fmt.Sprintf("tcp://127.0.0.1:%v", 30002)
+	relayConf1.RPC.ListenAddress = fmt.Sprintf("tcp://127.0.0.1:%v", 30000)
+	relayConf1.Instrumentation.Namespace += "_1"
 
 	serverRelay1, err := mx.NewServer(
 		tb.Context(),

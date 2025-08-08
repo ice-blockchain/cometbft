@@ -289,7 +289,6 @@ func (sw *Switch) MarkPeerAsGood(peer Peer) {
 // NOTE(midas): Uses the PeerSet instance corresponding to chainID.
 func (sw *Switch) Broadcast(_ string, e Envelope) error {
 	return sw.pool.Broadcast(e)
-
 }
 
 // TryBroadcast runs a go routine for each attempted send.

@@ -26,6 +26,7 @@ type ConnectionPool struct {
 	connector  *peerConnector
 	dispatcher cmtp2p.Dispatcher
 	handshaker cmtp2p.Handshaker
+	runtimeMgr types.RuntimeManager
 
 	// Resources
 	nodeInfo  *MultiNetworkNodeInfo
@@ -269,10 +270,10 @@ func (pool *ConnectionPool) AddPeer(peer *cmtp2p.PeerImpl) error {
 	// TODO(midas): do we still need reactor.AddPeer here?
 
 	if !pool.connected.Has(string(peer.ID())) {
-		if err := pool.connector.startRoutines(peer); err != nil {
-			pool.logger.Error("Error starting routines", "err", err, "peer", peer)
-			return err
-		}
+		// startRoutines requires us to take a lock on mutex.
+		pool.connector.Lock()
+		pool.connector.startRoutines(peer)
+		pool.connector.Unlock()
 
 		pool.connected.Set(string(peer.ID()), peer)
 	}
@@ -295,10 +296,12 @@ func (pool *ConnectionPool) RemovePeer(peerID cmtp2p.ID) error {
 	peer := pool.peers.Get(peerID)
 
 	if pool.connected.Has(string(peerID)) {
+		// stopRoutines requires us to take a lock on mutex.
+		pool.connector.Lock()
 		if err := pool.connector.stopRoutines(peer); err != nil {
 			pool.logger.Error("Error stopping routines", "err", err, "peer", peer)
 		}
-
+		pool.connector.Unlock()
 		pool.connected.Delete(string(peerID))
 	}
 
@@ -452,4 +455,14 @@ func (c *ConnectionPool) SetOptions(options ...ConnectionPoolOption) {
 // Logger returns the logger instance.
 func (c *ConnectionPool) Logger() cmtlog.Logger {
 	return c.logger
+}
+
+// SetRuntimeManager sets a custom idle manager instance.
+func (c *ConnectionPool) SetRuntimeManager(mgr types.RuntimeManager) {
+	c.runtimeMgr = mgr
+}
+
+// RuntimeManager returns the idle manager instance.
+func (c *ConnectionPool) RuntimeManager() types.RuntimeManager {
+	return c.runtimeMgr
 }

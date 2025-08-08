@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+	"sync/atomic"
 
 	"github.com/cosmos/gogoproto/proto"
 
@@ -27,6 +28,8 @@ type packetDispatcher struct {
 	reactorsByChIds     map[byte]string
 	reactorsServiceKeys map[string]string
 	channelsIndex       map[byte]*cmtp2p.Channel
+
+	initialized uint32 // atomic
 
 	// Options
 	logger cmtlog.Logger
@@ -64,6 +67,8 @@ func NewDispatcher(
 		logger: logger,
 	}
 
+	atomic.StoreUint32(&router.initialized, 0)
+
 	// Use option helpers
 	router.SetOptions(options...)
 
@@ -89,19 +94,23 @@ func DispatcherWithLogger(logger cmtlog.Logger) DispatcherOption {
 // Target returns the target reactor to process packet.
 func (router *packetDispatcher) Target(packet tmp2p.PacketMsg) cmtp2p.Reactor {
 	router.mtx.Lock()
-	defer router.mtx.Unlock()
-
 	// Uses a static list of reactors names
 	name := router.reactorsByChIds[byte(packet.ChannelID)]
+	router.mtx.Unlock()
+
+	if name == "MULTIPLEX" {
+		return router.GetMultiplexReactor()
+	}
 
 	// Populated in NewDispatcher().
 	skey := router.reactorsServiceKeys[name]
 
 	// Get the service instance from resources.
-	return router.resourceMgr.Get(
+	target := router.resourceMgr.Get(
 		packet.ChainID,
 		skey,
 	).(cmtp2p.Reactor)
+	return target
 }
 
 // Dispatch forwards the packet to the target reactor.
@@ -114,6 +123,7 @@ func (router *packetDispatcher) Dispatch(
 
 	// Find the correct proto message type.
 	chDescs := target.GetChannels()
+
 	var msgType proto.Message
 	for _, chDesc := range chDescs {
 		if chDesc.ID != byte(packet.ChannelID) {
@@ -138,6 +148,8 @@ func (router *packetDispatcher) Dispatch(
 			return
 		}
 	}
+
+	router.logger.Info("Dispatching message", "target", target, "msg", msg)
 
 	target.Receive(cmtp2p.Envelope{
 		ChainID:   packet.ChainID,
@@ -194,31 +206,46 @@ func (router *packetDispatcher) GetMultiplexReactor() cmtp2p.Reactor {
 // ----------------------------------------------------------------------------
 // cmtp2p.ChannelProvider API implementation
 
+// InitChannels initializes the channels index for this dispatcher.
+func (router *packetDispatcher) InitChannels() {
+	if atomic.CompareAndSwapUint32(&router.initialized, 0, 1) {
+		mxR := router.GetMultiplexReactor()
+		chDescs := GetChannelDescriptors(mxR)
+		router.logger.Info("InitChannels", "len", len(chDescs))
+
+		router.mtx.Lock()
+		defer router.mtx.Unlock()
+
+		router.channelsIndex = make(map[byte]*cmtp2p.Channel, len(chDescs))
+		for chID, chDesc := range chDescs {
+			router.channelsIndex[chID] = cmtconn.NewChannel(chDesc)
+		}
+	}
+}
+
 // GetChannels returns a slice of Channel instances.
 func (router *packetDispatcher) GetChannels() (channels []*cmtp2p.Channel) {
-	router.mtx.Lock()
-	defer router.mtx.Unlock()
-
-	channels = make([]*cmtp2p.Channel, len(router.channelsIndex))
-	if len(router.channelsIndex) > 0 {
-		for _, channel := range router.channelsIndex {
-			channels = append(channels, channel)
-		}
-		return // channels
+	if atomic.LoadUint32(&router.initialized) == 0 {
+		router.InitChannels()
 	}
 
-	mxR := router.GetMultiplexReactor()
-	chDescs := GetChannelDescriptors(mxR)
-	router.channelsIndex = make(map[byte]*cmtp2p.Channel, len(chDescs))
-	for chID, chDesc := range chDescs {
-		router.channelsIndex[chID] = cmtconn.NewChannel(chDesc)
-		channels = append(channels, router.channelsIndex[chID])
+	router.mtx.Lock()
+	channelsIdx := router.channelsIndex
+	router.mtx.Unlock()
+
+	channels = make([]*cmtp2p.Channel, len(channelsIdx))
+	for _, channel := range channelsIdx {
+		channels = append(channels, channel)
 	}
 	return // channels
 }
 
 // GetChannel returns a Channel by ID.
 func (router *packetDispatcher) GetChannel(chID byte) *cmtp2p.Channel {
+	if atomic.LoadUint32(&router.initialized) == 0 {
+		router.InitChannels()
+	}
+
 	router.mtx.Lock()
 	defer router.mtx.Unlock()
 

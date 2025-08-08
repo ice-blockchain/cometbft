@@ -117,15 +117,20 @@ func (mgr *ReplicationPool) Init(
 }
 
 // Process processes a received message e to the replication pool.
-func (mgr *ReplicationPool) Process(e cmtp2p.Envelope) error {
+func (mgr *ReplicationPool) Process(peerID cmtp2p.ID, e cmtp2p.Envelope) error {
 	mgr.mtx.Lock()
 	defer mgr.mtx.Unlock()
 
-	// Adds incoming message to message pool.
-	mgr.pool.AddIncoming(e)
+	if e.Src != nil {
+		// Adds incoming message to message pool.
+		mgr.pool.AddIncoming(e)
+	} else {
+		// Adds outgoing message to message pool.
+		mgr.pool.AddOutgoing(peerID, e)
+	}
 
 	// Also store the peer ID as a partner.
-	mgr.addPartner(e.ChainID, e.Src.ID())
+	mgr.addPartner(e.ChainID, peerID)
 
 	switch extMsg := e.Message.(type) {
 	case *mxp2p.Message:
@@ -133,16 +138,12 @@ func (mgr *ReplicationPool) Process(e cmtp2p.Envelope) error {
 		switch msg.(type) {
 		case *mxp2p.Message_ChainReplicationRequest:
 			replRequest := extMsg.GetChainReplicationRequest()
-
-			mgr.logger.Debug("Processing ChainReplicationRequest", "msg", replRequest)
 			mgr.addRequest(replRequest)
 
 			// Nothing more to do about ChainReplicationRequest.
 
 		case *mxp2p.Message_ChainReplicationResponse:
 			replResponse := extMsg.GetChainReplicationResponse()
-
-			mgr.logger.Debug("Processing ChainReplicationResponse", "msg", replResponse)
 			mgr.addResponse(replResponse)
 
 			// Close the "Accepted" channel when we have 2/3+1 responses.
@@ -153,8 +154,6 @@ func (mgr *ReplicationPool) Process(e cmtp2p.Envelope) error {
 
 		case *mxp2p.Message_ChainReplicationComplete:
 			replComplete := extMsg.GetChainReplicationComplete()
-
-			mgr.logger.Debug("Processing ChainReplicationComplete", "msg", replComplete)
 			mgr.addComplete(replComplete)
 
 			// Close the "Complete" channel when we have 2/3+1 completions.
@@ -253,6 +252,8 @@ func (mgr *ReplicationPool) WaitAccepted(chainID string) bool {
 			return true
 		case <-mgr.Context().Done():
 			return false
+		case <-mgr.Quit():
+			return false
 		}
 	}
 
@@ -268,6 +269,8 @@ func (mgr *ReplicationPool) WaitCompleted(chainID string) bool {
 		case <-ch:
 			return true
 		case <-mgr.Context().Done():
+			return false
+		case <-mgr.Quit():
 			return false
 		}
 	}

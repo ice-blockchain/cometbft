@@ -31,8 +31,9 @@ import (
 type ConsensusPool struct {
 	service.BaseService
 
-	mtx     *sync.Mutex
-	nodeKey *cmtp2p.NodeKey
+	mtx            *sync.Mutex
+	nodeKey        *cmtp2p.NodeKey
+	cometbftSwitch *cmtp2p.Switch
 
 	acceptorImpl    client.Acceptor
 	abciClient      proxy.ChainConns
@@ -60,7 +61,9 @@ func NewConsensusHandler(
 	options ...ConsensusPoolOption,
 ) *ConsensusPool {
 	pool := &ConsensusPool{
-		mtx:             new(sync.Mutex),
+		mtx:     new(sync.Mutex),
+		nodeKey: nodeKey,
+
 		abciClient:      abciClient,
 		resourceMgr:     resourceMgr,
 		runtimeComposer: composer.(*runtimeComposer),
@@ -117,6 +120,16 @@ func (pool *ConsensusPool) OnReset(ctx context.Context) error {
 
 // ----------------------------------------------------------------------------
 // ConsensusHandler API implementation
+
+// SetSwitch is used to set a cmtp2p.Switch for CometBFT.
+func (pool *ConsensusPool) SetSwitch(sw *cmtp2p.Switch) {
+	pool.cometbftSwitch = sw
+}
+
+// Switch returns the cmtp2p.Switch instance for CometBFT.
+func (pool *ConsensusPool) Switch() *cmtp2p.Switch {
+	return pool.cometbftSwitch
+}
 
 // ABCI returns the "application-blockchain client interface".
 func (pool *ConsensusPool) ABCI() proxy.ChainConns {
@@ -312,27 +325,43 @@ func (pool *ConsensusPool) Execute(chainID string) error {
 func (pool *ConsensusPool) Shutdown(
 	chainID string,
 ) error {
-	blocksyncReactor := pool.resourceMgr.Get(chainID, types.ServiceKeyBlockSyncReactor).(*blocksync.Reactor)
-	consensusReactor := pool.resourceMgr.Get(chainID, types.ServiceKeyConsensusReactor).(*cs.Reactor)
-	evidenceReactor := pool.resourceMgr.Get(chainID, types.ServiceKeyEvidenceReactor).(*evidence.Reactor)
-	mempoolReactor := pool.resourceMgr.Get(chainID, types.ServiceKeyMempoolReactor).(*mempl.Reactor)
+	var (
+		blocksyncReactor *blocksync.Reactor
+		consensusReactor *cs.Reactor
+		evidenceReactor  *evidence.Reactor
+		mempoolReactor   *mempl.Reactor
+	)
 
-	if blocksyncReactor.IsRunning() || blocksyncReactor.IsStarted() {
-		blocksyncReactor.Stop()
+	if bsR := pool.resourceMgr.Get(chainID, types.ServiceKeyBlockSyncReactor); bsR != nil {
+		blocksyncReactor = bsR.(*blocksync.Reactor)
+		if blocksyncReactor.IsRunning() || blocksyncReactor.IsStarted() {
+			blocksyncReactor.Stop()
+		}
 	}
-	if consensusReactor.IsRunning() || consensusReactor.IsStarted() {
-		consensusReactor.Stop()
+	if conR := pool.resourceMgr.Get(chainID, types.ServiceKeyConsensusReactor); conR != nil {
+		consensusReactor = conR.(*cs.Reactor)
+		if consensusReactor.IsRunning() || consensusReactor.IsStarted() {
+			consensusReactor.Stop()
+		}
 	}
-	if evidenceReactor.IsRunning() || evidenceReactor.IsStarted() {
-		evidenceReactor.Stop()
+	if evR := pool.resourceMgr.Get(chainID, types.ServiceKeyEvidenceReactor); evR != nil {
+		evidenceReactor = evR.(*evidence.Reactor)
+		if evidenceReactor.IsRunning() || evidenceReactor.IsStarted() {
+			evidenceReactor.Stop()
+		}
 	}
-	if mempoolReactor.IsRunning() || mempoolReactor.IsStarted() {
-		mempoolReactor.Stop()
+	if memR := pool.resourceMgr.Get(chainID, types.ServiceKeyMempoolReactor); memR != nil {
+		mempoolReactor = memR.(*mempl.Reactor)
+		if mempoolReactor.IsRunning() || mempoolReactor.IsStarted() {
+			mempoolReactor.Stop()
+		}
 	}
 
-	nodeInstance := pool.resourceMgr.Get(chainID, types.ServiceKeyNodeRuntime).(*node.Node)
-	if nodeInstance.IsRunning() {
-		nodeInstance.Stop()
+	if nodeR := pool.resourceMgr.Get(chainID, types.ServiceKeyNodeRuntime); nodeR != nil {
+		nodeInstance := nodeR.(*node.Node)
+		if nodeInstance.IsRunning() || nodeInstance.IsStarted() {
+			nodeInstance.Stop()
+		}
 	}
 
 	return nil
@@ -443,6 +472,7 @@ func (pool *ConsensusPool) makeNetworkMempoolReactor(
 		mempool.EnableTxsAvailable()
 	}
 	mempoolReactor.SetLogger(pool.logger.With("module", "mempool"))
+	mempoolReactor.SetSwitch(pool.Switch())
 
 	pool.resourceMgr.Set(chainID, types.ServiceKeyMempoolReactor, mempoolReactor)
 	return nil
@@ -478,6 +508,7 @@ func (pool *ConsensusPool) makeNetworkEvidenceReactor(
 			evidence.WithChainID(chainID),
 		)
 		evidenceReactor.SetLogger(pool.logger.With("module", "evidence"))
+		evidenceReactor.SetSwitch(pool.Switch())
 
 		pool.resourceMgr.Set(chainID, types.ServiceKeyEvidenceReactor, evidenceReactor)
 	}
@@ -521,6 +552,7 @@ func (pool *ConsensusPool) makeNetworkBlocksyncReactor(
 			blocksync.WithChainID(chainID),
 		)
 		blockSyncReactor.SetLogger(pool.logger.With("module", "blocksync"))
+		blockSyncReactor.SetSwitch(pool.Switch())
 
 		pool.resourceMgr.Set(chainID, types.InstanceKeyBlockExecutor, blockExecutor)
 		pool.resourceMgr.Set(chainID, types.ServiceKeyBlockSyncReactor, blockSyncReactor)
@@ -532,7 +564,6 @@ func (pool *ConsensusPool) makeNetworkBlocksyncReactor(
 func (pool *ConsensusPool) makeNetworkConsensusReactor(
 	chainID string,
 ) error {
-
 	runtimeConfig := pool.runtimeComposer.Config(chainID)
 	stateMachine := pool.runtimeComposer.StateMachine(chainID)
 	blockStore := pool.runtimeComposer.BlockStore(chainID)
@@ -565,8 +596,10 @@ func (pool *ConsensusPool) makeNetworkConsensusReactor(
 			shouldBlockSync, // "waitSync"
 			cs.WithNodeKey(pool.nodeKey),
 			cs.WithIdleManager(pool.runtimeMgr),
+			cs.WithChainID(chainID),
 		)
 		consensusReactor.SetLogger(pool.logger.With("module", "consensus"))
+		consensusReactor.SetSwitch(pool.Switch())
 
 		// services which will be publishing and/or subscribing for messages (events)
 		// consensusReactor will set it on consensusState and blockExecutor

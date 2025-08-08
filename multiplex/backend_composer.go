@@ -517,11 +517,27 @@ func (b *MultiplexBackend) StartSharedServices() error {
 		}
 	}
 
-	// We share one runtime manager amongst all replication chains.
+	// A runtime manager is responsible for activating/idling runtimes.
 	if !b.runtimeRegistry.IsRunning() {
 		if err := b.runtimeRegistry.Start(); err != nil {
 			return fmt.Errorf(
 				"failed to start runtime manager service: %w", err)
+		}
+	}
+
+	// A broadcast manager is responsible for evaluating ACK messages.
+	if !b.broadcastMgr.IsRunning() {
+		if err := b.broadcastMgr.Start(); err != nil {
+			return fmt.Errorf(
+				"failed to start broadcast manager service: %w", err)
+		}
+	}
+
+	// A replication manager is responsible for evaluating replication messages.
+	if !b.replicationMgr.IsRunning() {
+		if err := b.replicationMgr.Start(); err != nil {
+			return fmt.Errorf(
+				"failed to start replication manager service: %w", err)
 		}
 	}
 
@@ -533,7 +549,7 @@ func (b *MultiplexBackend) StartSharedServices() error {
 		}
 	}
 
-	// Make sure we have the multiplex reactor up and running.
+	// The multiplex reactor receives messages on multiplex channels.
 	if !b.reactor.IsRunning() {
 		if err := b.reactor.Start(); err != nil {
 			return fmt.Errorf(
@@ -565,6 +581,14 @@ func (b *MultiplexBackend) StopSharedServices() error {
 		}
 
 		go b.runtimeRegistry.Stop()
+	}
+
+	if b.broadcastMgr != nil && b.broadcastMgr.IsRunning() {
+		go b.broadcastMgr.Stop()
+	}
+
+	if b.replicationMgr != nil && b.replicationMgr.IsRunning() {
+		go b.replicationMgr.Stop()
 	}
 
 	if b.replayPool != nil && b.replayPool.IsRunning() {

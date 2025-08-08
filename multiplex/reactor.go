@@ -217,7 +217,7 @@ func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
 	// ChainReplicationComplete
 	case *mxp2p.Message:
 		// We shall track completeness of replications using a manager.
-		reactor.replicationMgr.Process(e)
+		reactor.replicationMgr.Process(e.Src.ID(), e)
 
 		msg := extMsg.GetSum()
 		switch msg.(type) {
@@ -460,6 +460,7 @@ func (reactor *Reactor) sendChainReplicationResponse(
 	// ReplicationChannel with body ChainReplicationResponse.
 	sendResponseToPeer := func(fromID cmtp2p.ID, toPeer *cmtp2p.PeerImpl, withChainID string) error {
 		if success := toPeer.Send(withChainID, cmtp2p.Envelope{
+			ChainID:   withChainID,
 			ChannelID: types.ReplicationChannel,
 			Message: &mxp2p.Message{
 				Sum: &mxp2p.Message_ChainReplicationResponse{

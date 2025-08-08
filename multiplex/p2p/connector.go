@@ -111,9 +111,6 @@ func (conn *peerConnector) Dial(addr *cmtp2p.NetAddress) (*cmtp2p.PeerImpl, erro
 	// TODO(midas): remove debug logs
 	conn.logger.Debug("Dialing peer", "address", addr)
 
-	conn.mtx.Lock()
-	defer conn.mtx.Unlock()
-
 	// Dial the remote relay
 	p, err := conn.transport.Dial(conn.Context(), *addr, cmtp2p.NewPeerConfig(
 		conn.dispatcher,
@@ -133,6 +130,7 @@ func (conn *peerConnector) Dial(addr *cmtp2p.NetAddress) (*cmtp2p.PeerImpl, erro
 	// Inject the messager
 	cmtp2p.PeerMessager(conn)(p)
 
+	// AddPeer locks the connector mutex for startRoutines.
 	if err := conn.pool.AddPeer(p); err != nil {
 		conn.logger.Error("failed to add outbound peer to set",
 			"addr", addr.DialString(),
@@ -180,6 +178,7 @@ func (conn *peerConnector) Listen() error {
 		// Inject the messager
 		cmtp2p.PeerMessager(conn)(p)
 
+		// AddPeer locks the connector mutex for startRoutines.
 		if err := conn.pool.AddPeer(p); err != nil {
 			conn.logger.Error("failed to add inbound peer to set",
 				"peer", p,
@@ -193,10 +192,10 @@ func (conn *peerConnector) Listen() error {
 }
 
 // Send sends a packet to peerID.
-func (conn *peerConnector) Send(e cmtp2p.Envelope) error {
-	if _, ok := conn.mconns[e.Src.ID()]; !ok {
+func (conn *peerConnector) Send(dest cmtp2p.ID, e cmtp2p.Envelope) error {
+	if _, ok := conn.mconns[dest]; !ok {
 		return fmt.Errorf(
-			"missing MConnection for peer %s", e.Src.ID())
+			"missing MConnection for peer %s", dest)
 	}
 
 	msgBytes, err := conn.wrapMsgBytes(e.Message)
@@ -204,25 +203,27 @@ func (conn *peerConnector) Send(e cmtp2p.Envelope) error {
 		return err
 	}
 
+	conn.logger.Debug("peerConnector#Send", "dest", dest, "chID", e.ChannelID, "msg", msgBytes, "mconn", conn.mconns[dest].IsRunning())
+
 	// Make sure this peer appears in the peerset per ChainID.
 	defer conn.pool.SetPeerForChainID(
-		e.Src.ID(),
+		dest,
 		e.ChainID,
 	)
 
-	mconn := conn.mconns[e.Src.ID()]
+	mconn := conn.mconns[dest]
 	if sent := mconn.Send(e.ChainID, e.ChannelID, msgBytes); !sent {
 		return fmt.Errorf(
-			"error while sending message to %s", e.Src.ID())
+			"error while sending message to %s", dest)
 	}
 	return nil
 }
 
 // TrySend tries to send a packet to peerID.
-func (conn *peerConnector) TrySend(e cmtp2p.Envelope) error {
-	if _, ok := conn.mconns[e.Src.ID()]; !ok {
+func (conn *peerConnector) TrySend(dest cmtp2p.ID, e cmtp2p.Envelope) error {
+	if _, ok := conn.mconns[dest]; !ok {
 		return fmt.Errorf(
-			"missing MConnection for peer %s", e.Src.ID())
+			"missing MConnection for peer %s", dest)
 	}
 
 	msgBytes, err := conn.wrapMsgBytes(e.Message)
@@ -232,14 +233,14 @@ func (conn *peerConnector) TrySend(e cmtp2p.Envelope) error {
 
 	// Make sure this peer appears in the peerset per ChainID.
 	defer conn.pool.SetPeerForChainID(
-		e.Src.ID(),
+		dest,
 		e.ChainID,
 	)
 
-	mconn := conn.mconns[e.Src.ID()]
+	mconn := conn.mconns[dest]
 	if sent := mconn.TrySend(e.ChainID, e.ChannelID, msgBytes); !sent {
 		return fmt.Errorf(
-			"error while sending message to %s", e.Src.ID())
+			"error while sending message to %s", dest)
 	}
 	return nil
 }
@@ -258,9 +259,20 @@ func (conn *peerConnector) Logger() cmtlog.Logger {
 	return conn.logger
 }
 
+// Lock locks the connector mutex.
+func (conn *peerConnector) Lock() {
+	conn.mtx.Lock()
+}
+
+// Unlock locks the connector mutex.
+func (conn *peerConnector) Unlock() {
+	conn.mtx.Unlock()
+}
+
 // ----------------------------------------------------------------------------
 
 // startRoutines starts the send and receive routines for peer.
+// The mutex should be locked by the caller.
 func (conn *peerConnector) startRoutines(peer *cmtp2p.PeerImpl) error {
 	mconn := cmtconn.NewMConnection(conn.Context(),
 		peer.Conn(),
@@ -278,27 +290,26 @@ func (conn *peerConnector) startRoutines(peer *cmtp2p.PeerImpl) error {
 	)
 	mconn.SetLogger(conn.logger)
 
-	conn.mtx.Lock()
-	conn.mconns[peer.ID()] = mconn
-	conn.mtx.Unlock()
-
 	if !mconn.IsRunning() {
 		if err := mconn.Start(); err != nil {
 			conn.logger.Error("failed to start routines",
 				"peer", peer,
 				"err", err,
+				"running", mconn.IsRunning(),
+				"started", mconn.IsStarted(),
+				"stopped", mconn.IsStopped(),
+				"routines", mconn.HasStartedRoutines(),
 			)
 		}
 	}
 
+	conn.mconns[peer.ID()] = mconn
 	return nil
 }
 
 // stopRoutines stops the send and receive routines for peer.
+// The mutex should be locked by the caller.
 func (conn *peerConnector) stopRoutines(peer *cmtp2p.PeerImpl) error {
-	conn.mtx.Lock()
-	defer conn.mtx.Unlock()
-
 	if err := conn.mconns[peer.ID()].Stop(); err != nil {
 		conn.logger.Error("failed to stop routines",
 			"peer", peer,
@@ -306,6 +317,7 @@ func (conn *peerConnector) stopRoutines(peer *cmtp2p.PeerImpl) error {
 		)
 	}
 
+	conn.transport.Cleanup(peer)
 	return nil
 }
 

@@ -75,9 +75,9 @@ type Connector interface {
 // Messager defines the contract for peer messagers.
 type Messager interface {
 	// Send sends a packet to peerID.
-	Send(e Envelope) error
+	Send(dest ID, e Envelope) error
 	// TrySend tries to send a packet to peerID (no failure).
-	TrySend(e Envelope) error
+	TrySend(dest ID, e Envelope) error
 }
 
 // Pool defines the contract for a connection pool.

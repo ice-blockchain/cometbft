@@ -240,7 +240,7 @@ func (p *PeerImpl) Send(chainID string, e Envelope) bool {
 		return false
 	}
 
-	if err := p.msgr.Send(e); err != nil {
+	if err := p.msgr.Send(p.ID(), e); err != nil {
 		p.Logger.Error("failed to send message",
 			"peer", p,
 			"msg", e,
@@ -265,7 +265,7 @@ func (p *PeerImpl) TrySend(chainID string, e Envelope) bool {
 		return false
 	}
 
-	if err := p.msgr.TrySend(e); err != nil {
+	if err := p.msgr.TrySend(p.ID(), e); err != nil {
 		p.Logger.Error("failed to try-send message",
 			"peer", e.Src,
 			"err", err,

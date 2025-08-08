@@ -218,13 +218,10 @@ func (a *RelayAddress) AddressForDiscovery() string {
 //
 // The relay info port is always `discoveryPort - 1`.
 func (a *RelayAddress) AddressForRelayInfo() string {
-	bkp := a.port
-	a.port = a.port - 1 // Discovery Port - 1, i.e. :30000
-	defer func() {
-		a.port = bkp
-	}()
-
-	return a.String()
+	str := a.String()
+	cpa, _ := NewRelayAddress(str)
+	cpa.port = cpa.port - 1 // Discovery Port - 1, i.e. :30000
+	return cpa.String()
 }
 
 // AddressForCometBFT returns the relay address associated with
@@ -232,13 +229,10 @@ func (a *RelayAddress) AddressForRelayInfo() string {
 //
 // The CometBFT P2P port is always `discoveryPort + 1`.
 func (a *RelayAddress) AddressForCometBFT() string {
-	bkp := a.port
-	a.port = a.port + 1 // Discovery Port + 1, i.e. :30002
-	defer func() {
-		a.port = bkp
-	}()
-
-	return a.String()
+	str := a.String()
+	cpa, _ := NewRelayAddress(str)
+	cpa.port = cpa.port + 1 // Discovery Port + 1, i.e. :30002
+	return cpa.String()
 }
 
 // AddressForLightRPC returns the relay address associated with
@@ -246,13 +240,10 @@ func (a *RelayAddress) AddressForCometBFT() string {
 //
 // The CometBFT RPC port is always `discoveryPort + 2`.
 func (a *RelayAddress) AddressForLightRPC() string {
-	bkp := a.port
-	a.port = a.port + 2 // Discovery Port + 2, i.e. :30003
-	defer func() {
-		a.port = bkp
-	}()
-
-	return a.String()
+	str := a.String()
+	cpa, _ := NewRelayAddress(str)
+	cpa.port = cpa.port + 2 // Discovery Port + 2, i.e. :30003
+	return cpa.String()
 }
 
 // AddressForMonitoring returns the relay address associated with
@@ -260,11 +251,8 @@ func (a *RelayAddress) AddressForLightRPC() string {
 //
 // The Prometheus HTTP port is always `discoveryPort + 3`.
 func (a *RelayAddress) AddressForMonitoring() string {
-	bkp := a.port
-	a.port = a.port + 3 // Discovery Port + 3, i.e. :30004
-	defer func() {
-		a.port = bkp
-	}()
-
-	return a.String()
+	str := a.String()
+	cpa, _ := NewRelayAddress(str)
+	cpa.port = cpa.port + 3 // Discovery Port + 3, i.e. :30004
+	return cpa.String()
 }

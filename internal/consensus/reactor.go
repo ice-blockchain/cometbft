@@ -118,6 +118,15 @@ func WithIdleManager(
 	}
 }
 
+// WithChainID is an option helper to inject a custom ChainID.
+func WithChainID(
+	chainID string,
+) func(*Reactor) {
+	return func(r *Reactor) {
+		r.ChainID = chainID
+	}
+}
+
 // SetSendStatusToPeer updates the atomic value of msgStatusToPeers bool.
 func (conR *Reactor) SetSendStatusToPeers(b bool) {
 	conR.msgStatusToPeers.Swap(b)
@@ -266,6 +275,7 @@ func (conR *Reactor) announceReplicationToPeers(
 ) {
 	sendReplCompleteToPeer := func(fromID p2p.ID, toPeer *p2p.PeerImpl) error {
 		if success := toPeer.Send(chainID, p2p.Envelope{
+			ChainID:   chainID,
 			ChannelID: mxtypes.RuntimeChannel,
 			Message: &mxp2p.Message{
 				Sum: &mxp2p.Message_ChainReplicationComplete{
@@ -642,6 +652,7 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 				eMsg.Votes = *votes
 			}
 			e.Src.TrySend(conR.ChainID, p2p.Envelope{
+				ChainID:   conR.ChainID,
 				ChannelID: VoteSetBitsChannel,
 				Message:   eMsg,
 			})
@@ -819,7 +830,11 @@ func (conR *Reactor) unsubscribeFromBroadcastEvents() {
 func (conR *Reactor) broadcastNewRoundStepMessage(rs *cstypes.RoundState) {
 	nrsMsg := makeRoundStepMessage(rs)
 	go func() {
+		peers := conR.Switch.Peers(conR.ChainID)
+		conR.Logger.Debug("Peers before Broadcast", "len", peers.Size())
+
 		conR.Switch.Broadcast(conR.ChainID, p2p.Envelope{
+			ChainID:   conR.ChainID,
 			ChannelID: StateChannel,
 			Message:   nrsMsg,
 		})
@@ -837,6 +852,7 @@ func (conR *Reactor) broadcastNewValidBlockMessage(rs *cstypes.RoundState) {
 	}
 	go func() {
 		conR.Switch.Broadcast(conR.ChainID, p2p.Envelope{
+			ChainID:   conR.ChainID,
 			ChannelID: StateChannel,
 			Message:   csMsg,
 		})
@@ -854,6 +870,7 @@ func (conR *Reactor) broadcastHasVoteMessage(vote *types.Vote) {
 
 	go func() {
 		conR.Switch.TryBroadcast(conR.ChainID, p2p.Envelope{
+			ChainID:   conR.ChainID,
 			ChannelID: StateChannel,
 			Message:   msg,
 		})
@@ -891,6 +908,7 @@ func (conR *Reactor) broadcastHasProposalBlockPartMessage(partMsg *BlockPartMess
 	}
 	go func() {
 		conR.Switch.TryBroadcast(conR.ChainID, p2p.Envelope{
+			ChainID:   conR.ChainID,
 			ChannelID: StateChannel,
 			Message:   msg,
 		})
@@ -912,6 +930,7 @@ func (conR *Reactor) sendNewRoundStepMessage(peer *p2p.PeerImpl) {
 	rs := conR.conS.GetRoundState()
 	nrsMsg := makeRoundStepMessage(&rs)
 	peer.Send(conR.ChainID, p2p.Envelope{
+		ChainID:   conR.ChainID,
 		ChannelID: StateChannel,
 		Message:   nrsMsg,
 	})
@@ -1022,8 +1041,8 @@ OUTER_LOOP:
 			sleeping = 0
 		}
 
-		// logger.Debug("gossipVotesRoutine", "rsHeight", rs.Height, "rsRound", rs.Round,
-		// "prsHeight", prs.Height, "prsRound", prs.Round, "prsStep", prs.Step)
+		logger.Debug("gossipVotesRoutine", "rsHeight", rs.Height, "rsRound", rs.Round,
+			"prsHeight", prs.Height, "prsRound", prs.Round, "prsStep", prs.Step)
 
 		if vote := pickVoteToSend(logger, conR.conS, &rs, ps, prs, rng); vote != nil {
 			if ps.sendVoteSetHasVote(cid, vote) {
@@ -1069,6 +1088,7 @@ OUTER_LOOP:
 			if rs.Height == prs.Height {
 				if maj23, ok := rs.Votes.Prevotes(prs.Round).TwoThirdsMajority(); ok {
 					peer.TrySend(conR.ChainID, p2p.Envelope{
+						ChainID:   conR.ChainID,
 						ChannelID: StateChannel,
 						Message: &cmtcons.VoteSetMaj23{
 							Height:  prs.Height,
@@ -1091,6 +1111,7 @@ OUTER_LOOP:
 			if rs.Height == prs.Height {
 				if maj23, ok := rs.Votes.Precommits(prs.Round).TwoThirdsMajority(); ok {
 					peer.TrySend(conR.ChainID, p2p.Envelope{
+						ChainID:   conR.ChainID,
 						ChannelID: StateChannel,
 						Message: &cmtcons.VoteSetMaj23{
 							Height:  prs.Height,
@@ -1113,6 +1134,7 @@ OUTER_LOOP:
 			if rs.Height == prs.Height && prs.ProposalPOLRound >= 0 {
 				if maj23, ok := rs.Votes.Prevotes(prs.ProposalPOLRound).TwoThirdsMajority(); ok {
 					peer.TrySend(conR.ChainID, p2p.Envelope{
+						ChainID:   conR.ChainID,
 						ChannelID: StateChannel,
 						Message: &cmtcons.VoteSetMaj23{
 							Height:  prs.Height,
@@ -1138,6 +1160,7 @@ OUTER_LOOP:
 				prs.Height >= conR.conS.blockStore.Base() {
 				if commit := conR.conS.LoadCommit(prs.Height); commit != nil {
 					peer.TrySend(conR.ChainID, p2p.Envelope{
+						ChainID:   conR.ChainID,
 						ChannelID: StateChannel,
 						Message: &cmtcons.VoteSetMaj23{
 							Height:  prs.Height,
@@ -1607,6 +1630,7 @@ func (ps *PeerState) SendPartSetHasPart(chainID string, part *types.Part, prs *c
 		return false
 	}
 	if ps.peer.Send(chainID, p2p.Envelope{
+		ChainID:   chainID,
 		ChannelID: DataChannel,
 		Message: &cmtcons.BlockPart{
 			Height: prs.Height, // Not our height, so it doesn't matter.
@@ -1632,6 +1656,7 @@ func (ps *PeerState) SendProposalSetHasProposal(
 	// Proposal: share the proposal metadata with peer.
 	logger.Debug("Sending proposal", "chain_id", chainID, "height", prs.Height, "round", prs.Round)
 	if ps.peer.Send(chainID, p2p.Envelope{
+		ChainID:   chainID,
 		ChannelID: DataChannel,
 		Message:   &cmtcons.Proposal{Proposal: *rs.Proposal.ToProto()},
 	}) {
@@ -1646,6 +1671,7 @@ func (ps *PeerState) SendProposalSetHasProposal(
 	if 0 <= rs.Proposal.POLRound {
 		logger.Debug("Sending POL", "chain_id", chainID, "height", prs.Height, "round", prs.Round)
 		ps.peer.Send(chainID, p2p.Envelope{
+			ChainID:   chainID,
 			ChannelID: DataChannel,
 			Message: &cmtcons.ProposalPOL{
 				Height:           rs.Height,
@@ -1661,6 +1687,7 @@ func (ps *PeerState) SendProposalSetHasProposal(
 func (ps *PeerState) sendVoteSetHasVote(chainID string, vote *types.Vote) bool {
 	ps.logger.Debug("Sending vote message", "chain_id", chainID, "ps", ps, "vote", vote)
 	if ps.peer.Send(chainID, p2p.Envelope{
+		ChainID:   chainID,
 		ChannelID: VoteChannel,
 		Message: &cmtcons.Vote{
 			Vote: vote.ToProto(),
