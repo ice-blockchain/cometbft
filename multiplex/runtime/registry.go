@@ -484,6 +484,13 @@ func (reg *Registry) InitRuntime(chainID string, otherValPubKeys []string) error
 		return fmt.Errorf("failed to compose network for %s: %w", chainID, err)
 	}
 
+	// Updates the internal chainRegistry instance.
+	extChainID := helpers.NewExtendedChainIDFromString(chainID)
+	reg.chainRegistry.AddChain(
+		extChainID.GetUserAddress(),
+		chainID,
+	)
+
 	return nil
 }
 

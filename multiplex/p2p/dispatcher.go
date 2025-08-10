@@ -225,10 +225,6 @@ func (router *packetDispatcher) InitChannels() {
 
 // GetChannels returns a slice of Channel instances.
 func (router *packetDispatcher) GetChannels() (channels []*cmtp2p.Channel) {
-	if atomic.LoadUint32(&router.initialized) == 0 {
-		router.InitChannels()
-	}
-
 	router.mtx.Lock()
 	channelsIdx := router.channelsIndex
 	router.mtx.Unlock()
@@ -242,10 +238,6 @@ func (router *packetDispatcher) GetChannels() (channels []*cmtp2p.Channel) {
 
 // GetChannel returns a Channel by ID.
 func (router *packetDispatcher) GetChannel(chID byte) *cmtp2p.Channel {
-	if atomic.LoadUint32(&router.initialized) == 0 {
-		router.InitChannels()
-	}
-
 	router.mtx.Lock()
 	defer router.mtx.Unlock()
 

@@ -115,12 +115,13 @@ func (mgr *BroadcastPool) Init(
 }
 
 // Process processes a received message e to the replication pool.
-func (mgr *BroadcastPool) Process(e cmtp2p.Envelope) error {
-	mgr.mtx.Lock()
-	defer mgr.mtx.Unlock()
-
-	// Adds incoming message to message pool.
-	mgr.pool.AddIncoming(e)
+func (mgr *BroadcastPool) Process(peerID cmtp2p.ID, e cmtp2p.Envelope) error {
+	if e.Src != nil {
+		// Adds incoming message to message pool.
+		mgr.pool.AddIncoming(e)
+	} else {
+		mgr.pool.AddOutgoing(peerID, e)
+	}
 
 	switch extMsg := e.Message.(type) {
 	case *mxp2p.Receipt:
@@ -132,11 +133,16 @@ func (mgr *BroadcastPool) Process(e cmtp2p.Envelope) error {
 			mgr.logger.Debug("Processing AckTransactionBroadcast", "msg", ackTxBroadcast)
 
 			txHash := bytesToHex(ackTxBroadcast.TxHash)
+
+			mgr.mtx.Lock()
 			mgr.addPartner(txHash, e.Src.ID())
 			mgr.addMessage(ackTxBroadcast)
 
+			isAccepted := mgr.evaluateAcceptanceMajority(txHash)
+			mgr.mtx.Unlock()
+
 			// Close the "Accepted" channel when we have 2/3+1 ACK messages.
-			if mgr.evaluateAcceptanceMajority(txHash) {
+			if isAccepted {
 				ch := mgr.Accepted(txHash)
 				close(ch) // DONE!
 			}

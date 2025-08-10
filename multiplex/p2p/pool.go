@@ -392,6 +392,8 @@ func (pool *ConnectionPool) InitPeerForChainID(
 	peerID cmtp2p.ID,
 	chainID string,
 ) (peerForReactor *cmtp2p.PeerImpl) {
+	pool.SetPeerForChainID(peerID, chainID)
+
 	peerKey := strings.Join([]string{string(peerID), chainID}, ":")
 
 	pool.mtx.Lock()

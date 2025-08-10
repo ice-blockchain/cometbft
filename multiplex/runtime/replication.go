@@ -118,9 +118,6 @@ func (mgr *ReplicationPool) Init(
 
 // Process processes a received message e to the replication pool.
 func (mgr *ReplicationPool) Process(peerID cmtp2p.ID, e cmtp2p.Envelope) error {
-	mgr.mtx.Lock()
-	defer mgr.mtx.Unlock()
-
 	if e.Src != nil {
 		// Adds incoming message to message pool.
 		mgr.pool.AddIncoming(e)
@@ -130,7 +127,9 @@ func (mgr *ReplicationPool) Process(peerID cmtp2p.ID, e cmtp2p.Envelope) error {
 	}
 
 	// Also store the peer ID as a partner.
+	mgr.mtx.Lock()
 	mgr.addPartner(e.ChainID, peerID)
+	mgr.mtx.Unlock()
 
 	switch extMsg := e.Message.(type) {
 	case *mxp2p.Message:
@@ -138,26 +137,37 @@ func (mgr *ReplicationPool) Process(peerID cmtp2p.ID, e cmtp2p.Envelope) error {
 		switch msg.(type) {
 		case *mxp2p.Message_ChainReplicationRequest:
 			replRequest := extMsg.GetChainReplicationRequest()
+
+			mgr.mtx.Lock()
 			mgr.addRequest(replRequest)
+			mgr.mtx.Unlock()
 
 			// Nothing more to do about ChainReplicationRequest.
 
 		case *mxp2p.Message_ChainReplicationResponse:
 			replResponse := extMsg.GetChainReplicationResponse()
+
+			mgr.mtx.Lock()
 			mgr.addResponse(replResponse)
+			isAccepted := mgr.evaluateAcceptanceMajority(replResponse.ChainID)
+			mgr.mtx.Unlock()
 
 			// Close the "Accepted" channel when we have 2/3+1 responses.
-			if mgr.evaluateAcceptanceMajority(replResponse.ChainID) {
+			if isAccepted {
 				ch := mgr.Accepted(replResponse.ChainID)
 				close(ch) // DONE!
 			}
 
 		case *mxp2p.Message_ChainReplicationComplete:
 			replComplete := extMsg.GetChainReplicationComplete()
+
+			mgr.mtx.Lock()
 			mgr.addComplete(replComplete)
+			hasCompleted := mgr.evaluateCompletionMajority(replComplete.ChainID)
+			mgr.mtx.Unlock()
 
 			// Close the "Complete" channel when we have 2/3+1 completions.
-			if mgr.evaluateCompletionMajority(replComplete.ChainID) {
+			if hasCompleted {
 				ch := mgr.Completed(replComplete.ChainID)
 				close(ch) // DONE!
 			}

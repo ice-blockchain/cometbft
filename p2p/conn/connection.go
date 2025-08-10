@@ -11,6 +11,7 @@ import (
 	"net"
 	"reflect"
 	"runtime/debug"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -449,6 +450,8 @@ func (c *MConnection) Send(chainID string, chID byte, msgBytes []byte) bool {
 	var channel *Channel
 	channel = c.channelProvider.GetChannel(chID)
 
+	c.Logger.Debug("Channel", "msgBytes", log.NewLazySprintf("%X", msgBytes), "ch", channel)
+
 	// Send message to channel.
 	success := channel.sendBytes(chainID, msgBytes)
 	if success {
@@ -472,7 +475,8 @@ func (c *MConnection) TrySend(chainID string, chID byte, msgBytes []byte) bool {
 
 	c.Logger.Debug("TrySend", "chain_id", chainID, "channel", chID, "conn", c, "msgBytes", log.NewLazySprintf("%X", msgBytes))
 
-	channel := c.channelProvider.GetChannel(chID)
+	var channel *Channel
+	channel = c.channelProvider.GetChannel(chID)
 
 	ok := channel.trySendBytes(chainID, msgBytes)
 	if ok {
@@ -493,7 +497,8 @@ func (c *MConnection) CanSend(chainID string, chID byte) bool {
 		return false
 	}
 
-	channel := c.channelProvider.GetChannel(chID)
+	var channel *Channel
+	channel = c.channelProvider.GetChannel(chID)
 	return channel.canSend()
 }
 
@@ -829,6 +834,8 @@ func (c *MConnection) Status() ConnectionStatus {
 
 // ChannelProvider defines the contract for channel providers.
 type ChannelProvider interface {
+	// InitChannels should initialize the channels index of a provider.
+	InitChannels()
 	// GetChannels returns a slice of Channel instances.
 	GetChannels() []*Channel
 	// GetChannel returns a Channel by ID.
@@ -862,9 +869,9 @@ func (chDesc ChannelDescriptor) FillDefaults() (filled *ChannelDescriptor) {
 	return filled
 }
 
-// TODO: lowercase.
-// NOTE: not goroutine-safe.
 type Channel struct {
+	mtx *sync.Mutex
+
 	desc             *ChannelDescriptor
 	sendQueueChainID string
 	sendQueue        chan []byte
@@ -889,6 +896,7 @@ func NewChannel(desc *ChannelDescriptor) *Channel {
 	}
 
 	return &Channel{
+		mtx:       new(sync.Mutex),
 		desc:      desc,
 		sendQueue: make(chan []byte, desc.SendQueueCapacity),
 		sending:   []byte{},
@@ -914,7 +922,10 @@ func (ch *Channel) Desc() *ChannelDescriptor {
 // Goroutine-safe
 // Times out (and returns false) after defaultSendTimeout.
 func (ch *Channel) sendBytes(chainID string, bytes []byte) bool {
+	ch.mtx.Lock()
 	ch.sendQueueChainID = chainID
+	ch.mtx.Unlock()
+
 	select {
 	case ch.sendQueue <- bytes:
 		atomic.AddInt32(&ch.sendQueueSize, 1)
@@ -928,7 +939,10 @@ func (ch *Channel) sendBytes(chainID string, bytes []byte) bool {
 // Nonblocking, returns true if successful.
 // Goroutine-safe.
 func (ch *Channel) trySendBytes(chainID string, bytes []byte) bool {
+	ch.mtx.Lock()
 	ch.sendQueueChainID = chainID
+	ch.mtx.Unlock()
+
 	select {
 	case ch.sendQueue <- bytes:
 		atomic.AddInt32(&ch.sendQueueSize, 1)
@@ -969,6 +983,9 @@ func (ch *Channel) isSendPending() bool {
 // Updates the nextPacket proto message for us to send.
 // Not goroutine-safe.
 func (ch *Channel) updateNextPacket() {
+	ch.mtx.Lock()
+	defer ch.mtx.Unlock()
+
 	maxSize := ch.maxPacketMsgPayloadSize
 	if len(ch.sending) <= maxSize {
 		ch.nextPacketMsg.ChainID = ch.sendQueueChainID
@@ -1006,6 +1023,10 @@ func (ch *Channel) recvPacketMsg(packet tmp2p.PacketMsg) ([]byte, error) {
 	if ch.Logger != nil {
 		ch.Logger.Debug("Read PacketMsg", "packet", packet, "chID", ch.desc.ID)
 	}
+
+	ch.mtx.Lock()
+	defer ch.mtx.Unlock()
+
 	recvCap, recvReceived := ch.desc.RecvMessageCapacity, len(ch.recving)+len(packet.Data)
 	if recvCap < recvReceived {
 		return nil, fmt.Errorf("received message exceeds available capacity: %v < %v", recvCap, recvReceived)

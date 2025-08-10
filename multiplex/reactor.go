@@ -245,6 +245,7 @@ func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
 					"err", err,
 				)
 			}
+			reactor.cometbftPool.SetPeerForChainID(sourceAddr.ID, replRequest.ChainID)
 
 			// Start consensus reactors for newly injected runtime.
 			if err := reactor.runtimeMgr.StartRuntime(
@@ -301,6 +302,7 @@ func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
 					"err", err,
 				)
 			}
+			reactor.cometbftPool.SetPeerForChainID(sourceAddr.ID, replResponse.ChainID)
 
 			return
 
@@ -327,7 +329,7 @@ func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
 
 	case *mxp2p.Receipt:
 		// We shall track completeness of broadcast operations using a manager.
-		reactor.broadcastMgr.Process(e)
+		reactor.broadcastMgr.Process(e.Src.ID(), e)
 
 		msg := extMsg.GetSum()
 		switch msg.(type) {

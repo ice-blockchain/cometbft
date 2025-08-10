@@ -89,6 +89,10 @@ func (conn *peerConnector) OnStart(ctx context.Context) (err error) {
 		return errors.New("peerConnector requires a connection pool")
 	}
 
+	// MultiplexBackend#NewServer sets a multiplex reactor such that
+	// InitChannels may be called here to initialize a channels store.
+	conn.dispatcher.InitChannels()
+
 	// Start accepting Peers.
 	go conn.Listen()
 
@@ -108,6 +112,14 @@ func (conn *peerConnector) OnReset(ctx context.Context) error {
 
 // Dial dials addr or returns an error.
 func (conn *peerConnector) Dial(addr *cmtp2p.NetAddress) (*cmtp2p.PeerImpl, error) {
+	if conn.pool.HasPeerID(addr.ID) {
+		// TODO(midas): remove debug logs
+		conn.logger.Debug("Skipping dial - already dialed", "address", addr)
+
+		p := conn.pool.peers.Get(addr.ID)
+		return p, nil
+	}
+
 	// TODO(midas): remove debug logs
 	conn.logger.Debug("Dialing peer", "address", addr)
 

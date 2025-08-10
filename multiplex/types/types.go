@@ -173,7 +173,7 @@ type BroadcastManager interface {
 	// Init initializes a broadcast processor for txHash with relays.
 	Init(txHash string, relays []*helpers.RelayAddress) error
 	// Process processes a received message e with the broadcast pool.
-	Process(e cmtp2p.Envelope) error
+	Process(peerID cmtp2p.ID, e cmtp2p.Envelope) error
 
 	// Partners returns a list of relay ID from broadcast partners for txHash.
 	Partners(txHash string) []cmtp2p.ID
