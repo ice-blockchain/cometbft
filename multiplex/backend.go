@@ -193,7 +193,9 @@ func NewServer(
 	// Creates one manager service instance per backend.
 	resourceMgr := runtime.NewResourceManager(ctx, nodeLogger)
 	replicationMgr := runtime.NewReplicationManager(ctx, nodeLogger)
-	broadcastMgr := runtime.NewBroadcastManager(ctx, nodeLogger)
+	broadcastMgr := runtime.NewBroadcastManager(ctx, resourceMgr, nodeLogger,
+		runtime.BroadcastPoolWithTimeout(DefaultTransactionTimeout),
+	)
 
 	// Initialize the multiplex reactor, responsible for broadcast and
 	// replication messages. Created exactly once per backend server.

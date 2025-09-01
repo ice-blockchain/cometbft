@@ -103,6 +103,12 @@ func (mgr *ReplicationPool) Init(
 	chainID string,
 	relays []*helpers.RelayAddress,
 ) error {
+	// TODO(midas): remove debug logs
+	mgr.logger.Debug("ReplicationPool#Init",
+		"chainId", chainID,
+		"numRelays", len(relays),
+	)
+
 	mgr.mtx.Lock()
 	defer mgr.mtx.Unlock()
 
@@ -118,6 +124,13 @@ func (mgr *ReplicationPool) Init(
 
 // Process processes a received message e to the replication pool.
 func (mgr *ReplicationPool) Process(peerID cmtp2p.ID, e cmtp2p.Envelope) error {
+	// TODO(midas): remove debug logs
+	mgr.logger.Debug("ReplicationPool#Process",
+		"chainId", e.ChainID,
+		"peerID", string(peerID),
+		"msg", e.Message,
+	)
+
 	if e.Src != nil {
 		// Adds incoming message to message pool.
 		mgr.pool.AddIncoming(e)

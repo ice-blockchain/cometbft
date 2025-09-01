@@ -345,11 +345,11 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() types.RelaysBroadcast
 			// For NEW networks, we don't need to wait for acknowledgments.
 			if _, ok := relaysByChain[chainID]; !ok {
 				// We won't wait for AckTransactionBroadcast.
-				b.broadcastMgr.Init(txHash, []*helpers.RelayAddress{})
+				b.broadcastMgr.Init(chainID, txHash, []*helpers.RelayAddress{})
 			} else {
 				// For each TxHash that requires ACK of at least one relay,
 				// we initialize the broadcast manager to evaluate with correct relays.
-				b.broadcastMgr.Init(txHash, relaysByChain[chainID])
+				b.broadcastMgr.Init(chainID, txHash, relaysByChain[chainID])
 			}
 
 			// Force the execution of mempool broadcast to *all* healthy relays.

@@ -347,6 +347,9 @@ func (reg *Registry) IdleDuration() time.Duration {
 // If the runtime is found sleeping, we re-activate it and remove its'
 // scheduler entry so that a re-activation delays its idling to completion.
 func (reg *Registry) OnActivate(chainID string) error {
+	// TODO(midas): remove debug logs
+	reg.logger.Debug("Registry#OnActivate", "chainId", chainID)
+
 	reg.mtx.Lock()
 	defer reg.mtx.Unlock()
 
@@ -372,6 +375,9 @@ func (reg *Registry) OnActivate(chainID string) error {
 // If after decrementing the counter, we find no more active runtimes for
 // chainID, we shall put it asleep so that it gets idled after runIdleDuration.
 func (reg *Registry) OnComplete(chainID string) error {
+	// TODO(midas): remove debug logs
+	reg.logger.Debug("Registry#OnComplete", "chainId", chainID)
+
 	reg.mtx.Lock()
 	defer reg.mtx.Unlock()
 
@@ -399,7 +405,8 @@ func (reg *Registry) OnComplete(chainID string) error {
 
 // OnIdle executes the callback cbOnIdle to idle a sleeping runtime by chainID.
 func (reg *Registry) OnIdle(chainID string) error {
-	reg.logger.Debug("OnIdle", "chainId", chainID)
+	// TODO(midas): remove debug logs
+	reg.logger.Debug("Registry#OnIdle", "chainId", chainID)
 
 	// StopRuntime takes a mutex lock.
 	if err := reg.StopRuntime(chainID); err != nil {
@@ -475,7 +482,7 @@ func (reg *Registry) AddRuntime(
 // InitRuntime should initialize all services and resources for chainID.
 func (reg *Registry) InitRuntime(chainID string, otherValPubKeys []string) error {
 	// TODO(midas): remove debug logs
-	reg.logger.Debug("InitRuntime", "chainId", chainID)
+	reg.logger.Debug("Registry#InitRuntime", "chainId", chainID)
 
 	reg.mtx.Lock()
 	defer reg.mtx.Unlock()
@@ -497,7 +504,7 @@ func (reg *Registry) InitRuntime(chainID string, otherValPubKeys []string) error
 // StartRuntime should start all services for chainID.
 func (reg *Registry) StartRuntime(chainID string) error {
 	// TODO(midas): remove debug logs
-	reg.logger.Debug("StartRuntime", "chainId", chainID)
+	reg.logger.Debug("Registry#StartRuntime", "chainId", chainID)
 
 	reg.mtx.Lock()
 	defer reg.mtx.Unlock()
@@ -539,7 +546,7 @@ func (reg *Registry) StartRuntime(chainID string) error {
 // StopRuntime should stop all services for chainID.
 func (reg *Registry) StopRuntime(chainID string) error {
 	// TODO(midas): remove debug logs
-	reg.logger.Debug("StopRuntime", "chainId", chainID)
+	reg.logger.Debug("Registry#StopRuntime", "chainId", chainID)
 
 	reg.mtx.Lock()
 	defer reg.mtx.Unlock()
@@ -597,6 +604,12 @@ func (reg *Registry) removeSleeping(chainID string) error {
 // cleanerRoutine waits for cleanerInterval, then finds node runtimes that have
 // been idle for at least runIdleDuration and executes the OnIdle() method.
 func (reg *Registry) cleanerRoutine() {
+	// TODO(midas): remove debug logs
+	reg.logger.Debug("Registry#cleanerRoutine",
+		"numActive", reg.NumRuntimes(),
+		"numSleeping", reg.NumSleeping(),
+		"timer", reg.CleanerInterval())
+
 	// Loops and garbage collects runtimes when timer ticks.
 	for reg.Context().Err() == nil {
 		cleanerInterval := reg.CleanerInterval()

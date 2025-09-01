@@ -3,12 +3,15 @@ package runtime
 import (
 	"context"
 	"slices"
+	"strings"
 	"sync"
+	"time"
 
 	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/libs/service"
 	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
+	cmttypes "github.com/ice-blockchain/cometbft/types"
 
 	"github.com/ice-blockchain/cometbft/multiplex/helpers"
 	"github.com/ice-blockchain/cometbft/multiplex/types"
@@ -19,9 +22,15 @@ type BroadcastPool struct {
 	service.BaseService
 	mtx *sync.Mutex
 
-	pool            *MessagePool
-	resourceManager *ResourceRegistry
+	pool        *MessagePool
+	resourceMgr *ResourceRegistry
 
+	chainIdsByTxHash map[string]string
+	eventSubscribers map[string]string
+	timeoutIndex     time.Duration
+
+	// Contains buffered channels of size 1 as we expect exactly 1
+	// update on those channels, per transaction hash.
 	acceptedChs map[string]chan struct{}
 	indexedChs  map[string]chan struct{}
 
@@ -29,6 +38,9 @@ type BroadcastPool struct {
 	partners map[string][]cmtp2p.ID
 
 	messages map[string][]*mxp2p.AckTransactionBroadcast
+
+	// Unbuffered channel that may be written on to shutdown indexer routines.
+	goShutdownCh chan bool
 
 	// Options
 	logger cmtlog.Logger
@@ -42,15 +54,21 @@ type BroadcastPoolOption func(*BroadcastPool)
 // NewBroadcastManager creates a new broadcast manager.
 func NewBroadcastManager(
 	ctx context.Context,
+	resourceMgr *ResourceRegistry,
 	logger cmtlog.Logger,
 	options ...BroadcastPoolOption,
 ) types.BroadcastManager {
 	mgr := &BroadcastPool{
-		mtx:  new(sync.Mutex),
-		pool: NewMessageManager(ctx, logger),
+		mtx:         new(sync.Mutex),
+		pool:        NewMessageManager(ctx, logger),
+		resourceMgr: resourceMgr,
 
-		acceptedChs: map[string]chan struct{}{},
-		indexedChs:  map[string]chan struct{}{},
+		chainIdsByTxHash: map[string]string{},
+		eventSubscribers: map[string]string{},
+
+		acceptedChs:  map[string]chan struct{}{},
+		indexedChs:   map[string]chan struct{}{},
+		goShutdownCh: make(chan bool), // unbuffered
 
 		relays:   map[string][]*helpers.RelayAddress{},
 		partners: map[string][]cmtp2p.ID{},
@@ -74,6 +92,13 @@ func BroadcastPoolWithLogger(logger cmtlog.Logger) BroadcastPoolOption {
 	}
 }
 
+// BroadcastPoolWithTimeout injects a custom index timeout.
+func BroadcastPoolWithTimeout(timeoutIndex time.Duration) BroadcastPoolOption {
+	return func(mgr *BroadcastPool) {
+		mgr.timeoutIndex = timeoutIndex
+	}
+}
+
 // ----------------------------------------------------------------------------
 // BroadcastPool implements [service.Service]
 
@@ -86,6 +111,20 @@ func (mgr *BroadcastPool) OnStart(ctx context.Context) (err error) {
 // OnStop implements [service.Service] by closing the database.
 func (mgr *BroadcastPool) OnStop() {
 	// TODO(midas): persistence of broadcast status in database
+
+	// First, make sure all goroutines are stopped.
+	mgr.mtx.Lock()
+	close(mgr.goShutdownCh)
+	mgr.mtx.Unlock()
+
+	// Then free allocated event subscribers.
+	for chainID, subscriberName := range mgr.eventSubscribers {
+		if eventBus := mgr.EventBus(chainID); eventBus != nil {
+			eventBus.UnsubscribeAll(mgr.Context(), subscriberName)
+		}
+
+		delete(mgr.eventSubscribers, chainID)
+	}
 }
 
 // OnReset implements [service.Service] by resetting the service.
@@ -96,26 +135,72 @@ func (mgr *BroadcastPool) OnReset(ctx context.Context) error {
 // ----------------------------------------------------------------------------
 // BroadcastManager API implementation
 
+// EventBus returns an event bus for chainID.
+func (mgr *BroadcastPool) EventBus(chainID string) *cmttypes.EventBus {
+	if !mgr.resourceMgr.Has(chainID, types.ServiceKeyEventBus) {
+		return nil
+	}
+
+	return mgr.resourceMgr.Get(
+		chainID,
+		types.ServiceKeyEventBus,
+	).(*cmttypes.EventBus)
+}
+
 // Init initializes a replication processor for chainID with relays.
 func (mgr *BroadcastPool) Init(
+	chainID string,
 	txHash string,
 	relays []*helpers.RelayAddress,
 ) error {
-	mgr.mtx.Lock()
-	defer mgr.mtx.Unlock()
+	// TODO(midas): remove debug logs
+	mgr.logger.Debug("BroadcastPool#Init",
+		"chainId", chainID,
+		"txHash", txHash,
+		"numRelays", len(relays),
+	)
 
+	mgr.mtx.Lock()
 	prev, has := mgr.relays[txHash]
+	mgr.mtx.Unlock()
 	if !has {
 		prev = []*helpers.RelayAddress{}
 	}
 
-	prev = append(prev, relays...)
+	if len(relays) > 0 {
+		for _, relay := range relays {
+			if -1 == slices.IndexFunc(prev, func(ra *helpers.RelayAddress) bool {
+				return ra.String() == relay.String()
+			}) {
+				prev = append(prev, relay)
+			}
+		}
+	}
+
+	mgr.mtx.Lock()
 	mgr.relays[txHash] = prev
+	mgr.chainIdsByTxHash[txHash] = chainID
+	_, hasEventSubscriber := mgr.eventSubscribers[chainID]
+	mgr.mtx.Unlock()
+
+	// The transaction indexer pushes events on an event bus instance per ChainID,
+	// so we only need the indexer routine once per ChainID, and not for every tx.
+	if !hasEventSubscriber {
+		go mgr.indexerRoutine(chainID)
+	}
+
 	return nil
 }
 
 // Process processes a received message e to the replication pool.
 func (mgr *BroadcastPool) Process(peerID cmtp2p.ID, e cmtp2p.Envelope) error {
+	// TODO(midas): remove debug logs
+	mgr.logger.Debug("BroadcastPool#Process",
+		"chainId", e.ChainID,
+		"peerID", string(peerID),
+		"msg", e.Message,
+	)
+
 	if e.Src != nil {
 		// Adds incoming message to message pool.
 		mgr.pool.AddIncoming(e)
@@ -130,6 +215,7 @@ func (mgr *BroadcastPool) Process(peerID cmtp2p.ID, e cmtp2p.Envelope) error {
 		case *mxp2p.Receipt_AckTransactionBroadcast:
 			ackTxBroadcast := extMsg.GetAckTransactionBroadcast()
 
+			// TODO(midas): remove debug logs
 			mgr.logger.Debug("Processing AckTransactionBroadcast", "msg", ackTxBroadcast)
 
 			txHash := bytesToHex(ackTxBroadcast.TxHash)
@@ -228,11 +314,11 @@ func (mgr *BroadcastPool) WaitAccepted(txHash string) bool {
 
 // WaitIndexed blocks the thread until txHash got indexed locally
 func (mgr *BroadcastPool) WaitIndexed(txHash string) bool {
-	ch := mgr.Indexed(txHash)
+	txIndexedCh := mgr.Indexed(txHash)
 
 	for mgr.Context().Err() == nil {
 		select {
-		case <-ch:
+		case <-txIndexedCh:
 			return true
 		case <-mgr.Context().Done():
 			return false
@@ -257,6 +343,69 @@ func (mgr *BroadcastPool) Logger() cmtlog.Logger {
 }
 
 // ----------------------------------------------------------------------------
+
+// indexerRoutine subscribes to [cmttypes.EventDataTx] events for chainID and
+// closes the internal indexedChs channel to stop waiting for indexed txes.
+func (mgr *BroadcastPool) indexerRoutine(chainID string) {
+	// TODO(midas): remove debug logs
+	mgr.logger.Debug("BroadcastPool#indexerRoutine",
+		"chainId", chainID,
+		"timeout", mgr.timeoutIndex)
+
+	cancelTimer := time.NewTimer(mgr.timeoutIndex)
+
+	subsName := mgr.getSubscriberName(chainID)
+	eventBus := mgr.EventBus(chainID)
+
+	if eventBus == nil {
+		mgr.logger.Error("failed to start indexerRoutine; nil-EventBus", "chainId", chainID)
+		return
+	}
+
+	txsSub, _ := eventBus.Subscribe(mgr.Context(), subsName, cmttypes.EventQueryTx)
+
+	defer func(subscriberName string) {
+		eventBus.UnsubscribeAll(mgr.Context(), subscriberName)
+		delete(mgr.eventSubscribers, chainID)
+	}(subsName)
+
+	defer cancelTimer.Stop()
+
+	mgr.mtx.Lock()
+	mgr.eventSubscribers[chainID] = subsName
+	mgr.mtx.Unlock()
+
+	for mgr.Context().Err() == nil {
+		select {
+		case tx, ok := <-txsSub.Out():
+			if !ok {
+				return
+			}
+
+			// Interpret received transaction result
+			txResult := tx.Data().(cmttypes.EventDataTx).TxResult
+			rawTx := cmttypes.Tx(txResult.Tx)
+			txHash := bytesToHex(rawTx.Hash())
+
+			txIndexedCh := mgr.Indexed(txHash)
+			close(txIndexedCh)
+		case <-cancelTimer.C:
+			return
+		case <-mgr.goShutdownCh:
+			return
+		}
+	}
+}
+
+// ----------------------------------------------------------------------------
+
+// getSubscriberName returns a unique subscriber name per transaction hash.
+func (mgr *BroadcastPool) getSubscriberName(chainID string) string {
+	return strings.Join([]string{
+		"BroadcastPool",
+		chainID,
+	}, "_")
+}
 
 // addPartner adds a peer ID as a partner for broadcast of txHash in the pool.
 func (mgr *BroadcastPool) addPartner(txHash string, peerID cmtp2p.ID) {

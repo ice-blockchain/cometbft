@@ -170,8 +170,11 @@ type ReplicationManager interface {
 type BroadcastManager interface {
 	service.Service
 
+	// EventBus returns an event bus for chainID.
+	EventBus(chainID string) *cmttypes.EventBus
+
 	// Init initializes a broadcast processor for txHash with relays.
-	Init(txHash string, relays []*helpers.RelayAddress) error
+	Init(chainID string, txHash string, relays []*helpers.RelayAddress) error
 	// Process processes a received message e with the broadcast pool.
 	Process(peerID cmtp2p.ID, e cmtp2p.Envelope) error
 

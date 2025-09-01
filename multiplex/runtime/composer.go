@@ -239,7 +239,7 @@ func (c *runtimeComposer) Compose(
 	remoteValidatorPubKeys []string,
 ) error {
 	// TODO(midas): remove debug logs
-	c.logger.Debug("Compose", "chainId", chainID)
+	c.logger.Debug("runtimeComposer#Compose", "chainId", chainID)
 
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
@@ -281,7 +281,7 @@ func (c *runtimeComposer) Compose(
 // Inject injects a running state machine and block store.
 func (c *runtimeComposer) Inject(chainID string) error {
 	// TODO(midas): remove debug logs
-	c.logger.Debug("Inject", "chainId", chainID)
+	c.logger.Debug("runtimeComposer#Inject", "chainId", chainID)
 
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
@@ -317,7 +317,7 @@ func (c *runtimeComposer) Build(
 	abciClient proxy.ChainConns,
 ) error {
 	// TODO(midas): remove debug logs
-	c.logger.Debug("Build", "chainId", chainID)
+	c.logger.Debug("runtimeComposer#Build", "chainId", chainID)
 
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
@@ -387,7 +387,7 @@ func (c *runtimeComposer) Build(
 // Unload decomposes resources and services for chainID.
 func (c *runtimeComposer) Unload(chainID string) error {
 	// TODO(midas): remove debug logs
-	c.logger.Debug("Unload", "chainId", chainID)
+	c.logger.Debug("runtimeComposer#Unload", "chainId", chainID)
 
 	defer func() {
 		c.mtx.Lock()

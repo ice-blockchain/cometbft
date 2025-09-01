@@ -142,7 +142,7 @@ func (pool *ConsensusPool) ABCI() proxy.ChainConns {
 // Handshake executes the consensus/ABCI handshake to set the App version.
 func (pool *ConsensusPool) Handshake(chainID string) error {
 	// TODO(midas): remove debug logs
-	pool.logger.Debug("Handshake", "chainId", chainID)
+	pool.logger.Debug("ConsensusPool#Handshake", "chainId", chainID)
 
 	pool.mtx.Lock()
 	defer pool.mtx.Unlock()
@@ -184,7 +184,7 @@ func (pool *ConsensusPool) Handshake(chainID string) error {
 // Inject injects mempool, blocksync, consensus and evidence reactors.
 func (pool *ConsensusPool) Inject(chainID string) error {
 	// TODO(midas): remove debug logs
-	pool.logger.Debug("Inject", "chainId", chainID)
+	pool.logger.Debug("ConsensusPool#Inject", "chainId", chainID)
 
 	pool.mtx.Lock()
 	defer pool.mtx.Unlock()
@@ -220,7 +220,7 @@ func (pool *ConsensusPool) Inject(chainID string) error {
 // Execute starts mempool, blocksync, consensus and evidence reactors.
 func (pool *ConsensusPool) Execute(chainID string) error {
 	// TODO(midas): remove debug logs
-	pool.logger.Debug("Execute", "chainId", chainID)
+	pool.logger.Debug("ConsensusPool#Execute", "chainId", chainID)
 
 	// CAUTION:
 	// Note that consensus reactors are not started here to prevent race
@@ -325,6 +325,9 @@ func (pool *ConsensusPool) Execute(chainID string) error {
 func (pool *ConsensusPool) Shutdown(
 	chainID string,
 ) error {
+	// TODO(midas): remove debug logs
+	pool.logger.Debug("ConsensusPool#Shutdown", "chainId", chainID)
+
 	var (
 		blocksyncReactor *blocksync.Reactor
 		consensusReactor *cs.Reactor

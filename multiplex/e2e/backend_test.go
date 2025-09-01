@@ -152,6 +152,10 @@ func TestMultiplexClientBroadcastTx(t *testing.T) {
 		testAcceptorRelay2,
 		testAcceptorRelay3,
 	)
+
+	waitDuration := 2 * time.Second
+	t.Logf("Waiting %.0fsec to shutdown...", waitDuration.Seconds())
+	time.Sleep(waitDuration)
 }
 
 // ----------------------------------------------------------------------------
