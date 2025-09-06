@@ -2,6 +2,7 @@ package consensus
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -45,7 +46,7 @@ func TestWALTruncate(t *testing.T) {
 	// defaultHeadSizeLimit(10M) is hard to simulate.
 	// this magic number 1 * time.Millisecond make RotateFile check frequently.
 	// defaultGroupCheckDuration(5s) is hard to simulate.
-	wal, err := NewWAL(walFile,
+	wal, err := NewWAL(context.TODO(), walFile,
 		autofile.GroupHeadSizeLimit(4096),
 		autofile.GroupCheckDuration(1*time.Millisecond),
 	)
@@ -258,7 +259,7 @@ func TestWALWrite(t *testing.T) {
 	defer os.RemoveAll(walDir)
 	walFile := filepath.Join(walDir, "wal")
 
-	wal, err := NewWAL(walFile)
+	wal, err := NewWAL(context.TODO(), walFile)
 	require.NoError(t, err)
 	err = wal.Start()
 	require.NoError(t, err)
@@ -301,7 +302,7 @@ func TestWALSearchForEndHeight(t *testing.T) {
 	}
 	walFile := tempWALWithData(walBody)
 
-	wal, err := NewWAL(walFile)
+	wal, err := NewWAL(context.TODO(), walFile)
 	require.NoError(t, err)
 	wal.SetLogger(log.TestingLogger())
 
@@ -326,7 +327,7 @@ func TestWALPeriodicSync(t *testing.T) {
 	defer os.RemoveAll(walDir)
 
 	walFile := filepath.Join(walDir, "wal")
-	wal, err := NewWAL(walFile, autofile.GroupCheckDuration(1*time.Millisecond))
+	wal, err := NewWAL(context.TODO(), walFile, autofile.GroupCheckDuration(1*time.Millisecond))
 	require.NoError(t, err)
 
 	wal.SetFlushInterval(walTestFlushInterval)

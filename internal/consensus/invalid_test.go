@@ -1,6 +1,7 @@
 package consensus
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -29,7 +30,7 @@ func TestReactorInvalidPrecommit(t *testing.T) {
 	defer cleanup()
 
 	for i := 0; i < n; i++ {
-		ticker := NewTimeoutTicker()
+		ticker := NewTimeoutTicker(context.TODO())
 		ticker.SetLogger(css[i].Logger)
 		css[i].SetTimeoutTicker(ticker)
 	}

@@ -201,7 +201,7 @@ LOOP:
 		os.Remove(walFile)
 
 		// set crashing WAL
-		csWal, err := cs.OpenWAL(walFile)
+		csWal, err := cs.OpenWAL(context.TODO(), walFile)
 		require.NoError(t, err)
 		crashingWal.next = csWal
 
@@ -307,9 +307,10 @@ func (w *crashingWAL) SearchForEndHeight(
 	return w.next.SearchForEndHeight(height, options)
 }
 
-func (w *crashingWAL) Start() error { return w.next.Start() }
-func (w *crashingWAL) Stop() error  { return w.next.Stop() }
-func (w *crashingWAL) Wait()        { w.next.Wait() }
+func (w *crashingWAL) Start() error                  { return w.next.Start() }
+func (w *crashingWAL) Stop() error                   { return w.next.Stop() }
+func (w *crashingWAL) Reset(c context.Context) error { return w.next.Reset(c) }
+func (w *crashingWAL) Wait()                         { w.next.Wait() }
 
 // ------------------------------------------------------------------------------------------
 
@@ -618,7 +619,7 @@ func testHandshakeReplay(t *testing.T, config *cfg.Config, nBlocks int, mode uin
 		walFile := tempWALWithData(walBody)
 		testConfig.Consensus.SetWalFile(walFile)
 
-		wal, err := NewWAL(walFile)
+		wal, err := NewWAL(context.TODO(), walFile)
 		require.NoError(t, err)
 		wal.SetLogger(log.TestingLogger())
 		err = wal.Start()
@@ -657,7 +658,7 @@ func testHandshakeReplay(t *testing.T, config *cfg.Config, nBlocks int, mode uin
 	if nBlocks > 0 {
 		// run nBlocks against a new client to build up the app state.
 		// use a throwaway CometBFT state
-		proxyApp := proxy.NewAppConns(clientCreator2, proxy.NopMetrics())
+		proxyApp := proxy.NewAppConns(context.TODO(), clientCreator2, proxy.NopMetrics())
 		stateDB1 := dbm.NewMemDB()
 		dummyStateStore := sm.NewStore(stateDB1, sm.StoreOptions{
 			DiscardABCIResponses: false,
@@ -680,7 +681,7 @@ func testHandshakeReplay(t *testing.T, config *cfg.Config, nBlocks int, mode uin
 	genDoc, err := sm.MakeGenesisDocFromFile(testConfig.GenesisFile())
 	require.NoError(t, err)
 	handshaker := NewHandshaker(stateStore, state, store, genDoc)
-	proxyApp := proxy.NewAppConns(clientCreator2, proxy.NopMetrics())
+	proxyApp := proxy.NewAppConns(context.TODO(), clientCreator2, proxy.NopMetrics())
 	if err := proxyApp.Start(); err != nil {
 		t.Fatalf("Error starting proxy app connections: %v", err)
 	}
@@ -808,7 +809,7 @@ func buildTMStateFromChain(
 	clientCreator := proxy.NewLocalClientCreator(
 		kvstore.NewPersistentApplication(
 			filepath.Join(config.DBDir(), fmt.Sprintf("replay_test_%d_%d_t", nBlocks, mode))))
-	proxyApp := proxy.NewAppConns(clientCreator, proxy.NopMetrics())
+	proxyApp := proxy.NewAppConns(context.TODO(), clientCreator, proxy.NopMetrics())
 	if err := proxyApp.Start(); err != nil {
 		panic(err)
 	}
@@ -917,7 +918,7 @@ func TestHandshakePanicsIfAppReturnsWrongAppHash(t *testing.T) {
 	{
 		app := &badApp{numBlocks: 3, allHashesAreWrong: true}
 		clientCreator := proxy.NewLocalClientCreator(app)
-		proxyApp := proxy.NewAppConns(clientCreator, proxy.NopMetrics())
+		proxyApp := proxy.NewAppConns(context.TODO(), clientCreator, proxy.NopMetrics())
 		err := proxyApp.Start()
 		require.NoError(t, err)
 		t.Cleanup(func() {
@@ -941,7 +942,7 @@ func TestHandshakePanicsIfAppReturnsWrongAppHash(t *testing.T) {
 	{
 		app := &badApp{numBlocks: 3, onlyLastHashIsWrong: true}
 		clientCreator := proxy.NewLocalClientCreator(app)
-		proxyApp := proxy.NewAppConns(clientCreator, proxy.NopMetrics())
+		proxyApp := proxy.NewAppConns(context.TODO(), clientCreator, proxy.NopMetrics())
 		err := proxyApp.Start()
 		require.NoError(t, err)
 		t.Cleanup(func() {
@@ -1239,7 +1240,7 @@ func TestHandshakeUpdatesValidators(t *testing.T) {
 	// now start the app using the handshake - it should sync
 	genDoc, _ := sm.MakeGenesisDocFromFile(config.GenesisFile())
 	handshaker := NewHandshaker(stateStore, state, store, genDoc)
-	proxyApp := proxy.NewAppConns(clientCreator, proxy.NopMetrics())
+	proxyApp := proxy.NewAppConns(context.TODO(), clientCreator, proxy.NopMetrics())
 	if err := proxyApp.Start(); err != nil {
 		t.Fatalf("Error starting proxy app connections: %v", err)
 	}

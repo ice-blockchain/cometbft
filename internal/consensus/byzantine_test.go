@@ -67,8 +67,8 @@ func TestByzantinePrevoteEquivocation(t *testing.T) {
 
 		mtx := new(cmtsync.Mutex)
 		// one for mempool, one for consensus
-		proxyAppConnCon := proxy.NewAppConnConsensus(abcicli.NewLocalClient(mtx, app), proxy.NopMetrics())
-		proxyAppConnMem := proxy.NewAppConnMempool(abcicli.NewLocalClient(mtx, app), proxy.NopMetrics())
+		proxyAppConnCon := proxy.NewAppConnConsensus(abcicli.NewLocalClient(context.TODO(), mtx, app), proxy.NopMetrics())
+		proxyAppConnMem := proxy.NewAppConnMempool(abcicli.NewLocalClient(context.TODO(), mtx, app), proxy.NopMetrics())
 
 		// Make Mempool
 		mempool := mempl.NewCListMempool(config.Mempool,
@@ -89,13 +89,13 @@ func TestByzantinePrevoteEquivocation(t *testing.T) {
 
 		// Make State
 		blockExec := sm.NewBlockExecutor(stateStore, log.TestingLogger(), proxyAppConnCon, mempool, evpool, blockStore)
-		cs := NewState(thisConfig.Consensus, state, blockExec, blockStore, mempool, evpool)
+		cs := NewState(context.TODO(), thisConfig.Consensus, state, blockExec, blockStore, mempool, evpool)
 		cs.SetLogger(cs.Logger)
 		// set private validator
 		pv := privVals[i]
 		cs.SetPrivValidator(pv)
 
-		eventBus := types.NewEventBus()
+		eventBus := types.NewEventBus(context.TODO())
 		eventBus.SetLogger(log.TestingLogger().With("module", "events"))
 		err = eventBus.Start()
 		require.NoError(t, err)
@@ -112,7 +112,7 @@ func TestByzantinePrevoteEquivocation(t *testing.T) {
 	blocksSubs := make([]types.Subscription, 0)
 	eventBuses := make([]*types.EventBus, nValidators)
 	for i := 0; i < nValidators; i++ {
-		reactors[i] = NewReactor(css[i], true) // so we dont start the consensus states
+		reactors[i] = NewReactor(context.TODO(), css[i], true) // so we dont start the consensus states
 		reactors[i].SetLogger(css[i].Logger)
 
 		// eventBus is already started with the cs
@@ -308,14 +308,14 @@ func TestByzantineConflictingProposalsWithPartition(t *testing.T) {
 	defer cleanup()
 
 	// give the byzantine validator a normal ticker
-	ticker := NewTimeoutTicker()
+	ticker := NewTimeoutTicker(context.TODO())
 	ticker.SetLogger(css[0].Logger)
 	css[0].SetTimeoutTicker(ticker)
 
 	switches := make([]*p2p.Switch, n)
 	p2pLogger := logger.With("module", "p2p")
 	for i := 0; i < n; i++ {
-		switches[i] = p2p.MakeSwitch(
+		switches[i] = p2p.MakeSwitch(t,
 			config.P2P,
 			i,
 			func(_ int, sw *p2p.Switch) *p2p.Switch {
@@ -350,7 +350,7 @@ func TestByzantineConflictingProposalsWithPartition(t *testing.T) {
 		blocksSubs[i], err = eventBus.Subscribe(context.Background(), testSubscriber, types.EventQueryNewBlock)
 		require.NoError(t, err)
 
-		conR := NewReactor(css[i], true) // so we don't start the consensus states
+		conR := NewReactor(context.TODO(), css[i], true) // so we don't start the consensus states
 		conR.SetLogger(logger.With("validator", i))
 		conR.SetEventBus(eventBus)
 
@@ -378,16 +378,16 @@ func TestByzantineConflictingProposalsWithPartition(t *testing.T) {
 		}
 	}()
 
-	p2p.MakeConnectedSwitches(config.P2P, n, func(i int, _ *p2p.Switch) *p2p.Switch {
+	p2p.MakeConnectedSwitches(t, config.P2P, n, func(i int, _ *p2p.Switch) *p2p.Switch {
 		// ignore new switch s, we already made ours
 		switches[i].AddReactor("", "CONSENSUS", reactors[i])
 		return switches[i]
-	}, func(sws []*p2p.Switch, i, j int) {
+	}, func(t *testing.T, sws []*p2p.Switch, i, j int) {
 		// the network starts partitioned with globally active adversary
 		if i != 0 {
 			return
 		}
-		p2p.Connect2Switches(sws, i, j)
+		p2p.Connect2Switches(t, sws, i, j)
 	})
 
 	// start the non-byz state machines.
@@ -413,14 +413,14 @@ func TestByzantineConflictingProposalsWithPartition(t *testing.T) {
 	// partition B
 	ind1 := getSwitchIndex(switches, peers[1])
 	ind2 := getSwitchIndex(switches, peers[2])
-	p2p.Connect2Switches(switches, ind1, ind2)
+	p2p.Connect2Switches(t, switches, ind1, ind2)
 
 	// wait for someone in the big partition (B) to make a block
 	<-blocksSubs[ind2].Out()
 
 	t.Log("A block has been committed. Healing partition")
-	p2p.Connect2Switches(switches, ind0, ind1)
-	p2p.Connect2Switches(switches, ind0, ind2)
+	p2p.Connect2Switches(t, switches, ind0, ind1)
+	p2p.Connect2Switches(t, switches, ind0, ind2)
 
 	// wait till everyone makes the first new block
 	// (one of them already has)
@@ -565,7 +565,7 @@ func NewByzantineReactor(conR *Reactor) *ByzantineReactor {
 
 func (br *ByzantineReactor) SetSwitch(s *p2p.Switch)               { br.reactor.SetSwitch(s) }
 func (br *ByzantineReactor) GetChannels() []*p2p.ChannelDescriptor { return br.reactor.GetChannels() }
-func (br *ByzantineReactor) AddPeer(peer p2p.Peer) {
+func (br *ByzantineReactor) AddPeer(peer *p2p.PeerImpl) {
 	if !br.reactor.IsRunning() {
 		return
 	}
@@ -581,7 +581,7 @@ func (br *ByzantineReactor) AddPeer(peer p2p.Peer) {
 	}
 }
 
-func (br *ByzantineReactor) RemovePeer(peer p2p.Peer, reason any) {
+func (br *ByzantineReactor) RemovePeer(peer *p2p.PeerImpl, reason any) {
 	br.reactor.RemovePeer(peer, reason)
 }
 
@@ -590,4 +590,4 @@ func (br *ByzantineReactor) Receive(e p2p.Envelope) {
 	br.reactor.Receive(e)
 }
 
-func (*ByzantineReactor) InitPeer(peer p2p.Peer) p2p.Peer { return peer }
+func (*ByzantineReactor) InitPeer(peer *p2p.PeerImpl) *p2p.PeerImpl { return peer }

@@ -1,6 +1,7 @@
 package consensus
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -10,7 +11,7 @@ import (
 )
 
 func TestTimeoutTicker(t *testing.T) {
-	ticker := NewTimeoutTicker()
+	ticker := NewTimeoutTicker(context.TODO())
 	err := ticker.Start()
 	require.NoError(t, err)
 	defer func() {

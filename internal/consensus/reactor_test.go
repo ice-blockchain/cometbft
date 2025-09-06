@@ -56,7 +56,7 @@ func startConsensusNet(t *testing.T, css []*State, n int) (
 	for i := 0; i < n; i++ {
 		// logger, err := cmtflags.ParseLogLevel("consensus:info,*:error", logger, "info")
 		// if err != nil {	t.Fatal(err)}
-		reactors[i] = NewReactor(css[i], true) // so we dont start the consensus states
+		reactors[i] = NewReactor(context.TODO(), css[i], true) // so we dont start the consensus states
 		reactors[i].SetLogger(css[i].Logger)
 
 		// eventBus is already started with the cs
@@ -159,8 +159,8 @@ func TestReactorWithEvidence(t *testing.T) {
 		mtx := new(cmtsync.Mutex)
 		memplMetrics := mempl.NopMetrics()
 		// one for mempool, one for consensus
-		proxyAppConnCon := proxy.NewAppConnConsensus(abcicli.NewLocalClient(mtx, app), proxy.NopMetrics())
-		proxyAppConnMem := proxy.NewAppConnMempool(abcicli.NewLocalClient(mtx, app), proxy.NopMetrics())
+		proxyAppConnCon := proxy.NewAppConnConsensus(abcicli.NewLocalClient(context.TODO(), mtx, app), proxy.NopMetrics())
+		proxyAppConnMem := proxy.NewAppConnMempool(abcicli.NewLocalClient(context.TODO(), mtx, app), proxy.NopMetrics())
 
 		// Make Mempool
 		mempool := mempl.NewCListMempool(config.Mempool,
@@ -190,11 +190,11 @@ func TestReactorWithEvidence(t *testing.T) {
 
 		// Make State
 		blockExec := sm.NewBlockExecutor(stateStore, log.TestingLogger(), proxyAppConnCon, mempool, evpool, blockStore)
-		cs := NewState(thisConfig.Consensus, state, blockExec, blockStore, mempool, evpool2)
+		cs := NewState(context.TODO(), thisConfig.Consensus, state, blockExec, blockStore, mempool, evpool2)
 		cs.SetLogger(log.TestingLogger().With("module", "consensus"))
 		cs.SetPrivValidator(pv)
 
-		eventBus := types.NewEventBus()
+		eventBus := types.NewEventBus(context.TODO())
 		eventBus.SetLogger(log.TestingLogger().With("module", "events"))
 		err = eventBus.Start()
 		require.NoError(t, err)
@@ -257,13 +257,14 @@ func TestReactorReceiveDoesNotPanicIfAddPeerHasntBeenCalledYet(t *testing.T) {
 		peer    = p2pmock.NewPeer(nil)
 	)
 
-	reactor.InitPeer(peer)
+	ipeer := interface{}(peer).(*p2p.PeerImpl)
+	reactor.InitPeer(ipeer)
 
 	// simulate switch calling Receive before AddPeer
 	assert.NotPanics(t, func() {
 		reactor.Receive(p2p.Envelope{
 			ChannelID: StateChannel,
-			Src:       peer,
+			Src:       ipeer,
 			Message: &cmtcons.HasVote{
 				Height: 1,
 				Round:  1,
@@ -271,7 +272,7 @@ func TestReactorReceiveDoesNotPanicIfAddPeerHasntBeenCalledYet(t *testing.T) {
 				Type:   types.PrevoteType,
 			},
 		})
-		reactor.AddPeer(peer)
+		reactor.AddPeer(ipeer)
 	})
 }
 
@@ -285,6 +286,7 @@ func TestReactorReceivePanicsIfInitPeerHasntBeenCalledYet(t *testing.T) {
 	var (
 		reactor = reactors[0]
 		peer    = p2pmock.NewPeer(nil)
+		ipeer   = interface{}(peer).(*p2p.PeerImpl)
 	)
 
 	// we should call InitPeer here
@@ -293,7 +295,7 @@ func TestReactorReceivePanicsIfInitPeerHasntBeenCalledYet(t *testing.T) {
 	assert.Panics(t, func() {
 		reactor.Receive(p2p.Envelope{
 			ChannelID: StateChannel,
-			Src:       peer,
+			Src:       ipeer,
 			Message: &cmtcons.HasVote{
 				Height: 1,
 				Round:  1,
@@ -402,7 +404,7 @@ func TestSwitchToConsensusVoteExtensions(t *testing.T) {
 			} else {
 				cs.blockStore.SaveBlock(propBlock, blockParts, voteSet.MakeExtendedCommit(veHeightParam).ToCommit())
 			}
-			reactor := NewReactor(
+			reactor := NewReactor(context.TODO(),
 				cs,
 				true,
 			)

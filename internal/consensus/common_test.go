@@ -460,8 +460,8 @@ func newStateWithConfigAndBlockStore(
 	// one for mempool, one for consensus
 	mtx := new(cmtsync.Mutex)
 
-	proxyAppConnCon := proxy.NewAppConnConsensus(abcicli.NewLocalClient(mtx, app), proxy.NopMetrics())
-	proxyAppConnMem := proxy.NewAppConnMempool(abcicli.NewLocalClient(mtx, app), proxy.NopMetrics())
+	proxyAppConnCon := proxy.NewAppConnConsensus(abcicli.NewLocalClient(context.TODO(), mtx, app), proxy.NopMetrics())
+	proxyAppConnMem := proxy.NewAppConnMempool(abcicli.NewLocalClient(context.TODO(), mtx, app), proxy.NopMetrics())
 	// Make Mempool
 	memplMetrics := mempl.NopMetrics()
 
@@ -490,11 +490,11 @@ func newStateWithConfigAndBlockStore(
 	}
 
 	blockExec := sm.NewBlockExecutor(stateStore, log.TestingLogger(), proxyAppConnCon, mempool, evpool, blockStore)
-	cs := NewState(thisConfig.Consensus, state, blockExec, blockStore, mempool, evpool)
+	cs := NewState(context.TODO(), thisConfig.Consensus, state, blockExec, blockStore, mempool, evpool)
 	cs.SetLogger(log.TestingLogger().With("module", "consensus"))
 	cs.SetPrivValidator(pv)
 
-	eventBus := types.NewEventBus()
+	eventBus := types.NewEventBus(context.TODO())
 	eventBus.SetLogger(log.TestingLogger().With("module", "events"))
 	err := eventBus.Start()
 	if err != nil {
@@ -1005,6 +1005,10 @@ func (*mockTicker) Start() error {
 }
 
 func (*mockTicker) Stop() error {
+	return nil
+}
+
+func (*mockTicker) Reset(_ context.Context) error {
 	return nil
 }
 

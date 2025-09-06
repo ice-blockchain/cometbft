@@ -5,6 +5,7 @@ import (
 	"net"
 
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
+	"github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/libs/service"
 	"github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/p2p/conn"
@@ -18,6 +19,8 @@ type Peer struct {
 	kv                   map[string]any
 	Outbound, Persistent bool
 }
+
+var _ p2p.Peer = (*Peer)(nil)
 
 // NewPeer creates and starts a new mock peer. If the ip
 // is nil, random routable address is used.
@@ -43,6 +46,7 @@ func NewPeer(ip net.IP) *Peer {
 	return mp
 }
 
+func (*Peer) GetLogger() log.Logger                 { return log.NewNopLogger() }
 func (mp *Peer) FlushStop()                         { mp.Stop() } //nolint:errcheck //ignore error
 func (*Peer) TrySend(_ string, _ p2p.Envelope) bool { return true }
 func (*Peer) Send(_ string, _ p2p.Envelope) bool    { return true }
@@ -65,6 +69,10 @@ func (mp *Peer) Get(key string) any {
 
 func (mp *Peer) Set(key string, value any) {
 	mp.kv[key] = value
+}
+func (mp *Peer) Has(key string) bool {
+	_, ok := mp.kv[key]
+	return ok
 }
 func (mp *Peer) RemoteIP() net.IP            { return mp.ip }
 func (mp *Peer) SocketAddr() *p2p.NetAddress { return mp.addr }

@@ -351,7 +351,7 @@ func TestStateFullRound1(t *testing.T) {
 	if err := cs.eventBus.Stop(); err != nil {
 		t.Error(err)
 	}
-	eventBus := types.NewEventBusWithBufferCapacity(0)
+	eventBus := types.NewEventBusWithBufferCapacity(context.TODO(), 0)
 	eventBus.SetLogger(log.TestingLogger().With("module", "events"))
 	cs.SetEventBus(eventBus)
 	if err := eventBus.Start(); err != nil {
