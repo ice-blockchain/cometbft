@@ -228,9 +228,11 @@ func (mgr *BroadcastPool) Process(peerID cmtp2p.ID, e cmtp2p.Envelope) error {
 			mgr.mtx.Unlock()
 
 			// Close the "Accepted" channel when we have 2/3+1 ACK messages.
+			ch := mgr.Accepted(txHash)
 			if isAccepted {
-				ch := mgr.Accepted(txHash)
-				close(ch) // DONE!
+				if _, ok := <-ch; ok {
+					close(ch) // DONE!
+				}
 			}
 		}
 	}

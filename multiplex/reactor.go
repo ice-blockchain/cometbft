@@ -237,8 +237,18 @@ func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
 				return
 			}
 
+			// Dial the CometBFT peer
+			discoveryAddr, _ := helpers.NewRelayAddress(sourceAddr.String())
+			cometbftAddr := discoveryAddr.NetAddressForCometBFT()
+
+			// TODO(midas): remove debug logs.
+			reactor.logger.Debug("Dialing peer for CometBFT",
+				"chainID", replRequest.ChainID,
+				"address", cometbftAddr,
+			)
+
 			// Dial the peer for CometBFT to permit faster consensus building.
-			if _, err := reactor.cometbftPool.Connector().Dial(sourceAddr); err != nil {
+			if _, err := reactor.cometbftPool.Connector().Dial(cometbftAddr); err != nil {
 				reactor.logger.Error(
 					"failed to process ChainReplicationRequest: error dialing source peer",
 					"chainId", replRequest.ChainID,
@@ -265,6 +275,12 @@ func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
 			// otherwise OnComplete is called by memR.sendChainReplicationComplete when
 			// transactions are successfully processed with memR.processTxs.
 			reactor.IdleManager().OnActivate(replRequest.ChainID)
+
+			// TODO(midas): remove debug logs.
+			reactor.logger.Debug("Dialing peer for Discovery",
+				"chainID", replRequest.ChainID,
+				"address", sourceAddr,
+			)
 
 			// Dial the peer for Discovery as we will be sending a ChainReplicationResponse.
 			if _, err := reactor.discoveryPool.Connector().Dial(sourceAddr); err != nil {

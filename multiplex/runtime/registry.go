@@ -16,6 +16,7 @@ import (
 	"github.com/ice-blockchain/cometbft/proxy"
 	cmttypes "github.com/ice-blockchain/cometbft/types"
 
+	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/helpers"
 	"github.com/ice-blockchain/cometbft/multiplex/p2p"
 	"github.com/ice-blockchain/cometbft/multiplex/types"
@@ -52,7 +53,9 @@ type Registry struct {
 	chainRegistry   helpers.ChainRegistry
 	abciClient      proxy.ChainConns
 	runtimeBaseConf *config.Config
-	resourceManager types.ResourceManager
+	resourceMgr     *ResourceRegistry
+	broadcastMgr    *BroadcastPool
+	replicationMgr  *ReplicationPool
 	runtimeComposer *runtimeComposer
 	consensusPool   *ConsensusPool
 	discoveryPool   *p2p.ConnectionPool
@@ -84,6 +87,8 @@ func NewRegistry(
 	discoveryPool *p2p.ConnectionPool,
 	cometbftPool *p2p.ConnectionPool,
 	resourceMgr types.ResourceManager,
+	broadcastMgr types.BroadcastManager,
+	replicationMgr types.ReplicationManager,
 	logger cmtlog.Logger,
 	options ...RegistryOption,
 ) *Registry {
@@ -116,7 +121,9 @@ func NewRegistry(
 			runtimeComposer,
 			logger.With("module", "consensus"),
 		),
-		resourceManager: resourceMgr,
+		resourceMgr:    resourceMgr.(*ResourceRegistry),
+		broadcastMgr:   broadcastMgr.(*BroadcastPool),
+		replicationMgr: replicationMgr.(*ReplicationPool),
 
 		// Storage
 		Runtimes:  map[string]uint64{},
@@ -419,6 +426,120 @@ func (reg *Registry) OnIdle(chainID string) error {
 	return nil
 }
 
+// WaitForIndexedTransactions creates goroutines that wait for indexing events
+// with relevantChainIds and all transactions for each ChainID.
+//
+// CAUTION:
+// The main thread is blocked using a WaitGroup, and this method completes
+// only when *all* transactions for relevantChainIds are indexed or when
+// the broadcast pool is shutdown (general shutdown).
+//
+// Additionally, runtimes are marked complete when all txes are indexed.
+func (reg *Registry) WaitForIndexedTransactions(
+	relevantChainIds []string,
+	transactionsByChain map[string][]client.Transaction,
+) (numCompleted int) {
+	txHashes := []string{}
+
+	// CAUTION:
+	// The caller thread will be locked until transactions are indexed.
+	chainsWg := new(sync.WaitGroup)
+	chainsWg.Add(len(relevantChainIds))
+
+	for _, chainID := range relevantChainIds {
+		cliTxes := transactionsByChain[chainID]
+
+		// One goroutine per syncing ChainID, blocked until all txes indexed.
+		// The runtime is marked complete upon completion of all tx indexing.
+		go func() {
+			defer chainsWg.Done()
+			defer func() {
+				reg.OnComplete(chainID)
+			}()
+
+			txesWg := new(sync.WaitGroup)
+			txesWg.Add(len(cliTxes))
+
+			for _, tx := range cliTxes {
+				// One goroutine per txHash, blocked until tx indexed.
+				go func() {
+					defer txesWg.Done()
+
+					txHash := bytesToHex(tx.Hash())
+					txHashes = append(txHashes, txHash)
+
+					if ok := reg.broadcastMgr.WaitIndexed(txHash); ok {
+						numCompleted++
+					}
+				}()
+			}
+			txesWg.Wait()
+		}()
+	}
+	chainsWg.Wait()
+
+	if numCompleted > 0 && numCompleted == len(txHashes) {
+		reg.logger.Info("All transactions have been indexed locally",
+			"numNetworks", len(relevantChainIds),
+			"numIndexed", numCompleted,
+			"chainIds", relevantChainIds,
+			"txHashes", txHashes,
+		)
+	}
+
+	return // numCompleted
+}
+
+// WaitForChainReplications creates goroutines that wait for replications
+// with relevantChainIds and all transactions for each ChainID.
+//
+// CAUTION:
+// The main thread is blocked using a WaitGroup, and this method completes
+// only when *all* transactions for relevantChainIds are also indexed.
+//
+// Eventually, it should execute waitForIndexedTransactions upon deferral.
+func (reg *Registry) WaitForChainReplications(
+	relevantChainIds []string,
+	transactionsByChain map[string][]client.Transaction,
+) (numCompleted int) {
+	defer reg.WaitForIndexedTransactions(
+		relevantChainIds,
+		transactionsByChain,
+	)
+
+	txHashes := []string{}
+
+	// CAUTION:
+	// This goroutine will be locked until relevant relays are done with replication.
+	completionWg := new(sync.WaitGroup)
+	completionWg.Add(len(relevantChainIds))
+	for _, syncingChainID := range relevantChainIds {
+		cliTxes := transactionsByChain[syncingChainID]
+		txHashes = append(txHashes, txHashesToHex(cliTxes...)...)
+
+		go func() {
+			defer completionWg.Done()
+
+			//XXX add logs
+
+			// This blocks the goroutine until shutdown and/or replication done.
+			if ok := reg.replicationMgr.WaitCompleted(syncingChainID); ok {
+				numCompleted++
+			}
+		}()
+	}
+	completionWg.Wait()
+
+	reg.logger.Info("All relays have caught up and completed chain replications",
+		"numNetworks", len(relevantChainIds),
+		"numSynced", numCompleted,
+		"chainIds", relevantChainIds,
+		"txHashes", txHashes,
+	)
+
+	return // numCompleted
+}
+
 // ----------------------------------------------------------------------------
 // RuntimeManager API implementation
 //
@@ -426,7 +547,7 @@ func (reg *Registry) OnIdle(chainID string) error {
 
 // Resources returns the resource manager.
 func (reg *Registry) Resources() types.ResourceManager {
-	return reg.resourceManager
+	return reg.resourceMgr
 }
 
 // Validators returns a map of [cmttypes.PrivValidator] by ChainID.
@@ -461,7 +582,7 @@ func (reg *Registry) AddRuntime(
 	defer reg.mtx.Unlock()
 
 	// Injects a GenesisDoc in runtimeComposer.genesisDocSet.
-	reg.resourceManager.Set(chainID, types.InstanceKeyGenesisDoc, genesisDoc)
+	reg.resourceMgr.Set(chainID, types.InstanceKeyGenesisDoc, genesisDoc)
 	if err := reg.runtimeComposer.makeNetworkGenesis(chainID); err != nil {
 		return fmt.Errorf("failed to inject genesis doc for %s: %w", chainID, err)
 	}

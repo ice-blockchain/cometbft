@@ -150,6 +150,8 @@ func (sw *Switch) AddReactor(chainID string, name string, reactor Reactor) React
 
 	// NOTE(midas): Nothing to do here anymore. The Switch's capacity to manage
 	// reactors has been removed in favor of Dispatcher and Pool interfaces.
+	// IMPORTANT: The above does **not** change the fact that the reactors are
+	// responsible for receiving messages, but we use a Dispatcher in-between.
 
 	return reactor
 }
@@ -244,7 +246,8 @@ func (sw *Switch) OnStart(ctx context.Context) error {
 	// BREAKING
 	// NOTE(midas): We removed the startup of reactors from this method because
 	// in a multiplex of nodes, the active node runtimes (ChainID) have a short
-	// lifecycle that is controlled fully by the multiplex reactor.
+	// lifecycle that is controlled fully by the multiplex runtime manager.
+	// See also: [multiplex.runtime.Registry].
 
 	return nil
 }

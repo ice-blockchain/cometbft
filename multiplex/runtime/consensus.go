@@ -318,6 +318,13 @@ func (pool *ConsensusPool) Execute(chainID string) error {
 	reactorStarterFn("MEMPOOL", mempoolReactor)
 	reactorStarterFn("EVIDENCE", evidenceReactor)
 
+	// Mark peers active in CONSENSUS and BLOCKSYNC
+	peerSet := pool.cometbftSwitch.Peers(chainID)
+	for _, peer := range peerSet.Copy() {
+		pool.cometbftSwitch.InitPeerForScope(peer, chainID)
+		pool.cometbftSwitch.AddPeerForScope(peer, chainID)
+	}
+
 	return nil
 }
 
@@ -470,6 +477,7 @@ func (pool *ConsensusPool) makeNetworkMempoolReactor(
 		mempl.WithChainID(chainID),
 		mempl.WithNodeKey(pool.nodeKey),
 		mempl.WithIdleManager(pool.runtimeMgr),
+		// XXX mempl.WithDialerFn
 	)
 	if runtimeConfig.Consensus.WaitForTxs() {
 		mempool.EnableTxsAvailable()

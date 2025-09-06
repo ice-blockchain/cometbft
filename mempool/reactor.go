@@ -449,8 +449,8 @@ func (memR *Reactor) ensureConnectionToPeer(p *p2p.PeerImpl) error {
 	// dialerFn is an extension that permits to run a custom dialer.
 	if _, err := memR.dialerFn(memR.Switch, p, memR.ChainID); err != nil {
 		memR.Logger.Error("failed to dial peer with dialer extension",
-			"chain_id", memR.ChainID,
-			"peer_in", p,
+			"chainId", memR.ChainID,
+			"peerIn", p,
 			"err", err,
 		)
 
@@ -463,40 +463,43 @@ func (memR *Reactor) ensureConnectionToPeer(p *p2p.PeerImpl) error {
 // ensureActiveRuntime activates chainID using the multiplex reactor and
 // ensures that connection channels are opened for chainID.
 func (memR *Reactor) ensureActiveRuntime(chainID string, protoTxs [][]byte) error {
-	// If we receive a transaction, but are not yet running consensus reactors
-	// for the attached ChainID, we must start the consensus reactors.
-	if multiplexReactor := memR.Switch.GetMultiplexReactor(); multiplexReactor != nil {
-		type inlineRuntimeActivator interface {
-			OnActivateRuntime(chainID string)
-			OnCompleteRuntime(chainID string, protoTxs [][]byte)
-
-			AddConnectionChannels(
-				sw *p2p.Switch,
-				scopes []string,
-			) error
-		}
-
-		// Use type assertion to access multiplex reactor methods.
-		if mxR, ok := multiplexReactor.(inlineRuntimeActivator); ok {
-			// Activate this runtime in idle manager.
-			mxR.OnActivateRuntime(chainID)
-
-			// CAUTION: This runtime for ChainID *must be long-living* because it
-			// is used to execute cometbft consensus (blocks proposal). Thus we shall
-			// wait for transactions to be **indexed** before the runtime is completed.
-			//
-			// Completes the runtime activated here.
-			defer func() {
-				go mxR.OnCompleteRuntime(chainID, protoTxs)
-			}()
-
-			// We must add consensus and blocksync connection channels,
-			// we should have a peer in the peerSet per ChainID now.
-			mxR.AddConnectionChannels(memR.Switch, []string{chainID})
-		}
-	} else {
-		return fmt.Errorf("multiplex reactor is not available for %s", chainID)
+	if memR.runtimeRegistry == nil {
+		return fmt.Errorf("ERROR: idle manager is not set for %s", memR.ChainID)
 	}
+
+	// CAUTION: This runtime for ChainID *must be long-living* because it
+	// is used to execute cometbft consensus (blocks proposal). Thus we shall
+	// wait for transactions to be **indexed** before the runtime is completed.
+	//
+	// Activate this runtime in idle manager.
+	memR.runtimeRegistry.OnActivate(chainID)
+
+	// Waits for transactions to be indexed before completing the runtime.
+	return memR.startWaitIndexedRoutine(chainID, protoTxs)
+}
+
+// startWaitIndexedRoutine starts a goroutine which is blocked until all of
+// the txes in protoTxs have been indexed locally or until shutdown.
+func (memR *Reactor) startWaitIndexedRoutine(chainID string, protoTxs [][]byte) error {
+	if memR.runtimeRegistry == nil {
+		return fmt.Errorf("ERROR: idle manager is not set for %s", memR.ChainID)
+	}
+
+	cliTxes := make([]client.Transaction, len(protoTxs))
+	for _, rawTx := range protoTxs {
+		cliTxes = append(cliTxes, client.RawTxToTransaction(types.Tx(rawTx)))
+	}
+
+	relevantChainIds := []string{chainID}
+	txesByChainIds := map[string][]client.Transaction{
+		chainID: cliTxes,
+	}
+
+	// Creates a goroutine that completes runtimes when txes are indexed.
+	go memR.runtimeRegistry.WaitForIndexedTransactions(
+		relevantChainIds,
+		txesByChainIds,
+	)
 
 	return nil
 }

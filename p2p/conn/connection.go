@@ -478,6 +478,8 @@ func (c *MConnection) TrySend(chainID string, chID byte, msgBytes []byte) bool {
 	var channel *Channel
 	channel = c.channelProvider.GetChannel(chID)
 
+	c.Logger.Debug("Channel", "msgBytes", log.NewLazySprintf("%X", msgBytes), "ch", channel)
+
 	ok := channel.trySendBytes(chainID, msgBytes)
 	if ok {
 		// Wake up sendRoutine if necessary
@@ -750,7 +752,7 @@ FOR_LOOP:
 				}
 				break FOR_LOOP
 			}
-			if msgBytes != nil {
+			if msgBytes != nil && len(msgBytes) > 0 {
 				c.Logger.Debug("Received bytes", "ChainId", chainID, "chID", channelID, "msgBytes", msgBytes)
 				// NOTE: This means the reactor.Receive runs in the same thread as the p2p recv routine
 				c.onReceive(chainID, channelID, msgBytes)
@@ -967,11 +969,11 @@ func (ch *Channel) canSend() bool {
 // Call before calling updateNextPacket
 // Goroutine-safe.
 func (ch *Channel) isSendPending() bool {
-	if ch == nil || ch.sending == nil {
+	if ch == nil {
 		return false
 	}
 
-	if len(ch.sending) == 0 {
+	if ch.sending == nil || len(ch.sending) == 0 {
 		if len(ch.sendQueue) == 0 {
 			return false
 		}
@@ -991,7 +993,7 @@ func (ch *Channel) updateNextPacket() {
 		ch.nextPacketMsg.ChainID = ch.sendQueueChainID
 		ch.nextPacketMsg.Data = ch.sending
 		ch.nextPacketMsg.EOF = true
-		ch.sending = []byte{}
+		ch.sending = nil
 		atomic.AddInt32(&ch.sendQueueSize, -1) // decrement sendQueueSize
 	} else {
 		ch.nextPacketMsg.ChainID = ch.sendQueueChainID

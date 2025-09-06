@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"sync"
 
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	mempl "github.com/ice-blockchain/cometbft/mempool"
@@ -229,7 +228,7 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 
 		// Wait for the syncing relays to announce a ChainReplicationComplete.
 		// Additionally, we make sure txes are all indexed after completion.
-		go b.waitForChainReplications(ctx,
+		go b.runtimeRegistry.WaitForChainReplications(
 			syncingPeersChainIds,
 			transactionsByChain,
 		)
@@ -241,7 +240,7 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 	// these ChainID should have been indexed by now, if they were not
 	// we shall be listening for transaction events, i.e. `EventQueryTx`.
 
-	go b.waitForIndexedTransactions(ctx,
+	go b.runtimeRegistry.WaitForIndexedTransactions(
 		relevantChainIds,
 		transactionsByChain,
 	)
@@ -262,96 +261,4 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 	)
 
 	return nil
-}
-
-// ----------------------------------------------------------------------------
-
-// waitForIndexedTransactions creates goroutines that wait for indexing events
-// with relevantChainIds and all transactions for each ChainID.
-//
-// The main thread is blocked using a WaitGroup, and this method completes
-// only when *all* transactions for relevantChainIds are indexed.
-//
-// Additionally, runtimes are marked complete when all txes are indexed.
-func (b *MultiplexBackend) waitForIndexedTransactions(
-	ctx context.Context,
-	relevantChainIds []string,
-	transactionsByChain map[string][]client.Transaction,
-) (numCompleted int) {
-	chainsWg := new(sync.WaitGroup)
-	chainsWg.Add(len(relevantChainIds))
-
-	for _, chainID := range relevantChainIds {
-		cliTxes := transactionsByChain[chainID]
-
-		// One goroutine per syncing ChainID, blocked until all txes indexed.
-		// The runtime is marked complete upon completion of all tx indexing.
-		go func() {
-			defer chainsWg.Done()
-			defer func() {
-				b.IdleManager().OnComplete(chainID)
-			}()
-
-			txesWg := new(sync.WaitGroup)
-			txesWg.Add(len(cliTxes))
-
-			for _, tx := range cliTxes {
-				// One goroutine per txHash, blocked until tx indexed.
-				go func() {
-					defer txesWg.Done()
-
-					txHash := txHashesToHex(tx)[0]
-					if ok := b.broadcastMgr.WaitIndexed(txHash); ok {
-						numCompleted++
-					}
-				}()
-			}
-			txesWg.Wait()
-		}()
-	}
-	chainsWg.Wait()
-
-	return // numCompleted
-}
-
-// waitForChainReplications creates goroutines that wait for replications
-// with relevantChainIds and all transactions for each ChainID.
-//
-// The main thread is blocked using a WaitGroup, and this method completes
-// only when *all* transactions for relevantChainIds are also indexed.
-//
-// Eventually, it should execute waitForIndexedTransactions upon deferral.
-func (b *MultiplexBackend) waitForChainReplications(
-	ctx context.Context,
-	relevantChainIds []string,
-	transactionsByChain map[string][]client.Transaction,
-) (numCompleted int) {
-	defer b.waitForIndexedTransactions(ctx,
-		relevantChainIds,
-		transactionsByChain,
-	)
-
-	// This goroutine will be locked until relevant relays are done with replication.
-	completionWg := new(sync.WaitGroup)
-	completionWg.Add(len(relevantChainIds))
-	for _, syncingChainID := range relevantChainIds {
-		go func() {
-			defer completionWg.Done()
-
-			// This blocks the goroutine until shutdown and/or replication done.
-			if ok := b.replicationMgr.WaitCompleted(syncingChainID); ok {
-				numCompleted++
-			}
-		}()
-	}
-	completionWg.Wait()
-
-	// TODO(midas): remove debug logs
-	b.logger.Debug("All relays have caught up and completed chain replications",
-		"numNetworks", len(relevantChainIds),
-		"numSynced", numCompleted,
-		"chainIds", relevantChainIds,
-	)
-
-	return // numCompleted
 }

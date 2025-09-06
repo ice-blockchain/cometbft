@@ -105,6 +105,10 @@ func (router *packetDispatcher) Target(packet tmp2p.PacketMsg) cmtp2p.Reactor {
 	// Populated in NewDispatcher().
 	skey := router.reactorsServiceKeys[name]
 
+	if !router.resourceMgr.Has(packet.ChainID, skey) {
+		return nil
+	}
+
 	// Get the service instance from resources.
 	target := router.resourceMgr.Get(
 		packet.ChainID,
@@ -120,6 +124,10 @@ func (router *packetDispatcher) Dispatch(
 ) (err error) {
 	// Get the packet's target reactor.
 	target := router.Target(packet)
+	if target == nil {
+		err = fmt.Errorf("[CAUTION] ignoring message; too early, retry later")
+		return
+	}
 
 	// Find the correct proto message type.
 	chDescs := target.GetChannels()

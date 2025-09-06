@@ -142,6 +142,22 @@ func (ps *PeerSet) Get(peerID ID) *PeerImpl {
 	return getterFn(peerID)
 }
 
+// GetInbound looks up a peer byt the provided peerID and IN direction.
+func (ps *PeerSet) GetInbound(peerID ID) *PeerImpl {
+	ps.mtx.Lock()
+	defer ps.mtx.Unlock()
+
+	return ps.getInbound(peerID)
+}
+
+// GetOutbound looks up a peer byt the provided peerID and OUT direction.
+func (ps *PeerSet) GetOutbound(peerID ID) *PeerImpl {
+	ps.mtx.Lock()
+	defer ps.mtx.Unlock()
+
+	return ps.getOutbound(peerID)
+}
+
 // GetByAddr returns peer with the given RemoteAddr, or nil if not found.
 func (ps *PeerSet) GetByAddr(addr net.Addr) *PeerImpl {
 	ps.mtx.Lock()

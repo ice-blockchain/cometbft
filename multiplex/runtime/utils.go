@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ice-blockchain/cometbft/crypto"
+	"github.com/ice-blockchain/cometbft/multiplex/client"
 	sm "github.com/ice-blockchain/cometbft/state"
 )
 
@@ -55,6 +56,15 @@ func splitAndTrimEmpty(s, sep, cutset string) []string {
 		}
 	}
 	return nonEmptyStrings
+}
+
+// txHashesToHex returns a string-slice with transaction hashes in hex format.
+func txHashesToHex(transactions ...client.Transaction) []string {
+	txHashes := make([]string, 0, len(transactions))
+	for _, tx := range transactions {
+		txHashes = append(txHashes, bytesToHex(tx.Hash()))
+	}
+	return txHashes
 }
 
 // bytesToHex returns an upper-case hexadecimal format of bytes.

@@ -175,6 +175,8 @@ func (b *MultiplexBackend) InitRuntimeManager() error {
 		b.discoveryPool,
 		b.cometbftPool,
 		b.resourceMgr,
+		b.broadcastMgr,
+		b.replicationMgr,
 		b.logger.With("module", "runtime"),
 	)
 	b.replayPool = replay.NewReplayPool(b.Context(),

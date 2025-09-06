@@ -2,6 +2,7 @@ package types
 
 import (
 	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
+	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/helpers"
 
 	"github.com/ice-blockchain/cometbft/config"
@@ -30,6 +31,20 @@ type IdleManager interface {
 	OnComplete(chainID string) error
 	// OnIdle idles a sleeping runtime for chainID.
 	OnIdle(chainID string) error
+
+	// WaitForIndexedTransactions creates goroutines that wait for indexing events
+	// with relevantChainIds and all transactions for each ChainID.
+	WaitForIndexedTransactions(
+		relevantChainIds []string,
+		transactionsByChain map[string][]client.Transaction,
+	) (numCompleted int)
+
+	// WaitForChainReplications creates goroutines that wait for replications
+	// with relevantChainIds and all transactions for each ChainID.
+	WaitForChainReplications(
+		relevantChainIds []string,
+		transactionsByChain map[string][]client.Transaction,
+	) (numCompleted int)
 }
 
 // RuntimeManager defines the contract for the runtime manager.
