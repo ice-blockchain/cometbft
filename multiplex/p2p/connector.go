@@ -218,7 +218,7 @@ func (conn *peerConnector) Send(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 	conn.logger.Debug("peerConnector#Send", "dest", dest, "chID", e.ChannelID, "msg", msgBytes, "mconn", conn.mconns[dest].IsRunning())
 
 	// Make sure this peer appears in the peerset per ChainID.
-	defer conn.pool.SetPeerForChainID(
+	conn.pool.SetPeerForChainID(
 		dest,
 		e.ChainID,
 	)
@@ -244,7 +244,7 @@ func (conn *peerConnector) TrySend(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 	}
 
 	// Make sure this peer appears in the peerset per ChainID.
-	defer conn.pool.SetPeerForChainID(
+	conn.pool.SetPeerForChainID(
 		dest,
 		e.ChainID,
 	)

@@ -1011,7 +1011,10 @@ OUTER_LOOP:
 			}
 		}
 
-		// XXX ps is correct peerstate or maybe in/out confusion?
+		// This should not cost too much to do every time because the peer
+		// state key is being set on the peer and read directly from there.
+		// ps may become stale/outdated when gossipVotesRoutine needs more time.
+		ps = conR.GetPeerState(peer)
 
 		rs := conR.conS.GetRoundState() // under conR.conS.mtx
 		prs := ps.GetRoundState()       // under ps.mtx
