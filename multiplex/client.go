@@ -162,6 +162,7 @@ func (c MultiplexClient) BroadcastTx(
 	// errorRelays contains addresses that did not respond to RelayInfo RPC.
 	//
 	// relaysWithoutSelf excludes self from healthyRelays if present.
+	// relaysWithSelf includes self in healthyRelays if not present.
 	//
 	// The broadcast process will be terminated at this step only if we have
 	// less than 2/3+1 of relays being considered healthy.
@@ -213,9 +214,10 @@ func (c MultiplexClient) BroadcastTx(
 		if a.ID() == c.backend.GetRelayID() {
 			numHealthyRemote = numHealthyRemote - 1
 			relaysContainSelf = true
+			return true
 		}
 
-		return a.ID() == c.backend.GetRelayID()
+		return false
 	})
 
 	// When "self" is not present in relays, we set it healthy and we
@@ -227,6 +229,11 @@ func (c MultiplexClient) BroadcastTx(
 		minHealthyRelays = numConsensusRelays*2/3 + 1
 		maxFailingRelays = numConsensusRelays - minHealthyRelays
 	}
+
+	// When "self" is not present in relays, we add it manually to relaysWithSelf.
+	backendRelayAddr, _ := helpers.NewRelayAddress(c.backend.GetListenAddress())
+	relaysWithSelf := relaysWithoutSelf[:]
+	relaysWithSelf = append(relaysWithSelf, backendRelayAddr)
 
 	// TODO(midas): remove debug logs
 	c.backend.GetLogger().Debug("Networks information retrieved from relays",
@@ -453,11 +460,13 @@ func (c MultiplexClient) BroadcastTx(
 		c.backend.GetLogger().Debug("Requesting chain replication from relays",
 			"requestId", broadcastID,
 			"numRequests", len(chainCatchupRelays),
+			"numConsensusRelays", len(relaysWithSelf),
 			"chainId", chainID,
 			"txBatch", transactionHashes)
 
 		routineNodeReplRequest := c.backend.Routines().NodeReplRequest
 		go routineNodeReplRequest(ctx,
+			relaysWithSelf,
 			chainCatchupRelays,
 			chainID,
 			notifyCh,

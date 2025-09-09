@@ -112,6 +112,8 @@ func (b *MultiplexBackend) DefaultCometBFTDialerRoutine() types.CometBFTDialerFn
 						}
 						return
 					}
+					b.cometbftPool.SetPeerForChainID(addr.ID(), relevantChainID)
+
 					durationMs := time.Since(startTz).Milliseconds()
 
 					// TODO(midas): remove debug logs
@@ -129,20 +131,32 @@ func (b *MultiplexBackend) DefaultCometBFTDialerRoutine() types.CometBFTDialerFn
 // attaching the corresponding ChainParams.
 //
 // This method broadcasts a [mxp2p.ChainReplicationRequest] message to
-// relays, to ask them to replicate a chain using the ChainParams.
+// catchupRelays, to ask them to replicate a chain using the ChainParams.
+//
+// remoteRelays should contain a list of all the relays' discovery addresses,
+// including "self" - i.e. the sender relay.
+// catchupRelays should contain a list of the relays that shall receive
+// a chain replication request - i.e. these relays must "catch-up".
 func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() types.NodeReplRequestFn {
 	return func(
 		_ context.Context,
-		relays []*helpers.RelayAddress,
+		remoteRelays []*helpers.RelayAddress,
+		catchupRelays []*helpers.RelayAddress,
 		chainID string,
 		notifyCh chan<- client.BroadcastStatus,
 		logger cmtlog.Logger,
 	) {
 		requestSentPeerIds := []string{}
 		replRequestPeerIds := []string{}
-		for _, relayAddr := range relays {
+		for _, relayAddr := range catchupRelays {
 			if relayAddr.HasID() {
 				replRequestPeerIds = append(replRequestPeerIds, string(relayAddr.ID()))
+			}
+		}
+		healthyRemoteRelays := make([]*helpers.RelayAddress, 0, len(remoteRelays))
+		for _, relayAddr := range remoteRelays {
+			if relayAddr != nil && relayAddr.HasID() {
+				healthyRemoteRelays = append(healthyRemoteRelays, relayAddr)
 			}
 		}
 
@@ -158,7 +172,7 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() types.NodeReplRequest
 
 		// For each ChainID that requires replication of at least one relay,
 		// we initialize the replication manager to evaluate with correct relays.
-		if err = b.replicationMgr.Init(chainID, relays); err != nil {
+		if err = b.replicationMgr.Init(chainID, catchupRelays); err != nil {
 			client.Error(notifyCh, fmt.Errorf(
 				"failed to initialize replication in NodeReplRequest: %w", err))
 			return // terminates the process
@@ -173,26 +187,39 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() types.NodeReplRequest
 		// TODO(midas): remove debug logs
 		logger.Debug("Preparing to send ChainReplicationRequest",
 			"chainId", chainID,
-			"relays", relays,
+			"relays", catchupRelays,
 			"numValidators", len(genesisDoc.Validators),
 			"numPeers", discoveryPeers.Size(),
+			"dialRelays", healthyRemoteRelays,
 		)
 
 		requestsWg := sync.WaitGroup{}
-		requestsWg.Add(len(relays))
+		requestsWg.Add(len(catchupRelays))
 
 		// Broadcast the ChainReplicationRequest.
-		for _, relay := range relays {
+		for _, relay := range catchupRelays {
 			func(addr *helpers.RelayAddress) {
 				defer requestsWg.Done()
 
 				peer := discoveryPeers.Get(addr.ID())
 				peerID := string(addr.ID())
 
+				// The receiving end (peerID) will have to dial all other
+				// CometBFT peers that are involved in this broadcast to permit
+				// faster consensus build-up and reaching consensus faster.
+				cometbftPeers := make([]string, 0, len(healthyRemoteRelays))
+				for _, relayDiscoveryAddr := range healthyRemoteRelays {
+					if relayDiscoveryAddr.ID() != addr.ID() {
+						cometbftPeers = append(cometbftPeers, relayDiscoveryAddr.AddressForCometBFT())
+					}
+				}
+				replicationReq.Relays = cometbftPeers
+
 				// TODO(midas): remove debug logs
 				b.logger.Debug("Now sending ChainReplicationRequest",
 					"chainId", chainID,
 					"peerId", peerID,
+					"relays", cometbftPeers,
 				)
 
 				e := cmtp2p.Envelope{

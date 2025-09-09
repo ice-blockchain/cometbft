@@ -441,7 +441,7 @@ func (c *MConnection) stopForError(r any) {
 
 // Queues a message to be sent to channel.
 func (c *MConnection) Send(chainID string, chID byte, msgBytes []byte) bool {
-	if !c.IsRunning() {
+	if !c.IsRunning() || len(msgBytes) == 0 {
 		return false
 	}
 
@@ -449,8 +449,11 @@ func (c *MConnection) Send(chainID string, chID byte, msgBytes []byte) bool {
 
 	var channel *Channel
 	channel = c.channelProvider.GetChannel(chID)
+	if channel == nil {
+		return false
+	}
 
-	c.Logger.Debug("Channel", "msgBytes", log.NewLazySprintf("%X", msgBytes), "ch", channel)
+	//c.Logger.Debug("Channel", "msgBytes", log.NewLazySprintf("%X", msgBytes), "ch", channel)
 
 	// Send message to channel.
 	success := channel.sendBytes(chainID, msgBytes)
@@ -469,7 +472,7 @@ func (c *MConnection) Send(chainID string, chID byte, msgBytes []byte) bool {
 // Queues a message to be sent to channel.
 // Nonblocking, returns true if successful.
 func (c *MConnection) TrySend(chainID string, chID byte, msgBytes []byte) bool {
-	if !c.IsRunning() {
+	if !c.IsRunning() || len(msgBytes) == 0 {
 		return false
 	}
 
@@ -477,8 +480,11 @@ func (c *MConnection) TrySend(chainID string, chID byte, msgBytes []byte) bool {
 
 	var channel *Channel
 	channel = c.channelProvider.GetChannel(chID)
+	if channel == nil {
+		return false
+	}
 
-	c.Logger.Debug("Channel", "msgBytes", log.NewLazySprintf("%X", msgBytes), "ch", channel)
+	//c.Logger.Debug("Channel", "msgBytes", log.NewLazySprintf("%X", msgBytes), "ch", channel)
 
 	ok := channel.trySendBytes(chainID, msgBytes)
 	if ok {
@@ -501,6 +507,10 @@ func (c *MConnection) CanSend(chainID string, chID byte) bool {
 
 	var channel *Channel
 	channel = c.channelProvider.GetChannel(chID)
+	if channel == nil {
+		return false
+	}
+
 	return channel.canSend()
 }
 
@@ -984,7 +994,7 @@ func (ch *Channel) isSendPending() bool {
 
 // Updates the nextPacket proto message for us to send.
 // Not goroutine-safe.
-func (ch *Channel) updateNextPacket() {
+func (ch *Channel) updateNextPacket() error {
 	ch.mtx.Lock()
 	defer ch.mtx.Unlock()
 
@@ -995,21 +1005,27 @@ func (ch *Channel) updateNextPacket() {
 		ch.nextPacketMsg.EOF = true
 		ch.sending = nil
 		atomic.AddInt32(&ch.sendQueueSize, -1) // decrement sendQueueSize
-	} else {
+	} else if len(ch.sending) > 0 {
 		ch.nextPacketMsg.ChainID = ch.sendQueueChainID
 		ch.nextPacketMsg.Data = ch.sending[:maxSize]
 		ch.nextPacketMsg.EOF = false
 		ch.sending = ch.sending[maxSize:]
+	} else {
+		return errors.New("Channel: empty packet")
 	}
 
 	ch.nextP2pWrapperPacketMsg.PacketMsg = ch.nextPacketMsg
 	ch.nextPacket.Sum = ch.nextP2pWrapperPacketMsg
+	return nil
 }
 
 // Writes next PacketMsg to w and updates c.recentlySent.
 // Not goroutine-safe.
 func (ch *Channel) writePacketMsgTo(w protoio.Writer) (n int, err error) {
-	ch.updateNextPacket()
+	if err := ch.updateNextPacket(); err != nil {
+		return 0, err
+	}
+
 	n, err = w.WriteMsg(ch.nextPacket)
 	if err != nil {
 		return 0, err

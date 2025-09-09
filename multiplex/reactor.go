@@ -227,7 +227,7 @@ func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
 			replRequest := extMsg.GetChainReplicationRequest()
 			reactor.logger.Debug("Received ChainReplicationRequest", "msg", replRequest)
 
-			// Process the chain replication request.
+			// (1) Process the chain replication request.
 			if err := reactor.handleChainReplicationRequest(e); err != nil {
 				reactor.logger.Error(
 					"failed to process ChainReplicationRequest: error handling replication",
@@ -237,27 +237,35 @@ func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
 				return
 			}
 
-			// Dial the CometBFT peer
-			discoveryAddr, _ := helpers.NewRelayAddress(sourceAddr.String())
-			cometbftAddr := discoveryAddr.NetAddressForCometBFT()
+			// (2) IMPORTANT:
+			//
+			// Dialing many-to-many here, this is important such that consensus
+			// reactors may communicate with all involved peers during its
+			// blocks proposal and votes collection processes.
 
-			// TODO(midas): remove debug logs.
-			reactor.logger.Debug("Dialing peer for CometBFT",
-				"chainID", replRequest.ChainID,
-				"address", cometbftAddr,
-			)
+			// The chain replication request contains a list of Relays that
+			// this receiving relay must dial before starting consensus.
+			for _, relayAddrStr := range replRequest.Relays {
+				cometbftAddr, _ := helpers.NewRelayAddress(relayAddrStr)
 
-			// Dial the peer for CometBFT to permit faster consensus building.
-			if _, err := reactor.cometbftPool.Connector().Dial(cometbftAddr); err != nil {
-				reactor.logger.Error(
-					"failed to process ChainReplicationRequest: error dialing source peer",
-					"chainId", replRequest.ChainID,
-					"err", err,
+				// TODO(midas): remove debug logs.
+				reactor.logger.Debug("Dialing peer for CometBFT",
+					"chainID", replRequest.ChainID,
+					"address", cometbftAddr,
 				)
-			}
-			reactor.cometbftPool.SetPeerForChainID(sourceAddr.ID, replRequest.ChainID)
 
-			// Start consensus reactors for newly injected runtime.
+				// Dial the peer for CometBFT to permit faster consensus building.
+				if _, err := reactor.cometbftPool.Connector().Dial(cometbftAddr.NetAddress()); err != nil {
+					reactor.logger.Error(
+						"failed to process ChainReplicationRequest: error dialing source peer",
+						"chainId", replRequest.ChainID,
+						"err", err,
+					)
+				}
+				reactor.cometbftPool.SetPeerForChainID(cometbftAddr.ID(), replRequest.ChainID)
+			}
+
+			// (3) Start consensus reactors for newly injected runtime.
 			if err := reactor.runtimeMgr.StartRuntime(
 				replRequest.ChainID,
 			); err != nil {
@@ -269,7 +277,7 @@ func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
 				return
 			}
 
-			// Activate this runtime in our runtime registry.
+			// (4) Activate this runtime in our runtime registry.
 			//
 			// In case of conR.WaitSync, OnComplete is called by conR.SwitchToConsensus,
 			// otherwise OnComplete is called by memR.sendChainReplicationComplete when
@@ -282,7 +290,7 @@ func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
 				"address", sourceAddr,
 			)
 
-			// Dial the peer for Discovery as we will be sending a ChainReplicationResponse.
+			// (5) Dial the peer for Discovery as we will be sending a ChainReplicationResponse.
 			if _, err := reactor.discoveryPool.Connector().Dial(sourceAddr); err != nil {
 				reactor.logger.Error(
 					"failed to process ChainReplicationRequest: error dialing source peer",
@@ -291,7 +299,7 @@ func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
 				)
 			}
 
-			// Now respond with a [ChainReplicationResponse].
+			// (6) Now respond with a [ChainReplicationResponse].
 			// This serves as a receipt for a chain replication request.
 			if err = reactor.sendChainReplicationResponse(e.Src, replRequest.ChainID); err != nil {
 				reactor.logger.Error("failed to send ChainReplicationResponse",

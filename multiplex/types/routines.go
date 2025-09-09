@@ -34,10 +34,16 @@ type RelayDialError struct {
 // NodeReplRequestFn describes a function that may be run on a separate
 // goroutine and which should send [ChainReplicationRequest] to relays.
 //
+// remoteRelays should contain a list of all the relays' discovery addresses,
+// including "self" - i.e. including the sender relay.
+// catchupRelays should contain a list of the relays that shall receive
+// a chain replication request - i.e. these relays must "catch-up".
+//
 // A write-only [client.BroadcastStatus] channel is used to transmit errors.
 type NodeReplRequestFn func(
 	context.Context,
-	[]*helpers.RelayAddress,
+	[]*helpers.RelayAddress, // remoteRelays
+	[]*helpers.RelayAddress, // catchupRelays
 	string,
 	chan<- client.BroadcastStatus,
 	cmtlog.Logger,
