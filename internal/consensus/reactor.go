@@ -579,6 +579,11 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 	// data through initialization and then read the state once more.
 	ps := conR.GetPeerState(e.Src)
 	if ps == nil {
+		conR.InitPeer(e.Src)
+		ps = conR.GetPeerState(e.Src)
+	}
+
+	if ps == nil {
 		panic(fmt.Sprintf("Source peer %v has no state for %v", e.Src, conR.PeerStateKey()))
 	}
 
@@ -934,6 +939,10 @@ OUTER_LOOP:
 	for conR.Context().Err() == nil {
 		// Manage disconnects from self or peer.
 		if !peer.IsRunning() || !conR.IsRunning() {
+			logger.Debug("Peer connection stopped; stopping gossipDataRoutine",
+				"peer", peer,
+				"ps", ps,
+			)
 			return
 		}
 
@@ -947,8 +956,13 @@ OUTER_LOOP:
 			}
 		}
 
-		rs := conR.conS.getRoundState()
-		prs := ps.GetRoundState() // under ps.mtx
+		// This should not cost too much to do every time because the peer
+		// state key is being set on the peer and read directly from there.
+		// ps may become stale/outdated when gossipDataRoutine needs more time.
+		ps = conR.GetPeerState(peer)
+
+		rs := conR.conS.GetRoundState() // under conR.conS.mtx
+		prs := ps.GetRoundState()       // under ps.mtx
 		cid := conR.ChainID
 
 		// --------------------
@@ -998,6 +1012,10 @@ OUTER_LOOP:
 	for conR.Context().Err() == nil {
 		// Manage disconnects from self or peer.
 		if !peer.IsRunning() || !conR.IsRunning() {
+			logger.Debug("Peer connection stopped; stopping gossipVotesRoutine",
+				"peer", peer,
+				"ps", ps,
+			)
 			return
 		}
 
@@ -1031,15 +1049,15 @@ OUTER_LOOP:
 		vote := pickVoteToSend(logger, conR.conS, &rs, ps, prs, rng)
 		conR.conS.mtx.RUnlock()
 
-		logger.Debug("gossipVotesRoutine", "rsHeight", rs.Height, "rsRound", rs.Round,
-			"prsHeight", prs.Height, "prsRound", prs.Round, "prsStep", prs.Step, "v", vote)
+		// logger.Debug("gossipVotesRoutine", "rsHeight", rs.Height, "rsRound", rs.Round,
+		// 	"prsHeight", prs.Height, "prsRound", prs.Round, "prsStep", prs.Step, "v", vote)
 
 		// if vote := pickVoteToSend(logger, conR.conS, &rs, ps, prs, rng); vote != nil {
 		if vote != nil {
 			if ps.sendVoteSetHasVote(cid, vote) {
 				continue OUTER_LOOP
 			}
-			logger.Debug("Failed to send vote to peer",
+			logger.Error("Failed to send vote to peer",
 				"height", prs.Height,
 				"vote", vote,
 			)
@@ -1065,17 +1083,28 @@ OUTER_LOOP:
 // NOTE: `queryMaj23Routine` has a simple crude design since it only comes
 // into play for liveness when there's a signature DDoS attack happening.
 func (conR *Reactor) queryMaj23Routine(peer *p2p.PeerImpl, ps *PeerState) {
+	logger := conR.Logger.With("peer", peer)
+
 OUTER_LOOP:
 	for conR.Context().Err() == nil {
 		// Manage disconnects from self or peer.
 		if !peer.IsRunning() || !conR.IsRunning() {
+			logger.Debug("Peer connection stopped; stopping queryMaj23Routine",
+				"peer", peer,
+				"ps", ps,
+			)
 			return
 		}
 
+		// This should not cost too much to do every time because the peer
+		// state key is being set on the peer and read directly from there.
+		// ps may become stale/outdated when queryMaj23Routine needs more time.
+		ps = conR.GetPeerState(peer)
+
 		// Maybe send Height/Round/Prevotes
 		{
-			rs := conR.conS.GetRoundState()
-			prs := ps.GetRoundState() // under ps.mtx
+			rs := conR.conS.GetRoundState() // under conR.conS.mtx
+			prs := ps.GetRoundState()       // under ps.mtx
 			if rs.Height == prs.Height {
 				if maj23, ok := rs.Votes.Prevotes(prs.Round).TwoThirdsMajority(); ok {
 					peer.TrySend(conR.ChainID, p2p.Envelope{
@@ -1097,8 +1126,8 @@ OUTER_LOOP:
 
 		// Maybe send Height/Round/Precommits
 		{
-			rs := conR.conS.GetRoundState()
-			prs := ps.GetRoundState() // under ps.mtx
+			rs := conR.conS.GetRoundState() // under conR.conS.mtx
+			prs := ps.GetRoundState()       // under ps.mtx
 			if rs.Height == prs.Height {
 				if maj23, ok := rs.Votes.Precommits(prs.Round).TwoThirdsMajority(); ok {
 					peer.TrySend(conR.ChainID, p2p.Envelope{
@@ -1120,8 +1149,8 @@ OUTER_LOOP:
 
 		// Maybe send Height/Round/ProposalPOL
 		{
-			rs := conR.conS.GetRoundState()
-			prs := ps.GetRoundState() // under ps.mtx
+			rs := conR.conS.GetRoundState() // under conR.conS.mtx
+			prs := ps.GetRoundState()       // under ps.mtx
 			if rs.Height == prs.Height && prs.ProposalPOLRound >= 0 {
 				if maj23, ok := rs.Votes.Prevotes(prs.ProposalPOLRound).TwoThirdsMajority(); ok {
 					peer.TrySend(conR.ChainID, p2p.Envelope{
@@ -1332,12 +1361,12 @@ func pickVoteToSend(
 		}
 	}
 
-	// TODO(midas): remove debug logs.
-	logger.Debug("No votes available to gossip",
-		"height", rs.Height,
-		"round", rs.Round,
-		"step", rs.Step,
-	)
+	// // TODO(midas): remove debug logs.
+	// logger.Debug("No votes available to gossip",
+	// 	"height", rs.Height,
+	// 	"round", rs.Round,
+	// 	"step", rs.Step,
+	// )
 
 	return nil
 }
@@ -1373,12 +1402,12 @@ func pickVoteCurrentHeight(
 			return vote
 		}
 
-		// TODO(midas): remove debug logs.
-		logger.Debug("No prevotes available to gossip",
-			"height", rs.Height,
-			"round", rs.Round,
-			"step", rs.Step,
-		)
+		// // TODO(midas): remove debug logs.
+		// logger.Debug("No prevotes available to gossip",
+		// 	"height", rs.Height,
+		// 	"round", rs.Round,
+		// 	"step", rs.Step,
+		// )
 	}
 	// If there are precommits to send...
 	if prs.Step <= cstypes.RoundStepPrecommitWait && prs.Round != -1 && prs.Round <= rs.Round {
@@ -1387,12 +1416,12 @@ func pickVoteCurrentHeight(
 			return vote
 		}
 
-		// TODO(midas): remove debug logs.
-		logger.Debug("No precommits available to gossip",
-			"height", rs.Height,
-			"round", rs.Round,
-			"step", rs.Step,
-		)
+		// // TODO(midas): remove debug logs.
+		// logger.Debug("No precommits available to gossip",
+		// 	"height", rs.Height,
+		// 	"round", rs.Round,
+		// 	"step", rs.Step,
+		// )
 	}
 	// If there are prevotes to send...Needed because of validBlock mechanism
 	if prs.Round != -1 && prs.Round <= rs.Round {
