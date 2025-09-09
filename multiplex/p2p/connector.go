@@ -207,12 +207,15 @@ func (conn *peerConnector) Listen() error {
 func (conn *peerConnector) Send(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 	if _, ok := conn.mconns[dest]; !ok {
 		return fmt.Errorf(
-			"missing MConnection for peer %s", dest)
+			"failed to send message; missing MConnection for peer %s", dest)
 	}
 
 	msgBytes, err := conn.wrapMsgBytes(e.Message)
 	if err != nil {
 		return err
+	}
+	if len(msgBytes) == 0 {
+		return fmt.Errorf("failed to send message; empty msgBytes", "dest", dest, "e", e)
 	}
 
 	conn.logger.Debug("peerConnector#Send", "dest", dest, "chID", e.ChannelID, "msg", msgBytes, "mconn", conn.mconns[dest].IsRunning())
@@ -226,7 +229,7 @@ func (conn *peerConnector) Send(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 	mconn := conn.mconns[dest]
 	if sent := mconn.Send(e.ChainID, e.ChannelID, msgBytes); !sent {
 		return fmt.Errorf(
-			"error while sending message to %s", dest)
+			"failed to send message; MConnection is stopped for %s", dest)
 	}
 	return nil
 }
@@ -235,12 +238,15 @@ func (conn *peerConnector) Send(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 func (conn *peerConnector) TrySend(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 	if _, ok := conn.mconns[dest]; !ok {
 		return fmt.Errorf(
-			"missing MConnection for peer %s", dest)
+			"failed to send message; missing MConnection for peer %s", dest)
 	}
 
 	msgBytes, err := conn.wrapMsgBytes(e.Message)
 	if err != nil {
 		return err
+	}
+	if len(msgBytes) == 0 {
+		return fmt.Errorf("failed to send message; empty msgBytes", "dest", dest, "e", e)
 	}
 
 	// Make sure this peer appears in the peerset per ChainID.
@@ -252,7 +258,7 @@ func (conn *peerConnector) TrySend(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 	mconn := conn.mconns[dest]
 	if sent := mconn.TrySend(e.ChainID, e.ChannelID, msgBytes); !sent {
 		return fmt.Errorf(
-			"error while sending message to %s", dest)
+			"failed to send message; MConnection is stopped for %s", dest)
 	}
 	return nil
 }
