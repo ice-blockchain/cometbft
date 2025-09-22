@@ -2,7 +2,6 @@ package snapsapp_test
 
 import (
 	"context"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -22,16 +21,14 @@ import (
 
 func TestMultiplexABCI_Info(t *testing.T) {
 	suite := NewSnapsAppSuite(t)
-	defer func() {
-		defer os.RemoveAll(suite.rootDir)
-		suite.reactor.Stop() //nolint:errcheck
-	}()
+	defer shutdownBackends(t, suite.backend)
 
 	// We test using the "first network"
-	testChainID := suite.reactor.GetNetworks()[0]
+	testChainID := suite.backend.GetNetworks()[0]
+	defer suite.backend.RuntimeManager().StopRuntime(testChainID)
 
 	// Check that we have a correct state store
-	chainStore := suite.reactor.GetStateStore(testChainID)
+	chainStore := suite.backend.StateStore(testChainID)
 	require.NotNil(t, chainStore)
 
 	reqTestInfo := abci.InfoRequest{}
@@ -60,16 +57,13 @@ func TestMultiplexABCI_Info(t *testing.T) {
 
 func TestMultiplexABCI_InitChain(t *testing.T) {
 	suite := NewSnapsAppSuite(t)
-	defer func() {
-		defer os.RemoveAll(suite.rootDir)
-		suite.reactor.Stop() //nolint:errcheck
-	}()
+	defer shutdownBackends(t, suite.backend)
 
 	// We test using the "first network"
-	testChainID := suite.reactor.GetNetworks()[0]
+	testChainID := suite.backend.GetNetworks()[0]
 
 	// Check that we have a correct state store
-	chainStore := suite.reactor.GetStateStore(testChainID)
+	chainStore := suite.backend.StateStore(testChainID)
 	require.NotNil(t, chainStore)
 
 	// Store custom state machine instance
@@ -117,16 +111,13 @@ func TestMultiplexABCI_InitChain(t *testing.T) {
 
 func TestMultiplexABCI_InitChain_WithInitialHeight(t *testing.T) {
 	suite := NewSnapsAppSuite(t)
-	defer func() {
-		defer os.RemoveAll(suite.rootDir)
-		suite.reactor.Stop() //nolint:errcheck
-	}()
+	defer shutdownBackends(t, suite.backend)
 
 	// We test using the "first network"
-	testChainID := suite.reactor.GetNetworks()[0]
+	testChainID := suite.backend.GetNetworks()[0]
 
 	// Check that we have a correct state store
-	chainStore := suite.reactor.GetStateStore(testChainID)
+	chainStore := suite.backend.StateStore(testChainID)
 	require.NotNil(t, chainStore)
 
 	// Attach an Initial Height
@@ -141,16 +132,13 @@ func TestMultiplexABCI_InitChain_WithInitialHeight(t *testing.T) {
 
 func TestMultiplexABCI_PrepareProposal(t *testing.T) {
 	suite := NewSnapsAppSuite(t)
-	defer func() {
-		defer os.RemoveAll(suite.rootDir)
-		suite.reactor.Stop() //nolint:errcheck
-	}()
+	defer shutdownBackends(t, suite.backend)
 
 	// We test using the "first network"
-	testChainID := suite.reactor.GetNetworks()[0]
+	testChainID := suite.backend.GetNetworks()[0]
 
 	// Check that we have a correct state store
-	chainStore := suite.reactor.GetStateStore(testChainID)
+	chainStore := suite.backend.StateStore(testChainID)
 	require.NotNil(t, chainStore)
 
 	// (0). Inject ChainID
@@ -173,16 +161,13 @@ func TestMultiplexABCI_PrepareProposal(t *testing.T) {
 
 func TestMultiplexABCI_ProcessProposal(t *testing.T) {
 	suite := NewSnapsAppSuite(t, snapsapp.WithUseMempool(false))
-	defer func() {
-		defer os.RemoveAll(suite.rootDir)
-		suite.reactor.Stop() //nolint:errcheck
-	}()
+	defer shutdownBackends(t, suite.backend)
 
 	// We test using the "first network"
-	testChainID := suite.reactor.GetNetworks()[0]
+	testChainID := suite.backend.GetNetworks()[0]
 
 	// Check that we have a correct state store
-	chainStore := suite.reactor.GetStateStore(testChainID)
+	chainStore := suite.backend.StateStore(testChainID)
 	require.NotNil(t, chainStore)
 
 	// (0). Inject ChainID
@@ -205,16 +190,13 @@ func TestMultiplexABCI_ProcessProposal(t *testing.T) {
 
 func TestMultiplexABCI_FinalizeBlock(t *testing.T) {
 	suite := NewSnapsAppSuite(t)
-	defer func() {
-		defer os.RemoveAll(suite.rootDir)
-		suite.reactor.Stop() //nolint:errcheck
-	}()
+	defer shutdownBackends(t, suite.backend)
 
 	// We test using the "first network"
-	testChainID := suite.reactor.GetNetworks()[0]
+	testChainID := suite.backend.GetNetworks()[0]
 
 	// Check that we have a correct state store
-	chainStore := suite.reactor.GetStateStore(testChainID)
+	chainStore := suite.backend.StateStore(testChainID)
 	require.NotNil(t, chainStore)
 
 	// (0). Inject ChainID
@@ -233,16 +215,13 @@ func TestMultiplexABCI_FinalizeBlock(t *testing.T) {
 
 func TestMultiplexABCI_FinalizeBlock_WithInitialHeight(t *testing.T) {
 	suite := NewSnapsAppSuite(t)
-	defer func() {
-		defer os.RemoveAll(suite.rootDir)
-		suite.reactor.Stop() //nolint:errcheck
-	}()
+	defer shutdownBackends(t, suite.backend)
 
 	// We test using the "first network"
-	testChainID := suite.reactor.GetNetworks()[0]
+	testChainID := suite.backend.GetNetworks()[0]
 
 	// Check that we have a correct state store
-	chainStore := suite.reactor.GetStateStore(testChainID)
+	chainStore := suite.backend.StateStore(testChainID)
 	require.NotNil(t, chainStore)
 
 	// Attach an Initial Height
@@ -266,13 +245,10 @@ func TestMultiplexABCI_FinalizeBlock_WithAcceptor(t *testing.T) {
 	suite := NewSnapsAppSuite(t, snapsapp.WithAcceptor(
 		client.NewMockAcceptorImpl(),
 	))
-	defer func() {
-		defer os.RemoveAll(suite.rootDir)
-		suite.reactor.Stop() //nolint:errcheck
-	}()
+	defer shutdownBackends(t, suite.backend)
 
 	// We test using the "first network"
-	testChainID := suite.reactor.GetNetworks()[0]
+	testChainID := suite.backend.GetNetworks()[0]
 	testAddress := client.GetUserAddress(testChainID)
 	testFingerprint := testChainID[len(testChainID)-16:]
 	require.NotEmpty(t, testAddress)
@@ -289,7 +265,7 @@ func TestMultiplexABCI_FinalizeBlock_WithAcceptor(t *testing.T) {
 	}
 
 	// Check that we have a correct state store
-	chainStore := suite.reactor.GetStateStore(testChainID)
+	chainStore := suite.backend.StateStore(testChainID)
 	require.NotNil(t, chainStore)
 
 	// Attach an Initial Height
@@ -312,7 +288,7 @@ func TestMultiplexABCI_FinalizeBlock_WithAcceptor(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, res)
 
-	actualAcceptor := suite.snapsApp.GetAcceptor()
+	actualAcceptor := suite.snapsApp.Acceptor()
 	assert.NotNil(t, actualAcceptor)
 	testAcceptor := actualAcceptor.(*client.MockAcceptorImpl)
 
@@ -322,16 +298,13 @@ func TestMultiplexABCI_FinalizeBlock_WithAcceptor(t *testing.T) {
 
 func TestMultiplexABCI_Proposal_HappyPath(t *testing.T) {
 	suite := NewSnapsAppSuite(t, snapsapp.WithUseMempool(false))
-	defer func() {
-		defer os.RemoveAll(suite.rootDir)
-		suite.reactor.Stop() //nolint:errcheck
-	}()
+	defer shutdownBackends(t, suite.backend)
 
 	// We test using the "first network"
-	testChainID := suite.reactor.GetNetworks()[0]
+	testChainID := suite.backend.GetNetworks()[0]
 
 	// Check that we have a correct state store
-	chainStore := suite.reactor.GetStateStore(testChainID)
+	chainStore := suite.backend.StateStore(testChainID)
 	require.NotNil(t, chainStore)
 
 	// (0). Inject ChainID
@@ -381,16 +354,13 @@ func TestMultiplexABCI_Proposal_HappyPath(t *testing.T) {
 
 func TestMultiplexABCI_CheckTx(t *testing.T) {
 	suite := NewSnapsAppSuite(t)
-	defer func() {
-		defer os.RemoveAll(suite.rootDir)
-		suite.reactor.Stop() //nolint:errcheck
-	}()
+	defer shutdownBackends(t, suite.backend)
 
 	// We test using the "first network"
-	testChainID := suite.reactor.GetNetworks()[0]
+	testChainID := suite.backend.GetNetworks()[0]
 
 	// Check that we have a correct state store
-	chainStore := suite.reactor.GetStateStore(testChainID)
+	chainStore := suite.backend.StateStore(testChainID)
 	require.NotNil(t, chainStore)
 
 	// (0). Inject ChainID
@@ -410,16 +380,13 @@ func TestMultiplexABCI_CheckTx(t *testing.T) {
 
 func TestMultiplexABCI_Commit(t *testing.T) {
 	suite := NewSnapsAppSuite(t)
-	defer func() {
-		defer os.RemoveAll(suite.rootDir)
-		suite.reactor.Stop() //nolint:errcheck
-	}()
+	defer shutdownBackends(t, suite.backend)
 
 	// We test using the "first network"
-	testChainID := suite.reactor.GetNetworks()[0]
+	testChainID := suite.backend.GetNetworks()[0]
 
 	// Check that we have a correct state store
-	chainStore := suite.reactor.GetStateStore(testChainID)
+	chainStore := suite.backend.StateStore(testChainID)
 	require.NotNil(t, chainStore)
 
 	// (0). Inject ChainID

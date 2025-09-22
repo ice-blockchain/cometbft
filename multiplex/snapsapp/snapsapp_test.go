@@ -6,25 +6,26 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	"github.com/ice-blockchain/cometbft/crypto/tmhash"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
-	mx "github.com/ice-blockchain/cometbft/multiplex"
-	"github.com/ice-blockchain/cometbft/multiplex/snapsapp"
-	"github.com/ice-blockchain/cometbft/node"
-	"github.com/ice-blockchain/cometbft/p2p"
 	sm "github.com/ice-blockchain/cometbft/state"
 	"github.com/ice-blockchain/cometbft/types"
 	cmttime "github.com/ice-blockchain/cometbft/types/time"
+
+	mx "github.com/ice-blockchain/cometbft/multiplex"
+	"github.com/ice-blockchain/cometbft/multiplex/client"
+	"github.com/ice-blockchain/cometbft/multiplex/snapsapp"
 )
 
 type (
 	SnapsAppSuite struct {
 		snapsApp *snapsapp.SnapsApp
-		reactor  *mx.Reactor
+		backend  *mx.MultiplexBackend
 		logger   cmtlog.Logger
 		rootDir  string
 	}
@@ -34,57 +35,32 @@ const (
 	baseExampleChainID = "mx-chain-CC8E6555A3F401FF61DA098F94D325E7041BC43A-"
 )
 
-// mockGenesisDocSetProviderFunc mocks a GenesisDocSet provider helper.
-func mockGenesisDocSetProviderFunc(withChainID string) node.GenesisDocProvider {
-	return func() (node.IChecksummedGenesisDoc, error) {
-		// random validators, careful with this provider.
-		valPubKey := ed25519.GenPrivKey().PubKey()
-		return &mx.ChecksummedGenesisDocSet{
-			GenesisDocs: mx.GenesisDocSet{
-				types.GenesisDoc{
-					GenesisTime:   cmttime.Now(),
-					ChainID:       withChainID,
-					InitialHeight: 1000,
-					Validators: []types.GenesisValidator{{
-						Address: valPubKey.Address(),
-						PubKey:  valPubKey,
-						Power:   10,
-						Name:    "myval",
-					}},
-					ConsensusParams: types.DefaultConsensusParams(),
-					AppHash:         []byte{1, 2, 3},
-					AppState:        []byte(`{"account_owner":"Bob"}`),
-				},
-			},
-			Sha256Checksum: []byte{1, 2, 3},
-		}, nil
-	}
-}
-
 func NewSnapsAppSuite(t *testing.T, opts ...func(*snapsapp.SnapsApp)) *SnapsAppSuite {
 	t.Helper()
 
-	rootDir, _, testReactor := prepareMultiplexReactor(t)
+	snapLogger := cmtlog.NewNopLogger() // for debug of SnapsApp change to TestingLogger()
+	nodeLogger := cmtlog.NewNopLogger() // for debug of Backend change to TestingLogger()
 
-	logger := cmtlog.NewNopLogger() // for debug change to TestingLogger()
+	rootDir, testBackend := prepareMultiplexBackend(t, nodeLogger)
+
 	app := snapsapp.NewSnapsApplication(
-		testReactor,
-		logger,
+		testBackend,
+		snapLogger,
 		opts...,
 	)
 
 	return &SnapsAppSuite{
 		snapsApp: app,
-		reactor:  testReactor,
-		logger:   logger,
+		backend:  testBackend,
+		logger:   snapLogger,
 		rootDir:  rootDir,
 	}
 }
 
-func prepareMultiplexReactor(t *testing.T) (
+// Creates a MultiplexBackend and initializes a testChainID.
+func prepareMultiplexBackend(t *testing.T, withLogger cmtlog.Logger) (
 	string,
-	*config.Config,
-	*mx.Reactor,
+	*mx.MultiplexBackend,
 ) {
 	t.Helper()
 
@@ -108,28 +84,24 @@ func prepareMultiplexReactor(t *testing.T) (
 	)
 	conf.SetRoot(rootDir)
 
-	nodeKey := makeRandomNodeKey()
-	testChainRegistry, err := mx.NewChainRegistry(&conf.MultiplexConfig, "")
-	require.NoError(t, err, "should create chain registry instance")
-
-	// Test Reactor implementation in multiplex package
-	testReactor := mx.NewReactor(t.Context(),
-		nodeKey,
+	testBackend, err := mx.NewServer(
+		t.Context(),
+		&client.DefaultAcceptor{},
 		conf,
-		cmtlog.NewNopLogger(),
-		testChainRegistry,
-		mockGenesisDocSetProviderFunc(testChainID),
+		withLogger,
 	)
+	require.NoError(t, err, "should create a server instance")
 
-	err = testReactor.Start()
-	require.NoError(t, err, "should not error starting multiplex reactor")
+	startErr := testBackend.Start()
+	require.NoError(t, startErr, "should start a server instance")
 
-	return rootDir, conf, testReactor
-}
+	initErr := testBackend.RuntimeManager().InitRuntime(testChainID, []string{})
+	require.NoError(t, initErr, "should initialize test network")
 
-func makeRandomNodeKey() *p2p.NodeKey {
-	priv := ed25519.GenPrivKey()
-	return &p2p.NodeKey{PrivKey: priv}
+	runtimeErr := testBackend.RuntimeManager().StartRuntime(testChainID)
+	require.NoError(t, runtimeErr, "should start network runtime")
+
+	return rootDir, testBackend
 }
 
 func makeState(
@@ -164,4 +136,35 @@ func makeState(
 	state.LastValidators = state.Validators
 
 	return state, state.AppHash
+}
+
+// closeAndRemoveAll is a helper to shutdown a running [mx.MultiplexBackend] and
+// remove all filesystem resources created under rootDir.
+func closeAndRemoveAll(
+	tb testing.TB,
+	rootDir string,
+	backend *mx.MultiplexBackend,
+) {
+	tb.Helper()
+
+	defer os.RemoveAll(rootDir)
+
+	if backend.IsRunning() {
+		err := backend.Stop()
+		assert.NoError(tb, err, "should shutdown backend gracefully")
+	}
+}
+
+// shutdownBackends stops all backends concurrently.
+func shutdownBackends(
+	tb testing.TB,
+	backends ...*mx.MultiplexBackend,
+) {
+	tb.Helper()
+
+	for i := 0; i < len(backends); i++ {
+		backend := backends[i]
+		rootDir := backend.Config().RootDir
+		go closeAndRemoveAll(tb, rootDir, backend)
+	}
 }
