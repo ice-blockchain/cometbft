@@ -2333,6 +2333,11 @@ func (cs *State) addVote(vote *types.Vote, peerID p2p.ID) (added bool, err error
 	// A precommit for the previous height?
 	// These come in while we wait timeoutCommit
 	if vote.Height+1 == cs.Height && vote.Type == types.PrecommitType {
+		// TODO(midas): remove debug logs.
+		cs.Logger.Debug("Adding vote to last precommits",
+			"vote", vote,
+		)
+
 		if cs.Step != cstypes.RoundStepNewHeight {
 			// Late precommit at prior height is ignored
 			cs.Logger.Debug("Precommit vote came in after commit timeout and has been ignored", "vote", vote)
@@ -2379,6 +2384,11 @@ func (cs *State) addVote(vote *types.Vote, peerID p2p.ID) (added bool, err error
 		// The chain is configured to extend votes, check that the vote is
 		// not for a nil block and verify the extensions signature against the
 		// corresponding public key.
+
+		// TODO(midas): remove debug logs.
+		cs.Logger.Debug("Verifying vote extensions",
+			"vote", vote,
+		)
 
 		var myAddr []byte
 		if cs.privValidatorPubKey != nil {
@@ -2433,10 +2443,21 @@ func (cs *State) addVote(vote *types.Vote, peerID p2p.ID) (added bool, err error
 		return added, err
 	}
 	if vote.Round == cs.Round {
+		// TODO(midas): remove debug logs.
+		cs.Logger.Debug("Marking vote received",
+			"vote", vote,
+			"round", vote.Round,
+		)
+
 		vals := cs.state.Validators
 		_, val := vals.GetByIndex(vote.ValidatorIndex)
 		cs.metrics.MarkVoteReceived(vote.Type, val.VotingPower, vals.TotalVotingPower())
 	}
+
+	// TODO(midas): remove debug logs.
+	cs.Logger.Debug("Publishing vote event",
+		"vote", vote,
+	)
 
 	if err := cs.eventBus.PublishEventVote(types.EventDataVote{Vote: vote}); err != nil {
 		return added, err

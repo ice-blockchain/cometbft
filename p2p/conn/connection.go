@@ -445,7 +445,11 @@ func (c *MConnection) Send(chainID string, chID byte, msgBytes []byte) bool {
 		return false
 	}
 
-	c.Logger.Debug("Send", "chain_id", chainID, "channel", chID, "conn", c, "msgBytes", log.NewLazySprintf("%X", msgBytes))
+	c.Logger.Debug("Send",
+		"chainId", chainID,
+		"channel", chID,
+		"conn", c,
+		"msgBytes", log.NewLazySprintf("%X", msgBytes))
 
 	var channel *Channel
 	channel = c.channelProvider.GetChannel(chID)
@@ -476,7 +480,11 @@ func (c *MConnection) TrySend(chainID string, chID byte, msgBytes []byte) bool {
 		return false
 	}
 
-	c.Logger.Debug("TrySend", "chain_id", chainID, "channel", chID, "conn", c, "msgBytes", log.NewLazySprintf("%X", msgBytes))
+	c.Logger.Debug("TrySend",
+		"chainId", chainID,
+		"channel", chID,
+		"conn", c,
+		"msgBytes", log.NewLazySprintf("%X", msgBytes))
 
 	var channel *Channel
 	channel = c.channelProvider.GetChannel(chID)
@@ -615,10 +623,15 @@ func (c *MConnection) sendBatchPacketMsgs(w protoio.Writer, batchSize int) bool 
 	channels := c.channelProvider.GetChannels()
 	for i := 0; i < batchSize; i++ {
 		channel := selectChannelToGossipOn(channels)
-		// nothing to send across any channel.
 		if channel == nil {
+			// nothing to send across all channels.
 			return true
 		}
+		// // nothing in buffer for selected channel.
+		// if channel.sending == nil {
+		// 	return true
+		// }
+
 		bytesWritten, err := c.sendPacketMsgOnChannel(w, channel)
 		if err {
 			return true
@@ -664,6 +677,7 @@ func (c *MConnection) sendPacketMsgOnChannel(w protoio.Writer, sendChannel *Chan
 		c.stopForError(err)
 		return n, true
 	}
+
 	// TODO: Change this to only add flush signals at the start and end of the batch.
 	c.flushTimer.Set()
 	return n, false
@@ -994,7 +1008,7 @@ func (ch *Channel) isSendPending() bool {
 
 // Updates the nextPacket proto message for us to send.
 // Not goroutine-safe.
-func (ch *Channel) updateNextPacket() error {
+func (ch *Channel) updateNextPacket() {
 	ch.mtx.Lock()
 	defer ch.mtx.Unlock()
 
@@ -1005,26 +1019,24 @@ func (ch *Channel) updateNextPacket() error {
 		ch.nextPacketMsg.EOF = true
 		ch.sending = nil
 		atomic.AddInt32(&ch.sendQueueSize, -1) // decrement sendQueueSize
-	} else if len(ch.sending) > 0 {
+	} else {
 		ch.nextPacketMsg.ChainID = ch.sendQueueChainID
 		ch.nextPacketMsg.Data = ch.sending[:maxSize]
 		ch.nextPacketMsg.EOF = false
 		ch.sending = ch.sending[maxSize:]
-	} else {
-		return errors.New("Channel: empty packet")
 	}
 
 	ch.nextP2pWrapperPacketMsg.PacketMsg = ch.nextPacketMsg
 	ch.nextPacket.Sum = ch.nextP2pWrapperPacketMsg
-	return nil
 }
 
 // Writes next PacketMsg to w and updates c.recentlySent.
 // Not goroutine-safe.
 func (ch *Channel) writePacketMsgTo(w protoio.Writer) (n int, err error) {
-	if err := ch.updateNextPacket(); err != nil {
-		return 0, err
-	}
+	ch.updateNextPacket()
+
+	ch.mtx.Lock()
+	defer ch.mtx.Unlock()
 
 	n, err = w.WriteMsg(ch.nextPacket)
 	if err != nil {

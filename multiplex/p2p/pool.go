@@ -256,8 +256,6 @@ func (pool *ConnectionPool) AddPeer(peer *cmtp2p.PeerImpl) error {
 	pool.logger.Info("Adding peer", "peer", peer)
 	pool.peers.Add(peer)
 
-	// TODO(midas): do we still need reactor.InitPeer here?
-
 	if !peer.IsRunning() {
 		// peer.Start does *not* start a MConnection anymore,
 		// instead the connection is started with peerConnector.
@@ -267,8 +265,6 @@ func (pool *ConnectionPool) AddPeer(peer *cmtp2p.PeerImpl) error {
 		}
 	}
 
-	// TODO(midas): do we still need reactor.AddPeer here?
-
 	if !pool.connected.Has(string(peer.ID())) {
 		// startRoutines requires us to take a lock on mutex.
 		pool.connector.Lock()
@@ -276,6 +272,9 @@ func (pool *ConnectionPool) AddPeer(peer *cmtp2p.PeerImpl) error {
 		pool.connector.Unlock()
 
 		pool.connected.Set(string(peer.ID()), peer)
+
+		// TODO(midas): remove debug logs.
+		pool.logger.Debug("Connected to peer", "peer", peer)
 	}
 
 	return nil
@@ -303,6 +302,9 @@ func (pool *ConnectionPool) RemovePeer(peerID cmtp2p.ID) error {
 		}
 		pool.connector.Unlock()
 		pool.connected.Delete(string(peerID))
+
+		// TODO(midas): remove debug logs.
+		pool.logger.Debug("Disconnected from peer", "peer", peer)
 	}
 
 	pool.peers.Remove(peer)
@@ -329,13 +331,18 @@ func (pool *ConnectionPool) Broadcast(e cmtp2p.Envelope) error {
 	peerSet := pool.Peers(e.ChainID)
 
 	if peerSet.Size() == 0 {
-		// TODO(midas): remove debug logs
 		pool.logger.Error("Skipping broadcast - peerset is empty",
 			"chainId", e.ChainID,
 			"msg", e.Message,
 		)
 		return fmt.Errorf("failed to broadcast; peerset is empty for %s", e.ChainID)
 	}
+
+	// TODO(midas): remove debug logs.
+	pool.logger.Debug("ConnectionPool#Broadcast",
+		"numPeers", peerSet.Size(),
+		"msg", e.Message,
+	)
 
 	peers := peerSet.Copy()
 	for _, p := range peers {
@@ -355,6 +362,12 @@ func (pool *ConnectionPool) TryBroadcast(e cmtp2p.Envelope) error {
 	if peerSet.Size() == 0 {
 		return fmt.Errorf("failed to try-broadcast; peerset is empty for %s", e.ChainID)
 	}
+
+	// TODO(midas): remove debug logs.
+	pool.logger.Debug("ConnectionPool#TryBroadcast",
+		"numPeers", peerSet.Size(),
+		"msg", e.Message,
+	)
 
 	peers := peerSet.Copy()
 	for _, p := range peers {

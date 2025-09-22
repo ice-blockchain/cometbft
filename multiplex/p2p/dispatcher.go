@@ -125,6 +125,8 @@ func (router *packetDispatcher) Dispatch(
 	// Get the packet's target reactor.
 	target := router.Target(packet)
 	if target == nil {
+		router.logger.Error("failed to find target for message",
+			"msg", packet.Data)
 		err = fmt.Errorf("[CAUTION] ignoring message; too early, retry later")
 		return
 	}
@@ -157,7 +159,11 @@ func (router *packetDispatcher) Dispatch(
 		}
 	}
 
-	router.logger.Info("Dispatching message", "target", target, "msg", msg)
+	// TODO(midas): remove debug logs.
+	router.logger.Debug("packetDispatcher#Dispatch; dispatching...",
+		"target", target,
+		"msg", msg,
+	)
 
 	target.Receive(cmtp2p.Envelope{
 		ChainID:   packet.ChainID,
