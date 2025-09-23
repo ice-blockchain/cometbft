@@ -413,7 +413,7 @@ func (c *MConnection) String() string {
 }
 
 func (c *MConnection) flush() {
-	c.Logger.Debug("Flush", "conn", c)
+	c.Logger.Debug("MConnection#Flush", "conn", c)
 	err := c.bufConnWriter.Flush()
 	if err != nil {
 		c.Logger.Debug("MConnection flush failed", "err", err)
@@ -445,7 +445,7 @@ func (c *MConnection) Send(chainID string, chID byte, msgBytes []byte) bool {
 		return false
 	}
 
-	c.Logger.Debug("Send",
+	c.Logger.Debug("MConnection#Send",
 		"chainId", chainID,
 		"channel", chID,
 		"conn", c,
@@ -480,7 +480,7 @@ func (c *MConnection) TrySend(chainID string, chID byte, msgBytes []byte) bool {
 		return false
 	}
 
-	c.Logger.Debug("TrySend",
+	c.Logger.Debug("MConnection#TrySend",
 		"chainId", chainID,
 		"channel", chID,
 		"conn", c,

@@ -233,7 +233,7 @@ func (mt *MultiplexTransport) SetHandshaker(h Handshaker) {
 // Accept implements Transport.
 func (mt *MultiplexTransport) Accept(ctx context.Context, cfg PeerConfig) (*PeerImpl, error) {
 	// TODO(midas): remove debug logs
-	mt.Logger.Debug("Accept", "nodeInfo", mt.nodeInfo)
+	mt.Logger.Debug("MultiplexTransport#Accept", "nodeInfo", mt.nodeInfo)
 
 	select {
 	// This case should never have any side-effectful/blocking operations to
@@ -267,7 +267,7 @@ func (mt *MultiplexTransport) Dial(
 	cfg PeerConfig,
 ) (*PeerImpl, error) {
 	// TODO(midas): remove debug logs
-	mt.Logger.Debug("Dial", "nodeInfo", mt.nodeInfo, "addr", addr)
+	mt.Logger.Debug("MultiplexTransport#Dial", "nodeInfo", mt.nodeInfo, "addr", addr)
 
 	c, err := addr.DialTimeout(mt.dialTimeout)
 	if err != nil {
@@ -302,7 +302,7 @@ func (mt *MultiplexTransport) Dial(
 // Close implements transportLifecycle.
 func (mt *MultiplexTransport) Close() error {
 	// TODO(midas): remove debug logs
-	mt.Logger.Debug("Close", "nodeInfo", mt.nodeInfo)
+	mt.Logger.Debug("MultiplexTransport#Close", "nodeInfo", mt.nodeInfo)
 
 	// Using sync.Once to prevent concurrent closing of the channel.
 	mt.once.Do(func() {

@@ -155,11 +155,22 @@ func (c *runtimeComposer) OnStart(ctx context.Context) error {
 	genesisDocSetProvider := helpers.GenesisDocSetProvider(c.runtimeBaseConf)
 
 	// Loads GenesisDocSet from filesystem if available.
-	genesisDocSet, err := genesisDocSetProvider()
-	if err != nil {
-		c.logger.Debug("CAUTION: Using empty GenesisDocSet (not an error)")
+	if genesisDocSet, err := genesisDocSetProvider(); err == nil {
+		if len(genesisDocSet.GenesisDocs) == 0 {
+			c.logger.Info("CAUTION: Using empty GenesisDocSet (not an error)")
+		}
+		c.SetOptions(ComposerWithGenesisDocSet(genesisDocSet))
+	} else {
+		switch err.(type) {
+		case helpers.ErrMissingGenesisDocSet:
+			c.logger.Info("CAUTION: Creating empty GenesisDocSet (not an error)")
+			return nil
+		case helpers.ErrEmptyGenesisDocSet:
+			c.logger.Info("CAUTION: Using empty GenesisDocSet (not an error)")
+			return nil
+		}
+		return err
 	}
-	c.SetOptions(ComposerWithGenesisDocSet(genesisDocSet))
 
 	return nil
 }
@@ -405,10 +416,11 @@ func (c *runtimeComposer) Unload(chainID string) error {
 		types.ServiceKeyDatabaseEvidence,
 	}
 	for _, dbServiceKey := range dbServiceKeys {
-		if dbService := c.resourceMgr.Get(
+		if dbS := c.resourceMgr.Get(
 			chainID,
 			dbServiceKey,
-		).(service.Service); dbService != nil {
+		); dbS != nil {
+			dbService := dbS.(service.Service)
 			if dbService.IsRunning() || dbService.IsStarted() {
 				go func() {
 					c.mtx.Lock()

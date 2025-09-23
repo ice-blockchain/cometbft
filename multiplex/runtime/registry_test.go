@@ -9,10 +9,30 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 
-	"github.com/ice-blockchain/cometbft/config"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
+
+	mx "github.com/ice-blockchain/cometbft/multiplex"
+	"github.com/ice-blockchain/cometbft/multiplex/e2e"
 	"github.com/ice-blockchain/cometbft/multiplex/runtime"
 )
+
+func ResetTestMultiplexRuntimeManager(
+	tb testing.TB,
+	customLogger cmtlog.Logger,
+	options ...runtime.RegistryOption,
+) *runtime.Registry {
+	testBackend := e2e.ResetTestMultiplexRelays(
+		tb, 1,
+		customLogger,
+		mx.WithRuntimeManagerOptions(
+			options...,
+		),
+	)[0]
+	require.NotNil(tb, testBackend, "should create a backend instance")
+
+	testRegistry := testBackend.RuntimeManager().(*runtime.Registry)
+	return testRegistry
+}
 
 // ----------------------------------------------------------------------------
 // Unit Tests
@@ -21,7 +41,8 @@ func TestMultiplexRuntimeRegistryNewRegistry(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	// Test default instance
-	testReg1 := runtime.NewRegistry(t.Context(), config.TestConfig(), cmtlog.NewNopLogger())
+	testReg1 := ResetTestMultiplexRuntimeManager(t, cmtlog.NewNopLogger())
+
 	assert.NotNil(t, testReg1)
 	assert.NotNil(t, testReg1.Runtimes)
 	assert.NotNil(t, testReg1.Sleeping)
@@ -30,9 +51,11 @@ func TestMultiplexRuntimeRegistryNewRegistry(t *testing.T) {
 	assert.NotNil(t, testReg1.NumSleeping())
 
 	// Test instance with options
-	testReg2 := runtime.NewRegistry(t.Context(), config.TestConfig(), cmtlog.NewNopLogger(),
+	testReg2 := ResetTestMultiplexRuntimeManager(t,
+		cmtlog.NewNopLogger(),
 		runtime.RegistryCleanerInterval(1*time.Second),
 	)
+
 	assert.NotNil(t, testReg2)
 	assert.Equal(t, 1*time.Second, testReg2.CleanerInterval())
 }
@@ -40,7 +63,7 @@ func TestMultiplexRuntimeRegistryNewRegistry(t *testing.T) {
 func TestMultiplexRuntimeRegistryOnActivate(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	testReg1 := runtime.NewRegistry(t.Context(), config.TestConfig(), cmtlog.NewNopLogger())
+	testReg1 := ResetTestMultiplexRuntimeManager(t, cmtlog.NewNopLogger())
 
 	// Act: runtime activation should add to Runtimes
 	err := testReg1.OnActivate("test-chain-1")
@@ -69,7 +92,7 @@ func TestMultiplexRuntimeRegistryOnActivate(t *testing.T) {
 	nextActualNumRuntimes := testReg1.NumRuntimes()
 	assert.Equal(t, uint64(3), nextActualNumRuntimes) // 2xtest-chain-1 + test-chain-2
 
-	testReg2 := runtime.NewRegistry(t.Context(), config.TestConfig(), cmtlog.NewNopLogger())
+	testReg2 := ResetTestMultiplexRuntimeManager(t, cmtlog.NewNopLogger())
 
 	// Act: concurrent OnActivate calls must succeed
 	waitAll := sync.WaitGroup{}
@@ -100,7 +123,7 @@ func TestMultiplexRuntimeRegistryOnActivate(t *testing.T) {
 func TestMultiplexRuntimeRegistryOnComplete(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	testReg1 := runtime.NewRegistry(t.Context(), config.TestConfig(), cmtlog.NewNopLogger())
+	testReg1 := ResetTestMultiplexRuntimeManager(t, cmtlog.NewNopLogger())
 	activateErr := testReg1.OnActivate("test-chain-1")
 	require.NoError(t, activateErr)
 
@@ -121,7 +144,7 @@ func TestMultiplexRuntimeRegistryOnComplete(t *testing.T) {
 func TestMultiplexRuntimeRegistryStartStop(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	testReg1 := runtime.NewRegistry(t.Context(), config.TestConfig(), cmtlog.NewNopLogger())
+	testReg1 := ResetTestMultiplexRuntimeManager(t, cmtlog.TestingLogger())
 
 	// Act: Test simple registry start/stop
 	startErr := testReg1.Start()
@@ -131,7 +154,8 @@ func TestMultiplexRuntimeRegistryStartStop(t *testing.T) {
 	assert.NoError(t, stopErr)
 
 	// Act: Test cleaner routine processing
-	testReg2 := runtime.NewRegistry(t.Context(), config.TestConfig(), cmtlog.NewNopLogger(),
+	testReg2 := ResetTestMultiplexRuntimeManager(t,
+		cmtlog.NewNopLogger(),
 		runtime.RegistryCleanerInterval(1*time.Second),   // run cleaner every sec
 		runtime.RegistryIdleDuration(1*time.Millisecond), // 1ms means idle asap
 	)
@@ -185,7 +209,7 @@ func TestMultiplexRuntimeRegistryReset(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	// Test simple registry start/stop
-	reg := runtime.NewRegistry(t.Context(), config.TestConfig(), cmtlog.NewNopLogger())
+	reg := ResetTestMultiplexRuntimeManager(t, cmtlog.NewNopLogger())
 
 	startErr := reg.Start()
 	assert.NoError(t, startErr)

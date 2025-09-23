@@ -100,6 +100,7 @@ type MultiplexBackend struct {
 
 	// A runtime manager used to orchestrate networks and start consensus.
 	runtimeRegistry *runtime.Registry
+	runtimeOptions  []runtime.RegistryOption
 	// A catchup replay pool to process missed events using the acceptor.
 	replayPool *replay.ReplayPool
 
@@ -147,6 +148,16 @@ func WithLogger(
 ) MultiplexBackendOption {
 	return func(b *MultiplexBackend) {
 		b.logger = logger
+	}
+}
+
+// WithRuntimeManagerOptions is an option helper to inject custom options
+// for the [runtime.Registry] instance and children services, e.g. composer.
+func WithRuntimeManagerOptions(
+	options ...runtime.RegistryOption,
+) MultiplexBackendOption {
+	return func(b *MultiplexBackend) {
+		b.runtimeOptions = options[:]
 	}
 }
 
@@ -216,6 +227,7 @@ func NewServer(
 		resourceMgr:    resourceMgr,
 		replicationMgr: replicationMgr,
 		broadcastMgr:   broadcastMgr,
+		runtimeOptions: []runtime.RegistryOption{},
 
 		rpcListeners:   []net.Listener{},
 		httpClients:    []*http.Client{},
@@ -310,6 +322,11 @@ func (b *MultiplexBackend) Acceptor() client.Acceptor {
 // SetAcceptor sets a custom [client.Acceptor] implementation.
 func (b *MultiplexBackend) SetAcceptor(acceptorImpl client.Acceptor) {
 	b.acceptor = acceptorImpl
+}
+
+// NodeKey should return the p2p node key.
+func (b *MultiplexBackend) NodeKey() *cmtp2p.NodeKey {
+	return b.nodeKey
 }
 
 // RuntimeManager should return the runtime manager's idler implementation.

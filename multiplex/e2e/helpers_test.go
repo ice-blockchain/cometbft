@@ -12,8 +12,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/ice-blockchain/cometbft/config"
-
 	mx "github.com/ice-blockchain/cometbft/multiplex"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/helpers"
@@ -205,19 +203,6 @@ BLOCK_COMMITS_LOOP:
 	} else {
 		tb.Fatalf("Failed to commit %d blocks", numRoundCommits)
 	}
-}
-
-// -----------------------------------------------------------------------------
-// Test helpers
-
-// MakeConfig creates a test configuration with custom rootDir.
-func MakeConfig(tb testing.TB, rootDir string) *config.Config {
-	tb.Helper()
-
-	conf := config.TestConfig()
-	conf.SetRoot(rootDir)
-
-	return conf
 }
 
 // -----------------------------------------------------------------------------

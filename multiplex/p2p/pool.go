@@ -109,6 +109,7 @@ func ConnectionPoolWithLogger(logger cmtlog.Logger) ConnectionPoolOption {
 
 // OnStart implements [service.Service] by opening a database.
 func (pool *ConnectionPool) OnStart(ctx context.Context) (err error) {
+	// TODO(midas): remove debug logs
 	pool.logger.Debug("Starting connection pool",
 		"nodeId", pool.nodeKey.ID(),
 		"nodeInfo", pool.nodeInfo,
@@ -125,6 +126,12 @@ func (pool *ConnectionPool) OnStart(ctx context.Context) (err error) {
 func (pool *ConnectionPool) OnStop() {
 	pool.mtx.Lock()
 	defer pool.mtx.Unlock()
+
+	// TODO(midas): remove debug logs
+	pool.logger.Debug("Stopping connection pool",
+		"nodeId", pool.nodeKey.ID(),
+		"nodeInfo", pool.nodeInfo,
+	)
 
 	peers := pool.peers.Copy()
 	for _, peer := range peers {

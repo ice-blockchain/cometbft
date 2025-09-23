@@ -53,22 +53,22 @@ func (b *MultiplexBackend) Init() error {
 
 	// Create the local ABCI client for the SnapsApp application.
 	if err := b.InitSnapsAppClient(); err != nil {
-		return err.(ErrSetupSnapsapp)
+		return err.(helpers.ErrSetupSnapsapp)
 	}
 
 	// Create the cmtp2p.Switch instance for Discovery.
 	if err := b.InitDiscoverySwitch(); err != nil {
-		return err.(ErrSetupDiscovery)
+		return err.(helpers.ErrSetupDiscovery)
 	}
 
 	// Create the cmtp2p.Switch instance for Discovery.
 	if err := b.InitCometBFTSwitch(); err != nil {
-		return err.(ErrSetupCometBFT)
+		return err.(helpers.ErrSetupCometBFT)
 	}
 
 	// Create the RuntimeManager instance, requires connection pools.
 	if err := b.InitRuntimeManager(); err != nil {
-		return err.(ErrSetupRuntime)
+		return err.(helpers.ErrSetupRuntime)
 	}
 
 	return nil
@@ -178,6 +178,7 @@ func (b *MultiplexBackend) InitRuntimeManager() error {
 		b.broadcastMgr,
 		b.replicationMgr,
 		b.logger.With("module", "runtime"),
+		b.runtimeOptions...,
 	)
 	b.replayPool = replay.NewReplayPool(b.Context(),
 		b.logger.With("module", "replay"),

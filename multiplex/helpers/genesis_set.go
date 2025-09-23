@@ -204,7 +204,7 @@ func GenesisDocSetFromJSON(jsonBlob []byte) (GenesisDocSet, error) {
 func GenesisDocSetFromFile(genDocSetFile string) (GenesisDocSet, error) {
 	jsonBlob, err := os.ReadFile(genDocSetFile)
 	if err != nil {
-		return nil, fmt.Errorf("couldn't read GenesisDocSet file: %w", err)
+		return nil, ErrMissingGenesisDocSet{Path: genDocSetFile}
 	}
 	genDocSet, err := GenesisDocSetFromJSON(jsonBlob)
 	if err != nil {
@@ -270,7 +270,7 @@ func GenesisDocSetProvider(nodeCfg *config.Config) func() (*ChecksummedGenesisDo
 
 		jsonBlob, err := os.ReadFile(nodeCfg.GenesisFile())
 		if err != nil {
-			return emptyGenesisDocSet, fmt.Errorf("couldn't read GenesisDocSet from file: %w", err)
+			return emptyGenesisDocSet, ErrMissingGenesisDocSet{Path: nodeCfg.GenesisFile()}
 		}
 
 		genDocSet, err := GenesisDocSetFromJSON(jsonBlob)
