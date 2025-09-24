@@ -95,7 +95,7 @@ func NewComposer(
 	// Use option helpers
 	c.SetOptions(options...)
 
-	c.BaseService = *service.NewBaseService(ctx, nil, "runtimeComposer", c)
+	c.BaseService = *service.NewBaseService(ctx, logger, "runtimeComposer", c)
 	return c
 }
 

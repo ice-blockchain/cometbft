@@ -78,7 +78,7 @@ func NewConsensusHandler(
 	// Use option helpers
 	pool.SetOptions(options...)
 
-	pool.BaseService = *service.NewBaseService(ctx, nil, "ConsensusPool", pool)
+	pool.BaseService = *service.NewBaseService(ctx, logger, "ConsensusPool", pool)
 	return pool
 }
 

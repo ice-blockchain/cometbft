@@ -52,7 +52,7 @@ func NewDBService(
 	// Use option helpers
 	dbs.SetOptions(options...)
 
-	dbs.BaseService = *service.NewBaseService(ctx, nil, "DBService", dbs)
+	dbs.BaseService = *service.NewBaseService(ctx, logger, "DBService", dbs)
 	return dbs
 }
 

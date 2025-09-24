@@ -65,7 +65,7 @@ func NewReplicationManager(
 	// Use option helpers
 	mgr.SetOptions(options...)
 
-	mgr.BaseService = *service.NewBaseService(ctx, nil, "ReplicationPool", mgr)
+	mgr.BaseService = *service.NewBaseService(ctx, logger, "ReplicationPool", mgr)
 	return mgr
 }
 

@@ -90,7 +90,7 @@ func NewConnectionManager(
 
 	// Use option helpers
 	pool.SetOptions(options...)
-	pool.BaseService = *service.NewBaseService(ctx, nil, "ConnectionPool", pool)
+	pool.BaseService = *service.NewBaseService(ctx, logger, "ConnectionPool", pool)
 
 	// Makes sure peer connector knows about this pool.
 	connector.SetOptions(ConnectorWithPool(pool))
@@ -142,6 +142,12 @@ func (pool *ConnectionPool) OnStop() {
 
 			pool.connected.Delete(string(peer.ID()))
 		}
+	}
+
+	if err := pool.connector.Stop(); err != nil {
+		pool.logger.Error("failed to stop peerConnector",
+			"err", err,
+		)
 	}
 
 	pool.transport.Close()

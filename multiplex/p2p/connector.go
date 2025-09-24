@@ -62,7 +62,7 @@ func NewConnector(
 	// Use option helpers
 	conn.SetOptions(options...)
 
-	conn.BaseService = *service.NewBaseService(ctx, nil, "peerConnector", conn)
+	conn.BaseService = *service.NewBaseService(ctx, logger, "peerConnector", conn)
 	return conn
 }
 

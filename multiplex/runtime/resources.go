@@ -45,7 +45,7 @@ func NewResourceManager(
 	// Use option helpers
 	mgr.SetOptions(options...)
 
-	mgr.BaseService = *service.NewBaseService(ctx, nil, "ResourceRegistry", mgr)
+	mgr.BaseService = *service.NewBaseService(ctx, logger, "ResourceRegistry", mgr)
 	return mgr
 }
 

@@ -76,7 +76,7 @@ func NewMessageManager(
 	// Use option helpers
 	pool.SetOptions(options...)
 
-	pool.BaseService = *service.NewBaseService(ctx, nil, "MessagePool", pool)
+	pool.BaseService = *service.NewBaseService(ctx, logger, "MessagePool", pool)
 	return pool
 }
 

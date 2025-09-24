@@ -144,14 +144,14 @@ func TestMultiplexRuntimeRegistryOnComplete(t *testing.T) {
 func TestMultiplexRuntimeRegistryStartStop(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	testReg1 := ResetTestMultiplexRuntimeManager(t, cmtlog.TestingLogger())
+	testReg1 := ResetTestMultiplexRuntimeManager(t, cmtlog.NewNopLogger())
 
 	// Act: Test simple registry start/stop
 	startErr := testReg1.Start()
-	assert.NoError(t, startErr)
+	require.NoError(t, startErr, "should start first runtime manager")
 
 	stopErr := testReg1.Stop()
-	assert.NoError(t, stopErr)
+	require.NoError(t, stopErr, "should stop first runtime manager")
 
 	// Act: Test cleaner routine processing
 	testReg2 := ResetTestMultiplexRuntimeManager(t,
@@ -161,7 +161,7 @@ func TestMultiplexRuntimeRegistryStartStop(t *testing.T) {
 	)
 
 	newStartErr := testReg2.Start()
-	assert.NoError(t, newStartErr)
+	require.NoError(t, newStartErr, "should start second runtime manager")
 
 	waitAll := sync.WaitGroup{}
 	waitAll.Add(100)
@@ -191,7 +191,7 @@ func TestMultiplexRuntimeRegistryStartStop(t *testing.T) {
 	time.Sleep(3 * time.Second)
 
 	newStopErr := testReg2.Stop()
-	assert.NoError(t, newStopErr)
+	require.NoError(t, newStopErr, "should stop second runtime manager")
 
 	actualRuntimes := testReg2.ActiveRuntimes()
 	actualSleeping := testReg2.SleepingRuntimes()

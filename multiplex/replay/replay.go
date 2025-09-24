@@ -121,7 +121,7 @@ func NewReplayPool(ctx context.Context, logger cmtlog.Logger, options ...ReplayO
 	// Use option helpers
 	pool.SetOptions(options...)
 
-	pool.BaseService = *service.NewBaseService(ctx, nil, "ReplayPool", pool)
+	pool.BaseService = *service.NewBaseService(ctx, logger, "ReplayPool", pool)
 
 	return pool
 }

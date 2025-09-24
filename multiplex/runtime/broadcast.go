@@ -81,7 +81,7 @@ func NewBroadcastManager(
 	// Use option helpers
 	mgr.SetOptions(options...)
 
-	mgr.BaseService = *service.NewBaseService(ctx, nil, "BroadcastPool", mgr)
+	mgr.BaseService = *service.NewBaseService(ctx, logger, "BroadcastPool", mgr)
 	return mgr
 }
 
