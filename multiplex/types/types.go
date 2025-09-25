@@ -129,8 +129,6 @@ type ConsensusHandler interface {
 
 // ResourceManager defines the contract for the resources manager.
 type ResourceManager interface {
-	service.Service
-
 	// Has returns true if a resource or service with name exists for chainID.
 	Has(chainID, name string) bool
 

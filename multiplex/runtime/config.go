@@ -25,6 +25,7 @@ func NewConfig(
 
 	// Deep-copy the config object to create multiple nodes
 	mxConfig := deepCopyConfig(baseConfig)
+	mxConfig.DiscoveryPort = uint16(discoveryPort)
 
 	// ----------------------------
 	// P2P Configuration Overwrite
@@ -45,8 +46,8 @@ func NewConfig(
 	// WAL Configuration Overwrite
 	// i.e.: data/%address%/%ChainID%/wal
 	dataDir := filepath.Join(baseConfig.RootDir, config.DefaultDataDir)
-	walFile := filepath.Join(dataDir, address, withChainID, "wal")
-	walPath := filepath.Join(config.DefaultDataDir, address, withChainID, "wal")
+	walFile := filepath.Join(dataDir, address, withChainID, "wal")               // absolute path
+	walPath := filepath.Join(config.DefaultDataDir, address, withChainID, "wal") // relative path
 
 	// We overwrite the wal file to allow parallel I/O for multiple nodes
 	mxConfig.Consensus.SetWalFile(walFile)

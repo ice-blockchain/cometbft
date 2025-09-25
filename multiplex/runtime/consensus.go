@@ -103,18 +103,19 @@ func ConsensusPoolWithAcceptor(
 
 // OnStart implements [service.Service] by opening a database.
 func (pool *ConsensusPool) OnStart(ctx context.Context) (err error) {
-
+	// TODO(midas): we may want the abciClient to be managed by this pool.
 	return nil
 }
 
 // OnStop implements [service.Service] by closing the database.
 func (pool *ConsensusPool) OnStop() {
-
+	// Note: nothing to do with respect to the injected and executing ChainIDs
+	// because this is *controlled* by the Registry in `Registry#StopRuntime`.
 }
 
 // OnReset implements [service.Service] by resetting the service.
 func (pool *ConsensusPool) OnReset(ctx context.Context) error {
-
+	// TODO(midas): we may want the abciClient to be managed by this pool.
 	return nil
 }
 
@@ -222,7 +223,7 @@ func (pool *ConsensusPool) Execute(chainID string) error {
 	// TODO(midas): remove debug logs
 	pool.logger.Debug("ConsensusPool#Execute", "chainId", chainID)
 
-	// CAUTION:
+	// (1) CAUTION:
 	// Note that consensus reactors are not started here to prevent race
 	// conditions between the replication routine and cometbft services.
 
@@ -250,7 +251,7 @@ func (pool *ConsensusPool) Execute(chainID string) error {
 		)
 	}(chainID, nodeInstance)
 
-	// IMPORTANT:
+	// (2) IMPORTANT:
 	// We intentionally start reactors at the end to give the Node instance
 	// some time to initialize and load services.
 
@@ -318,7 +319,11 @@ func (pool *ConsensusPool) Execute(chainID string) error {
 	reactorStarterFn("MEMPOOL", mempoolReactor)
 	reactorStarterFn("EVIDENCE", evidenceReactor)
 
-	// Mark peers active in CONSENSUS and BLOCKSYNC
+	// (3) CAUTION:
+	// Note that for already existing peers, this has no effect, but for
+	// freshly connected peers it enables the reactor channels.
+
+	// Mark peers active in CONSENSUS and BLOCKSYNC reactors.
 	peerSet := pool.cometbftSwitch.Peers(chainID)
 	for _, peer := range peerSet.Copy() {
 		pool.cometbftSwitch.InitPeerForScope(peer, chainID)

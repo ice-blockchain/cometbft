@@ -5,7 +5,6 @@ import (
 	"sync"
 
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
-	"github.com/ice-blockchain/cometbft/libs/service"
 
 	"github.com/ice-blockchain/cometbft/multiplex/helpers"
 	"github.com/ice-blockchain/cometbft/multiplex/types"
@@ -13,7 +12,6 @@ import (
 
 // ResourceRegistry defines a resources manager.
 type ResourceRegistry struct {
-	service.BaseService
 	mtx *sync.Mutex
 
 	// resourceMap is a map which is searchable by resource name.
@@ -44,8 +42,6 @@ func NewResourceManager(
 
 	// Use option helpers
 	mgr.SetOptions(options...)
-
-	mgr.BaseService = *service.NewBaseService(ctx, logger, "ResourceRegistry", mgr)
 	return mgr
 }
 
@@ -54,26 +50,6 @@ func ResourceRegistryWithLogger(logger cmtlog.Logger) ResourceRegistryOption {
 	return func(mgr *ResourceRegistry) {
 		mgr.logger = logger
 	}
-}
-
-// ----------------------------------------------------------------------------
-// ResourceRegistry implements [service.Service]
-
-// OnStart implements [service.Service] by opening a database.
-func (reg *ResourceRegistry) OnStart(ctx context.Context) (err error) {
-
-	return nil
-}
-
-// OnStop implements [service.Service] by closing the database.
-func (reg *ResourceRegistry) OnStop() {
-
-}
-
-// OnReset implements [service.Service] by resetting the service.
-func (reg *ResourceRegistry) OnReset(ctx context.Context) error {
-
-	return nil
 }
 
 // ----------------------------------------------------------------------------
