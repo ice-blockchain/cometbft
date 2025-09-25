@@ -8,7 +8,6 @@ import (
 
 	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
-	"github.com/ice-blockchain/cometbft/libs/service"
 	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
 
 	"github.com/ice-blockchain/cometbft/multiplex/types"
@@ -16,21 +15,36 @@ import (
 
 // MessageStore contains a map to store messages by string keys.
 type MessageStore struct {
-	msgs map[string][]cmtp2p.Envelope
+	msgs map[string][]*cmtp2p.Envelope
 }
 
 // NewMessageStore creates a new message store.
 func NewMessageStore() *MessageStore {
 	s := &MessageStore{
-		msgs: map[string][]cmtp2p.Envelope{},
+		msgs: map[string][]*cmtp2p.Envelope{},
 	}
 
 	return s
 }
 
+// Size returns the number of entries in the store.
+func (s *MessageStore) Size() int {
+	total := 0
+	for _, a := range s.msgs {
+		total += len(a)
+	}
+	return total
+}
+
+// Data returns the underlying map of the store.
+func (s *MessageStore) Data() map[string][]*cmtp2p.Envelope {
+	return s.msgs
+}
+
+// ----------------------------------------------------------------------------
+
 // MessagePool defines a chain replication pool.
 type MessagePool struct {
-	service.BaseService
 	mtx *sync.Mutex
 
 	incoming *MessageStore
@@ -75,8 +89,6 @@ func NewMessageManager(
 
 	// Use option helpers
 	pool.SetOptions(options...)
-
-	pool.BaseService = *service.NewBaseService(ctx, logger, "MessagePool", pool)
 	return pool
 }
 
@@ -90,20 +102,127 @@ func MessagePoolWithLogger(logger cmtlog.Logger) MessagePoolOption {
 // ----------------------------------------------------------------------------
 // MessageManager API implementation
 
+// Reset clears all message stores from the pool.
+func (pool *MessagePool) Reset() error {
+	pool.mtx.Lock()
+	defer pool.mtx.Unlock()
+
+	pool.incoming = NewMessageStore()
+	pool.outgoing = NewMessageStore()
+	pool.incomingByType = NewMessageStore()
+	pool.outgoingByType = NewMessageStore()
+	pool.incomingByChainID = NewMessageStore()
+	pool.outgoingByChainID = NewMessageStore()
+	return nil
+}
+
+// GetMsgType parses the type of message in msg and returns a string.
+func (pool *MessagePool) GetMsgType(msg proto.Message) string {
+	var msgType string
+	switch extMsg := msg.(type) {
+	case *mxp2p.Receipt:
+		msg := extMsg.GetSum()
+		switch msg.(type) {
+		case *mxp2p.Receipt_AckTransactionBroadcast:
+			msgType = "AckTransactionBroadcast"
+		}
+	case *mxp2p.Message:
+		msg := extMsg.GetSum()
+		switch msg.(type) {
+		case *mxp2p.Message_ChainReplicationRequest:
+			msgType = "ChainReplicationRequest"
+		case *mxp2p.Message_ChainReplicationResponse:
+			msgType = "ChainReplicationResponse"
+		case *mxp2p.Message_ChainReplicationComplete:
+			msgType = "ChainReplicationComplete"
+		}
+	}
+
+	return msgType
+}
+
+// IncomingByPeer returns all the incoming messages from peer p.
+func (pool *MessagePool) IncomingByPeer(p cmtp2p.ID) []*cmtp2p.Envelope {
+	pool.mtx.Lock()
+	defer pool.mtx.Unlock()
+
+	if msgs, ok := pool.incoming.msgs[string(p)]; ok {
+		return msgs
+	}
+	return []*cmtp2p.Envelope{}
+}
+
+// OutgoingByPeer returns all the outgoing messages sent to peer p.
+func (pool *MessagePool) OutgoingByPeer(p cmtp2p.ID) []*cmtp2p.Envelope {
+	pool.mtx.Lock()
+	defer pool.mtx.Unlock()
+
+	if msgs, ok := pool.outgoing.msgs[string(p)]; ok {
+		return msgs
+	}
+	return []*cmtp2p.Envelope{}
+}
+
+// IncomingByType returns all the incoming messages for type t.
+func (pool *MessagePool) IncomingByType(t string) []*cmtp2p.Envelope {
+	pool.mtx.Lock()
+	defer pool.mtx.Unlock()
+
+	if msgs, ok := pool.incomingByType.msgs[t]; ok {
+		return msgs
+	}
+	return []*cmtp2p.Envelope{}
+}
+
+// OutgoingByType returns all the outgoing messages for type t.
+func (pool *MessagePool) OutgoingByType(t string) []*cmtp2p.Envelope {
+	pool.mtx.Lock()
+	defer pool.mtx.Unlock()
+
+	if msgs, ok := pool.outgoingByType.msgs[t]; ok {
+		return msgs
+	}
+	return []*cmtp2p.Envelope{}
+}
+
+// IncomingByChainID returns all the incoming messages with ChainID c.
+func (pool *MessagePool) IncomingByChainID(c string) []*cmtp2p.Envelope {
+	pool.mtx.Lock()
+	defer pool.mtx.Unlock()
+
+	if msgs, ok := pool.incomingByChainID.msgs[c]; ok {
+		return msgs
+	}
+	return []*cmtp2p.Envelope{}
+}
+
+// OutgoingByChainID returns all the outgoing messages with ChainID c.
+func (pool *MessagePool) OutgoingByChainID(c string) []*cmtp2p.Envelope {
+	pool.mtx.Lock()
+	defer pool.mtx.Unlock()
+
+	if msgs, ok := pool.outgoingByChainID.msgs[c]; ok {
+		return msgs
+	}
+	return []*cmtp2p.Envelope{}
+}
+
 // AddIncoming adds a received message to the pool.
 func (pool *MessagePool) AddIncoming(e cmtp2p.Envelope) error {
 	pool.mtx.Lock()
 	defer pool.mtx.Unlock()
 
 	// Store message by source peer ID.
-	pool.addMessage(string(e.Src.ID()), pool.incoming, e)
+	if e.Src != nil {
+		pool.addMessage(string(e.Src.ID()), pool.incoming, &e)
+	}
 
 	// Also store by parsed message type.
-	msgType := pool.getMsgType(e.Message)
-	pool.addMessage(msgType, pool.incomingByType, e)
+	msgType := pool.GetMsgType(e.Message)
+	pool.addMessage(msgType, pool.incomingByType, &e)
 
 	// And store by ChainID.
-	pool.addMessage(e.ChainID, pool.incomingByChainID, e)
+	pool.addMessage(e.ChainID, pool.incomingByChainID, &e)
 	return nil
 }
 
@@ -112,15 +231,15 @@ func (pool *MessagePool) AddOutgoing(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 	pool.mtx.Lock()
 	defer pool.mtx.Unlock()
 
-	// Store message by source peer ID.
-	pool.addMessage(string(dest), pool.outgoing, e)
+	// Store message by destination peer ID.
+	pool.addMessage(string(dest), pool.outgoing, &e)
 
 	// Also store by parsed message type.
-	msgType := pool.getMsgType(e.Message)
-	pool.addMessage(msgType, pool.outgoingByType, e)
+	msgType := pool.GetMsgType(e.Message)
+	pool.addMessage(msgType, pool.outgoingByType, &e)
 
 	// And store by ChainID.
-	pool.addMessage(e.ChainID, pool.outgoingByChainID, e)
+	pool.addMessage(e.ChainID, pool.outgoingByChainID, &e)
 	return nil
 }
 
@@ -144,40 +263,15 @@ func (pool *MessagePool) Logger() cmtlog.Logger {
 func (pool *MessagePool) addMessage(
 	key string, // peerID, msgType or chainID
 	store *MessageStore,
-	e cmtp2p.Envelope,
-) []cmtp2p.Envelope {
+	e *cmtp2p.Envelope,
+) []*cmtp2p.Envelope {
 	// Store message by key.
 	byKey, ok := store.msgs[key]
 	if !ok {
-		byKey = []cmtp2p.Envelope{}
+		byKey = []*cmtp2p.Envelope{}
 	}
 
 	byKey = append(byKey, e)
 	store.msgs[key] = byKey
 	return store.msgs[key]
-}
-
-// getMsgType parses the type of message in msg.
-func (pool *MessagePool) getMsgType(msg proto.Message) string {
-	var msgType string
-	switch extMsg := msg.(type) {
-	case *mxp2p.Receipt:
-		msg := extMsg.GetSum()
-		switch msg.(type) {
-		case *mxp2p.Receipt_AckTransactionBroadcast:
-			msgType = "AckTransactionBroadcast"
-		}
-	case *mxp2p.Message:
-		msg := extMsg.GetSum()
-		switch msg.(type) {
-		case *mxp2p.Message_ChainReplicationRequest:
-			msgType = "ChainReplicationRequest"
-		case *mxp2p.Message_ChainReplicationResponse:
-			msgType = "ChainReplicationResponse"
-		case *mxp2p.Message_ChainReplicationComplete:
-			msgType = "ChainReplicationComplete"
-		}
-	}
-
-	return msgType
 }

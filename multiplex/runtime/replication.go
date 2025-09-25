@@ -19,16 +19,18 @@ type ReplicationPool struct {
 	service.BaseService
 	mtx *sync.Mutex
 
+	// A message pool is used to store incoming/outgoing messages
+	// by type. This pool handles messages of types:
+	// - mxp2p.ChainReplicationRequest
+	// - mxp2p.ChainReplicationResponse
+	// - mxp2p.ChainReplicationComplete
 	pool *MessagePool
 
 	acceptedChs map[string]chan struct{}
 	completeChs map[string]chan struct{}
 
-	relays    map[string][]*helpers.RelayAddress
-	partners  map[string][]cmtp2p.ID
-	requests  map[string][]*mxp2p.ChainReplicationRequest
-	responses map[string][]*mxp2p.ChainReplicationResponse
-	completes map[string][]*mxp2p.ChainReplicationComplete
+	relays   map[string][]*helpers.RelayAddress
+	partners map[string][]cmtp2p.ID
 
 	// Options
 	logger cmtlog.Logger
@@ -52,11 +54,8 @@ func NewReplicationManager(
 		acceptedChs: map[string]chan struct{}{},
 		completeChs: map[string]chan struct{}{},
 
-		relays:    map[string][]*helpers.RelayAddress{},
-		partners:  map[string][]cmtp2p.ID{},
-		requests:  map[string][]*mxp2p.ChainReplicationRequest{},
-		responses: map[string][]*mxp2p.ChainReplicationResponse{},
-		completes: map[string][]*mxp2p.ChainReplicationComplete{},
+		relays:   map[string][]*helpers.RelayAddress{},
+		partners: map[string][]cmtp2p.ID{},
 
 		// Options
 		logger: logger,
@@ -148,20 +147,15 @@ func (mgr *ReplicationPool) Process(peerID cmtp2p.ID, e cmtp2p.Envelope) error {
 	case *mxp2p.Message:
 		msg := extMsg.GetSum()
 		switch msg.(type) {
-		case *mxp2p.Message_ChainReplicationRequest:
-			replRequest := extMsg.GetChainReplicationRequest()
+		// - ChainReplicationRequest
+		// Nothing to do about ChainReplicationRequest.
 
-			mgr.mtx.Lock()
-			mgr.addRequest(replRequest)
-			mgr.mtx.Unlock()
-
-			// Nothing more to do about ChainReplicationRequest.
-
+		// - ChainReplicationResponse
+		// We evaluate a potential acceptance super majority.
 		case *mxp2p.Message_ChainReplicationResponse:
 			replResponse := extMsg.GetChainReplicationResponse()
 
 			mgr.mtx.Lock()
-			mgr.addResponse(replResponse)
 			isAccepted := mgr.evaluateAcceptanceMajority(replResponse.ChainID)
 			mgr.mtx.Unlock()
 
@@ -175,7 +169,6 @@ func (mgr *ReplicationPool) Process(peerID cmtp2p.ID, e cmtp2p.Envelope) error {
 			replComplete := extMsg.GetChainReplicationComplete()
 
 			mgr.mtx.Lock()
-			mgr.addComplete(replComplete)
 			hasCompleted := mgr.evaluateCompletionMajority(replComplete.ChainID)
 			mgr.mtx.Unlock()
 
@@ -202,33 +195,106 @@ func (mgr *ReplicationPool) Partners(chainID string) []cmtp2p.ID {
 	return []cmtp2p.ID{}
 }
 
-// Status returns the status of a chain replication.
-func (mgr *ReplicationPool) Status(chainID string) *mxp2p.ChainReplicationStatus {
-	return nil
-}
-
-// Requests returns the stored replication requests for chainID.
+// Requests returns the outgoing ChainReplicationRequest by chainID.
 func (mgr *ReplicationPool) Requests(chainID string) []*mxp2p.ChainReplicationRequest {
-	mgr.mtx.Lock()
-	defer mgr.mtx.Unlock()
+	responses := []*mxp2p.ChainReplicationRequest{}
 
-	if r, ok := mgr.requests[chainID]; ok {
-		return r
+	// Collect all chain replication requests.
+	envelopes := mgr.pool.OutgoingByType("ChainReplicationRequest")
+	if len(envelopes) == 0 {
+		return responses
 	}
 
-	return []*mxp2p.ChainReplicationRequest{}
+	// Keep only relevant ones for this chainID.
+	for _, envelope := range envelopes {
+		if envelope.ChainID != chainID {
+			continue
+		}
+
+		switch extMsg := envelope.Message.(type) {
+		case *mxp2p.Message:
+			msg := extMsg.GetSum()
+			switch msg.(type) {
+			case *mxp2p.Message_ChainReplicationRequest:
+				replReq := extMsg.GetChainReplicationRequest()
+				responses = append(responses, replReq)
+			default:
+				continue
+			}
+		default:
+			continue
+		}
+	}
+
+	return responses
 }
 
-// Responses returns the stored replication responses for chainID.
+// Responses returns the incoming ChainReplicationResponse by chainID.
 func (mgr *ReplicationPool) Responses(chainID string) []*mxp2p.ChainReplicationResponse {
-	mgr.mtx.Lock()
-	defer mgr.mtx.Unlock()
+	responses := []*mxp2p.ChainReplicationResponse{}
 
-	if r, ok := mgr.responses[chainID]; ok {
-		return r
+	// Collect all chain replication responses.
+	envelopes := mgr.pool.IncomingByType("ChainReplicationResponse")
+	if len(envelopes) == 0 {
+		return responses
 	}
 
-	return []*mxp2p.ChainReplicationResponse{}
+	// Keep only relevant ones for this chainID.
+	for _, envelope := range envelopes {
+		if envelope.ChainID != chainID {
+			continue
+		}
+
+		switch extMsg := envelope.Message.(type) {
+		case *mxp2p.Message:
+			msg := extMsg.GetSum()
+			switch msg.(type) {
+			case *mxp2p.Message_ChainReplicationResponse:
+				replResp := extMsg.GetChainReplicationResponse()
+				responses = append(responses, replResp)
+			default:
+				continue
+			}
+		default:
+			continue
+		}
+	}
+
+	return responses
+}
+
+// Completions returns a list of incoming ChainReplicationComplete for chainID.
+func (mgr *ReplicationPool) Completions(chainID string) []*mxp2p.ChainReplicationComplete {
+	responses := []*mxp2p.ChainReplicationComplete{}
+
+	// Collect all chain replication responses.
+	envelopes := mgr.pool.IncomingByType("ChainReplicationComplete")
+	if len(envelopes) == 0 {
+		return responses
+	}
+
+	// Keep only relevant ones for this chainID.
+	for _, envelope := range envelopes {
+		if envelope.ChainID != chainID {
+			continue
+		}
+
+		switch extMsg := envelope.Message.(type) {
+		case *mxp2p.Message:
+			msg := extMsg.GetSum()
+			switch msg.(type) {
+			case *mxp2p.Message_ChainReplicationComplete:
+				replComp := extMsg.GetChainReplicationComplete()
+				responses = append(responses, replComp)
+			default:
+				continue
+			}
+		default:
+			continue
+		}
+	}
+
+	return responses
 }
 
 // Accepted returns a channel, which is closed when chainID has 2/3+1 responses.
@@ -333,41 +399,11 @@ func (mgr *ReplicationPool) addPartner(chainID string, peerID cmtp2p.ID) {
 	mgr.partners[chainID] = prev
 }
 
-// addRequest adds a ChainReplicationRequest to the pool.
-func (mgr *ReplicationPool) addRequest(req *mxp2p.ChainReplicationRequest) {
-	prev, has := mgr.requests[req.ChainID]
-	if !has {
-		prev = []*mxp2p.ChainReplicationRequest{}
-	}
-
-	prev = append(prev, req)
-	mgr.requests[req.ChainID] = prev
-}
-
-// addResponse adds a ChainReplicationResponse to the pool.
-func (mgr *ReplicationPool) addResponse(res *mxp2p.ChainReplicationResponse) {
-	prev, has := mgr.responses[res.ChainID]
-	if !has {
-		prev = []*mxp2p.ChainReplicationResponse{}
-	}
-
-	prev = append(prev, res)
-	mgr.responses[res.ChainID] = prev
-}
-
-// addComplete adds a ChainReplicationComplete to the pool.
-func (mgr *ReplicationPool) addComplete(res *mxp2p.ChainReplicationComplete) {
-	prev, has := mgr.completes[res.ChainID]
-	if !has {
-		prev = []*mxp2p.ChainReplicationComplete{}
-	}
-
-	prev = append(prev, res)
-	mgr.completes[res.ChainID] = prev
-}
-
 // evaluateAcceptanceMajority counts the received ChainReplicationResponse
-// messages and evaluates whether we have a super majority (2/3+1).
+// messages and evaluates whether we have a majority of responses (2/3).
+//
+// Note that we don't evaluate a super-majority here because there is always
+// the one relay which sends ChainReplicationRequest messages ("self").
 func (mgr *ReplicationPool) evaluateAcceptanceMajority(
 	chainID string,
 ) bool {
@@ -376,19 +412,20 @@ func (mgr *ReplicationPool) evaluateAcceptanceMajority(
 	} else if len(mgr.relays[chainID]) == 0 {
 		return true
 	}
-	if _, ok := mgr.responses[chainID]; !ok {
-		return false
-	}
+
+	// Keep only relevant ones for this acceptance evaluation.
+	responses := mgr.Responses(chainID)
 
 	// The number of received ChainReplicationResponse messages
-	responses := mgr.responses[chainID]
-
-	numRequired := len(mgr.relays[chainID])*2/3 + 1
+	numRequired := len(mgr.relays[chainID]) * 2 / 3
 	return len(responses) >= numRequired
 }
 
 // evaluateCompletionMajority counts the received ChainReplicationComplete
-// messages and evaluates whether we have a super majority (2/3+1).
+// messages and evaluates whether we have a majority of completion (2/3).
+//
+// Note that we don't evaluate a super-majority here because there is always
+// the one relay which expects ChainReplicationComplete messages ("self").
 func (mgr *ReplicationPool) evaluateCompletionMajority(
 	chainID string,
 ) bool {
@@ -397,13 +434,11 @@ func (mgr *ReplicationPool) evaluateCompletionMajority(
 	} else if len(mgr.relays[chainID]) == 0 {
 		return true
 	}
-	if _, ok := mgr.completes[chainID]; !ok {
-		return false
-	}
+
+	// Keep only relevant ones for this acceptance evaluation.
+	completes := mgr.Completions(chainID)
 
 	// The number of received ChainReplicationComplete messages
-	completes := mgr.completes[chainID]
-
-	numRequired := len(mgr.relays[chainID])*2/3 + 1
+	numRequired := len(mgr.relays[chainID]) * 2 / 3
 	return len(completes) >= numRequired
 }

@@ -122,6 +122,19 @@ type PeerImpl struct {
 
 type PeerOption func(*PeerImpl)
 
+func NewPeer(
+	id ID,
+	options ...PeerOption,
+) *PeerImpl {
+	p := &PeerImpl{
+		nodeInfo: &DefaultNodeInfo{
+			DefaultNodeID: id,
+		},
+	}
+
+	return p
+}
+
 func newPeer(
 	ctx context.Context,
 	pc peerConn,

@@ -1,15 +1,17 @@
 package types
 
 import (
-	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
-	"github.com/ice-blockchain/cometbft/multiplex/client"
-	"github.com/ice-blockchain/cometbft/multiplex/helpers"
+	"github.com/cosmos/gogoproto/proto"
 
+	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/libs/service"
 	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/proxy"
 	cmttypes "github.com/ice-blockchain/cometbft/types"
+
+	"github.com/ice-blockchain/cometbft/multiplex/client"
+	"github.com/ice-blockchain/cometbft/multiplex/helpers"
 )
 
 // IdleManager defines the contract for the runtime idle manager.
@@ -144,10 +146,30 @@ type ResourceManager interface {
 
 // MessageManager defines the contract for a message pool.
 type MessageManager interface {
+	// Reset clears all message stores from the pool.
+	Reset() error
+	// GetMsgType parses the type of msg and returns a string.
+	GetMsgType(msg proto.Message) string
+
 	// AddIncoming adds a received message to the pool.
 	AddIncoming(e cmtp2p.Envelope) error
 	// AddOutgoing adds a sent message to the pool.
 	AddOutgoing(dest cmtp2p.ID, e cmtp2p.Envelope) error
+
+	// IncomingByPeer returns all the incoming messages from peer p.
+	IncomingByPeer(p cmtp2p.ID) []*cmtp2p.Envelope
+	// OutgoingByPeer returns all the outgoing messages sent to peer p.
+	OutgoingByPeer(p cmtp2p.ID) []*cmtp2p.Envelope
+
+	// IncomingByType returns all the incoming messages for type t.
+	IncomingByType(t string) []*cmtp2p.Envelope
+	// OutgoingByType returns all the outgoing messages for type t.
+	OutgoingByType(t string) []*cmtp2p.Envelope
+
+	// IncomingByChainID returns all the incoming messages with ChainID c.
+	IncomingByChainID(c string) []*cmtp2p.Envelope
+	// OutgoingByChainID returns all the outgoing messages with ChainID c.
+	OutgoingByChainID(c string) []*cmtp2p.Envelope
 }
 
 // ReplicationManager defines the contract for the replications manager.
@@ -161,12 +183,12 @@ type ReplicationManager interface {
 
 	// Partners returns a list of relay ID from replication partners.
 	Partners(chainID string) []cmtp2p.ID
-	// Status returns the status of a chain replication.
-	Status(chainID string) *mxp2p.ChainReplicationStatus
-	// Requests returns the stored replication requests for chainID.
+	// Requests returns a list of outgoing ChainReplicationRequest for chainID.
 	Requests(chainID string) []*mxp2p.ChainReplicationRequest
-	// Responses returns the stored replication responses for chainID.
+	// Responses returns a list of incoming ChainReplicationResponse for chainID.
 	Responses(chainID string) []*mxp2p.ChainReplicationResponse
+	// Completions returns a list of incoming ChainReplicationComplete for chainID.
+	Completions(chainID string) []*mxp2p.ChainReplicationComplete
 
 	// Accepted returns a channel, which is closed when chainID has 2/3+1 responses.
 	Accepted(chainID string) chan struct{}
@@ -193,7 +215,7 @@ type BroadcastManager interface {
 
 	// Partners returns a list of relay ID from broadcast partners for txHash.
 	Partners(txHash string) []cmtp2p.ID
-	// Responses returns the stored ack transaction messages for txHash.
+	// Responses returns a list of incoming AckTransactionBroadcast for txHash.
 	Responses(txHash string) []*mxp2p.AckTransactionBroadcast
 
 	// Accepted returns a channel, which is closed when txHash has 2/3+1 ACK messages.

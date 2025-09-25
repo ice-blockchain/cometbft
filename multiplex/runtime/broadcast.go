@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/hex"
 	"slices"
 	"strings"
 	"sync"
@@ -22,6 +23,9 @@ type BroadcastPool struct {
 	service.BaseService
 	mtx *sync.Mutex
 
+	// A message pool is used to store incoming/outgoing messages
+	// by type. This pool handles messages of types:
+	// - mxp2p.AckTransactionBroadcast
 	pool        *MessagePool
 	resourceMgr *ResourceRegistry
 
@@ -36,8 +40,6 @@ type BroadcastPool struct {
 
 	relays   map[string][]*helpers.RelayAddress
 	partners map[string][]cmtp2p.ID
-
-	messages map[string][]*mxp2p.AckTransactionBroadcast
 
 	// Unbuffered channel that may be written on to shutdown indexer routines.
 	goShutdownCh chan bool
@@ -72,7 +74,6 @@ func NewBroadcastManager(
 
 		relays:   map[string][]*helpers.RelayAddress{},
 		partners: map[string][]cmtp2p.ID{},
-		messages: map[string][]*mxp2p.AckTransactionBroadcast{},
 
 		// Options
 		logger: logger,
@@ -222,7 +223,6 @@ func (mgr *BroadcastPool) Process(peerID cmtp2p.ID, e cmtp2p.Envelope) error {
 
 			mgr.mtx.Lock()
 			mgr.addPartner(txHash, e.Src.ID())
-			mgr.addMessage(ackTxBroadcast)
 
 			isAccepted := mgr.evaluateAcceptanceMajority(txHash)
 			mgr.mtx.Unlock()
@@ -252,16 +252,37 @@ func (mgr *BroadcastPool) Partners(txHash string) []cmtp2p.ID {
 	return []cmtp2p.ID{}
 }
 
-// Responses returns the stored ack transaction messages for txHash.
+// Responses returns the incoming AckTransactionBroadcast by txHash.
 func (mgr *BroadcastPool) Responses(txHash string) []*mxp2p.AckTransactionBroadcast {
-	mgr.mtx.Lock()
-	defer mgr.mtx.Unlock()
+	responses := []*mxp2p.AckTransactionBroadcast{}
 
-	if m, ok := mgr.messages[txHash]; ok {
-		return m
+	// Collect all chain replication responses.
+	envelopes := mgr.pool.IncomingByType("AckTransactionBroadcast")
+	if len(envelopes) == 0 {
+		return responses
 	}
 
-	return []*mxp2p.AckTransactionBroadcast{}
+	// Keep only relevant ones for this txHash.
+	for _, envelope := range envelopes {
+		switch extMsg := envelope.Message.(type) {
+		case *mxp2p.Receipt:
+			msg := extMsg.GetSum()
+			switch msg.(type) {
+			case *mxp2p.Receipt_AckTransactionBroadcast:
+				ackTx := extMsg.GetAckTransactionBroadcast()
+				ackTxHash := hex.EncodeToString(ackTx.TxHash)
+				if ackTxHash == txHash {
+					responses = append(responses, ackTx)
+				}
+			default:
+				continue
+			}
+		default:
+			continue
+		}
+	}
+
+	return responses
 }
 
 // Accepted returns a channel, which is closed when txHash has 2/3+1 ACK messages.
@@ -425,20 +446,11 @@ func (mgr *BroadcastPool) addPartner(txHash string, peerID cmtp2p.ID) {
 	mgr.partners[txHash] = prev
 }
 
-// addMessage adds a AckTransactionBroadcast to the pool.
-func (mgr *BroadcastPool) addMessage(msg *mxp2p.AckTransactionBroadcast) {
-	txHash := bytesToHex(msg.TxHash)
-	prev, has := mgr.messages[txHash]
-	if !has {
-		prev = []*mxp2p.AckTransactionBroadcast{}
-	}
-
-	prev = append(prev, msg)
-	mgr.messages[txHash] = prev
-}
-
 // evaluateAcceptanceMajority counts the received AckTransactionBroadcast
 // messages and evaluates whether we have a super majority (2/3+1).
+//
+// Note that we don't evaluate a super-majority here because there is always
+// the one relay which sends the mempool.Tx messages ("self").
 func (mgr *BroadcastPool) evaluateAcceptanceMajority(
 	txHash string,
 ) bool {
@@ -447,13 +459,12 @@ func (mgr *BroadcastPool) evaluateAcceptanceMajority(
 	} else if len(mgr.relays[txHash]) == 0 {
 		return true
 	}
-	if _, ok := mgr.messages[txHash]; !ok {
-		return false
-	}
+
+	// Keep only relevant ones for this acceptance evaluation.
+	// We type-assert the envelope to filter by contained tx hash.
+	responses := mgr.Responses(txHash)
 
 	// The number of received AckTransactionBroadcast messages
-	messages := mgr.messages[txHash]
-
-	numRequired := len(mgr.relays[txHash])*2/3 + 1
-	return len(messages) >= numRequired
+	numRequired := len(mgr.relays[txHash]) * 2 / 3
+	return len(responses) >= numRequired
 }
