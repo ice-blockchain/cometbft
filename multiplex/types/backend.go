@@ -159,6 +159,11 @@ type RelayComposer interface {
 
 	// StartPrometheusServer starts a HTTP server, listening on `DiscoveryPort+3`.
 	StartPrometheusServer() error
+
+	// StopSharedServices stops the global services shared amongst networks.
+	StopSharedServices() error
+	// ResetSharedServices starts the global services shared amongst networks.
+	ResetSharedServices(ctx context.Context) error
 }
 
 // ----------------------------------------------------------------------------

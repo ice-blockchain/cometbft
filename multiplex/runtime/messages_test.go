@@ -19,7 +19,7 @@ import (
 // Unit Tests
 
 func TestMultiplexRuntimeMessagePoolAddIncoming(t *testing.T) {
-	testPool := runtime.NewMessageManager(t.Context(), cmtlog.NewNopLogger())
+	testPool := runtime.NewMessageManager(cmtlog.NewNopLogger())
 	require.NotNil(t, testPool)
 
 	testAckEnvelope := makeAckTransactionBroadcast("test-hash-0", "test-node-id", "test-chain-0")
@@ -77,10 +77,22 @@ func TestMultiplexRuntimeMessagePoolAddIncoming(t *testing.T) {
 	assert.Len(t, byPeer, 0)
 	assert.Len(t, byType, 0)
 	assert.Len(t, byChain, 0)
+
+	// Test other message type with ChainReplicationRequest
+	testReplEnvelope := makeChainReplicationRequest("test-node-id", "test-chain-3")
+	testPool.AddIncoming(testReplEnvelope)
+
+	byPeer = testPool.IncomingByPeer("test-node-id")
+	byType = testPool.IncomingByType("ChainReplicationRequest")
+	byChain = testPool.IncomingByChainID("test-chain-3")
+
+	assert.Len(t, byPeer, 1)
+	assert.Len(t, byType, 1)
+	assert.Len(t, byChain, 1)
 }
 
 func TestMultiplexRuntimeMessagePoolAddOutgoing(t *testing.T) {
-	testPool := runtime.NewMessageManager(t.Context(), cmtlog.NewNopLogger())
+	testPool := runtime.NewMessageManager(cmtlog.NewNopLogger())
 	require.NotNil(t, testPool)
 
 	testAckEnvelope := makeAckTransactionBroadcast("test-hash-0", "test-node-id", "test-chain-0")
@@ -126,13 +138,37 @@ func TestMultiplexRuntimeMessagePoolAddOutgoing(t *testing.T) {
 	assert.Len(t, byChain0, 1)
 	assert.Len(t, byChain1, 50)
 	assert.Len(t, byChain2, 50)
+
+	// Test Reset method for outgoing messages, must be empty after.
+	err := testPool.Reset()
+	assert.NoError(t, err)
+
+	byPeer = testPool.OutgoingByPeer("test-node-id")
+	byType = testPool.OutgoingByType("AckTransactionBroadcast")
+	byChain = testPool.OutgoingByChainID("test-chain-0")
+
+	assert.Len(t, byPeer, 0)
+	assert.Len(t, byType, 0)
+	assert.Len(t, byChain, 0)
+
+	// Test other message type with ChainReplicationRequest
+	testReplEnvelope := makeChainReplicationRequest("peer-3", "test-chain-3")
+	testPool.AddOutgoing(cmtp2p.ID("peer-3"), testReplEnvelope)
+
+	byPeer = testPool.OutgoingByPeer("peer-3")
+	byType = testPool.OutgoingByType("ChainReplicationRequest")
+	byChain = testPool.OutgoingByChainID("test-chain-3")
+
+	assert.Len(t, byPeer, 1)
+	assert.Len(t, byType, 1)
+	assert.Len(t, byChain, 1)
 }
 
 // ----------------------------------------------------------------------------
 
 func makeAckTransactionBroadcast(txHash, nodeId, chainId string) cmtp2p.Envelope {
 	return cmtp2p.Envelope{
-		Src:       cmtp2p.NewPeer(cmtp2p.ID(nodeId)),
+		Src:       cmtp2p.NewPeerWithoutConn(cmtp2p.ID(nodeId)),
 		ChainID:   chainId,
 		ChannelID: types.ReplicationChannel,
 		Message: &mxp2p.Receipt{
@@ -141,6 +177,55 @@ func makeAckTransactionBroadcast(txHash, nodeId, chainId string) cmtp2p.Envelope
 					TxHash:  []byte(txHash),
 					NodeId:  nodeId,
 					ChainID: chainId,
+				},
+			},
+		},
+	}
+}
+
+func makeChainReplicationRequest(nodeId, chainId string) cmtp2p.Envelope {
+	return cmtp2p.Envelope{
+		Src:       cmtp2p.NewPeerWithoutConn(cmtp2p.ID(nodeId)),
+		ChainID:   chainId,
+		ChannelID: types.ReplicationChannel,
+		Message: &mxp2p.Message{
+			Sum: &mxp2p.Message_ChainReplicationRequest{
+				ChainReplicationRequest: &mxp2p.ChainReplicationRequest{
+					ChainID:     chainId,
+					ChainParams: &mxp2p.ChainParams{},
+					Relays:      []string{},
+				},
+			},
+		},
+	}
+}
+
+func makeChainReplicationResponse(nodeId, chainId string) cmtp2p.Envelope {
+	return cmtp2p.Envelope{
+		Src:       cmtp2p.NewPeerWithoutConn(cmtp2p.ID(nodeId)),
+		ChainID:   chainId,
+		ChannelID: types.ReplicationChannel,
+		Message: &mxp2p.Message{
+			Sum: &mxp2p.Message_ChainReplicationResponse{
+				ChainReplicationResponse: &mxp2p.ChainReplicationResponse{
+					ChainID: chainId,
+					NodeId:  nodeId,
+				},
+			},
+		},
+	}
+}
+
+func makeChainReplicationComplete(nodeId, chainId string) cmtp2p.Envelope {
+	return cmtp2p.Envelope{
+		Src:       cmtp2p.NewPeerWithoutConn(cmtp2p.ID(nodeId)),
+		ChainID:   chainId,
+		ChannelID: types.ReplicationChannel,
+		Message: &mxp2p.Message{
+			Sum: &mxp2p.Message_ChainReplicationComplete{
+				ChainReplicationComplete: &mxp2p.ChainReplicationComplete{
+					ChainID: chainId,
+					NodeId:  nodeId,
 				},
 			},
 		},

@@ -49,6 +49,20 @@ var _ snapsapp.Backend = (*MultiplexBackend)(nil)
 //
 // Additionally, an internal [client.Acceptor] instance may be used to further
 // extend the broadcast verification process, e.g. [client.CommitBroadcastTx].
+//
+// The backend instance also controls/manages the lifecycle of some
+// shared services which are started/stopped/reset by the backend.
+//
+// See also:
+// - [config.Config]
+// - [snapsapp.SnapsApp]
+// - [proxy.ChainConns]
+// - [multiplex.runtime.Registry]
+// - [multiplex.p2p.ConnectionPool]
+// - [multiplex.runtime.BroadcastPool]
+// - [multiplex.runtime.ReplicationPool]
+// - [multiplex.replay.ReplayPool]
+// - [multiplex.Reactor]
 type MultiplexBackend struct {
 	*service.BaseService
 
@@ -624,39 +638,12 @@ func (b *MultiplexBackend) OnReset(ctx context.Context) error {
 		"path", b.backendCfg.RootDir,
 	)
 
-	if b.chainConns != nil && b.chainConns.IsStopped() {
-		if err := b.chainConns.Reset(ctx); err != nil {
-			b.logger.Error(
-				"failed to reset the ABCI client", "err", err)
-		}
+	// Resets ABCI, RuntimeManager, ReplayPool, Reactor.
+	// Takes a temporary lock on the mutex during shutdowns.
+	if err := b.ResetSharedServices(ctx); err != nil {
+		b.logger.Error(
+			"failed to stop shared services", "err", err)
 	}
-
-	if b.replayPool != nil && b.replayPool.IsStopped() {
-		if err := b.replayPool.Reset(ctx); err != nil {
-			b.logger.Error(
-				"failed to reset the replay pool", "err", err)
-		}
-	}
-
-	if b.runtimeRegistry != nil && b.runtimeRegistry.IsStopped() {
-		if err := b.runtimeRegistry.Reset(ctx); err != nil {
-			b.logger.Error(
-				"failed to reset the runtime manager", "err", err)
-		}
-	}
-
-	if b.reactor != nil && b.reactor.IsStopped() {
-		if err := b.reactor.Reset(ctx); err != nil {
-			b.logger.Error(
-				"failed to reset the multiplex reactor", "err", err)
-		}
-	}
-
-	b.mtx.Lock()
-	defer b.mtx.Unlock()
-
-	b.rpcListeners = []net.Listener{}
-	b.httpClients = []*http.Client{}
 
 	b.logger.Debug("Reset multiplex backend")
 	return nil

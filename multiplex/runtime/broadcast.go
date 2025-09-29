@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/hex"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -35,8 +36,10 @@ type BroadcastPool struct {
 
 	// Contains buffered channels of size 1 as we expect exactly 1
 	// update on those channels, per transaction hash.
-	acceptedChs map[string]chan struct{}
-	indexedChs  map[string]chan struct{}
+	acceptedChs     map[string]chan struct{}
+	doneAcceptedChs map[string]bool
+	indexedChs      map[string]chan struct{}
+	doneIndexedChs  map[string]bool
 
 	relays   map[string][]*helpers.RelayAddress
 	partners map[string][]cmtp2p.ID
@@ -62,14 +65,17 @@ func NewBroadcastManager(
 ) types.BroadcastManager {
 	mgr := &BroadcastPool{
 		mtx:         new(sync.Mutex),
-		pool:        NewMessageManager(ctx, logger),
+		pool:        NewMessageManager(logger),
 		resourceMgr: resourceMgr,
 
 		chainIdsByTxHash: map[string]string{},
 		eventSubscribers: map[string]string{},
 
-		acceptedChs:  map[string]chan struct{}{},
-		indexedChs:   map[string]chan struct{}{},
+		acceptedChs:     map[string]chan struct{}{},
+		doneAcceptedChs: map[string]bool{},
+		indexedChs:      map[string]chan struct{}{},
+		doneIndexedChs:  map[string]bool{},
+
 		goShutdownCh: make(chan bool), // unbuffered
 
 		relays:   map[string][]*helpers.RelayAddress{},
@@ -130,6 +136,28 @@ func (mgr *BroadcastPool) OnStop() {
 
 // OnReset implements [service.Service] by resetting the service.
 func (mgr *BroadcastPool) OnReset(ctx context.Context) error {
+	if err := mgr.pool.Reset(); err != nil {
+		return fmt.Errorf("failed to reset broadcast pool: %w", err)
+	}
+
+	mgr.mtx.Lock()
+	defer mgr.mtx.Unlock()
+
+	// Reset all internal maps
+	mgr.chainIdsByTxHash = map[string]string{}
+	mgr.eventSubscribers = map[string]string{}
+
+	mgr.acceptedChs = map[string]chan struct{}{}
+	mgr.doneAcceptedChs = map[string]bool{}
+	mgr.indexedChs = map[string]chan struct{}{}
+	mgr.doneIndexedChs = map[string]bool{}
+	mgr.relays = map[string][]*helpers.RelayAddress{}
+	mgr.partners = map[string][]cmtp2p.ID{}
+
+	// Reset internal shutdown channel
+	mgr.goShutdownCh = make(chan bool) // unbuffered
+
+	mgr.logger.Debug("Reset broadcast pool")
 	return nil
 }
 
@@ -202,6 +230,16 @@ func (mgr *BroadcastPool) Process(peerID cmtp2p.ID, e cmtp2p.Envelope) error {
 		"msg", e.Message,
 	)
 
+	msgTypes := []string{"AckTransactionBroadcast"}
+	if !slices.Contains(msgTypes, mgr.pool.GetMsgType(e.Message)) {
+		mgr.logger.Info("Skipping message in broadcast pool (wrong type)",
+			"chainId", e.ChainID,
+			"peerID", string(peerID),
+			"msg", e.Message,
+		)
+		return nil
+	}
+
 	if e.Src != nil {
 		// Adds incoming message to message pool.
 		mgr.pool.AddIncoming(e)
@@ -222,22 +260,43 @@ func (mgr *BroadcastPool) Process(peerID cmtp2p.ID, e cmtp2p.Envelope) error {
 			txHash := bytesToHex(ackTxBroadcast.TxHash)
 
 			mgr.mtx.Lock()
-			mgr.addPartner(txHash, e.Src.ID())
+			_, isDone := mgr.doneAcceptedChs[txHash]
+			mgr.mtx.Unlock()
+			if isDone {
+				return nil
+			}
 
+			mgr.mtx.Lock()
+			mgr.addPartner(txHash, e.Src.ID())
 			isAccepted := mgr.evaluateAcceptanceMajority(txHash)
 			mgr.mtx.Unlock()
 
 			// Close the "Accepted" channel when we have 2/3+1 ACK messages.
 			ch := mgr.Accepted(txHash)
 			if isAccepted {
-				if _, ok := <-ch; ok {
+				mgr.mtx.Lock()
+				if _, isDone := mgr.doneAcceptedChs[txHash]; !isDone {
 					close(ch) // DONE!
+					mgr.doneAcceptedChs[txHash] = true
 				}
+				mgr.mtx.Unlock()
 			}
 		}
 	}
 
 	return nil
+}
+
+// Relays returns a list of relays that are *expected* to respond about txHash.
+func (mgr *BroadcastPool) Relays(txHash string) []*helpers.RelayAddress {
+	mgr.mtx.Lock()
+	defer mgr.mtx.Unlock()
+
+	if r, ok := mgr.relays[txHash]; ok {
+		return r
+	}
+
+	return []*helpers.RelayAddress{}
 }
 
 // Partners returns a list of relay ID from broadcast partners for txHash.
@@ -410,8 +469,20 @@ func (mgr *BroadcastPool) indexerRoutine(chainID string) {
 			rawTx := cmttypes.Tx(txResult.Tx)
 			txHash := bytesToHex(rawTx.Hash())
 
-			txIndexedCh := mgr.Indexed(txHash)
-			close(txIndexedCh)
+			mgr.mtx.Lock()
+			_, isDone := mgr.doneIndexedChs[txHash]
+			mgr.mtx.Unlock()
+			if isDone {
+				return
+			}
+
+			ch := mgr.Indexed(txHash)
+			mgr.mtx.Lock()
+			if _, isDone := mgr.doneIndexedChs[txHash]; !isDone {
+				close(ch) // DONE
+				mgr.doneIndexedChs[txHash] = true
+			}
+			mgr.mtx.Unlock()
 		case <-cancelTimer.C:
 			return
 		case <-mgr.goShutdownCh:

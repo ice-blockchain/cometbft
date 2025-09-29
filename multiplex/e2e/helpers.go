@@ -10,8 +10,10 @@ import (
 
 	"github.com/ice-blockchain/cometbft/config"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
+
 	mx "github.com/ice-blockchain/cometbft/multiplex"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
+	"github.com/ice-blockchain/cometbft/multiplex/helpers"
 )
 
 // -----------------------------------------------------------------------------
@@ -25,6 +27,31 @@ func MakeConfig(tb testing.TB, rootDir string) *config.Config {
 	conf.SetRoot(rootDir)
 
 	return conf
+}
+
+// MakeRelayAddresses creates one or more
+func MakeRelayAddresses(
+	tb testing.TB,
+	baseHost string,
+	startPort uint16,
+	num ...int,
+) (out []*helpers.RelayAddress) {
+	tb.Helper()
+
+	if len(num) == 0 {
+		num[0] = 1
+	}
+
+	out = make([]*helpers.RelayAddress, 0, num[0])
+	for i := 0; i < num[0]; i++ {
+		addr, err := helpers.NewRelayAddress("http://" + baseHost + ":" + strconv.Itoa(
+			30000+i,
+		))
+		require.NoError(tb, err)
+
+		out = append(out, addr)
+	}
+	return
 }
 
 // CAUTION: This helper uses an empty multiplex config on multiple relays.

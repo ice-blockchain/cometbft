@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -112,6 +113,8 @@ Typical usage:
 	}
 */
 type BaseService struct {
+	mtx *sync.Mutex
+
 	Logger    log.Logger
 	name      string
 	started   uint32 // atomic
@@ -137,6 +140,7 @@ func NewBaseService(ctx context.Context, logger log.Logger, name string, impl Se
 		quit:      make(chan struct{}),
 		impl:      impl,
 		parentCtx: ctx,
+		mtx:       new(sync.Mutex),
 	}
 	bs.ctx, bs.ctxCancel = context.WithCancel(ctx)
 	return bs
@@ -154,6 +158,9 @@ func (bs *BaseService) SetContext(c context.Context) {
 // Start implements Service by calling OnStart (if defined). An error will be returned if the
 // service is already running or stopped. Not to start the stopped service, you need to call Reset.
 func (bs *BaseService) Start() error {
+	bs.mtx.Lock()
+	defer bs.mtx.Unlock()
+
 	if atomic.CompareAndSwapUint32(&bs.started, 0, 1) {
 		if atomic.LoadUint32(&bs.stopped) == 1 {
 			bs.Logger.Error(fmt.Sprintf("Not starting %v service -- already stopped", bs.name),
@@ -211,6 +218,9 @@ func (bs *BaseService) StartedAt() time.Time {
 // Stop implements Service by calling OnStop (if defined) and closing quit
 // channel. An error will be returned if the service is already stopped.
 func (bs *BaseService) Stop() error {
+	bs.mtx.Lock()
+	defer bs.mtx.Unlock()
+
 	if atomic.CompareAndSwapUint32(&bs.stopped, 0, 1) {
 		if atomic.LoadUint32(&bs.started) == 0 {
 			bs.Logger.Error(fmt.Sprintf("Not stopping %v service -- has not been started yet", bs.name),
@@ -251,19 +261,21 @@ func (bs *BaseService) StoppedAt() time.Time {
 // Reset implements Service by calling OnReset callback (if defined). An error
 // will be returned if the service is running.
 func (bs *BaseService) Reset(ctx context.Context) error {
-	if !atomic.CompareAndSwapUint32(&bs.stopped, 1, 0) {
-		if bs.IsStarted() {
-			bs.Logger.Debug("service reset",
-				"msg",
-				log.NewLazySprintf("Can't reset %v service. Still running", bs.name),
-				"impl",
-				bs.impl)
-			return fmt.Errorf("can't reset running %s", bs.name)
-		}
+	bs.mtx.Lock()
+	defer bs.mtx.Unlock()
+
+	if !bs.IsStopped() && bs.IsStarted() {
+		bs.Logger.Debug("service reset",
+			"msg",
+			log.NewLazySprintf("Can't reset %v service. Still running", bs.name),
+			"impl",
+			bs.impl)
+		return fmt.Errorf("can't reset running %s", bs.name)
 	}
 
 	// whether or not we've started, we can reset
-	atomic.CompareAndSwapUint32(&bs.started, 1, 0)
+	atomic.StoreUint32(&bs.started, 0)
+	atomic.StoreUint32(&bs.stopped, 0)
 
 	bs.quit = make(chan struct{})
 	bs.parentCtx = ctx

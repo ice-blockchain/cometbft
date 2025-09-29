@@ -181,6 +181,8 @@ type ReplicationManager interface {
 	// Process processes a message e with the replication pool.
 	Process(peerID cmtp2p.ID, e cmtp2p.Envelope) error
 
+	// Relays returns a list of relays that are *expected* to respond about chainID.
+	Relays(chainID string) []*helpers.RelayAddress
 	// Partners returns a list of relay ID from replication partners.
 	Partners(chainID string) []cmtp2p.ID
 	// Requests returns a list of outgoing ChainReplicationRequest for chainID.
@@ -213,6 +215,8 @@ type BroadcastManager interface {
 	// Process processes a received message e with the broadcast pool.
 	Process(peerID cmtp2p.ID, e cmtp2p.Envelope) error
 
+	// Relays returns a list of relays that are *expected* to respond about txHash.
+	Relays(txHash string) []*helpers.RelayAddress
 	// Partners returns a list of relay ID from broadcast partners for txHash.
 	Partners(txHash string) []cmtp2p.ID
 	// Responses returns a list of incoming AckTransactionBroadcast for txHash.

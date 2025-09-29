@@ -1,6 +1,7 @@
 package multiplex
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -606,5 +607,62 @@ func (b *MultiplexBackend) StopSharedServices() error {
 		go b.reactor.Stop()
 	}
 
+	return nil
+}
+
+// ResetSharedServices starts the global services shared amongst networks.
+func (b *MultiplexBackend) ResetSharedServices(ctx context.Context) error {
+	// TODO(midas): remove debug logs
+	b.logger.Debug("ResetSharedServices",
+		"addr", b.relayAddr.String(),
+	)
+
+	if b.runtimeRegistry != nil && b.runtimeRegistry.IsStopped() {
+		if err := b.runtimeRegistry.Reset(ctx); err != nil {
+			b.logger.Error(
+				"failed to reset the runtime manager", "err", err)
+		}
+	}
+
+	if b.replayPool != nil && b.replayPool.IsStopped() {
+		if err := b.replayPool.Reset(ctx); err != nil {
+			b.logger.Error(
+				"failed to reset the replay pool", "err", err)
+		}
+	}
+
+	if b.broadcastMgr != nil && b.broadcastMgr.IsStopped() {
+		if err := b.broadcastMgr.Reset(ctx); err != nil {
+			b.logger.Error(
+				"failed to reset the broadcast pool", "err", err)
+		}
+	}
+
+	if b.replicationMgr != nil && b.replicationMgr.IsStopped() {
+		if err := b.replicationMgr.Reset(ctx); err != nil {
+			b.logger.Error(
+				"failed to reset the replication pool", "err", err)
+		}
+	}
+
+	if b.chainConns != nil && b.chainConns.IsStopped() {
+		if err := b.chainConns.Reset(ctx); err != nil {
+			b.logger.Error(
+				"failed to reset the ABCI client", "err", err)
+		}
+	}
+
+	if b.reactor != nil && b.reactor.IsStopped() {
+		if err := b.reactor.Reset(ctx); err != nil {
+			b.logger.Error(
+				"failed to reset the multiplex reactor", "err", err)
+		}
+	}
+
+	b.mtx.Lock()
+	defer b.mtx.Unlock()
+
+	b.rpcListeners = []net.Listener{}
+	b.httpClients = []*http.Client{}
 	return nil
 }

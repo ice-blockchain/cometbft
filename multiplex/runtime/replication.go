@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"sync"
 
@@ -26,8 +27,10 @@ type ReplicationPool struct {
 	// - mxp2p.ChainReplicationComplete
 	pool *MessagePool
 
-	acceptedChs map[string]chan struct{}
-	completeChs map[string]chan struct{}
+	acceptedChs     map[string]chan struct{}
+	doneAcceptedChs map[string]bool
+	completeChs     map[string]chan struct{}
+	doneCompleteChs map[string]bool
 
 	relays   map[string][]*helpers.RelayAddress
 	partners map[string][]cmtp2p.ID
@@ -49,10 +52,12 @@ func NewReplicationManager(
 ) types.ReplicationManager {
 	mgr := &ReplicationPool{
 		mtx:  new(sync.Mutex),
-		pool: NewMessageManager(ctx, logger),
+		pool: NewMessageManager(logger),
 
-		acceptedChs: map[string]chan struct{}{},
-		completeChs: map[string]chan struct{}{},
+		acceptedChs:     map[string]chan struct{}{},
+		doneAcceptedChs: map[string]bool{},
+		completeChs:     map[string]chan struct{}{},
+		doneCompleteChs: map[string]bool{},
 
 		relays:   map[string][]*helpers.RelayAddress{},
 		partners: map[string][]cmtp2p.ID{},
@@ -91,6 +96,22 @@ func (mgr *ReplicationPool) OnStop() {
 
 // OnReset implements [service.Service] by resetting the service.
 func (mgr *ReplicationPool) OnReset(ctx context.Context) error {
+	if err := mgr.pool.Reset(); err != nil {
+		return fmt.Errorf("failed to reset replication pool: %w", err)
+	}
+
+	mgr.mtx.Lock()
+	defer mgr.mtx.Unlock()
+
+	// Reset all internal maps
+	mgr.acceptedChs = map[string]chan struct{}{}
+	mgr.doneAcceptedChs = map[string]bool{}
+	mgr.completeChs = map[string]chan struct{}{}
+	mgr.doneCompleteChs = map[string]bool{}
+	mgr.relays = map[string][]*helpers.RelayAddress{}
+	mgr.partners = map[string][]cmtp2p.ID{}
+
+	mgr.logger.Debug("Reset replication pool")
 	return nil
 }
 
@@ -130,17 +151,35 @@ func (mgr *ReplicationPool) Process(peerID cmtp2p.ID, e cmtp2p.Envelope) error {
 		"msg", e.Message,
 	)
 
-	if e.Src != nil {
-		// Adds incoming message to message pool.
-		mgr.pool.AddIncoming(e)
-	} else {
-		// Adds outgoing message to message pool.
-		mgr.pool.AddOutgoing(peerID, e)
+	msgTypes := []string{
+		"ChainReplicationRequest",
+		"ChainReplicationResponse",
+		"ChainReplicationComplete",
+	}
+	if !slices.Contains(msgTypes, mgr.pool.GetMsgType(e.Message)) {
+		mgr.logger.Info("Skipping message in replication pool (wrong type)",
+			"chainId", e.ChainID,
+			"peerID", string(peerID),
+			"msg", e.Message,
+		)
+		return nil
+	}
+
+	addToMessagePool := func(peerID cmtp2p.ID, e cmtp2p.Envelope) {
+		if e.Src != nil {
+			// Adds incoming message to message pool.
+			mgr.pool.AddIncoming(e)
+		} else {
+			// Adds outgoing message to message pool.
+			mgr.pool.AddOutgoing(peerID, e)
+		}
 	}
 
 	// Also store the peer ID as a partner.
 	mgr.mtx.Lock()
 	mgr.addPartner(e.ChainID, peerID)
+	prevResponses := mgr.Responses(e.ChainID)
+	prevCompletes := mgr.Completions(e.ChainID)
 	mgr.mtx.Unlock()
 
 	switch extMsg := e.Message.(type) {
@@ -149,38 +188,98 @@ func (mgr *ReplicationPool) Process(peerID cmtp2p.ID, e cmtp2p.Envelope) error {
 		switch msg.(type) {
 		// - ChainReplicationRequest
 		// Nothing to do about ChainReplicationRequest.
+		default:
+			addToMessagePool(peerID, e)
 
 		// - ChainReplicationResponse
 		// We evaluate a potential acceptance super majority.
 		case *mxp2p.Message_ChainReplicationResponse:
 			replResponse := extMsg.GetChainReplicationResponse()
 
+			// If we already received this response from peer, don't count for acceptance.
+			if -1 != slices.IndexFunc(prevResponses, func(msg *mxp2p.ChainReplicationResponse) bool {
+				return msg.NodeId == replResponse.NodeId && msg.ChainID == replResponse.ChainID
+			}) {
+				mgr.logger.Info("Skipping already received chain replication response",
+					"chainId", replResponse.ChainID,
+					"peerID", string(peerID),
+					"msg", e.Message,
+				)
+				return nil // Nothing to do with this message.
+			}
+
+			addToMessagePool(peerID, e)
+
 			mgr.mtx.Lock()
 			isAccepted := mgr.evaluateAcceptanceMajority(replResponse.ChainID)
+			_, isDone := mgr.doneAcceptedChs[replResponse.ChainID]
 			mgr.mtx.Unlock()
+			if isDone {
+				return nil // Nothing to do about this ChainID anymore.
+			}
 
-			// Close the "Accepted" channel when we have 2/3+1 responses.
+			// Close the "Accepted" channel when we have 2/3 responses.
+			ch := mgr.Accepted(replResponse.ChainID)
 			if isAccepted {
-				ch := mgr.Accepted(replResponse.ChainID)
-				close(ch) // DONE!
+				mgr.mtx.Lock()
+				if _, isDone := mgr.doneAcceptedChs[replResponse.ChainID]; !isDone {
+					close(ch) // DONE!
+					mgr.doneAcceptedChs[replResponse.ChainID] = true
+				}
+				mgr.mtx.Unlock()
 			}
 
 		case *mxp2p.Message_ChainReplicationComplete:
 			replComplete := extMsg.GetChainReplicationComplete()
 
+			// If we already received this response from peer, don't count for acceptance.
+			if -1 != slices.IndexFunc(prevCompletes, func(msg *mxp2p.ChainReplicationComplete) bool {
+				return msg.NodeId == replComplete.NodeId && msg.ChainID == replComplete.ChainID
+			}) {
+				mgr.logger.Info("Skipping already received chain replication completion",
+					"chainId", replComplete.ChainID,
+					"peerID", string(peerID),
+					"msg", e.Message,
+				)
+				return nil // Nothing to do with this message.
+			}
+
+			addToMessagePool(peerID, e)
+
 			mgr.mtx.Lock()
 			hasCompleted := mgr.evaluateCompletionMajority(replComplete.ChainID)
+			_, isDone := mgr.doneCompleteChs[replComplete.ChainID]
 			mgr.mtx.Unlock()
+			if isDone {
+				return nil // Nothing to do anymore, completion has been finalized.
+			}
 
 			// Close the "Complete" channel when we have 2/3+1 completions.
+			ch := mgr.Completed(replComplete.ChainID)
 			if hasCompleted {
-				ch := mgr.Completed(replComplete.ChainID)
-				close(ch) // DONE!
+				mgr.mtx.Lock()
+				if _, isDone := mgr.doneCompleteChs[replComplete.ChainID]; !isDone {
+					close(ch) // DONE!
+					mgr.doneCompleteChs[replComplete.ChainID] = true
+				}
+				mgr.mtx.Unlock()
 			}
 		}
 	}
 
 	return nil
+}
+
+// Relays returns a list of relays that are *expected* to respond about chainID.
+func (mgr *ReplicationPool) Relays(chainID string) []*helpers.RelayAddress {
+	mgr.mtx.Lock()
+	defer mgr.mtx.Unlock()
+
+	if r, ok := mgr.relays[chainID]; ok {
+		return r
+	}
+
+	return []*helpers.RelayAddress{}
 }
 
 // Partners returns a list of relay ID from replication partners.

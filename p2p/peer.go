@@ -122,7 +122,7 @@ type PeerImpl struct {
 
 type PeerOption func(*PeerImpl)
 
-func NewPeer(
+func NewPeerWithoutConn(
 	id ID,
 	options ...PeerOption,
 ) *PeerImpl {

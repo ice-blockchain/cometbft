@@ -1,7 +1,6 @@
 package runtime
 
 import (
-	"context"
 	"sync"
 
 	"github.com/cosmos/gogoproto/proto"
@@ -46,6 +45,7 @@ func (s *MessageStore) Data() map[string][]*cmtp2p.Envelope {
 // MessagePool defines a chain replication pool.
 type MessagePool struct {
 	mtx *sync.Mutex
+	// TODO(midas): optional persistence using db
 
 	incoming *MessageStore
 	outgoing *MessageStore
@@ -67,7 +67,7 @@ type MessagePoolOption func(*MessagePool)
 
 // NewMessageManager creates a new database service.
 func NewMessageManager(
-	ctx context.Context,
+	// TODO(midas): accept db for optional persistence
 	logger cmtlog.Logger,
 	options ...MessagePoolOption,
 ) *MessagePool {
