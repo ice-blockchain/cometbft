@@ -216,10 +216,17 @@ func NewServer(
 	}
 
 	// Creates one manager service instance per backend.
+	//
+	// NOTE(midas): For a production environment, it is recommended to set
+	// this timeout to 0 using `ReplicationPoolWithReplicationTimeout(0)`.
 	resourceMgr := runtime.NewResourceManager(ctx, nodeLogger)
-	replicationMgr := runtime.NewReplicationManager(ctx, nodeLogger)
+	replicationMgr := runtime.NewReplicationManager(ctx, nodeLogger,
+		runtime.ReplicationPoolWithAcceptanceTimeout(runtime.DefaultReplicationResponseTimeout), // 10s
+		runtime.ReplicationPoolWithReplicationTimeout(runtime.DefaultReplicationTimeout),        // 2h
+	)
 	broadcastMgr := runtime.NewBroadcastManager(ctx, resourceMgr, nodeLogger,
-		runtime.BroadcastPoolWithTimeout(DefaultTransactionTimeout),
+		runtime.BroadcastPoolWithTransactionTimeout(runtime.DefaultTransactionTimeout),   // 60s
+		runtime.BroadcastPoolWithAckBroadcastTimeout(runtime.DefaultAckBroadcastTimeout), // 10s
 	)
 
 	// Initialize the multiplex reactor, responsible for broadcast and

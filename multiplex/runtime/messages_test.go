@@ -170,7 +170,7 @@ func makeAckTransactionBroadcast(txHash, nodeId, chainId string) cmtp2p.Envelope
 	return cmtp2p.Envelope{
 		Src:       cmtp2p.NewPeerWithoutConn(cmtp2p.ID(nodeId)),
 		ChainID:   chainId,
-		ChannelID: types.ReplicationChannel,
+		ChannelID: types.AckBroadcastChannel,
 		Message: &mxp2p.Receipt{
 			Sum: &mxp2p.Receipt_AckTransactionBroadcast{
 				AckTransactionBroadcast: &mxp2p.AckTransactionBroadcast{

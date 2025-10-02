@@ -14,29 +14,11 @@ const (
 	// Prometheus timeout configuration
 	DefaultReadHeaderTimeout = 10 * time.Second
 
-	// Transaction events timeout configuration. This duration defines the
-	// maximum waiting time for transactions to appear in the tx indexer.
-	// Used as a failsafe to stop [WaitForTransactionEvents] from waiting
-	// for transactions forever upon completion of broadcast operations.
-	DefaultTransactionTimeout = 60 * time.Second
-
 	// Maximum number of indexer read operrations when expecting transaction
 	// indexing events during or after a broadcast operation.
 	// Used as a failsafe to stop [MultiplexBackend#OnTransactionIndexed] from
 	// waiting forever.
 	DefaultMaxIndexerReadAttempts = 20
-
-	// Remote replication timeout configuration. This duration defines the
-	// maximum waiting time for remote replication to complete.
-	// Used as a failsafe to stop [WaitForRelaysReplicationCompleted] from
-	// waiting for runtime updates forever.
-	//
-	// Using a timeout of 2 hours permits to cover for networks that grow
-	// above of 2 million blocks with a blocksync range of 200-400 blocks.
-	//
-	// NOTE(midas): For a production environment, it is recommended to set
-	// this timeout to 0 using `WithReplicationTimeout(0)`.
-	DefaultReplicationTimeout = 2 * time.Hour
 
 	// Network requests timeout configuration, e.g. [GetRemoteRelayInfo].
 	DefaultRequestTimeout = 5 * time.Second

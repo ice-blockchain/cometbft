@@ -45,7 +45,7 @@ func MakeRelayAddresses(
 	out = make([]*helpers.RelayAddress, 0, num[0])
 	for i := 0; i < num[0]; i++ {
 		addr, err := helpers.NewRelayAddress("http://" + baseHost + ":" + strconv.Itoa(
-			30000+i,
+			int(startPort)+i,
 		))
 		require.NoError(tb, err)
 

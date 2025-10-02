@@ -2,9 +2,42 @@ package runtime
 
 import (
 	"path/filepath"
+	"time"
 
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/multiplex/helpers"
+)
+
+const (
+	// Broadcast ACK timeout configuration. This duration defines the
+	// maximum waiting time for transaction ACKs to be received from relays.
+	// Used as a failsafe to stop [multiplex.runtime.BroadcastPool#WaitAccepted]
+	// from waiting for ACKs forever.
+	DefaultAckBroadcastTimeout = 10 * time.Second
+
+	// Replication response timeout configuration. This duration defines the
+	// maximum waiting time for replication responses to be received from relays.
+	// Used as a failsafe to stop [multiplex.runtime.ReplicationPool#WaitAccepted]
+	// from waiting for responses forever.
+	DefaultReplicationResponseTimeout = 10 * time.Second
+
+	// Remote replication timeout configuration. This duration defines the
+	// maximum waiting time for remote replication to complete.
+	// Used as a failsafe to stop [WaitForRelaysReplicationCompleted] from
+	// waiting for runtime updates forever.
+	//
+	// Using a timeout of 2 hours permits to cover for networks that grow
+	// above of 2 million blocks with a blocksync range of 200-400 blocks.
+	//
+	// NOTE(midas): For a production environment, it is recommended to set
+	// this timeout to 0 using `ReplicationPoolWithReplicationTimeout(0)`.
+	DefaultReplicationTimeout = 2 * time.Hour
+
+	// Transaction events timeout configuration. This duration defines the
+	// maximum waiting time for transactions to appear in the tx indexer.
+	// Used as a failsafe to stop [WaitForTransactionEvents] from waiting
+	// for transactions forever upon completion of broadcast operations.
+	DefaultTransactionTimeout = 60 * time.Second
 )
 
 // NewConfig updates a node configuration in-place to overwrite

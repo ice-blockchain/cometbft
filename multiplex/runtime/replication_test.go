@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -201,7 +202,10 @@ func TestMultiplexRuntimeReplicationPoolProcess(t *testing.T) {
 func TestMultiplexRuntimeReplicationPoolWaitAccepted(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	testPool := runtime.NewReplicationManager(t.Context(), cmtlog.NewNopLogger())
+	testPool := runtime.NewReplicationManager(t.Context(), cmtlog.NewNopLogger(),
+		runtime.ReplicationPoolWithAcceptanceTimeout(1*time.Second),
+		runtime.ReplicationPoolWithReplicationTimeout(1*time.Second),
+	)
 	startErr := testPool.Start()
 	require.NoError(t, startErr, "should start replication pool")
 	require.Equal(t, true, testPool.IsStarted())
@@ -258,10 +262,17 @@ func TestMultiplexRuntimeReplicationPoolWaitAccepted(t *testing.T) {
 	assert.Equal(t, true, didAcceptResponse, "should accept replication given enough responses")
 }
 
+func TestMultiplexRuntimeReplicationPoolWaitAcceptedTimeouts(t *testing.T) {
+
+}
+
 func TestMultiplexRuntimeReplicationPoolWaitCompleted(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	testPool := runtime.NewReplicationManager(t.Context(), cmtlog.NewNopLogger())
+	testPool := runtime.NewReplicationManager(t.Context(), cmtlog.NewNopLogger(),
+		runtime.ReplicationPoolWithAcceptanceTimeout(1*time.Second),
+		runtime.ReplicationPoolWithReplicationTimeout(1*time.Second),
+	)
 	startErr := testPool.Start()
 	require.NoError(t, startErr, "should start replication pool")
 	require.Equal(t, true, testPool.IsStarted())
@@ -316,4 +327,8 @@ func TestMultiplexRuntimeReplicationPoolWaitCompleted(t *testing.T) {
 
 	// Test that the replication completion got processed successfully.
 	assert.Equal(t, true, didAcceptResponse, "should complete replication given enough completions")
+}
+
+func TestMultiplexRuntimeReplicationPoolWaitCompletedTimeouts(t *testing.T) {
+
 }

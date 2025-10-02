@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"slices"
 	"sync"
+	"time"
 
 	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
+	"github.com/ice-blockchain/cometbft/internal/cmap"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/libs/service"
 	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
@@ -25,15 +27,17 @@ type ReplicationPool struct {
 	// - mxp2p.ChainReplicationRequest
 	// - mxp2p.ChainReplicationResponse
 	// - mxp2p.ChainReplicationComplete
-	pool *MessagePool
+	pool               *MessagePool
+	timeoutAcceptance  time.Duration
+	timeoutReplication time.Duration
 
-	acceptedChs     map[string]chan struct{}
-	doneAcceptedChs map[string]bool
-	completeChs     map[string]chan struct{}
-	doneCompleteChs map[string]bool
+	acceptedChs     *cmap.CMap
+	doneAcceptedChs *cmap.CMap
+	completeChs     *cmap.CMap
+	doneCompleteChs *cmap.CMap
 
-	relays   map[string][]*helpers.RelayAddress
-	partners map[string][]cmtp2p.ID
+	relays   *cmap.CMap
+	partners *cmap.CMap
 
 	// Options
 	logger cmtlog.Logger
@@ -51,16 +55,18 @@ func NewReplicationManager(
 	options ...ReplicationPoolOption,
 ) types.ReplicationManager {
 	mgr := &ReplicationPool{
-		mtx:  new(sync.Mutex),
-		pool: NewMessageManager(logger),
+		mtx:                new(sync.Mutex),
+		pool:               NewMessageManager(logger),
+		timeoutAcceptance:  -1,
+		timeoutReplication: -1,
 
-		acceptedChs:     map[string]chan struct{}{},
-		doneAcceptedChs: map[string]bool{},
-		completeChs:     map[string]chan struct{}{},
-		doneCompleteChs: map[string]bool{},
+		acceptedChs:     cmap.NewCMap(),
+		doneAcceptedChs: cmap.NewCMap(),
+		completeChs:     cmap.NewCMap(),
+		doneCompleteChs: cmap.NewCMap(),
 
-		relays:   map[string][]*helpers.RelayAddress{},
-		partners: map[string][]cmtp2p.ID{},
+		relays:   cmap.NewCMap(),
+		partners: cmap.NewCMap(),
 
 		// Options
 		logger: logger,
@@ -68,6 +74,15 @@ func NewReplicationManager(
 
 	// Use option helpers
 	mgr.SetOptions(options...)
+
+	// Overwrite timeouts with default if not set.
+	if mgr.timeoutAcceptance == -1 {
+		mgr.timeoutAcceptance = DefaultReplicationResponseTimeout
+	}
+
+	if mgr.timeoutReplication == -1 {
+		mgr.timeoutReplication = DefaultReplicationTimeout
+	}
 
 	mgr.BaseService = *service.NewBaseService(ctx, logger, "ReplicationPool", mgr)
 	return mgr
@@ -77,6 +92,20 @@ func NewReplicationManager(
 func ReplicationPoolWithLogger(logger cmtlog.Logger) ReplicationPoolOption {
 	return func(mgr *ReplicationPool) {
 		mgr.logger = logger
+	}
+}
+
+// ReplicationPoolWithAcceptanceTimeout injects a custom acceptance timeout.
+func ReplicationPoolWithAcceptanceTimeout(timeoutAccept time.Duration) ReplicationPoolOption {
+	return func(mgr *ReplicationPool) {
+		mgr.timeoutAcceptance = timeoutAccept
+	}
+}
+
+// ReplicationPoolWithReplicationTimeout injects a custom replication timeout.
+func ReplicationPoolWithReplicationTimeout(timeoutRepl time.Duration) ReplicationPoolOption {
+	return func(mgr *ReplicationPool) {
+		mgr.timeoutReplication = timeoutRepl
 	}
 }
 
@@ -104,12 +133,12 @@ func (mgr *ReplicationPool) OnReset(ctx context.Context) error {
 	defer mgr.mtx.Unlock()
 
 	// Reset all internal maps
-	mgr.acceptedChs = map[string]chan struct{}{}
-	mgr.doneAcceptedChs = map[string]bool{}
-	mgr.completeChs = map[string]chan struct{}{}
-	mgr.doneCompleteChs = map[string]bool{}
-	mgr.relays = map[string][]*helpers.RelayAddress{}
-	mgr.partners = map[string][]cmtp2p.ID{}
+	mgr.acceptedChs = cmap.NewCMap()
+	mgr.doneAcceptedChs = cmap.NewCMap()
+	mgr.completeChs = cmap.NewCMap()
+	mgr.doneCompleteChs = cmap.NewCMap()
+	mgr.relays = cmap.NewCMap()
+	mgr.partners = cmap.NewCMap()
 
 	mgr.logger.Debug("Reset replication pool")
 	return nil
@@ -129,16 +158,22 @@ func (mgr *ReplicationPool) Init(
 		"numRelays", len(relays),
 	)
 
-	mgr.mtx.Lock()
-	defer mgr.mtx.Unlock()
-
-	prev, has := mgr.relays[chainID]
-	if !has {
-		prev = []*helpers.RelayAddress{}
+	var prev []*helpers.RelayAddress
+	if mgr.relays.Has(chainID) {
+		prev = mgr.relays.Get(chainID).([]*helpers.RelayAddress)
 	}
 
-	prev = append(prev, relays...)
-	mgr.relays[chainID] = prev
+	if len(relays) > 0 {
+		for _, relay := range relays {
+			if -1 == slices.IndexFunc(prev, func(ra *helpers.RelayAddress) bool {
+				return ra.String() == relay.String()
+			}) {
+				prev = append(prev, relay)
+			}
+		}
+	}
+
+	mgr.relays.Set(chainID, prev)
 	return nil
 }
 
@@ -167,20 +202,16 @@ func (mgr *ReplicationPool) Process(peerID cmtp2p.ID, e cmtp2p.Envelope) error {
 
 	addToMessagePool := func(peerID cmtp2p.ID, e cmtp2p.Envelope) {
 		if e.Src != nil {
-			// Adds incoming message to message pool.
 			mgr.pool.AddIncoming(e)
 		} else {
-			// Adds outgoing message to message pool.
 			mgr.pool.AddOutgoing(peerID, e)
 		}
 	}
 
 	// Also store the peer ID as a partner.
-	mgr.mtx.Lock()
 	mgr.addPartner(e.ChainID, peerID)
 	prevResponses := mgr.Responses(e.ChainID)
 	prevCompletes := mgr.Completions(e.ChainID)
-	mgr.mtx.Unlock()
 
 	switch extMsg := e.Message.(type) {
 	case *mxp2p.Message:
@@ -210,24 +241,25 @@ func (mgr *ReplicationPool) Process(peerID cmtp2p.ID, e cmtp2p.Envelope) error {
 
 			addToMessagePool(peerID, e)
 
-			mgr.mtx.Lock()
-			isAccepted := mgr.evaluateAcceptanceMajority(replResponse.ChainID)
-			_, isDone := mgr.doneAcceptedChs[replResponse.ChainID]
-			mgr.mtx.Unlock()
-			if isDone {
-				return nil // Nothing to do about this ChainID anymore.
+			if ackd := mgr.evaluateAcceptanceMajority(replResponse.ChainID); !ackd {
+				return nil // More responses expected for this ChainID.
 			}
 
-			// Close the "Accepted" channel when we have 2/3 responses.
-			ch := mgr.Accepted(replResponse.ChainID)
-			if isAccepted {
-				mgr.mtx.Lock()
-				if _, isDone := mgr.doneAcceptedChs[replResponse.ChainID]; !isDone {
-					close(ch) // DONE!
-					mgr.doneAcceptedChs[replResponse.ChainID] = true
-				}
-				mgr.mtx.Unlock()
+			if mgr.doneAcceptedChs.Has(replResponse.ChainID) {
+				return nil // Already completed, nothing more to do.
 			}
+
+			mgr.mtx.Lock()
+			defer mgr.mtx.Unlock()
+
+			// Close the "Accepted" channel when we have 2/3+1 responses (self included).
+			if !mgr.doneAcceptedChs.Has(replResponse.ChainID) {
+				if ch := mgr.Accepted(replResponse.ChainID); ch != nil {
+					mgr.doneAcceptedChs.Set(replResponse.ChainID, true)
+					close(ch)
+				}
+			}
+			return nil // DONE!
 
 		case *mxp2p.Message_ChainReplicationComplete:
 			replComplete := extMsg.GetChainReplicationComplete()
@@ -246,24 +278,25 @@ func (mgr *ReplicationPool) Process(peerID cmtp2p.ID, e cmtp2p.Envelope) error {
 
 			addToMessagePool(peerID, e)
 
-			mgr.mtx.Lock()
-			hasCompleted := mgr.evaluateCompletionMajority(replComplete.ChainID)
-			_, isDone := mgr.doneCompleteChs[replComplete.ChainID]
-			mgr.mtx.Unlock()
-			if isDone {
-				return nil // Nothing to do anymore, completion has been finalized.
+			if done := mgr.evaluateCompletionMajority(replComplete.ChainID); !done {
+				return nil // More completions expected for this ChainID.
 			}
 
-			// Close the "Complete" channel when we have 2/3+1 completions.
-			ch := mgr.Completed(replComplete.ChainID)
-			if hasCompleted {
-				mgr.mtx.Lock()
-				if _, isDone := mgr.doneCompleteChs[replComplete.ChainID]; !isDone {
-					close(ch) // DONE!
-					mgr.doneCompleteChs[replComplete.ChainID] = true
-				}
-				mgr.mtx.Unlock()
+			if mgr.doneCompleteChs.Has(replComplete.ChainID) {
+				return nil // Already completed, nothing more to do.
 			}
+
+			mgr.mtx.Lock()
+			defer mgr.mtx.Unlock()
+
+			// Close the "Completion" channel when we have 2/3+1 responses (self included).
+			if !mgr.doneCompleteChs.Has(replComplete.ChainID) {
+				if ch := mgr.Completed(replComplete.ChainID); ch != nil {
+					mgr.doneCompleteChs.Set(replComplete.ChainID, true)
+					close(ch)
+				}
+			}
+			return nil // DONE!
 		}
 	}
 
@@ -272,11 +305,8 @@ func (mgr *ReplicationPool) Process(peerID cmtp2p.ID, e cmtp2p.Envelope) error {
 
 // Relays returns a list of relays that are *expected* to respond about chainID.
 func (mgr *ReplicationPool) Relays(chainID string) []*helpers.RelayAddress {
-	mgr.mtx.Lock()
-	defer mgr.mtx.Unlock()
-
-	if r, ok := mgr.relays[chainID]; ok {
-		return r
+	if mgr.relays.Has(chainID) {
+		return mgr.relays.Get(chainID).([]*helpers.RelayAddress)
 	}
 
 	return []*helpers.RelayAddress{}
@@ -284,11 +314,8 @@ func (mgr *ReplicationPool) Relays(chainID string) []*helpers.RelayAddress {
 
 // Partners returns a list of relay ID from replication partners.
 func (mgr *ReplicationPool) Partners(chainID string) []cmtp2p.ID {
-	mgr.mtx.Lock()
-	defer mgr.mtx.Unlock()
-
-	if p, ok := mgr.partners[chainID]; ok {
-		return p
+	if mgr.partners.Has(chainID) {
+		return mgr.partners.Get(chainID).([]cmtp2p.ID)
 	}
 
 	return []cmtp2p.ID{}
@@ -398,35 +425,31 @@ func (mgr *ReplicationPool) Completions(chainID string) []*mxp2p.ChainReplicatio
 
 // Accepted returns a channel, which is closed when chainID has 2/3+1 responses.
 func (mgr *ReplicationPool) Accepted(chainID string) chan struct{} {
-	mgr.mtx.Lock()
-	acceptedCh, hasChannel := mgr.acceptedChs[chainID]
-	mgr.mtx.Unlock()
-
-	if !hasChannel {
-		acceptedCh = make(chan struct{}, 1) // buffered
-
-		mgr.mtx.Lock()
-		mgr.acceptedChs[chainID] = acceptedCh
-		mgr.mtx.Unlock()
+	if mgr.doneAcceptedChs.Has(chainID) {
+		return nil
 	}
 
+	if mgr.acceptedChs.Has(chainID) {
+		return mgr.acceptedChs.Get(chainID).(chan struct{})
+	}
+
+	acceptedCh := make(chan struct{}, 1) // buffered
+	mgr.acceptedChs.Set(chainID, acceptedCh)
 	return acceptedCh
 }
 
 // Completed returns a channel, which is closed when chainID has 2/3+1 completions.
 func (mgr *ReplicationPool) Completed(chainID string) chan struct{} {
-	mgr.mtx.Lock()
-	completeCh, hasChannel := mgr.completeChs[chainID]
-	mgr.mtx.Unlock()
-
-	if !hasChannel {
-		completeCh = make(chan struct{}, 1) // buffered
-
-		mgr.mtx.Lock()
-		mgr.completeChs[chainID] = completeCh
-		mgr.mtx.Unlock()
+	if mgr.doneCompleteChs.Has(chainID) {
+		return nil
 	}
 
+	if mgr.completeChs.Has(chainID) {
+		return mgr.completeChs.Get(chainID).(chan struct{})
+	}
+
+	completeCh := make(chan struct{}, 1) // buffered
+	mgr.completeChs.Set(chainID, completeCh)
 	return completeCh
 }
 
@@ -434,36 +457,54 @@ func (mgr *ReplicationPool) Completed(chainID string) chan struct{} {
 func (mgr *ReplicationPool) WaitAccepted(chainID string) bool {
 	ch := mgr.Accepted(chainID)
 
+	cancelTimer := time.NewTimer(mgr.timeoutAcceptance)
+	if mgr.timeoutAcceptance == 0 {
+		cancelTimer.Stop()
+	} else {
+		defer cancelTimer.Stop()
+	}
+
 	for mgr.Context().Err() == nil {
 		select {
 		case <-ch:
 			return true
+		case <-cancelTimer.C:
+			return mgr.doneAcceptedChs.Has(chainID)
 		case <-mgr.Context().Done():
-			return false
+			return mgr.doneAcceptedChs.Has(chainID)
 		case <-mgr.Quit():
-			return false
+			return mgr.doneAcceptedChs.Has(chainID)
 		}
 	}
 
-	return false
+	return mgr.doneAcceptedChs.Has(chainID)
 }
 
 // WaitCompleted blocks a thread until chainID has 2/3+1 completions.
 func (mgr *ReplicationPool) WaitCompleted(chainID string) bool {
 	ch := mgr.Completed(chainID)
 
+	cancelTimer := time.NewTimer(mgr.timeoutReplication)
+	if mgr.timeoutReplication == 0 {
+		cancelTimer.Stop()
+	} else {
+		defer cancelTimer.Stop()
+	}
+
 	for mgr.Context().Err() == nil {
 		select {
 		case <-ch:
 			return true
+		case <-cancelTimer.C:
+			return mgr.doneCompleteChs.Has(chainID)
 		case <-mgr.Context().Done():
-			return false
+			return mgr.doneCompleteChs.Has(chainID)
 		case <-mgr.Quit():
-			return false
+			return mgr.doneCompleteChs.Has(chainID)
 		}
 	}
 
-	return false
+	return mgr.doneCompleteChs.Has(chainID)
 }
 
 // ----------------------------------------------------------------------------
@@ -484,9 +525,9 @@ func (mgr *ReplicationPool) Logger() cmtlog.Logger {
 
 // addPartner adds a peer ID as a partner for replication of chainID in the pool.
 func (mgr *ReplicationPool) addPartner(chainID string, peerID cmtp2p.ID) {
-	prev, has := mgr.partners[chainID]
-	if !has {
-		prev = []cmtp2p.ID{}
+	var prev []cmtp2p.ID
+	if mgr.partners.Has(chainID) {
+		prev = mgr.partners.Get(chainID).([]cmtp2p.ID)
 	}
 
 	if -1 == slices.IndexFunc(prev, func(p cmtp2p.ID) bool {
@@ -495,7 +536,7 @@ func (mgr *ReplicationPool) addPartner(chainID string, peerID cmtp2p.ID) {
 		prev = append(prev, peerID)
 	}
 
-	mgr.partners[chainID] = prev
+	mgr.partners.Set(chainID, prev)
 }
 
 // evaluateAcceptanceMajority counts the received ChainReplicationResponse
@@ -506,17 +547,16 @@ func (mgr *ReplicationPool) addPartner(chainID string, peerID cmtp2p.ID) {
 func (mgr *ReplicationPool) evaluateAcceptanceMajority(
 	chainID string,
 ) bool {
-	if _, ok := mgr.relays[chainID]; !ok {
-		return true
-	} else if len(mgr.relays[chainID]) == 0 {
-		return true
+	relays := mgr.Relays(chainID)
+	if len(relays) == 0 {
+		return true // Nothing to do
 	}
 
 	// Keep only relevant ones for this acceptance evaluation.
 	responses := mgr.Responses(chainID)
 
 	// The number of received ChainReplicationResponse messages
-	numRequired := len(mgr.relays[chainID]) * 2 / 3
+	numRequired := len(relays) * 2 / 3
 	return len(responses) >= numRequired
 }
 
@@ -528,16 +568,15 @@ func (mgr *ReplicationPool) evaluateAcceptanceMajority(
 func (mgr *ReplicationPool) evaluateCompletionMajority(
 	chainID string,
 ) bool {
-	if _, ok := mgr.relays[chainID]; !ok {
-		return false
-	} else if len(mgr.relays[chainID]) == 0 {
-		return true
+	relays := mgr.Relays(chainID)
+	if len(relays) == 0 {
+		return true // Nothing to do
 	}
 
 	// Keep only relevant ones for this acceptance evaluation.
 	completes := mgr.Completions(chainID)
 
 	// The number of received ChainReplicationComplete messages
-	numRequired := len(mgr.relays[chainID]) * 2 / 3
+	numRequired := len(relays) * 2 / 3
 	return len(completes) >= numRequired
 }
