@@ -72,7 +72,7 @@ func (reg *ResourceRegistry) Has(chainID, name string) bool {
 }
 
 // Set adds a resource res with name for chainID.
-func (reg *ResourceRegistry) Set(chainID string, name string, res any) error {
+func (reg *ResourceRegistry) Set(chainID, name string, res any) error {
 	reg.mtx.Lock()
 	defer reg.mtx.Unlock()
 
@@ -90,7 +90,7 @@ func (reg *ResourceRegistry) Set(chainID string, name string, res any) error {
 }
 
 // Get returns a resource by chainID and name or returns nil.
-func (reg *ResourceRegistry) Get(chainID string, name string) any {
+func (reg *ResourceRegistry) Get(chainID, name string) any {
 	reg.mtx.Lock()
 	defer reg.mtx.Unlock()
 
