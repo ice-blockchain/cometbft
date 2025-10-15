@@ -66,6 +66,11 @@ type Handshaker interface {
 type Connector interface {
 	service.Service
 
+	// Transport returns the packet transporter.
+	Transport() Transport
+	// Dispatcher returns a packet dispatcher.
+	Dispatcher() Dispatcher
+
 	// Dial dials addr or returns an error.
 	Dial(addr *NetAddress) (*PeerImpl, error)
 	// Listen listens for peer connections.

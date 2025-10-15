@@ -118,6 +118,8 @@ func NewConnector(ctx context.Context) *mockConnector {
 	return c
 }
 
+func (*mockConnector) Transport() Transport                     { return nil }
+func (*mockConnector) Dispatcher() Dispatcher                   { return nil }
 func (*mockConnector) Dial(addr *NetAddress) (*PeerImpl, error) { return nil, nil }
 func (*mockConnector) Listen() error                            { return nil }
 

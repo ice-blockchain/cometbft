@@ -23,7 +23,7 @@ type ConnectionPool struct {
 
 	// Services
 	transport  cmtp2p.Transport
-	connector  *peerConnector
+	connector  *PeerConnector
 	dispatcher cmtp2p.Dispatcher
 	handshaker cmtp2p.Handshaker
 	runtimeMgr types.RuntimeManager
@@ -145,7 +145,7 @@ func (pool *ConnectionPool) OnStop() {
 	}
 
 	if err := pool.connector.Stop(); err != nil {
-		pool.logger.Error("failed to stop peerConnector",
+		pool.logger.Error("failed to stop PeerConnector",
 			"err", err,
 		)
 	}
@@ -271,7 +271,7 @@ func (pool *ConnectionPool) AddPeer(peer *cmtp2p.PeerImpl) error {
 
 	if !peer.IsRunning() {
 		// peer.Start does *not* start a MConnection anymore,
-		// instead the connection is started with peerConnector.
+		// instead the connection is started with PeerConnector.
 		if err := peer.Start(); err != nil {
 			pool.logger.Error("Error starting peer", "err", err, "peer", peer)
 			return err

@@ -16,8 +16,8 @@ import (
 	"github.com/ice-blockchain/cometbft/types"
 )
 
-// peerConnector defines a peer connector as decribed with [cmtp2p.Connector].
-type peerConnector struct {
+// PeerConnector defines a peer connector as decribed with [cmtp2p.Connector].
+type PeerConnector struct {
 	service.BaseService
 	mtx *sync.Mutex
 
@@ -34,10 +34,10 @@ type peerConnector struct {
 }
 
 // Ensure that our implementation satisfies interface.
-var _ cmtp2p.Connector = (*peerConnector)(nil)
-var _ cmtp2p.Messager = (*peerConnector)(nil)
+var _ cmtp2p.Connector = (*PeerConnector)(nil)
+var _ cmtp2p.Messager = (*PeerConnector)(nil)
 
-type ConnectorOption func(*peerConnector)
+type ConnectorOption func(*PeerConnector)
 
 // NewConnector creates a new database service.
 func NewConnector(
@@ -46,8 +46,8 @@ func NewConnector(
 	dispatcher cmtp2p.Dispatcher,
 	logger cmtlog.Logger,
 	options ...ConnectorOption,
-) *peerConnector {
-	conn := &peerConnector{
+) *PeerConnector {
+	conn := &PeerConnector{
 		mtx:        new(sync.Mutex),
 		transport:  transport,
 		dispatcher: dispatcher,
@@ -62,31 +62,45 @@ func NewConnector(
 	// Use option helpers
 	conn.SetOptions(options...)
 
-	conn.BaseService = *service.NewBaseService(ctx, logger, "peerConnector", conn)
+	conn.BaseService = *service.NewBaseService(ctx, logger, "PeerConnector", conn)
 	return conn
 }
 
 // ConnectorWithLogger injects a custom logger instance.
 func ConnectorWithLogger(logger cmtlog.Logger) ConnectorOption {
-	return func(conn *peerConnector) {
+	return func(conn *PeerConnector) {
 		conn.logger = logger
 	}
 }
 
 // ConnectorWithPool injects a custom connection pool.
 func ConnectorWithPool(pool *ConnectionPool) ConnectorOption {
-	return func(conn *peerConnector) {
+	return func(conn *PeerConnector) {
 		conn.pool = pool
 	}
 }
 
+// ConnectorWithTransport injects a custom packet transporter.
+func ConnectorWithTransport(transport cmtp2p.Transport) ConnectorOption {
+	return func(conn *PeerConnector) {
+		conn.transport = transport
+	}
+}
+
+// ConnectorWithDispatcher injects a custom packet dispatcher.
+func ConnectorWithDispatcher(dispatcher cmtp2p.Dispatcher) ConnectorOption {
+	return func(conn *PeerConnector) {
+		conn.dispatcher = dispatcher
+	}
+}
+
 // ----------------------------------------------------------------------------
-// peerConnector implements [service.Service]
+// PeerConnector implements [service.Service]
 
 // OnStart implements [service.Service] by opening a database.
-func (conn *peerConnector) OnStart(ctx context.Context) (err error) {
+func (conn *PeerConnector) OnStart(ctx context.Context) (err error) {
 	if conn.pool == nil {
-		return errors.New("peerConnector requires a connection pool")
+		return errors.New("PeerConnector requires a connection pool")
 	}
 
 	// MultiplexBackend#NewServer sets a multiplex reactor such that
@@ -100,18 +114,28 @@ func (conn *peerConnector) OnStart(ctx context.Context) (err error) {
 }
 
 // OnStop implements [service.Service] by closing the database.
-func (conn *peerConnector) OnStop() {}
+func (conn *PeerConnector) OnStop() {}
 
 // OnReset implements [service.Service] by resetting the service.
-func (conn *peerConnector) OnReset(ctx context.Context) error {
+func (conn *PeerConnector) OnReset(ctx context.Context) error {
 	return nil
 }
 
 // ----------------------------------------------------------------------------
 // cmtp2p.Connector API implementation
 
+// Transport returns the packet transporter.
+func (conn *PeerConnector) Transport() cmtp2p.Transport {
+	return conn.transport
+}
+
+// Dispatcher returns the injected packet dispatcher.
+func (conn *PeerConnector) Dispatcher() cmtp2p.Dispatcher {
+	return conn.dispatcher
+}
+
 // Dial dials addr or returns an error.
-func (conn *peerConnector) Dial(addr *cmtp2p.NetAddress) (*cmtp2p.PeerImpl, error) {
+func (conn *PeerConnector) Dial(addr *cmtp2p.NetAddress) (*cmtp2p.PeerImpl, error) {
 	if conn.pool.HasPeerID(addr.ID) {
 		// TODO(midas): remove debug logs
 		conn.logger.Debug("Skipping dial - already dialed", "address", addr)
@@ -158,7 +182,7 @@ func (conn *peerConnector) Dial(addr *cmtp2p.NetAddress) (*cmtp2p.PeerImpl, erro
 }
 
 // Listen listens for peer connections.
-func (conn *peerConnector) Listen() error {
+func (conn *PeerConnector) Listen() error {
 	for conn.Context().Err() == nil {
 		// Early shutdown detection
 		switch {
@@ -209,7 +233,7 @@ func (conn *peerConnector) Listen() error {
 }
 
 // Send sends a packet to peerID.
-func (conn *peerConnector) Send(dest cmtp2p.ID, e cmtp2p.Envelope) error {
+func (conn *PeerConnector) Send(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 	if _, ok := conn.mconns[dest]; !ok {
 		return fmt.Errorf(
 			"failed to send message; missing MConnection for peer %s", dest)
@@ -220,11 +244,11 @@ func (conn *peerConnector) Send(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 		return err
 	}
 	if len(msgBytes) == 0 {
-		return fmt.Errorf("failed to send message; empty msgBytes", "dest", dest, "e", e)
+		return fmt.Errorf("failed to send message; empty msgBytes for dest %s", dest)
 	}
 
 	// TODO(midas): remove debug logs
-	conn.logger.Debug("peerConnector#Send",
+	conn.logger.Debug("PeerConnector#Send",
 		"dest", dest,
 		"chID", e.ChannelID,
 		"msg", msgBytes,
@@ -246,7 +270,7 @@ func (conn *peerConnector) Send(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 }
 
 // TrySend tries to send a packet to peerID.
-func (conn *peerConnector) TrySend(dest cmtp2p.ID, e cmtp2p.Envelope) error {
+func (conn *PeerConnector) TrySend(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 	if _, ok := conn.mconns[dest]; !ok {
 		return fmt.Errorf(
 			"failed to send message; missing MConnection for peer %s", dest)
@@ -257,11 +281,11 @@ func (conn *peerConnector) TrySend(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 		return err
 	}
 	if len(msgBytes) == 0 {
-		return fmt.Errorf("failed to send message; empty msgBytes", "dest", dest, "e", e)
+		return fmt.Errorf("failed to send message; empty msgBytes for dest %s", dest)
 	}
 
 	// TODO(midas): remove debug logs
-	conn.logger.Debug("peerConnector#TrySend",
+	conn.logger.Debug("PeerConnector#TrySend",
 		"dest", dest,
 		"chID", e.ChannelID,
 		"msg", msgBytes,
@@ -285,26 +309,26 @@ func (conn *peerConnector) TrySend(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 // ----------------------------------------------------------------------------
 
 // SetOptions uses custom option helpers.
-func (conn *peerConnector) SetOptions(options ...ConnectorOption) {
+func (conn *PeerConnector) SetOptions(options ...ConnectorOption) {
 	for _, option := range options {
 		option(conn)
 	}
 }
 
 // Logger returns the logger instance.
-func (conn *peerConnector) Logger() cmtlog.Logger {
+func (conn *PeerConnector) Logger() cmtlog.Logger {
 	return conn.logger
 }
 
 // Lock locks the connector mutex.
-func (conn *peerConnector) Lock() {
-	conn.logger.Debug("peerConnector#Lock")
+func (conn *PeerConnector) Lock() {
+	conn.logger.Debug("PeerConnector#Lock")
 	conn.mtx.Lock()
 }
 
 // Unlock locks the connector mutex.
-func (conn *peerConnector) Unlock() {
-	conn.logger.Debug("peerConnector#Unlock")
+func (conn *PeerConnector) Unlock() {
+	conn.logger.Debug("PeerConnector#Unlock")
 	conn.mtx.Unlock()
 }
 
@@ -312,7 +336,7 @@ func (conn *peerConnector) Unlock() {
 
 // startRoutines starts the send and receive routines for peer.
 // The mutex should be locked by the caller.
-func (conn *peerConnector) startRoutines(peer *cmtp2p.PeerImpl) error {
+func (conn *PeerConnector) startRoutines(peer *cmtp2p.PeerImpl) error {
 	mconn := cmtconn.NewMConnection(conn.Context(),
 		peer.Conn(),
 		conn.dispatcher,
@@ -348,7 +372,7 @@ func (conn *peerConnector) startRoutines(peer *cmtp2p.PeerImpl) error {
 
 // stopRoutines stops the send and receive routines for peer.
 // The mutex should be locked by the caller.
-func (conn *peerConnector) stopRoutines(peer *cmtp2p.PeerImpl) error {
+func (conn *PeerConnector) stopRoutines(peer *cmtp2p.PeerImpl) error {
 	if err := conn.mconns[peer.ID()].Stop(); err != nil {
 		conn.logger.Error("failed to stop routines",
 			"peer", peer,
@@ -363,12 +387,12 @@ func (conn *peerConnector) stopRoutines(peer *cmtp2p.PeerImpl) error {
 // ----------------------------------------------------------------------------
 
 // isPersistent returns false because multiplex doesn't allow persistent peers.
-func (conn *peerConnector) isPersistent(*cmtp2p.NetAddress) bool {
+func (conn *PeerConnector) isPersistent(*cmtp2p.NetAddress) bool {
 	return false
 }
 
 // stopPeerForError removes a peer from the peer set after an error happened.
-func (conn *peerConnector) stopPeerForError(p *cmtp2p.PeerImpl, r any) {
+func (conn *PeerConnector) stopPeerForError(p *cmtp2p.PeerImpl, r any) {
 	conn.logger.Error("Stopping peer for error", "peer", p, "reason", r)
 
 	conn.pool.RemovePeer(p.ID())
@@ -376,7 +400,7 @@ func (conn *peerConnector) stopPeerForError(p *cmtp2p.PeerImpl, r any) {
 }
 
 // wrapMsgBytes wraps a [proto.Message] and marshals it, or errors.
-func (conn *peerConnector) wrapMsgBytes(msg proto.Message) ([]byte, error) {
+func (conn *PeerConnector) wrapMsgBytes(msg proto.Message) ([]byte, error) {
 	if w, ok := msg.(types.Wrapper); ok {
 		msg = w.Wrap()
 	}
@@ -392,7 +416,7 @@ func (conn *peerConnector) wrapMsgBytes(msg proto.Message) ([]byte, error) {
 // handleErrorGracefully returns true if the connector should proceed with
 // routines when the error is processed. This method returns false to signal
 // that routines must be killed and/or transport must be closed.
-func (conn *peerConnector) handleErrorGracefully(err error) bool {
+func (conn *PeerConnector) handleErrorGracefully(err error) bool {
 	switch err := err.(type) {
 	case cmtp2p.ErrRejected:
 		conn.logger.Error("Peer rejected",
