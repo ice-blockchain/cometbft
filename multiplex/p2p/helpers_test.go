@@ -1,9 +1,13 @@
 package p2p_test
 
 import (
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -11,6 +15,7 @@ import (
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
 
+	"github.com/ice-blockchain/cometbft/multiplex/e2e"
 	"github.com/ice-blockchain/cometbft/multiplex/p2p"
 	"github.com/ice-blockchain/cometbft/multiplex/runtime"
 )
@@ -53,6 +58,7 @@ func ResetTestMultiplexConnectionPool(
 func ResetTestMultiplexPeerConnector(
 	tb testing.TB,
 	customLogger cmtlog.Logger,
+	listenPort uint16,
 	withOptions ...p2p.ConnectorOption,
 ) (*p2p.PeerConnector, func()) {
 	tb.Helper()
@@ -60,19 +66,45 @@ func ResetTestMultiplexPeerConnector(
 	tmpRootDir, err := os.MkdirTemp("", tb.Name()+"-1")
 	require.NoError(tb, err)
 
+	testConf := e2e.MakeConfig(tb, tmpRootDir)
+	testConf.DiscoveryPort = listenPort
+	testConf.P2P.ListenAddress = fmt.Sprintf("tcp://0.0.0.0:%v", listenPort+1)
+
 	resourceMgr := runtime.NewResourceManager(tb.Context(), customLogger)
 	require.NotNil(tb, resourceMgr)
 
-	nodeInfo := p2p.NewMultiNetworkNodeInfo()
 	nodeKey, keyErr := cmtp2p.LoadOrGenNodeKey(filepath.Join(tmpRootDir, "node_key.json"))
 	require.NotNil(tb, nodeKey)
 	require.NoError(tb, keyErr)
 
-	transport := cmtp2p.NewMultiplexTransport(tb.Context(), nodeInfo, *nodeKey)
+	netListenAddr, addrErr := cmtp2p.NewNetAddressString(
+		string(nodeKey.ID()) + "@0.0.0.0:" + strconv.Itoa(int(listenPort)),
+	)
+	require.NoError(tb, addrErr)
+
+	nodeInfo := p2p.NewMultiNetworkNodeInfoWithConfig(testConf, nodeKey, netListenAddr, []byte{})
+
+	handshaker := p2p.NewHandshaker(tb.Context(), nodeInfo, customLogger)
+	transport := cmtp2p.NewMultiplexTransportWithCustomHandshake(
+		tb.Context(),
+		nodeInfo,
+		*nodeKey,
+		func(c net.Conn, timeout time.Duration, ni cmtp2p.NodeInfo) (cmtp2p.NodeInfo, error) {
+			return handshaker.Handshake(c, timeout)
+		},
+	)
 	require.NotNil(tb, transport)
+	transport.SetLogger(customLogger)
+
+	// CAUTION: starts listening on listenPort with node ID.
+	listenErr := transport.Listen(*netListenAddr)
+	require.NoError(tb, listenErr)
+	transportShutdownFn := func() {
+		transport.Close()
+	}
 
 	// CAUTION: a connection pool is mandatory for the connector.
-	testPool, poolShutdownFn := ResetTestMultiplexConnectionPool(tb, cmtlog.TestingLogger())
+	testPool, poolShutdownFn := ResetTestMultiplexConnectionPool(tb, customLogger)
 	require.NotNil(tb, testPool)
 	require.NotNil(tb, poolShutdownFn)
 
@@ -96,5 +128,6 @@ func ResetTestMultiplexPeerConnector(
 	return testConnector, func() {
 		defer os.RemoveAll(tmpRootDir)
 		defer poolShutdownFn()
+		defer transportShutdownFn()
 	}
 }

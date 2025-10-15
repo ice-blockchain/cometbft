@@ -66,8 +66,10 @@ type Handshaker interface {
 type Connector interface {
 	service.Service
 
+	// Pool returns the connection pool.
+	Pool() Pool
 	// Transport returns the packet transporter.
-	Transport() Transport
+	Transport() *MultiplexTransport
 	// Dispatcher returns a packet dispatcher.
 	Dispatcher() Dispatcher
 
@@ -87,8 +89,13 @@ type Messager interface {
 
 // Pool defines the contract for a connection pool.
 type Pool interface {
+	// NodeInfo returns the local node information.
+	NodeInfo() NodeInfo
+	// NodeKey returns the local node key.
+	NodeKey() *NodeKey
+
 	// Transport returns the packet transporter.
-	Transport() Transport
+	Transport() *MultiplexTransport
 	// Connector returns a peer connector.
 	Connector() Connector
 	// Dispatcher returns a packet dispatcher.

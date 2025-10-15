@@ -88,7 +88,9 @@ type mockPool struct {
 
 var _ Pool = (*mockPool)(nil)
 
-func (*mockPool) Transport() Transport                                   { return nil }
+func (*mockPool) NodeInfo() NodeInfo                                     { return nil }
+func (*mockPool) NodeKey() *NodeKey                                      { return nil }
+func (*mockPool) Transport() *MultiplexTransport                         { return nil }
 func (*mockPool) Connector() Connector                                   { return &mockConnector{} }
 func (*mockPool) Dispatcher() Dispatcher                                 { return &mockDispatcher{} }
 func (*mockPool) Handshaker() Handshaker                                 { return &mockHandshaker{} }
@@ -118,7 +120,8 @@ func NewConnector(ctx context.Context) *mockConnector {
 	return c
 }
 
-func (*mockConnector) Transport() Transport                     { return nil }
+func (*mockConnector) Pool() Pool                               { return nil }
+func (*mockConnector) Transport() *MultiplexTransport           { return nil }
 func (*mockConnector) Dispatcher() Dispatcher                   { return nil }
 func (*mockConnector) Dial(addr *NetAddress) (*PeerImpl, error) { return nil, nil }
 func (*mockConnector) Listen() error                            { return nil }

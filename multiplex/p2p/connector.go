@@ -22,7 +22,7 @@ type PeerConnector struct {
 	mtx *sync.Mutex
 
 	// Resources
-	transport  cmtp2p.Transport
+	transport  *cmtp2p.MultiplexTransport
 	dispatcher cmtp2p.Dispatcher
 
 	// Services
@@ -42,7 +42,7 @@ type ConnectorOption func(*PeerConnector)
 // NewConnector creates a new database service.
 func NewConnector(
 	ctx context.Context,
-	transport cmtp2p.Transport,
+	transport *cmtp2p.MultiplexTransport,
 	dispatcher cmtp2p.Dispatcher,
 	logger cmtlog.Logger,
 	options ...ConnectorOption,
@@ -81,7 +81,7 @@ func ConnectorWithPool(pool *ConnectionPool) ConnectorOption {
 }
 
 // ConnectorWithTransport injects a custom packet transporter.
-func ConnectorWithTransport(transport cmtp2p.Transport) ConnectorOption {
+func ConnectorWithTransport(transport *cmtp2p.MultiplexTransport) ConnectorOption {
 	return func(conn *PeerConnector) {
 		conn.transport = transport
 	}
@@ -103,6 +103,12 @@ func (conn *PeerConnector) OnStart(ctx context.Context) (err error) {
 		return errors.New("PeerConnector requires a connection pool")
 	}
 
+	// TODO(midas): remove debug logs
+	conn.logger.Debug("Starting peer connector",
+		"nodeId", conn.pool.NodeKey().ID(),
+		"nodeInfo", conn.pool.NodeInfo(),
+	)
+
 	// MultiplexBackend#NewServer sets a multiplex reactor such that
 	// InitChannels may be called here to initialize a channels store.
 	conn.dispatcher.InitChannels()
@@ -114,18 +120,38 @@ func (conn *PeerConnector) OnStart(ctx context.Context) (err error) {
 }
 
 // OnStop implements [service.Service] by closing the database.
-func (conn *PeerConnector) OnStop() {}
+func (conn *PeerConnector) OnStop() {
+	// TODO(midas): remove debug logs
+	conn.logger.Debug("Stopping peer connector",
+		"nodeId", conn.pool.NodeKey().ID(),
+		"nodeInfo", conn.pool.NodeInfo(),
+	)
+
+	// Note: we don't need to stop the Listen() routine here because
+	// it stops automatically when the conn.Context() expires.
+}
 
 // OnReset implements [service.Service] by resetting the service.
 func (conn *PeerConnector) OnReset(ctx context.Context) error {
+	// TODO(midas): remove debug logs
+	conn.logger.Debug("Peer connector reset",
+		"nodeId", conn.pool.NodeKey().ID(),
+		"nodeInfo", conn.pool.NodeInfo(),
+	)
+
 	return nil
 }
 
 // ----------------------------------------------------------------------------
 // cmtp2p.Connector API implementation
 
+// Pool returns the connection manager (registry).
+func (conn *PeerConnector) Pool() cmtp2p.Pool {
+	return conn.pool
+}
+
 // Transport returns the packet transporter.
-func (conn *PeerConnector) Transport() cmtp2p.Transport {
+func (conn *PeerConnector) Transport() *cmtp2p.MultiplexTransport {
 	return conn.transport
 }
 
@@ -183,6 +209,9 @@ func (conn *PeerConnector) Dial(addr *cmtp2p.NetAddress) (*cmtp2p.PeerImpl, erro
 
 // Listen listens for peer connections.
 func (conn *PeerConnector) Listen() error {
+	// TODO(midas): remove debug logs
+	conn.logger.Debug("PeerConnector#Listen")
+
 	for conn.Context().Err() == nil {
 		// Early shutdown detection
 		switch {
@@ -419,25 +448,17 @@ func (conn *PeerConnector) wrapMsgBytes(msg proto.Message) ([]byte, error) {
 func (conn *PeerConnector) handleErrorGracefully(err error) bool {
 	switch err := err.(type) {
 	case cmtp2p.ErrRejected:
-		conn.logger.Error("Peer rejected",
-			"err", err,
-		)
+		conn.logger.Error("Peer rejected", "err", err)
 
 		return true
 	case cmtp2p.ErrFilterTimeout:
-		conn.logger.Error("Peer filter timed out",
-			"err", err,
-		)
+		conn.logger.Error("Peer filter timed out", "err", err)
 
 		return true
 	case cmtp2p.ErrTransportClosed:
-		conn.logger.Error("Stopped accept routine, as transport is closed",
-			"err", err,
-		)
+		conn.logger.Error("Transport is closed", "err", err)
 	default:
-		conn.logger.Error("Accept on transport errored - accept routine exited",
-			"err", err,
-		)
+		conn.logger.Error("Transport errored", "err", err)
 	}
 
 	return false

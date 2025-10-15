@@ -22,7 +22,7 @@ type ConnectionPool struct {
 	mtx *sync.Mutex
 
 	// Services
-	transport  cmtp2p.Transport
+	transport  *cmtp2p.MultiplexTransport
 	connector  *PeerConnector
 	dispatcher cmtp2p.Dispatcher
 	handshaker cmtp2p.Handshaker
@@ -53,7 +53,7 @@ type ConnectionPoolOption func(*ConnectionPool)
 func NewConnectionManager(
 	ctx context.Context,
 	nodeKey *cmtp2p.NodeKey,
-	transport cmtp2p.Transport,
+	transport *cmtp2p.MultiplexTransport,
 	resourceManager types.ResourceManager,
 	logger cmtlog.Logger,
 	options ...ConnectionPoolOption,
@@ -163,24 +163,30 @@ func (pool *ConnectionPool) OnReset(ctx context.Context) error {
 	pool.peerIdsByChainIds = cmap.NewCMap()
 	pool.initTimeByPeerKey = cmap.NewCMap()
 	pool.peersForReactors = cmap.NewCMap()
+
+	// TODO(midas): remove debug logs
+	pool.logger.Debug("Connection pool reset",
+		"nodeId", pool.nodeKey.ID(),
+		"nodeInfo", pool.nodeInfo,
+	)
 	return nil
 }
 
 // ----------------------------------------------------------------------------
 // ConnectionManager API implementation
 
-// NodeKey returns the local relay node public key (ed25519), or node ID.
-func (pool *ConnectionPool) NodeKey() *cmtp2p.NodeKey {
-	return pool.nodeKey
-}
-
 // NodeInfo returns the local relay node information.
 func (pool *ConnectionPool) NodeInfo() cmtp2p.NodeInfo {
 	return pool.nodeInfo
 }
 
+// NodeKey returns the local relay node public key (ed25519), or node ID.
+func (pool *ConnectionPool) NodeKey() *cmtp2p.NodeKey {
+	return pool.nodeKey
+}
+
 // Transport returns the packet transporter.
-func (pool *ConnectionPool) Transport() cmtp2p.Transport {
+func (pool *ConnectionPool) Transport() *cmtp2p.MultiplexTransport {
 	return pool.transport
 }
 

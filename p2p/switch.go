@@ -223,7 +223,7 @@ func (sw *Switch) GetPeerConfig() PeerConfig {
 
 // Transport returns the switch's Transport.
 func (sw *Switch) Transport() *MultiplexTransport {
-	return sw.pool.Transport().(*MultiplexTransport)
+	return sw.pool.Transport()
 }
 
 // Metrics returns the p2p metrics.
