@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 
+	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
 
@@ -102,11 +103,11 @@ func TestMultiplexP2PPeerConnectorStartStop(t *testing.T) {
 	assert.Equal(t, true, testConnector2.Transport().IsListening())
 }
 
-func TestMultiplexP2PPeerConnectorDial(t *testing.T) {
+func TestMultiplexP2PPeerConnectorDialErrors(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	testConnector, shutdownFn := ResetTestMultiplexPeerConnector(t,
-		cmtlog.TestingLogger(),
+		cmtlog.NewNopLogger(),
 		30001,
 	)
 	require.NotNil(t, testConnector)
@@ -134,17 +135,68 @@ func TestMultiplexP2PPeerConnectorDial(t *testing.T) {
 	assert.Contains(t, dialErr.Error(), "self ID<")
 	assert.Nil(t, testPeer, "rejected dialing should not add peer")
 
-	// TODO(midas): Make sure about SUCCESS dialing attempts.
+	// Test that we also error about connecting to invalid relay.
+	randPrivKey := ed25519.GenPrivKey()
+	randNodeKey := &cmtp2p.NodeKey{PrivKey: randPrivKey}
+	testAddress2, addrErr2 := cmtp2p.NewNetAddressString(
+		"tcp://" + string(randNodeKey.ID()) + "@127.0.0.1:31234", // wrong port
+	)
+	assert.NoError(t, addrErr2)
+	require.NotNil(t, testAddress2)
+
+	testPeer2, dialErr2 := testConnector.Dial(testAddress2)
+	assert.Error(t, dialErr2)
+	assert.Contains(t, dialErr2.Error(), "connection refused")
+	assert.Nil(t, testPeer2, "rejected dialing should not add peer")
 }
 
-func TestMultiplexP2PPeerConnectorSend(t *testing.T) {
+func TestMultiplexP2PPeerConnectorDialSuccess(t *testing.T) {
+	defer goleak.VerifyNone(t)
 
-}
+	testConnector1, shutdownFn1 := ResetTestMultiplexPeerConnector(t,
+		cmtlog.TestingLogger(),
+		30001,
+	)
+	require.NotNil(t, testConnector1)
+	require.NotNil(t, shutdownFn1)
+	defer shutdownFn1()
 
-func TestMultiplexP2PPeerConnectorTrySend(t *testing.T) {
+	shouldStartErr := testConnector1.Start()
+	require.NoError(t, shouldStartErr, "first peer should start")
+	defer testConnector1.Stop()
 
-}
+	testConnector2, shutdownFn2 := ResetTestMultiplexPeerConnector(t,
+		cmtlog.TestingLogger(),
+		40001,
+	)
+	require.NotNil(t, testConnector2)
+	require.NotNil(t, shutdownFn2)
+	defer shutdownFn2()
 
-func TestMultiplexP2PPeerConnectorRoutines(t *testing.T) {
+	shouldStartErr2 := testConnector2.Start()
+	require.NoError(t, shouldStartErr2, "second peer should start")
+	defer testConnector2.Stop()
 
+	// give both some time to start listening correctly.
+	time.Sleep(300 * time.Millisecond)
+	require.Equal(t, true, testConnector1.Transport().IsListening())
+	require.Equal(t, true, testConnector2.Transport().IsListening())
+
+	// peer-1 connects to peer-2
+	peer1NodeId := testConnector1.Transport().NodeInfo().ID()
+	peer2NodeId := testConnector2.Transport().NodeInfo().ID()
+	testAddress, addrErr := cmtp2p.NewNetAddressString(
+		"tcp://" + string(peer2NodeId) + "@127.0.0.1:40001", // peer-2
+	)
+	assert.NoError(t, addrErr)
+	require.NotNil(t, testAddress)
+
+	// Test that we succeed in connecting to a valid relay.
+	testPeer, dialErr := testConnector1.Dial(testAddress)
+	assert.NoError(t, dialErr, "peer-1 should connect to peer-2")
+	assert.NotNil(t, testPeer)
+
+	// ... and we must correctly cleanup afterwards.
+	testConnector1.Pool().RemovePeer(peer2NodeId)
+	testConnector2.Pool().RemovePeer(peer1NodeId)
 }

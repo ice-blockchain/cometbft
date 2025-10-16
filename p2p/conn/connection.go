@@ -627,10 +627,10 @@ func (c *MConnection) sendBatchPacketMsgs(w protoio.Writer, batchSize int) bool 
 			// nothing to send across all channels.
 			return true
 		}
-		// // nothing in buffer for selected channel.
-		// if channel.sending == nil {
-		// 	return true
-		// }
+		// nothing in buffer for selected channel.
+		if channel.sending == nil {
+			return true
+		}
 
 		bytesWritten, err := c.sendPacketMsgOnChannel(w, channel)
 		if err {
@@ -998,11 +998,10 @@ func (ch *Channel) isSendPending() bool {
 	}
 
 	if ch.sending == nil || len(ch.sending) == 0 {
-		if len(ch.sendQueue) == 0 {
-			return false
-		}
-		ch.sending = <-ch.sendQueue
+		return len(ch.sendQueue) == 0
 	}
+
+	ch.sending = <-ch.sendQueue
 	return true
 }
 

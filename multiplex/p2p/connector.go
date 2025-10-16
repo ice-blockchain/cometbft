@@ -263,7 +263,10 @@ func (conn *PeerConnector) Listen() error {
 
 // Send sends a packet to peerID.
 func (conn *PeerConnector) Send(dest cmtp2p.ID, e cmtp2p.Envelope) error {
-	if _, ok := conn.mconns[dest]; !ok {
+	conn.mtx.Lock()
+	mconn, hasConn := conn.mconns[dest]
+	conn.mtx.Unlock()
+	if !hasConn {
 		return fmt.Errorf(
 			"failed to send message; missing MConnection for peer %s", dest)
 	}
@@ -281,7 +284,7 @@ func (conn *PeerConnector) Send(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 		"dest", dest,
 		"chID", e.ChannelID,
 		"msg", msgBytes,
-		"mconn", conn.mconns[dest].IsRunning(),
+		"mconn", mconn.IsRunning(),
 	)
 
 	// Make sure this peer appears in the peerset per ChainID.
@@ -290,7 +293,6 @@ func (conn *PeerConnector) Send(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 		e.ChainID,
 	)
 
-	mconn := conn.mconns[dest]
 	if sent := mconn.Send(e.ChainID, e.ChannelID, msgBytes); !sent {
 		return fmt.Errorf(
 			"failed to send message; MConnection is stopped for %s", dest)
@@ -300,7 +302,10 @@ func (conn *PeerConnector) Send(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 
 // TrySend tries to send a packet to peerID.
 func (conn *PeerConnector) TrySend(dest cmtp2p.ID, e cmtp2p.Envelope) error {
-	if _, ok := conn.mconns[dest]; !ok {
+	conn.mtx.Lock()
+	mconn, hasConn := conn.mconns[dest]
+	conn.mtx.Unlock()
+	if !hasConn {
 		return fmt.Errorf(
 			"failed to send message; missing MConnection for peer %s", dest)
 	}
@@ -318,7 +323,7 @@ func (conn *PeerConnector) TrySend(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 		"dest", dest,
 		"chID", e.ChannelID,
 		"msg", msgBytes,
-		"mconn", conn.mconns[dest].IsRunning(),
+		"mconn", mconn.IsRunning(),
 	)
 
 	// Make sure this peer appears in the peerset per ChainID.
@@ -327,7 +332,6 @@ func (conn *PeerConnector) TrySend(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 		e.ChainID,
 	)
 
-	mconn := conn.mconns[dest]
 	if sent := mconn.TrySend(e.ChainID, e.ChannelID, msgBytes); !sent {
 		return fmt.Errorf(
 			"failed to send message; MConnection is stopped for %s", dest)
