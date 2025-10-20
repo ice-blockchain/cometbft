@@ -1,17 +1,24 @@
 package p2p_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/cosmos/gogoproto/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 
+	memp2p "github.com/ice-blockchain/cometbft/api/cometbft/mempool/v1"
 	"github.com/ice-blockchain/cometbft/crypto/ed25519"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
+	mempl "github.com/ice-blockchain/cometbft/mempool"
 	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
 
 	"github.com/ice-blockchain/cometbft/multiplex/p2p"
@@ -58,7 +65,7 @@ func TestMultiplexP2PPeerConnectorNewConnector(t *testing.T) {
 func TestMultiplexP2PPeerConnectorNewConnectorHelper(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	testConnector, shutdownFn := ResetTestMultiplexPeerConnector(t, cmtlog.NewNopLogger(), 30001)
+	testConnector, shutdownFn := ResetTestMultiplexPeerConnector(t, 30001, cmtlog.NewNopLogger())
 	require.NotNil(t, testConnector)
 	require.NotNil(t, shutdownFn)
 	defer shutdownFn()
@@ -73,8 +80,8 @@ func TestMultiplexP2PPeerConnectorStartStop(t *testing.T) {
 
 	// Test that the connector errors if no connection pool is set.
 	testConnector1, shutdownFn1 := ResetTestMultiplexPeerConnector(t,
-		cmtlog.NewNopLogger(),
 		30001,
+		cmtlog.NewNopLogger(),
 	)
 	require.NotNil(t, testConnector1)
 	require.NotNil(t, shutdownFn1)
@@ -89,8 +96,8 @@ func TestMultiplexP2PPeerConnectorStartStop(t *testing.T) {
 
 	// Test the instance start/stop implementation.
 	testConnector2, shutdownFn2 := ResetTestMultiplexPeerConnector(t,
-		cmtlog.NewNopLogger(),
 		30001,
+		cmtlog.NewNopLogger(),
 	)
 	require.NotNil(t, testConnector2)
 	require.NotNil(t, shutdownFn2)
@@ -103,12 +110,66 @@ func TestMultiplexP2PPeerConnectorStartStop(t *testing.T) {
 	assert.Equal(t, true, testConnector2.Transport().IsListening())
 }
 
+func TestMultiplexP2PPeerConnectorCreateHelper(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	testConnectors, shutdownFns := createPeerConnectors(t, 3, 30001, cmtlog.NewNopLogger())
+	require.NotEmpty(t, testConnectors)
+	require.NotEmpty(t, shutdownFns)
+	defer func() {
+		for _, shutdownFn := range shutdownFns {
+			shutdownFn()
+		}
+	}()
+
+	require.Len(t, testConnectors, 3)
+
+	// TEST 1: peer-1 connects to peer-2
+	testPeer1NodeID := testConnectors[0].Transport().NodeInfo().ID()
+	testPeer2NodeID := testConnectors[1].Transport().NodeInfo().ID()
+	testPeer3NodeID := testConnectors[2].Transport().NodeInfo().ID()
+
+	testAddrConn2, addrErr := cmtp2p.NewNetAddressString(
+		"tcp://" + string(testPeer2NodeID) + "@127.0.0.1:31001", // peer-2
+	)
+	assert.NoError(t, addrErr)
+	require.NotNil(t, testAddrConn2)
+
+	testPeerConn2, dialErr := testConnectors[0].Dial(testAddrConn2)
+	assert.NoError(t, dialErr, "peer-1 should connect to peer-2")
+	assert.NotNil(t, testPeerConn2)
+
+	// TEST 2: peer-1 connects to peer-3
+	testAddrConn3, addrErr3 := cmtp2p.NewNetAddressString(
+		"tcp://" + string(testPeer3NodeID) + "@127.0.0.1:32001", // peer-3
+	)
+	assert.NoError(t, addrErr3)
+	require.NotNil(t, testAddrConn3)
+
+	testPeerConn3, dialErr3 := testConnectors[0].Dial(testAddrConn3)
+	assert.NoError(t, dialErr3, "peer-1 should connect to peer-3")
+	assert.NotNil(t, testPeerConn3)
+
+	// TEST 3: peer-3 connects to peer-2
+	testPeerConn32, dialErr32 := testConnectors[2].Dial(testAddrConn2)
+	assert.NoError(t, dialErr32, "peer-3 should connect to peer-2")
+	assert.NotNil(t, testPeerConn32)
+
+	// ... and we must correctly cleanup afterwards.
+	testConnectors[0].Pool().RemovePeer(testPeer2NodeID) // peer1 -> peer2
+	testConnectors[0].Pool().RemovePeer(testPeer3NodeID) // peer1 -> peer3
+	testConnectors[1].Pool().RemovePeer(testPeer1NodeID) // peer2 <- peer1
+	testConnectors[1].Pool().RemovePeer(testPeer3NodeID) // peer2 <- peer3
+	testConnectors[2].Pool().RemovePeer(testPeer1NodeID) // peer3 <- peer1
+	testConnectors[2].Pool().RemovePeer(testPeer2NodeID) // peer3 -> peer2
+}
+
 func TestMultiplexP2PPeerConnectorDialErrors(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	testConnector, shutdownFn := ResetTestMultiplexPeerConnector(t,
-		cmtlog.NewNopLogger(),
 		30001,
+		cmtlog.NewNopLogger(),
 	)
 	require.NotNil(t, testConnector)
 	require.NotNil(t, shutdownFn)
@@ -154,8 +215,8 @@ func TestMultiplexP2PPeerConnectorDialSuccess(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	testConnector1, shutdownFn1 := ResetTestMultiplexPeerConnector(t,
-		cmtlog.TestingLogger(),
 		30001,
+		cmtlog.NewNopLogger(),
 	)
 	require.NotNil(t, testConnector1)
 	require.NotNil(t, shutdownFn1)
@@ -166,8 +227,8 @@ func TestMultiplexP2PPeerConnectorDialSuccess(t *testing.T) {
 	defer testConnector1.Stop()
 
 	testConnector2, shutdownFn2 := ResetTestMultiplexPeerConnector(t,
-		cmtlog.TestingLogger(),
 		40001,
+		cmtlog.NewNopLogger(),
 	)
 	require.NotNil(t, testConnector2)
 	require.NotNil(t, shutdownFn2)
@@ -182,7 +243,7 @@ func TestMultiplexP2PPeerConnectorDialSuccess(t *testing.T) {
 	require.Equal(t, true, testConnector1.Transport().IsListening())
 	require.Equal(t, true, testConnector2.Transport().IsListening())
 
-	// peer-1 connects to peer-2
+	// TEST 1: peer-1 connects to peer-2
 	peer1NodeId := testConnector1.Transport().NodeInfo().ID()
 	peer2NodeId := testConnector2.Transport().NodeInfo().ID()
 	testAddress, addrErr := cmtp2p.NewNetAddressString(
@@ -196,7 +257,215 @@ func TestMultiplexP2PPeerConnectorDialSuccess(t *testing.T) {
 	assert.NoError(t, dialErr, "peer-1 should connect to peer-2")
 	assert.NotNil(t, testPeer)
 
+	// TEST 2: peer-2 connects to peer-1
+	testAddress2, addrErr2 := cmtp2p.NewNetAddressString(
+		"tcp://" + string(peer1NodeId) + "@127.0.0.1:30001", // peer-1
+	)
+	assert.NoError(t, addrErr2)
+	require.NotNil(t, testAddress2)
+
+	// Test that we succeed in connecting back to the peer-1 relay.
+	testPeer2, dialErr2 := testConnector2.Dial(testAddress2)
+	assert.NoError(t, dialErr2, "peer-2 should connect to peer-1")
+	assert.NotNil(t, testPeer2)
+
 	// ... and we must correctly cleanup afterwards.
 	testConnector1.Pool().RemovePeer(peer2NodeId)
 	testConnector2.Pool().RemovePeer(peer1NodeId)
+}
+
+// TODO(midas): add TestMultiplexP2PPeerConnectorDialConcurrent
+
+func TestMultiplexP2PPeerConnectorSend(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	testConnectors, shutdownFns := createPeerConnectors(t, 2, 30001, cmtlog.NewNopLogger())
+	require.NotEmpty(t, testConnectors)
+	require.NotEmpty(t, shutdownFns)
+	defer func() {
+		for _, shutdownFn := range shutdownFns {
+			shutdownFn()
+		}
+	}()
+
+	require.Len(t, testConnectors, 2)
+
+	testPeer1NodeID := testConnectors[0].Transport().NodeInfo().ID()
+	testPeer2NodeID := testConnectors[1].Transport().NodeInfo().ID()
+
+	// first we dial peer-2 from peer-1
+	testAddrConn2, addrErr := cmtp2p.NewNetAddressString(
+		"tcp://" + string(testPeer2NodeID) + "@127.0.0.1:31001", // peer-2
+	)
+	assert.NoError(t, addrErr)
+	require.NotNil(t, testAddrConn2)
+
+	testPeerConn2, dialErr := testConnectors[0].Dial(testAddrConn2)
+	require.NoError(t, dialErr, "peer-1 should connect to peer-2")
+	require.NotNil(t, testPeerConn2)
+
+	testTransactions := make([][]byte, 1)
+	testTransactions[0] = []byte{1, 2, 3}
+
+	testTxMessage := cmtp2p.Envelope{
+		ChainID:   "test-chain-1",
+		ChannelID: mempl.MempoolChannel,
+		Message:   &memp2p.Txs{Txs: testTransactions},
+	}
+
+	// TEST 1: sending a message to unknown peer must error.
+	// Note that "self" is invalid for Send.
+	shouldErr1 := testConnectors[0].Send(testPeer1NodeID, testTxMessage)
+	assert.Error(t, shouldErr1, "sending to invalid peer ID must error")
+	assert.Contains(t, shouldErr1.Error(), "missing MConnection")
+	assert.Contains(t, shouldErr1.Error(), testPeer1NodeID)
+
+	// TEST 2: sending an empty message must error.
+	var emptyMsg proto.Message
+	shouldErr2 := testConnectors[0].Send(testPeer2NodeID, cmtp2p.Envelope{
+		Message: emptyMsg,
+	})
+	assert.Error(t, shouldErr2, "sending an empty message must error")
+	assert.Contains(t, shouldErr2.Error(), "Message may not be empty")
+	assert.Contains(t, shouldErr2.Error(), testPeer2NodeID)
+
+	// TEST 3: sending an actual well-formed transaction must succeed.
+	// peer-1 sends to previously dialed peer-2
+	shouldNotErr := testConnectors[0].Send(testPeer2NodeID, testTxMessage)
+	assert.NoError(t, shouldNotErr, "sending a valid message should not error")
+
+	actualHasPeer := testConnectors[0].Pool().HasPeerForChainID(testPeer2NodeID, "test-chain-1")
+	shouldNotFindSelf := testConnectors[0].Pool().HasPeerForChainID(testPeer1NodeID, "test-chain-1")
+	assert.Equal(t, true, actualHasPeer)
+	assert.Equal(t, false, shouldNotFindSelf)
+
+	// ... and we must correctly cleanup afterwards.
+	testConnectors[0].Pool().RemovePeer(testPeer2NodeID)
+	testConnectors[1].Pool().RemovePeer(testPeer1NodeID)
+}
+
+func TestMultiplexP2PPeerConnectorSendConcurrent(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	numPeers := 3
+	testConnectors, shutdownFns := createPeerConnectors(t, numPeers, 30001, cmtlog.TestingLogger())
+	require.NotEmpty(t, testConnectors)
+	require.NotEmpty(t, shutdownFns)
+	defer func() {
+		for _, shutdownFn := range shutdownFns {
+			shutdownFn()
+		}
+	}()
+
+	require.Len(t, testConnectors, numPeers)
+
+	peerAddresses := make([]*cmtp2p.NetAddress, numPeers)
+	peerNodeIds := map[string]cmtp2p.ID{
+		"peer-1": testConnectors[0].Transport().NodeInfo().ID(),
+		"peer-2": testConnectors[1].Transport().NodeInfo().ID(),
+		"peer-3": testConnectors[2].Transport().NodeInfo().ID(),
+	}
+
+	// fill peerAddresses
+	for i := 1; i <= numPeers; i++ {
+		name := "peer-" + strconv.Itoa(i)
+		peerId := peerNodeIds[name]
+
+		testPort := 30001 + ((i - 1) * 1000) // see createPeerConnectors()
+		testAddr, addrErr := cmtp2p.NewNetAddressString(
+			"tcp://" + string(peerId) + "@127.0.0.1:" + strconv.Itoa(testPort),
+		)
+		require.NoError(t, addrErr)
+		require.NotNil(t, testAddr)
+
+		peerAddresses[i-1] = testAddr
+	}
+
+	// CAUTION: we connect to all peers from peer-1
+	// peer-1 connects to peer-2
+	testPeer2, dialErrPeer2 := testConnectors[0].Dial(peerAddresses[1]) // peer-2
+	require.NoError(t, dialErrPeer2, "peer-1 should connect to peer-2")
+	require.NotNil(t, testPeer2)
+	// peer-1 connects to peer-3
+	testPeer3, dialErrPeer3 := testConnectors[0].Dial(peerAddresses[2]) // peer-3
+	require.NoError(t, dialErrPeer3, "peer-1 should connect to peer-3")
+	require.NotNil(t, testPeer3)
+
+	// prepare some test data
+	testTransactions := make([][]byte, 1)
+	testTransactions[0] = []byte{1, 2, 3}
+
+	testTxMessage := cmtp2p.Envelope{
+		ChainID:   "test-chain-1",
+		ChannelID: mempl.MempoolChannel,
+		Message:   &memp2p.Txs{Txs: testTransactions},
+	}
+
+	// TEST 1: sending messages concurrently should not error.
+	// Note that half of the messages are sent to each peer.
+	var actualNumMessages atomic.Uint64
+	waitAll := sync.WaitGroup{}
+	waitAll.Add(100)
+	for i := 0; i < 100; i++ {
+		go func(c int) {
+			defer waitAll.Done()
+
+			withPeerID := testPeer2.ID()
+			if c%2 == 0 {
+				withPeerID = testPeer3.ID()
+			}
+
+			shouldNotErr := testConnectors[0].Send(withPeerID, testTxMessage)
+			require.NoError(t, shouldNotErr, "sending a valid message should not error")
+
+			actualNumMessages.Add(1)
+		}(i + 1)
+	}
+	waitAll.Wait()
+
+	assert.Equal(t, uint64(100), actualNumMessages.Load())
+}
+
+// ----------------------------------------------------------------------------
+
+func createPeerConnectors(
+	tb testing.TB,
+	numPeers int,
+	startPort int,
+	customLogger cmtlog.Logger,
+	withOptions ...p2p.ConnectorOption,
+) (
+	connectors []*p2p.PeerConnector,
+	shutdownFns []func(),
+) {
+	tb.Helper()
+
+	connectors = make([]*p2p.PeerConnector, numPeers)
+	shutdownFns = make([]func(), numPeers)
+
+	// create and start PeerConnector instances
+	for i := 0; i < numPeers; i++ {
+		testConnector, connShutdownFn := ResetTestMultiplexPeerConnector(tb,
+			uint16(1000*i+startPort),
+			customLogger,
+			withOptions...,
+		)
+		require.NotNil(tb, testConnector)
+		require.NotNil(tb, connShutdownFn)
+
+		shouldStartErr := testConnector.Start()
+		require.NoError(tb, shouldStartErr, fmt.Sprintf("peer at %d should start", i))
+
+		// give both some time to start listening correctly.
+		time.Sleep(300 * time.Millisecond)
+		require.Equal(tb, true, testConnector.Transport().IsListening())
+
+		connectors[i] = testConnector
+		shutdownFns[i] = func() {
+			defer connShutdownFn()
+			defer testConnector.Stop()
+		}
+	}
+
+	return // connectors, shutdownFns
 }

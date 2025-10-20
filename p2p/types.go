@@ -123,6 +123,9 @@ type Pool interface {
 	// TryBroadcast sends a message to all peers.
 	TryBroadcast(e Envelope) error
 
+	// HasPeerForChainID returns true if the peerID is present in the
+	// chainPeers entry for chainID.
+	HasPeerForChainID(peerID ID, chainID string) bool
 	// SetPeerForChainID adds peerID to the chainPeers entry for chainID.
 	SetPeerForChainID(peerID ID, chainID string) int
 	// InitPeerForChainID calls InitPeer(peerID) for reactors of chainID.

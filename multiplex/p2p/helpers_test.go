@@ -22,6 +22,9 @@ import (
 
 func ResetTestMultiplexConnectionPool(
 	tb testing.TB,
+	listenPort uint16,
+	nodeInfo *p2p.MultiNetworkNodeInfo, // nil-able
+	nodeKey *cmtp2p.NodeKey, // nil-able
 	customLogger cmtlog.Logger,
 	withOptions ...p2p.ConnectionPoolOption,
 ) (*p2p.ConnectionPool, func()) {
@@ -30,13 +33,37 @@ func ResetTestMultiplexConnectionPool(
 	tmpRootDir, err := os.MkdirTemp("", tb.Name()+"-1")
 	require.NoError(tb, err)
 
+	testConf := e2e.MakeConfig(tb, tmpRootDir)
+	testConf.DiscoveryPort = listenPort
+	testConf.P2P.ListenAddress = fmt.Sprintf("tcp://0.0.0.0:%v", listenPort+1)
+
 	resourceMgr := runtime.NewResourceManager(tb.Context(), customLogger)
 	require.NotNil(tb, resourceMgr)
 
-	nodeInfo := p2p.NewMultiNetworkNodeInfo()
 	nodeKey, keyErr := cmtp2p.LoadOrGenNodeKey(filepath.Join(tmpRootDir, "node_key.json"))
 	require.NotNil(tb, nodeKey)
 	require.NoError(tb, keyErr)
+
+	if nodeKey == nil {
+		var keyErr error
+		nodeKey, keyErr = cmtp2p.LoadOrGenNodeKey(filepath.Join(tmpRootDir, "node_key.json"))
+		require.NotNil(tb, nodeKey)
+		require.NoError(tb, keyErr)
+	}
+
+	netListenAddr, addrErr := cmtp2p.NewNetAddressString(
+		string(nodeKey.ID()) + "@0.0.0.0:" + strconv.Itoa(int(listenPort)),
+	)
+	require.NoError(tb, addrErr)
+
+	if nodeInfo == nil {
+		nodeInfo = p2p.NewMultiNetworkNodeInfoWithConfig(
+			testConf,
+			nodeKey,
+			netListenAddr,
+			[]byte{},
+		)
+	}
 
 	transport := cmtp2p.NewMultiplexTransport(tb.Context(), nodeInfo, *nodeKey)
 	require.NotNil(tb, transport)
@@ -57,8 +84,8 @@ func ResetTestMultiplexConnectionPool(
 
 func ResetTestMultiplexPeerConnector(
 	tb testing.TB,
-	customLogger cmtlog.Logger,
 	listenPort uint16,
+	customLogger cmtlog.Logger,
 	withOptions ...p2p.ConnectorOption,
 ) (*p2p.PeerConnector, func()) {
 	tb.Helper()
@@ -104,7 +131,7 @@ func ResetTestMultiplexPeerConnector(
 	}
 
 	// CAUTION: a connection pool is mandatory for the connector.
-	testPool, poolShutdownFn := ResetTestMultiplexConnectionPool(tb, customLogger)
+	testPool, poolShutdownFn := ResetTestMultiplexConnectionPool(tb, listenPort, nodeInfo, nodeKey, customLogger)
 	require.NotNil(tb, testPool)
 	require.NotNil(tb, poolShutdownFn)
 
@@ -124,6 +151,12 @@ func ResetTestMultiplexPeerConnector(
 		withOptions...,
 	)
 	require.NotNil(tb, testConnector)
+
+	// CAUTION:
+	// In tests we must overwrite the pool's connector because it creates
+	// one internally that unit tests *don't use* to permit more flexibility
+	// on testing the PeerConnector implementation.
+	p2p.ConnectionPoolWithConnector(testConnector)(testPool)
 
 	return testConnector, func() {
 		defer os.RemoveAll(tmpRootDir)

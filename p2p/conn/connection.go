@@ -19,7 +19,9 @@ import (
 
 	tmp2p "github.com/ice-blockchain/cometbft/api/cometbft/p2p/v1"
 	"github.com/ice-blockchain/cometbft/config"
+	"github.com/ice-blockchain/cometbft/internal/cmap"
 	flow "github.com/ice-blockchain/cometbft/internal/flowrate"
+	cmtrand "github.com/ice-blockchain/cometbft/internal/rand"
 	"github.com/ice-blockchain/cometbft/internal/timer"
 	"github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/libs/protoio"
@@ -40,7 +42,7 @@ const (
 	// TODO: remove values present in config.
 	defaultFlushThrottle = 10 * time.Millisecond
 
-	defaultSendQueueCapacity   = 1
+	defaultSendQueueCapacity   = 10 // allows up to 10 queue send operations
 	defaultRecvBufferCapacity  = 4096
 	defaultRecvMessageCapacity = 22020096      // 21MB
 	defaultSendRate            = int64(512000) // 500KB/s
@@ -468,7 +470,7 @@ func (c *MConnection) Send(chainID string, chID byte, msgBytes []byte) bool {
 		default:
 		}
 	} else {
-		c.Logger.Debug("Send failed", "channel", chID, "conn", c, "msgBytes", log.NewLazySprintf("%X", msgBytes))
+		c.Logger.Debug("Send failed", "chainID", chainID, "channel", chID, "conn", c, "msgBytes", log.NewLazySprintf("%X", msgBytes))
 	}
 	return success
 }
@@ -847,8 +849,8 @@ func (c *MConnection) Status() ConnectionStatus {
 	for _, channel := range c.channelProvider.GetChannels() {
 		status.Channels = append(status.Channels, ChannelStatus{
 			ID:                channel.desc.ID,
-			SendQueueCapacity: cap(channel.sendQueue),
-			SendQueueSize:     int(atomic.LoadInt32(&channel.sendQueueSize)),
+			SendQueueCapacity: channel.desc.SendQueueCapacity,
+			SendQueueSize:     int(atomic.LoadInt32(&channel.totalSendQueueSize)),
 			Priority:          channel.desc.Priority,
 			RecentlySent:      atomic.LoadInt64(&channel.recentlySent),
 		})
@@ -898,13 +900,29 @@ func (chDesc ChannelDescriptor) FillDefaults() (filled *ChannelDescriptor) {
 type Channel struct {
 	mtx *sync.Mutex
 
-	desc             *ChannelDescriptor
-	sendQueueChainID string
-	sendQueue        chan []byte
-	sendQueueSize    int32 // atomic.
-	recving          []byte
-	sending          []byte
-	recentlySent     int64 // exponential moving average
+	desc *ChannelDescriptor
+	rand *cmtrand.Rand
+
+	// sendQueues maps queued bytes to be sent by ChainID.
+	sendQueues *cmap.CMap
+	// queueSizes maps sending queue sizes by ChainID.
+	queueSizes *cmap.CMap
+	// totalSendQueueSize represents the total of queued send operations
+	// across all ChainIDs.
+	totalSendQueueSize int32 // atomic
+
+	// recving holds bytes being received, until read.
+	recving []byte
+	// sending holds bytes being sent, until sent.
+	sending []byte // under mtx
+	sendCID string // under mtx
+
+	// sendQueueChainID string
+	// sendQueue        chan []byte
+	// sendQueueSize    int32 // atomic.
+	// recving          []byte
+	// sending          []byte
+	recentlySent int64 // exponential moving average
 
 	nextPacketMsg           *tmp2p.PacketMsg
 	nextP2pWrapperPacketMsg *tmp2p.Packet_PacketMsg
@@ -922,11 +940,15 @@ func NewChannel(desc *ChannelDescriptor) *Channel {
 	}
 
 	return &Channel{
-		mtx:       new(sync.Mutex),
-		desc:      desc,
-		sendQueue: make(chan []byte, desc.SendQueueCapacity),
-		sending:   []byte{},
-		recving:   make([]byte, 0, desc.RecvBufferCapacity),
+		mtx:  new(sync.Mutex),
+		desc: desc,
+		rand: cmtrand.NewRand(),
+
+		sendQueues: cmap.NewCMap(),
+		queueSizes: cmap.NewCMap(),
+		sending:    []byte{},
+		recving:    make([]byte, 0, desc.RecvBufferCapacity),
+
 		nextPacketMsg: &tmp2p.PacketMsg{
 			ChannelID: int32(desc.ID),
 		},
@@ -944,17 +966,32 @@ func (ch *Channel) Desc() *ChannelDescriptor {
 	return ch.desc
 }
 
+func (ch *Channel) getQueue(chainID string) (
+	queue chan []byte,
+	size int32,
+) {
+	if !ch.sendQueues.Has(chainID) {
+		queue = make(chan []byte, ch.desc.SendQueueCapacity)
+		atomic.StoreInt32(&size, 0)
+		ch.sendQueues.Set(chainID, queue)
+		ch.queueSizes.Set(chainID, size)
+	} else {
+		queue = ch.sendQueues.Get(chainID).(chan []byte)
+		size = ch.queueSizes.Get(chainID).(int32)
+	}
+
+	return // queue, size
+}
+
 // Queues message to send to this channel.
 // Goroutine-safe
 // Times out (and returns false) after defaultSendTimeout.
 func (ch *Channel) sendBytes(chainID string, bytes []byte) bool {
-	ch.mtx.Lock()
-	ch.sendQueueChainID = chainID
-	ch.mtx.Unlock()
-
+	queue, size := ch.getQueue(chainID)
 	select {
-	case ch.sendQueue <- bytes:
-		atomic.AddInt32(&ch.sendQueueSize, 1)
+	case queue <- bytes:
+		atomic.AddInt32(&size, 1)
+		atomic.AddInt32(&ch.totalSendQueueSize, 1)
 		return true
 	case <-time.After(defaultSendTimeout):
 		return false
@@ -965,13 +1002,11 @@ func (ch *Channel) sendBytes(chainID string, bytes []byte) bool {
 // Nonblocking, returns true if successful.
 // Goroutine-safe.
 func (ch *Channel) trySendBytes(chainID string, bytes []byte) bool {
-	ch.mtx.Lock()
-	ch.sendQueueChainID = chainID
-	ch.mtx.Unlock()
-
+	queue, size := ch.getQueue(chainID)
 	select {
-	case ch.sendQueue <- bytes:
-		atomic.AddInt32(&ch.sendQueueSize, 1)
+	case queue <- bytes:
+		atomic.AddInt32(&size, 1)
+		atomic.AddInt32(&ch.totalSendQueueSize, 1)
 		return true
 	default:
 		return false
@@ -980,7 +1015,7 @@ func (ch *Channel) trySendBytes(chainID string, bytes []byte) bool {
 
 // Goroutine-safe.
 func (ch *Channel) loadSendQueueSize() (size int) {
-	return int(atomic.LoadInt32(&ch.sendQueueSize))
+	return int(atomic.LoadInt32(&ch.totalSendQueueSize))
 }
 
 // Goroutine-safe
@@ -997,29 +1032,49 @@ func (ch *Channel) isSendPending() bool {
 		return false
 	}
 
-	if ch.sending == nil || len(ch.sending) == 0 {
-		return len(ch.sendQueue) == 0
+	ch.mtx.Lock()
+	isResetAfterSend := ch.sending == nil
+	ch.mtx.Unlock()
+
+	if isResetAfterSend && ch.loadSendQueueSize() == 0 {
+		return false
+	}
+	if ch.sendQueues.Size() == 0 {
+		return false
 	}
 
-	ch.sending = <-ch.sendQueue
+	// randomize ChainIDs to avoid prioritizing queues.
+	chainIds := ch.sendQueues.Keys()
+	randomAt := ch.rand.Intn(ch.sendQueues.Size())
+	rChainID := chainIds[randomAt]
+
+	ch.mtx.Lock()
+	defer ch.mtx.Unlock()
+
+	// consuming queue for rChainID and setting current ChainID
+	queueCID := ch.sendQueues.Get(rChainID).(chan []byte)
+	ch.sending = <-queueCID
+	ch.sendCID = rChainID
 	return true
 }
 
 // Updates the nextPacket proto message for us to send.
-// Not goroutine-safe.
 func (ch *Channel) updateNextPacket() {
 	ch.mtx.Lock()
 	defer ch.mtx.Unlock()
 
 	maxSize := ch.maxPacketMsgPayloadSize
 	if len(ch.sending) <= maxSize {
-		ch.nextPacketMsg.ChainID = ch.sendQueueChainID
+		ch.nextPacketMsg.ChainID = ch.sendCID
 		ch.nextPacketMsg.Data = ch.sending
 		ch.nextPacketMsg.EOF = true
 		ch.sending = nil
-		atomic.AddInt32(&ch.sendQueueSize, -1) // decrement sendQueueSize
+
+		_, size := ch.getQueue(ch.sendCID)
+		atomic.AddInt32(&size, -1) // decrement sendQueueSize
+		atomic.AddInt32(&ch.totalSendQueueSize, -1)
 	} else {
-		ch.nextPacketMsg.ChainID = ch.sendQueueChainID
+		ch.nextPacketMsg.ChainID = ch.sendCID
 		ch.nextPacketMsg.Data = ch.sending[:maxSize]
 		ch.nextPacketMsg.EOF = false
 		ch.sending = ch.sending[maxSize:]
@@ -1030,12 +1085,8 @@ func (ch *Channel) updateNextPacket() {
 }
 
 // Writes next PacketMsg to w and updates c.recentlySent.
-// Not goroutine-safe.
 func (ch *Channel) writePacketMsgTo(w protoio.Writer) (n int, err error) {
 	ch.updateNextPacket()
-
-	ch.mtx.Lock()
-	defer ch.mtx.Unlock()
 
 	n, err = w.WriteMsg(ch.nextPacket)
 	if err != nil {

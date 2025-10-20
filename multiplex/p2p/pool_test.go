@@ -60,7 +60,7 @@ func TestMultiplexP2PConnectionPoolNewConnectionManager(t *testing.T) {
 func TestMultiplexP2PConnectionPoolNewConnectionManagerHelper(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	testPool, shutdownFn := ResetTestMultiplexConnectionPool(t, cmtlog.NewNopLogger())
+	testPool, shutdownFn := ResetTestMultiplexConnectionPool(t, 30001, nil, nil, cmtlog.NewNopLogger())
 	require.NotNil(t, testPool)
 	require.NotNil(t, shutdownFn)
 	defer shutdownFn()

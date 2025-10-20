@@ -162,16 +162,18 @@ func (conn *PeerConnector) Dispatcher() cmtp2p.Dispatcher {
 
 // Dial dials addr or returns an error.
 func (conn *PeerConnector) Dial(addr *cmtp2p.NetAddress) (*cmtp2p.PeerImpl, error) {
+	peerLogger := conn.logger.With("self", string(conn.transport.NodeInfo().ID()))
+
 	if conn.pool.HasPeerID(addr.ID) {
 		// TODO(midas): remove debug logs
-		conn.logger.Debug("Skipping dial - already dialed", "address", addr)
+		peerLogger.Debug("Skipping dial - already dialed", "address", addr)
 
 		p := conn.pool.peers.Get(addr.ID)
 		return p, nil
 	}
 
 	// TODO(midas): remove debug logs
-	conn.logger.Debug("Dialing peer", "address", addr)
+	peerLogger.Debug("Dialing peer", "address", addr)
 
 	// Dial the remote relay
 	p, err := conn.transport.Dial(conn.Context(), *addr, cmtp2p.NewPeerConfig(
@@ -181,7 +183,7 @@ func (conn *PeerConnector) Dial(addr *cmtp2p.NetAddress) (*cmtp2p.PeerImpl, erro
 	))
 	if err != nil {
 		conn.handleErrorGracefully(err)
-		conn.logger.Error("Outbound peer rejected",
+		peerLogger.Error("Outbound peer rejected",
 			"addr", addr.DialString(),
 			"peerId", addr.ID,
 			"err", err,
@@ -194,7 +196,7 @@ func (conn *PeerConnector) Dial(addr *cmtp2p.NetAddress) (*cmtp2p.PeerImpl, erro
 
 	// AddPeer locks the connector mutex for startRoutines.
 	if err := conn.pool.AddPeer(p); err != nil {
-		conn.logger.Error("failed to add outbound peer to set",
+		peerLogger.Error("failed to add outbound peer to set",
 			"addr", addr.DialString(),
 			"peer", p,
 			"err", err,
@@ -203,14 +205,16 @@ func (conn *PeerConnector) Dial(addr *cmtp2p.NetAddress) (*cmtp2p.PeerImpl, erro
 	}
 
 	// TODO(midas): remove debug logs
-	conn.logger.Debug("Added outbound peer", "peer", p)
+	peerLogger.Debug("Added outbound peer", "peer", p)
 	return p, nil
 }
 
 // Listen listens for peer connections.
 func (conn *PeerConnector) Listen() error {
+	peerLogger := conn.logger.With("self", string(conn.transport.NodeInfo().ID()))
+
 	// TODO(midas): remove debug logs
-	conn.logger.Debug("PeerConnector#Listen")
+	peerLogger.Debug("PeerConnector#Listen")
 
 	for conn.Context().Err() == nil {
 		// Early shutdown detection
@@ -236,7 +240,7 @@ func (conn *PeerConnector) Listen() error {
 				return err // not possible to continue (transport closed)
 			}
 
-			conn.logger.Error("Inbound peer rejected",
+			peerLogger.Error("Inbound peer rejected",
 				"err", err,
 			)
 			continue
@@ -247,7 +251,7 @@ func (conn *PeerConnector) Listen() error {
 
 		// AddPeer locks the connector mutex for startRoutines.
 		if err := conn.pool.AddPeer(p); err != nil {
-			conn.logger.Error("failed to add inbound peer to set",
+			peerLogger.Error("failed to add inbound peer to set",
 				"peer", p,
 				"err", err,
 			)
@@ -255,7 +259,7 @@ func (conn *PeerConnector) Listen() error {
 		}
 
 		// TODO(midas): remove debug logs
-		conn.logger.Debug("Added inbound peer", "peer", p)
+		peerLogger.Debug("Added inbound peer", "peer", p)
 	}
 
 	return nil
@@ -263,6 +267,8 @@ func (conn *PeerConnector) Listen() error {
 
 // Send sends a packet to peerID.
 func (conn *PeerConnector) Send(dest cmtp2p.ID, e cmtp2p.Envelope) error {
+	peerLogger := conn.logger.With("self", string(conn.transport.NodeInfo().ID()))
+
 	conn.mtx.Lock()
 	mconn, hasConn := conn.mconns[dest]
 	conn.mtx.Unlock()
@@ -273,15 +279,15 @@ func (conn *PeerConnector) Send(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 
 	msgBytes, err := conn.wrapMsgBytes(e.Message)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to send message for peer %s: %w", dest, err)
 	}
 	if len(msgBytes) == 0 {
-		return fmt.Errorf("failed to send message; empty msgBytes for dest %s", dest)
+		return fmt.Errorf("failed to send message for peer %s: empty msgBytes", dest)
 	}
 
 	// TODO(midas): remove debug logs
-	conn.logger.Debug("PeerConnector#Send",
-		"dest", dest,
+	peerLogger.Debug("PeerConnector#Send",
+		"peerId", dest,
 		"chID", e.ChannelID,
 		"msg", msgBytes,
 		"mconn", mconn.IsRunning(),
@@ -302,6 +308,8 @@ func (conn *PeerConnector) Send(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 
 // TrySend tries to send a packet to peerID.
 func (conn *PeerConnector) TrySend(dest cmtp2p.ID, e cmtp2p.Envelope) error {
+	peerLogger := conn.logger.With("self", string(conn.transport.NodeInfo().ID()))
+
 	conn.mtx.Lock()
 	mconn, hasConn := conn.mconns[dest]
 	conn.mtx.Unlock()
@@ -312,14 +320,14 @@ func (conn *PeerConnector) TrySend(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 
 	msgBytes, err := conn.wrapMsgBytes(e.Message)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to send message for peer %s: %w", dest, err)
 	}
 	if len(msgBytes) == 0 {
-		return fmt.Errorf("failed to send message; empty msgBytes for dest %s", dest)
+		return fmt.Errorf("failed to send message for peer %s: empty msgBytes", dest)
 	}
 
 	// TODO(midas): remove debug logs
-	conn.logger.Debug("PeerConnector#TrySend",
+	peerLogger.Debug("PeerConnector#TrySend",
 		"dest", dest,
 		"chID", e.ChannelID,
 		"msg", msgBytes,
@@ -399,6 +407,7 @@ func (conn *PeerConnector) startRoutines(peer *cmtp2p.PeerImpl) error {
 		}
 	}
 
+	conn.logger.Debug("Storing mconn for connected peer", "peerID", peer.ID())
 	conn.mconns[peer.ID()] = mconn
 	return nil
 }
@@ -436,7 +445,10 @@ func (conn *PeerConnector) stopPeerForError(p *cmtp2p.PeerImpl, r any) {
 func (conn *PeerConnector) wrapMsgBytes(msg proto.Message) ([]byte, error) {
 	if w, ok := msg.(types.Wrapper); ok {
 		msg = w.Wrap()
+	} else {
+		return []byte{}, fmt.Errorf("protobuf for Message may not be empty")
 	}
+
 	msgBytes, err := proto.Marshal(msg)
 	if err != nil {
 		conn.logger.Error("failed to marshal message to send", "error", err)

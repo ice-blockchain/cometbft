@@ -103,6 +103,7 @@ func (*mockPool) HasPeerID(id ID) bool                                   { retur
 func (*mockPool) HasPeerIP(ip net.IP) bool                               { return true }
 func (*mockPool) Broadcast(e Envelope) error                             { return nil }
 func (*mockPool) TryBroadcast(e Envelope) error                          { return nil }
+func (*mockPool) HasPeerForChainID(peerID ID, chainID string) bool       { return false }
 func (*mockPool) SetPeerForChainID(peerID ID, chainID string) int        { return 0 }
 func (*mockPool) InitPeerForChainID(peerID ID, chainID string) *PeerImpl { return nil }
 func (*mockPool) AddPeerForChainID(peerID ID, chainID string) bool       { return false }
