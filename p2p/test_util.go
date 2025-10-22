@@ -103,6 +103,7 @@ func (*mockPool) HasPeerID(id ID) bool                                   { retur
 func (*mockPool) HasPeerIP(ip net.IP) bool                               { return true }
 func (*mockPool) Broadcast(e Envelope) error                             { return nil }
 func (*mockPool) TryBroadcast(e Envelope) error                          { return nil }
+func (*mockPool) HasConnection(peerID ID) bool                           { return false }
 func (*mockPool) HasPeerForChainID(peerID ID, chainID string) bool       { return false }
 func (*mockPool) SetPeerForChainID(peerID ID, chainID string) int        { return 0 }
 func (*mockPool) InitPeerForChainID(peerID ID, chainID string) *PeerImpl { return nil }
@@ -124,6 +125,7 @@ func NewConnector(ctx context.Context) *mockConnector {
 func (*mockConnector) Pool() Pool                               { return nil }
 func (*mockConnector) Transport() *MultiplexTransport           { return nil }
 func (*mockConnector) Dispatcher() Dispatcher                   { return nil }
+func (*mockConnector) Connection(peerID ID) *conn.MConnection   { return nil }
 func (*mockConnector) Dial(addr *NetAddress) (*PeerImpl, error) { return nil, nil }
 func (*mockConnector) Listen() error                            { return nil }
 

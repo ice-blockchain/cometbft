@@ -160,6 +160,15 @@ func (conn *PeerConnector) Dispatcher() cmtp2p.Dispatcher {
 	return conn.dispatcher
 }
 
+// Connection returns the MConnection instance for peerID.
+func (conn *PeerConnector) Connection(peerID cmtp2p.ID) *cmtconn.MConnection {
+	conn.mtx.Lock()
+	defer conn.mtx.Unlock()
+
+	mconn := conn.mconns[peerID]
+	return mconn
+}
+
 // Dial dials addr or returns an error.
 func (conn *PeerConnector) Dial(addr *cmtp2p.NetAddress) (*cmtp2p.PeerImpl, error) {
 	peerLogger := conn.logger.With("self", string(conn.transport.NodeInfo().ID()))
@@ -301,7 +310,7 @@ func (conn *PeerConnector) Send(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 
 	if sent := mconn.Send(e.ChainID, e.ChannelID, msgBytes); !sent {
 		return fmt.Errorf(
-			"failed to send message; MConnection is stopped for %s", dest)
+			"failed to send message; Timeout after 10s.")
 	}
 	return nil
 }
@@ -342,7 +351,7 @@ func (conn *PeerConnector) TrySend(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 
 	if sent := mconn.TrySend(e.ChainID, e.ChannelID, msgBytes); !sent {
 		return fmt.Errorf(
-			"failed to send message; MConnection is stopped for %s", dest)
+			"failed to send message; Send queue for %s is full.", e.ChainID)
 	}
 	return nil
 }

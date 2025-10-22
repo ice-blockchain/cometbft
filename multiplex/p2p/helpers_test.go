@@ -40,10 +40,6 @@ func ResetTestMultiplexConnectionPool(
 	resourceMgr := runtime.NewResourceManager(tb.Context(), customLogger)
 	require.NotNil(tb, resourceMgr)
 
-	nodeKey, keyErr := cmtp2p.LoadOrGenNodeKey(filepath.Join(tmpRootDir, "node_key.json"))
-	require.NotNil(tb, nodeKey)
-	require.NoError(tb, keyErr)
-
 	if nodeKey == nil {
 		var keyErr error
 		nodeKey, keyErr = cmtp2p.LoadOrGenNodeKey(filepath.Join(tmpRootDir, "node_key.json"))

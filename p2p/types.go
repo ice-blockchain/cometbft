@@ -72,6 +72,8 @@ type Connector interface {
 	Transport() *MultiplexTransport
 	// Dispatcher returns a packet dispatcher.
 	Dispatcher() Dispatcher
+	// Connection returns the MConnection instance for peerID.
+	Connection(peerID ID) *conn.MConnection
 
 	// Dial dials addr or returns an error.
 	Dial(addr *NetAddress) (*PeerImpl, error)
@@ -123,6 +125,8 @@ type Pool interface {
 	// TryBroadcast sends a message to all peers.
 	TryBroadcast(e Envelope) error
 
+	// HasConnection returns true if a connection entry exists for peerID.
+	HasConnection(peerID ID) bool
 	// HasPeerForChainID returns true if the peerID is present in the
 	// chainPeers entry for chainID.
 	HasPeerForChainID(peerID ID, chainID string) bool

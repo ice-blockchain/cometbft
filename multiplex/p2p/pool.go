@@ -407,6 +407,21 @@ func (pool *ConnectionPool) TryBroadcast(e cmtp2p.Envelope) error {
 	return nil
 }
 
+// HasConnection returns true if a connection entry exists for peerID.
+func (pool *ConnectionPool) HasConnection(
+	peerID cmtp2p.ID,
+) bool {
+	if isConnected := pool.connected.Has(string(peerID)); !isConnected {
+		return false
+	}
+
+	pool.mtx.Lock()
+	defer pool.mtx.Lock()
+
+	mconn := pool.connector.Connection(peerID)
+	return mconn != nil
+}
+
 // HasPeerForChainID returns true if the peerID has been added to the
 // chainPeers entry for chainID.
 func (pool *ConnectionPool) HasPeerForChainID(

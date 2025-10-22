@@ -42,7 +42,7 @@ const (
 	// TODO: remove values present in config.
 	defaultFlushThrottle = 10 * time.Millisecond
 
-	defaultSendQueueCapacity   = 10 // allows up to 10 queue send operations
+	defaultSendQueueCapacity   = 100 // allows up to 100 queued send operations
 	defaultRecvBufferCapacity  = 4096
 	defaultRecvMessageCapacity = 22020096      // 21MB
 	defaultSendRate            = int64(512000) // 500KB/s
@@ -521,7 +521,7 @@ func (c *MConnection) CanSend(chainID string, chID byte) bool {
 		return false
 	}
 
-	return channel.canSend()
+	return channel.canSendForChainID(chainID)
 }
 
 // sendRoutine polls for packets to send from channels.
@@ -970,6 +970,9 @@ func (ch *Channel) getQueue(chainID string) (
 	queue chan []byte,
 	size int32,
 ) {
+	ch.mtx.Lock()
+	defer ch.mtx.Unlock()
+
 	if !ch.sendQueues.Has(chainID) {
 		queue = make(chan []byte, ch.desc.SendQueueCapacity)
 		atomic.StoreInt32(&size, 0)
@@ -984,8 +987,8 @@ func (ch *Channel) getQueue(chainID string) (
 }
 
 // Queues message to send to this channel.
-// Goroutine-safe
 // Times out (and returns false) after defaultSendTimeout.
+// Goroutine-safe.
 func (ch *Channel) sendBytes(chainID string, bytes []byte) bool {
 	queue, size := ch.getQueue(chainID)
 	select {
@@ -1014,14 +1017,26 @@ func (ch *Channel) trySendBytes(chainID string, bytes []byte) bool {
 }
 
 // Goroutine-safe.
-func (ch *Channel) loadSendQueueSize() (size int) {
+func (ch *Channel) loadChainSendQueueSize(chainID string) (size int) {
+	_, s := ch.getQueue(chainID)
+	return int(atomic.LoadInt32(&s))
+}
+
+// Goroutine-safe.
+func (ch *Channel) loadTotalSendQueueSize() (size int) {
 	return int(atomic.LoadInt32(&ch.totalSendQueueSize))
 }
 
 // Goroutine-safe
 // Use only as a heuristic.
 func (ch *Channel) canSend() bool {
-	return ch.loadSendQueueSize() < defaultSendQueueCapacity
+	return ch.loadTotalSendQueueSize() < defaultSendQueueCapacity
+}
+
+// Goroutine-safe
+// Use only as a heuristic.
+func (ch *Channel) canSendForChainID(chainID string) bool {
+	return ch.loadChainSendQueueSize(chainID) < defaultSendQueueCapacity
 }
 
 // Returns true if any PacketMsgs are pending to be sent.
@@ -1036,14 +1051,16 @@ func (ch *Channel) isSendPending() bool {
 	isResetAfterSend := ch.sending == nil
 	ch.mtx.Unlock()
 
-	if isResetAfterSend && ch.loadSendQueueSize() == 0 {
+	if isResetAfterSend && ch.loadTotalSendQueueSize() == 0 {
 		return false
 	}
 	if ch.sendQueues.Size() == 0 {
 		return false
 	}
 
-	// randomize ChainIDs to avoid prioritizing queues.
+	// Randomize ChainIDs to avoid prioritizing queues when there is more than
+	// one ChainID in the send queues of this channel, which happens when
+	// the client sends transactions for multiple ChainIDs concurrently.
 	chainIds := ch.sendQueues.Keys()
 	randomAt := ch.rand.Intn(ch.sendQueues.Size())
 	rChainID := chainIds[randomAt]
@@ -1051,15 +1068,22 @@ func (ch *Channel) isSendPending() bool {
 	ch.mtx.Lock()
 	defer ch.mtx.Unlock()
 
-	// consuming queue for rChainID and setting current ChainID
+	// Consuming queue for rChainID and setting current ChainID for send operation.
+	// Non-blocking consumer avoids getting stuck here during shutdown.
 	queueCID := ch.sendQueues.Get(rChainID).(chan []byte)
-	ch.sending = <-queueCID
-	ch.sendCID = rChainID
-	return true
+	select {
+	case ch.sending = <-queueCID:
+		ch.sendCID = rChainID
+		return true
+	default:
+	}
+	return false
 }
 
 // Updates the nextPacket proto message for us to send.
 func (ch *Channel) updateNextPacket() {
+	_, size := ch.getQueue(ch.sendCID)
+
 	ch.mtx.Lock()
 	defer ch.mtx.Unlock()
 
@@ -1070,7 +1094,6 @@ func (ch *Channel) updateNextPacket() {
 		ch.nextPacketMsg.EOF = true
 		ch.sending = nil
 
-		_, size := ch.getQueue(ch.sendCID)
 		atomic.AddInt32(&size, -1) // decrement sendQueueSize
 		atomic.AddInt32(&ch.totalSendQueueSize, -1)
 	} else {
