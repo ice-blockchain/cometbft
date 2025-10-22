@@ -323,6 +323,7 @@ func (b *MultiplexBackend) DefaultNetworksCreatorRoutine() types.NetworksCreator
 				if err = b.runtimeRegistry.InitRuntime(
 					newChainID,
 					otherValPubKeys,
+					true, // createNetworkGenesis
 				); err != nil {
 					return err
 				}

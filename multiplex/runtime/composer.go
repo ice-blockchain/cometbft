@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	dbm "github.com/cometbft/cometbft-db"
@@ -83,6 +84,7 @@ func NewComposer(
 		validatorsByNet:  map[string][]string{},
 		composedChainIds: map[string]struct{}{},
 		injectedChainIds: map[string]struct{}{},
+		genesisDocSet:    new(helpers.ChecksummedGenesisDocSet),
 
 		// Options
 		logger: logger,
@@ -248,6 +250,7 @@ func (c *runtimeComposer) OnReset(ctx context.Context) error {
 func (c *runtimeComposer) Compose(
 	chainID string,
 	remoteValidatorPubKeys []string,
+	createNetworkGenesis bool,
 ) error {
 	// TODO(midas): remove debug logs
 	c.logger.Debug("runtimeComposer#Compose", "chainId", chainID)
@@ -272,7 +275,7 @@ func (c *runtimeComposer) Compose(
 
 	// Update the validators list for this ChainID.
 	localValidatorPubKey, _ := c.Validator(chainID).GetPubKey()
-	localValidatorPubKeyHex := hex.EncodeToString(localValidatorPubKey.Bytes())
+	localValidatorPubKeyHex := strings.ToUpper(hex.EncodeToString(localValidatorPubKey.Bytes()))
 
 	if _, ok := c.validatorsByNet[chainID]; !ok {
 		c.validatorsByNet[chainID] = make([]string, 0, len(remoteValidatorPubKeys)+1) // add local
@@ -280,9 +283,11 @@ func (c *runtimeComposer) Compose(
 	c.validatorsByNet[chainID] = remoteValidatorPubKeys[:]
 	c.validatorsByNet[chainID] = append(c.validatorsByNet[chainID], localValidatorPubKeyHex)
 
-	// Create a cmttypes.GenesisDoc with validatorPubKeys.
-	if err := c.makeNetworkGenesis(chainID); err != nil {
-		return err
+	if createNetworkGenesis {
+		// Create a cmttypes.GenesisDoc with validatorPubKeys.
+		if err := c.makeNetworkGenesis(chainID); err != nil {
+			return err
+		}
 	}
 
 	c.composedChainIds[chainID] = struct{}{}

@@ -95,7 +95,7 @@ func prepareMultiplexBackend(t *testing.T, withLogger cmtlog.Logger) (
 	startErr := testBackend.Start()
 	require.NoError(t, startErr, "should start a server instance")
 
-	initErr := testBackend.RuntimeManager().InitRuntime(testChainID, []string{})
+	initErr := testBackend.RuntimeManager().InitRuntime(testChainID, []string{}, true)
 	require.NoError(t, initErr, "should initialize test network")
 
 	runtimeErr := testBackend.RuntimeManager().StartRuntime(testChainID)

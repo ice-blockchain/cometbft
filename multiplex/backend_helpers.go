@@ -93,7 +93,7 @@ func (b *MultiplexBackend) GetLocalNetworkValidators(
 		}
 
 		// Otherwise, pre-allocates priv validator instance.
-		if err = b.runtimeRegistry.InitRuntime(chainID, []string{}); err != nil {
+		if err = b.runtimeRegistry.InitRuntime(chainID, []string{}, false); err != nil {
 			b.logger.Error("Failed to allocate new priv validator",
 				// TODO(midas): requestId not available here.
 				"chainId", chainID,

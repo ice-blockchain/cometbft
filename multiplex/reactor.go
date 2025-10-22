@@ -183,7 +183,7 @@ func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
 			types.ServiceKeyMempoolReactor,
 		).(*mempl.Reactor)
 		if !ok || !mempoolReactor.IsRunning() {
-			reactor.runtimeMgr.InitRuntime(e.ChainID, []string{})
+			reactor.runtimeMgr.InitRuntime(e.ChainID, []string{}, true)
 			reactor.runtimeMgr.StartRuntime(e.ChainID)
 		}
 
@@ -556,7 +556,7 @@ func (reactor *Reactor) handleChainReplicationRequest(
 	}
 
 	// Initializes the runtime services (not starting).
-	reactor.runtimeMgr.InitRuntime(replRequest.ChainID, validatorPubKeys)
+	reactor.runtimeMgr.InitRuntime(replRequest.ChainID, validatorPubKeys, true)
 
 	return nil
 }

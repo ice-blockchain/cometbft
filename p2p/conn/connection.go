@@ -607,7 +607,10 @@ func (c *MConnection) sendSomePacketMsgs(w protoio.Writer) bool {
 	// Block until .sendMonitor says we can write.
 	// Once we're ready we send more than we asked for,
 	// but amortized it should even out.
-	c.sendMonitor.Limit(c._maxPacketMsgSize, c.config.SendRate, true)
+	//
+	// TODO(midas): blocking through sendMonitor is DISABLED due to high
+	// amount of messages needed to be sent with multiplex. Must be adapted.
+	// c.sendMonitor.Limit(c._maxPacketMsgSize, c.config.SendRate, true)
 
 	// Now send some PacketMsgs.
 	return c.sendBatchPacketMsgs(w, numBatchPacketMsgs)
@@ -697,7 +700,10 @@ func (c *MConnection) recvRoutine() {
 FOR_LOOP:
 	for c.Context().Err() == nil {
 		// Block until .recvMonitor says we can read.
-		c.recvMonitor.Limit(c._maxPacketMsgSize, atomic.LoadInt64(&c.config.RecvRate), true)
+		//
+		// TODO(midas): blocking through recvMonitor is DISABLED due to high
+		// amount of messages needed with multiplex. Must be adapted.
+		// c.recvMonitor.Limit(c._maxPacketMsgSize, atomic.LoadInt64(&c.config.RecvRate), true)
 
 		// Peek into bufConnReader for debugging
 		/*

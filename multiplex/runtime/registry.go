@@ -601,16 +601,23 @@ func (reg *Registry) AddRuntime(
 }
 
 // InitRuntime should initialize all services and resources for chainID.
-func (reg *Registry) InitRuntime(chainID string, otherValPubKeys []string) error {
+func (reg *Registry) InitRuntime(
+	chainID string,
+	otherValPubKeys []string,
+	createNetworkGenesis bool,
+) error {
 	// TODO(midas): remove debug logs
 	reg.logger.Debug("Registry#InitRuntime", "chainId", chainID)
 
 	reg.mtx.Lock()
 	defer reg.mtx.Unlock()
 
-	if err := reg.runtimeComposer.Compose(chainID, otherValPubKeys); err != nil {
+	if err := reg.runtimeComposer.Compose(chainID, otherValPubKeys, createNetworkGenesis); err != nil {
 		return fmt.Errorf("failed to compose network for %s: %w", chainID, err)
 	}
+
+	// TODO(midas): remove debug logs
+	reg.logger.Debug("RuntimeComposer#Compose done", "chainId", chainID)
 
 	// Updates the internal chainRegistry instance.
 	extChainID := helpers.NewExtendedChainIDFromString(chainID)
@@ -619,6 +626,8 @@ func (reg *Registry) InitRuntime(chainID string, otherValPubKeys []string) error
 		chainID,
 	)
 
+	// TODO(midas): remove debug logs
+	reg.logger.Debug("Registry#InitRuntime done", "chainId", chainID)
 	return nil
 }
 

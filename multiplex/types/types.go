@@ -65,7 +65,7 @@ type RuntimeManager interface {
 	// AddRuntime should add a genesisDoc for chainID.
 	AddRuntime(chainID string, genesisDoc cmttypes.GenesisDoc) error
 	// InitRuntime should initialize all services and resources for chainID.
-	InitRuntime(chainID string, otherValPubKeys []string) error
+	InitRuntime(chainID string, otherValPubKeys []string, createNetworkGenesis bool) error
 	// StartRuntime should start all services for chainID.
 	StartRuntime(chainID string) error
 	// StopRuntime should stop all services for chainID.
@@ -82,7 +82,7 @@ type RuntimeComposer interface {
 	Switch() *cmtp2p.Switch
 
 	// Compose initializes a runtime for chainID.
-	Compose(chainID string, remoteValidatorPubKeys []string) error
+	Compose(chainID string, remoteValidatorPubKeys []string, createNetworkGenesis bool) error
 	// Inject injects a running state machine and block store.
 	Inject(chainID string) error
 	// Build packages a node runtime and injects a [node.Node].
