@@ -416,7 +416,7 @@ func (pool *ConnectionPool) HasConnection(
 	}
 
 	pool.mtx.Lock()
-	defer pool.mtx.Lock()
+	defer pool.mtx.Unlock()
 
 	mconn := pool.connector.Connection(peerID)
 	return mconn != nil

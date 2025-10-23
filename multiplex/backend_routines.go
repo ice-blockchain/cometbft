@@ -204,9 +204,13 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() types.NodeReplRequest
 				peer := discoveryPeers.Get(addr.ID())
 				peerID := string(addr.ID())
 
-				// The receiving end (peerID) will have to dial all other
+				// NOTE(midas):
+				// The receiving end (peerID) may have to dial all other
 				// CometBFT peers that are involved in this broadcast to permit
 				// faster consensus build-up and reaching consensus faster.
+				// This is called `any-to-any` dialing and should be revisited
+				// when we are reaching consistent replications of data.
+
 				cometbftPeers := make([]string, 0, len(healthyRemoteRelays))
 				for _, relayDiscoveryAddr := range healthyRemoteRelays {
 					if relayDiscoveryAddr.ID() != addr.ID() {
@@ -231,6 +235,8 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() types.NodeReplRequest
 						},
 					},
 				}
+
+				peer.SetLogger(b.logger.With("peerId", peerID))
 				peer.Send(chainID, e)
 				b.replicationMgr.Process(addr.ID(), e)
 

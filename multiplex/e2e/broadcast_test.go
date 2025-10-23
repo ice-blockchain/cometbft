@@ -15,7 +15,7 @@ import (
 // TestMultiplexClient
 
 // XXX
-func TestXXXMultiplexClientBroadcastTx(t *testing.T) {
+func TestMultiplexClientBroadcastTx(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numRelays := 3

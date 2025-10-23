@@ -53,7 +53,7 @@ func NewConnector(
 		dispatcher: dispatcher,
 
 		// Services
-		mconns: make(map[cmtp2p.ID]*cmtconn.MConnection, 0),
+		mconns: map[cmtp2p.ID]*cmtconn.MConnection{},
 
 		// Options
 		logger: logger,
@@ -165,8 +165,11 @@ func (conn *PeerConnector) Connection(peerID cmtp2p.ID) *cmtconn.MConnection {
 	conn.mtx.Lock()
 	defer conn.mtx.Unlock()
 
-	mconn := conn.mconns[peerID]
-	return mconn
+	if mconn, ok := conn.mconns[peerID]; ok {
+		return mconn
+	}
+
+	return nil
 }
 
 // Dial dials addr or returns an error.
@@ -200,7 +203,7 @@ func (conn *PeerConnector) Dial(addr *cmtp2p.NetAddress) (*cmtp2p.PeerImpl, erro
 		return nil, err
 	}
 
-	// Inject the messager
+	// Inject this connector instance as the peer messager.
 	cmtp2p.PeerMessager(conn)(p)
 
 	// AddPeer locks the connector mutex for startRoutines.
@@ -454,8 +457,6 @@ func (conn *PeerConnector) stopPeerForError(p *cmtp2p.PeerImpl, r any) {
 func (conn *PeerConnector) wrapMsgBytes(msg proto.Message) ([]byte, error) {
 	if w, ok := msg.(types.Wrapper); ok {
 		msg = w.Wrap()
-	} else {
-		return []byte{}, fmt.Errorf("protobuf for Message may not be empty")
 	}
 
 	msgBytes, err := proto.Marshal(msg)

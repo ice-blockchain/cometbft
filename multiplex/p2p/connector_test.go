@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cosmos/gogoproto/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -315,16 +314,7 @@ func TestMultiplexP2PPeerConnectorSend(t *testing.T) {
 	assert.Contains(t, shouldErr1.Error(), "missing MConnection")
 	assert.Contains(t, shouldErr1.Error(), testPeer1NodeID)
 
-	// TEST 2: sending an empty message must error.
-	var emptyMsg proto.Message
-	shouldErr2 := testConnectors[0].Send(testPeer2NodeID, cmtp2p.Envelope{
-		Message: emptyMsg,
-	})
-	assert.Error(t, shouldErr2, "sending an empty message must error")
-	assert.Contains(t, shouldErr2.Error(), "Message may not be empty")
-	assert.Contains(t, shouldErr2.Error(), testPeer2NodeID)
-
-	// TEST 3: sending an actual well-formed transaction must succeed.
+	// TEST 2: sending an actual well-formed transaction must succeed.
 	// peer-1 sends to previously dialed peer-2
 	shouldNotErr := testConnectors[0].Send(testPeer2NodeID, testTxMessage)
 	assert.NoError(t, shouldNotErr, "sending a valid message should not error")
@@ -474,16 +464,7 @@ func TestMultiplexP2PPeerConnectorTrySend(t *testing.T) {
 	assert.Contains(t, shouldErr1.Error(), "missing MConnection")
 	assert.Contains(t, shouldErr1.Error(), testPeer1NodeID)
 
-	// TEST 2: sending an empty message must error.
-	var emptyMsg proto.Message
-	shouldErr2 := testConnectors[0].TrySend(testPeer2NodeID, cmtp2p.Envelope{
-		Message: emptyMsg,
-	})
-	assert.Error(t, shouldErr2, "sending an empty message must error")
-	assert.Contains(t, shouldErr2.Error(), "Message may not be empty")
-	assert.Contains(t, shouldErr2.Error(), testPeer2NodeID)
-
-	// TEST 3: sending an actual well-formed transaction must succeed.
+	// TEST 2: sending an actual well-formed transaction must succeed.
 	// peer-1 sends to previously dialed peer-2
 	shouldNotErr := testConnectors[0].TrySend(testPeer2NodeID, testTxMessage)
 	assert.NoError(t, shouldNotErr, "sending a valid message should not error")
@@ -595,7 +576,7 @@ func TestMultiplexP2PPeerConnectorRoutines(t *testing.T) {
 	numPeers := 3
 	testConnectors,
 		peerAddresses,
-		shutdownFns := createPeerConnectors(t, numPeers, 30001, cmtlog.TestingLogger())
+		shutdownFns := createPeerConnectors(t, numPeers, 30001, cmtlog.NewNopLogger())
 	require.NotEmpty(t, testConnectors)
 	require.NotEmpty(t, shutdownFns)
 	defer func() {
@@ -634,21 +615,6 @@ func TestMultiplexP2PPeerConnectorRoutines(t *testing.T) {
 	require.NotNil(t, actualMConnectionPeer3)
 	// MConnection should be running
 	assert.Equal(t, true, actualMConnectionPeer3.IsRunning(), "MConn should be running for peer-1 -> peer-3")
-
-	// TEST 3: Make sure that wiring a valid message is successful
-	// using both MConnection instances.
-	testTransactions := make([][]byte, 1)
-	testTransactions[0] = []byte{1, 2, 3}
-	testTxMessage := cmtp2p.Envelope{
-		ChainID:   "test-chain-1",
-		ChannelID: mempl.MempoolChannel,
-		Message:   &memp2p.Txs{Txs: testTransactions},
-	}
-	shouldNotErrPeer2 := testConnectors[0].Send(testPeer2.ID(), testTxMessage)
-	assert.NoError(t, shouldNotErrPeer2, "sending a valid message to peer-2 should not error")
-
-	shouldNotErrPeer3 := testConnectors[0].Send(testPeer3.ID(), testTxMessage)
-	assert.NoError(t, shouldNotErrPeer3, "sending a valid message to peer-3 should not error")
 
 	// ... and we must correctly cleanup afterwards.
 	testConnectors[0].Pool().RemovePeer(testPeer2.ID())
