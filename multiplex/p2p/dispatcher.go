@@ -181,10 +181,9 @@ func (router *packetDispatcher) Reactors(chainID string) map[string]cmtp2p.React
 
 	reactors := make(map[string]cmtp2p.Reactor, len(router.reactorsServiceKeys))
 	for name, serviceKey := range router.reactorsServiceKeys {
-		reactors[name] = router.resourceMgr.Get(
-			chainID,
-			serviceKey,
-		).(cmtp2p.Reactor)
+		if r := router.resourceMgr.Get(chainID, serviceKey); r != nil {
+			reactors[name] = r.(cmtp2p.Reactor)
+		}
 	}
 
 	return reactors
@@ -199,6 +198,16 @@ func (router *packetDispatcher) Reactor(chainID string, name string) cmtp2p.Reac
 	}
 
 	return nil
+}
+
+// SetReactor sets a reactor for chainID by name.
+func (router *packetDispatcher) SetReactor(chainID, name string, r cmtp2p.Reactor) {
+	router.mtx.Lock()
+	defer router.mtx.Unlock()
+
+	if serviceKey, ok := router.reactorsServiceKeys[name]; ok {
+		router.resourceMgr.Set(chainID, serviceKey, r)
+	}
 }
 
 // SetMultiplexReactor sets the multiplex reactor.
@@ -294,4 +303,9 @@ func (router *packetDispatcher) SetOptions(options ...DispatcherOption) {
 // Logger returns the logger instance.
 func (router *packetDispatcher) Logger() cmtlog.Logger {
 	return router.logger
+}
+
+// Resources returns the resource manager.
+func (router *packetDispatcher) Resources() types.ResourceManager {
+	return router.resourceMgr
 }

@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
@@ -33,13 +32,16 @@ func ResetTestMultiplexConnectionPool(
 	tmpRootDir, err := os.MkdirTemp("", tb.Name()+"-1")
 	require.NoError(tb, err)
 
+	// creates config.Config
 	testConf := e2e.MakeConfig(tb, tmpRootDir)
 	testConf.DiscoveryPort = listenPort
 	testConf.P2P.ListenAddress = fmt.Sprintf("tcp://0.0.0.0:%v", listenPort+1)
 
+	// creates runtime.ResourceRegistry
 	resourceMgr := runtime.NewResourceManager(tb.Context(), customLogger)
 	require.NotNil(tb, resourceMgr)
 
+	// creates or reuses cmtp2p.NodeKey
 	if nodeKey == nil {
 		var keyErr error
 		nodeKey, keyErr = cmtp2p.LoadOrGenNodeKey(filepath.Join(tmpRootDir, "node_key.json"))
@@ -52,6 +54,7 @@ func ResetTestMultiplexConnectionPool(
 	)
 	require.NoError(tb, addrErr)
 
+	// creates or reuses p2p.MultiNetworkNodeInfo
 	if nodeInfo == nil {
 		nodeInfo = p2p.NewMultiNetworkNodeInfoWithConfig(
 			testConf,
@@ -61,17 +64,23 @@ func ResetTestMultiplexConnectionPool(
 		)
 	}
 
+	// creates cmtp2p.MultiplexTransport
 	transport := cmtp2p.NewMultiplexTransport(tb.Context(), nodeInfo, *nodeKey)
 	require.NotNil(tb, transport)
 
-	// Test the pool constructor.
+	// creates p2p.ConnectionPool
 	testPool := p2p.NewConnectionManager(tb.Context(),
 		nodeKey,
 		transport,
 		resourceMgr,
 		customLogger,
 	)
-	assert.NotNil(tb, testPool)
+	require.NotNil(tb, testPool)
+
+	// CAUTION: a multiplex Reactor is mandatory for the dispatcher.
+	testMultiplexReactor := cmtp2p.NewBaseReactor(tb.Context(), "MULTIPLEX", nil)
+	testDispatcher := testPool.Dispatcher()
+	testDispatcher.SetMultiplexReactor(testMultiplexReactor)
 
 	return testPool, func() {
 		defer os.RemoveAll(tmpRootDir)
@@ -89,13 +98,16 @@ func ResetTestMultiplexPeerConnector(
 	tmpRootDir, err := os.MkdirTemp("", tb.Name()+"-1")
 	require.NoError(tb, err)
 
+	// creates config.Config
 	testConf := e2e.MakeConfig(tb, tmpRootDir)
 	testConf.DiscoveryPort = listenPort
 	testConf.P2P.ListenAddress = fmt.Sprintf("tcp://0.0.0.0:%v", listenPort+1)
 
+	// creates runtime.ResourceRegistry
 	resourceMgr := runtime.NewResourceManager(tb.Context(), customLogger)
 	require.NotNil(tb, resourceMgr)
 
+	// creates cmtp2p.NodeKey
 	nodeKey, keyErr := cmtp2p.LoadOrGenNodeKey(filepath.Join(tmpRootDir, "node_key.json"))
 	require.NotNil(tb, nodeKey)
 	require.NoError(tb, keyErr)
@@ -105,9 +117,13 @@ func ResetTestMultiplexPeerConnector(
 	)
 	require.NoError(tb, addrErr)
 
+	// creates p2p.MultiNetworkNodeInfo
 	nodeInfo := p2p.NewMultiNetworkNodeInfoWithConfig(testConf, nodeKey, netListenAddr, []byte{})
 
+	// creates p2p.Hanshaker
 	handshaker := p2p.NewHandshaker(tb.Context(), nodeInfo, customLogger)
+
+	// creates cmtp2p.MultiplexTransport
 	transport := cmtp2p.NewMultiplexTransportWithCustomHandshake(
 		tb.Context(),
 		nodeInfo,
@@ -139,7 +155,7 @@ func ResetTestMultiplexPeerConnector(
 	testDispatcher := testPool.Dispatcher()
 	testDispatcher.SetMultiplexReactor(testMultiplexReactor)
 
-	// Test the instance constructor.
+	// creates p2p.PeerConnector
 	testConnector := p2p.NewConnector(tb.Context(),
 		transport,
 		testDispatcher,

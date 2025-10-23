@@ -46,6 +46,8 @@ type Dispatcher interface {
 	Reactors(chainID string) map[string]Reactor
 	// Reactor returns a reactor for chainID by name.
 	Reactor(chainID string, name string) Reactor
+	// SetReactor sets a reactor for chainID by name.
+	SetReactor(chainID, name string, r Reactor)
 
 	// SetMultiplexReactor sets the multiplex reactor.
 	SetMultiplexReactor(mxR Reactor)

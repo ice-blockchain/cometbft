@@ -104,7 +104,7 @@ func TestMultiplexP2PPeerConnectorStartStop(t *testing.T) {
 	defer shutdownFn2()
 
 	shouldNotErr := testConnector2.Start()
-	assert.NoError(t, shouldNotErr)
+	require.NoError(t, shouldNotErr)
 	defer testConnector2.Stop()
 
 	assert.Equal(t, true, testConnector2.Transport().IsListening())
@@ -661,7 +661,7 @@ func createPeerConnectors(
 
 		// create and store addresses for return.
 		peerNodeID := testConnector.Transport().NodeInfo().ID()
-		peerUsePort := 30001 + (i * 1000) // see startPort
+		peerUsePort := startPort + (i * 1000) // see startPort
 		peerAddress, addrErr := cmtp2p.NewNetAddressString(
 			"tcp://" + string(peerNodeID) + "@127.0.0.1:" + strconv.Itoa(peerUsePort),
 		)

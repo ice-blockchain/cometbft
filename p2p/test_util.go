@@ -158,6 +158,7 @@ func (*mockDispatcher) Target(packet tmp2p.PacketMsg) Reactor                   
 func (*mockDispatcher) Dispatch(sourcePeer *PeerImpl, packet tmp2p.PacketMsg) error { return nil }
 func (*mockDispatcher) Reactors(chainID string) map[string]Reactor                  { return map[string]Reactor{} }
 func (*mockDispatcher) Reactor(chainID string, name string) Reactor                 { return nil }
+func (*mockDispatcher) SetReactor(chainID, name string, r Reactor)                  {}
 func (*mockDispatcher) SetMultiplexReactor(mxR Reactor)                             {}
 func (*mockDispatcher) GetMultiplexReactor() Reactor                                { return nil }
 func (*mockDispatcher) InitChannels()                                               {}

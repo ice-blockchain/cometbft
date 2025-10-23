@@ -114,7 +114,10 @@ func NewReactor(
 // CAUTION: This method is used to determine a static list of channels
 // for the multiplex implementation. Do not use for transactions.
 func NewEmptyReactor(ctx context.Context) *Reactor {
-	memR := &Reactor{}
+	baseConf := cfg.DefaultMempoolConfig()
+	baseConf.Broadcast = false
+
+	memR := &Reactor{config: baseConf}
 	memR.BaseReactor = *p2p.NewBaseReactor(ctx, "Mempool", memR)
 
 	{
