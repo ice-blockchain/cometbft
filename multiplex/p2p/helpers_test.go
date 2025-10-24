@@ -24,6 +24,7 @@ func ResetTestMultiplexConnectionPool(
 	listenPort uint16,
 	nodeInfo *p2p.MultiNetworkNodeInfo, // nil-able
 	nodeKey *cmtp2p.NodeKey, // nil-able
+	transport *cmtp2p.MultiplexTransport, // nil-able
 	customLogger cmtlog.Logger,
 	withOptions ...p2p.ConnectionPoolOption,
 ) (*p2p.ConnectionPool, func()) {
@@ -65,8 +66,20 @@ func ResetTestMultiplexConnectionPool(
 	}
 
 	// creates cmtp2p.MultiplexTransport
-	transport := cmtp2p.NewMultiplexTransport(tb.Context(), nodeInfo, *nodeKey)
-	require.NotNil(tb, transport)
+	if transport == nil {
+		transport = cmtp2p.NewMultiplexTransport(tb.Context(), nodeInfo, *nodeKey)
+		require.NotNil(tb, transport)
+	}
+
+	// CAUTION: starts listening on listenPort with node ID.
+	// We must do this here because in the e2e scenario, this is done by the
+	// methods StartP2PServerDiscovery and StartP2PServerCometBFT in MultiplexBackend
+	// which are executed on Init(), before the connection pool is started.
+	listenErr := transport.Listen(*netListenAddr)
+	require.NoError(tb, listenErr)
+	transportShutdownFn := func() {
+		transport.Close()
+	}
 
 	// creates p2p.ConnectionPool
 	testPool := p2p.NewConnectionManager(tb.Context(),
@@ -84,6 +97,7 @@ func ResetTestMultiplexConnectionPool(
 
 	return testPool, func() {
 		defer os.RemoveAll(tmpRootDir)
+		defer transportShutdownFn()
 	}
 }
 
@@ -135,15 +149,9 @@ func ResetTestMultiplexPeerConnector(
 	require.NotNil(tb, transport)
 	transport.SetLogger(customLogger)
 
-	// CAUTION: starts listening on listenPort with node ID.
-	listenErr := transport.Listen(*netListenAddr)
-	require.NoError(tb, listenErr)
-	transportShutdownFn := func() {
-		transport.Close()
-	}
-
 	// CAUTION: a connection pool is mandatory for the connector.
-	testPool, poolShutdownFn := ResetTestMultiplexConnectionPool(tb, listenPort, nodeInfo, nodeKey, customLogger)
+	// Note that this also starts the Listen() method of MultiplexTransport.
+	testPool, poolShutdownFn := ResetTestMultiplexConnectionPool(tb, listenPort, nodeInfo, nodeKey, transport, customLogger)
 	require.NotNil(tb, testPool)
 	require.NotNil(tb, poolShutdownFn)
 
@@ -173,6 +181,5 @@ func ResetTestMultiplexPeerConnector(
 	return testConnector, func() {
 		defer os.RemoveAll(tmpRootDir)
 		defer poolShutdownFn()
-		defer transportShutdownFn()
 	}
 }

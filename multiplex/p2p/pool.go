@@ -216,6 +216,7 @@ func (pool *ConnectionPool) Handshaker() cmtp2p.Handshaker {
 // cmtp2p.Pool API implementation
 
 // NumPeers returns the number of inbound and outbound peers.
+// Return order: inbound, outbound, dialing.
 func (pool *ConnectionPool) NumPeers(chainIds ...string) (inbound, outbound, dialing int) {
 	pool.mtx.Lock()
 	defer pool.mtx.Unlock()
@@ -236,7 +237,7 @@ func (pool *ConnectionPool) NumPeers(chainIds ...string) (inbound, outbound, dia
 	}
 
 	dialing = pool.dialing.Size()
-	return outbound, inbound, dialing
+	return // inbound, outbound, dialing
 }
 
 // Peers returns a peerset by its chainID.

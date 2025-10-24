@@ -68,6 +68,7 @@ func TestMultiplexP2PConnectionPoolNewConnectionManagerHelper(t *testing.T) {
 		30001,
 		nil, // nil-NodeKey
 		nil, // nil-NodeInfo
+		nil, // nil-Transport
 		cmtlog.NewNopLogger(),
 	)
 	require.NotNil(t, testPool)
@@ -88,6 +89,7 @@ func TestMultiplexP2PConnectionPoolStartStop(t *testing.T) {
 		30001,
 		nil, // nil-NodeKey
 		nil, // nil-NodeInfo
+		nil, // nil-Transport
 		cmtlog.NewNopLogger(),
 	)
 	require.NotNil(t, testPool1)
@@ -110,6 +112,7 @@ func TestMultiplexP2PConnectionPoolStartStop(t *testing.T) {
 		30001, // SAME
 		nil,   // nil-NodeKey
 		nil,   // nil-NodeInfo
+		nil,   // nil-Transport
 		cmtlog.NewNopLogger(),
 	)
 	require.NotNil(t, testPool2)
@@ -129,6 +132,7 @@ func TestMultiplexP2PConnectionPoolSetPeerForChainID(t *testing.T) {
 		30001,
 		nil, // nil-NodeKey
 		nil, // nil-NodeInfo
+		nil, // nil-Transport
 		cmtlog.NewNopLogger(),
 	)
 	require.NotNil(t, testPool1)
@@ -170,10 +174,13 @@ func TestMultiplexP2PConnectionPoolSetPeerForChainID(t *testing.T) {
 func TestMultiplexP2PConnectionPoolInitPeerForChainID(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
+	// CAUTION: we use peer-0 to test ConnectionPool, and other peers
+	// are created with the createPeerConnectors helper from PeerConnector.
 	testPool1, shutdownFn1 := ResetTestMultiplexConnectionPool(t,
 		30001,
 		nil, // nil-NodeKey
 		nil, // nil-NodeInfo
+		nil, // nil-Transport
 		cmtlog.NewNopLogger(),
 	)
 	require.NotNil(t, testPool1)
@@ -202,16 +209,16 @@ func TestMultiplexP2PConnectionPoolInitPeerForChainID(t *testing.T) {
 		}
 	}()
 
-	// peer-1 connects to peer-2
-	testPeer2, dialErrPeer2 := testPool1.Connector().Dial(peerAddresses[0]) // peer-2
-	require.NoError(t, dialErrPeer2, "peer-1 should connect to peer-2")
-	require.NotNil(t, testPeer2)
-	assert.Equal(t, string(peerAddresses[0].ID), string(testPeer2.ID()))
+	// peer-0 connects to peer-1
+	testPeer1, dialErrPeer1 := testPool1.Connector().Dial(peerAddresses[0]) // peer-1
+	require.NoError(t, dialErrPeer1, "peer-0 should connect to peer-1")
+	require.NotNil(t, testPeer1)
+	assert.Equal(t, string(peerAddresses[0].ID), string(testPeer1.ID()))
 
 	// TEST 2: Initialize a known peerID for ChainID, should return peer.
-	actualPeer2ForReactor := testPool1.InitPeerForChainID(testPeer2.ID(), "test-chain-1")
-	assert.NotNil(t, actualPeer2ForReactor) // should NOT be nil.
-	assert.Equal(t, string(peerAddresses[0].ID), string(actualPeer2ForReactor.ID()))
+	actualPeer1ForReactor := testPool1.InitPeerForChainID(testPeer1.ID(), "test-chain-1")
+	assert.NotNil(t, actualPeer1ForReactor) // should NOT be nil.
+	assert.Equal(t, string(peerAddresses[0].ID), string(actualPeer1ForReactor.ID()))
 }
 
 func TestMultiplexP2PConnectionPoolAddPeerForChainID(t *testing.T) {
@@ -221,6 +228,7 @@ func TestMultiplexP2PConnectionPoolAddPeerForChainID(t *testing.T) {
 		30001,
 		nil, // nil-NodeKey
 		nil, // nil-NodeInfo
+		nil, // nil-Transport
 		cmtlog.NewNopLogger(),
 	)
 	require.NotNil(t, testPool1)
@@ -264,7 +272,92 @@ func TestMultiplexP2PConnectionPoolAddPeerForChainID(t *testing.T) {
 }
 
 func TestMultiplexP2PConnectionPoolNumPeers(t *testing.T) {
+	defer goleak.VerifyNone(t)
 
+	// CAUTION: we use peer-0 to test ConnectionPool, and other peers
+	// are created with the createPeerConnectors helper from PeerConnector.
+	testPool1, shutdownFn1 := ResetTestMultiplexConnectionPool(t,
+		30001,
+		nil, // nil-NodeKey
+		nil, // nil-NodeInfo
+		nil, // nil-Transport
+		cmtlog.NewNopLogger(),
+	)
+	require.NotNil(t, testPool1)
+	require.NotNil(t, shutdownFn1)
+	defer shutdownFn1()
+
+	shouldNotErrStart := testPool1.Start()
+	require.NoError(t, shouldNotErrStart)
+	defer testPool1.Stop()
+
+	require.Equal(t, true, testPool1.IsRunning())
+	require.Equal(t, true, testPool1.Connector().IsRunning())
+	require.Equal(t, true, testPool1.Transport().IsListening())
+
+	// Creates 6 additional peer connectors that we use for inbound/outbound.
+	// Creates peer-1 to peer-6, i.e. :31001 to :36001.
+	testConnectors,
+		peerAddresses,
+		shutdownFns := createPeerConnectors(t, 6, 31001, cmtlog.NewNopLogger())
+	require.NotEmpty(t, testConnectors)
+	require.NotEmpty(t, shutdownFns)
+	defer func() {
+		for _, shutdownFn := range shutdownFns {
+			shutdownFn()
+		}
+	}()
+
+	expectedInboundPeers := 0
+	expectedOutboundPeers := 0
+
+	// peer-0 connects to peer-1
+	testPeer1, dialErrPeer1 := testPool1.Connector().Dial(peerAddresses[0]) // peer-1
+	require.NoError(t, dialErrPeer1, "peer-0 should connect to peer-1")
+	expectedOutboundPeers++
+	// peer-0 connects to peer-2
+	testPeer2, dialErrPeer2 := testPool1.Connector().Dial(peerAddresses[1]) // peer-2
+	require.NoError(t, dialErrPeer2, "peer-0 should connect to peer-2")
+	expectedOutboundPeers++
+	// peer-0 connects to peer-3
+	testPeer3, dialErrPeer3 := testPool1.Connector().Dial(peerAddresses[2]) // peer-3
+	require.NoError(t, dialErrPeer3, "peer-0 should connect to peer-3")
+	expectedOutboundPeers++
+	// peer-0 connects to peer-4
+	testPeer4, dialErrPeer4 := testPool1.Connector().Dial(peerAddresses[3]) // peer-4
+	require.NoError(t, dialErrPeer4, "peer-0 should connect to peer-4")
+	expectedOutboundPeers++
+	// peer-0 connects to peer-5
+	testPeer5, dialErrPeer5 := testPool1.Connector().Dial(peerAddresses[4]) // peer-5
+	require.NoError(t, dialErrPeer5, "peer-0 should connect to peer-5")
+	expectedOutboundPeers++
+
+	require.NotNil(t, testPeer1)
+	require.NotNil(t, testPeer2)
+	require.NotNil(t, testPeer3)
+	require.NotNil(t, testPeer4)
+	require.NotNil(t, testPeer5)
+
+	// TEST 1: do we have the correct number of peers? (all outbound up to here)
+	actualInbound, actualOutbound, actualDialing := testPool1.NumPeers()
+	assert.Equal(t, 0, actualInbound)
+	assert.Equal(t, 0, actualDialing)
+	assert.Equal(t, expectedOutboundPeers, actualOutbound)
+
+	// CAUTION: this one will be INBOUND for peer-0, so we first make sure
+	// that peer-0 is actively listening for connections and can be dialed.
+	require.Equal(t, true, testPool1.Transport().IsListening())
+	peer1ListenAddr, addrErr := cmtp2p.NewNetAddressString(
+		"tcp://" + string(testPool1.NodeKey().ID()) + "@127.0.0.1:30001",
+	)
+	require.NoError(t, addrErr)
+
+	// peer-6 connects to peer-0
+	testPeer0, dialErrPeer0 := testConnectors[5].Dial(peer1ListenAddr) // peer-0
+	require.NoError(t, dialErrPeer0, "peer-6 should connect to peer-0")
+	expectedInboundPeers++
+
+	require.NotNil(t, testPeer0)
 }
 
 func TestMultiplexP2PConnectionPoolPeers(t *testing.T) {

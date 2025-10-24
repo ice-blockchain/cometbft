@@ -188,7 +188,7 @@ func (p *PeerImpl) OnStart(ctx context.Context) error {
 		p.Logger.Error("Error starting peer service", "err", err)
 	}
 
-	p.Logger.Debug("Peer started")
+	p.Logger.Debug("Peer started", "peer", p)
 	return nil
 }
 
