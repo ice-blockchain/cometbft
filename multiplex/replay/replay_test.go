@@ -213,6 +213,100 @@ func TestMultiplexServerReplayPoolStartStop(t *testing.T) {
 
 func TestMultiplexServerReplayPoolReplayBroadcastLoop(t *testing.T) {
 	defer goleak.VerifyNone(t)
+
+	// Test successful broadcast loop
+	testTxAcceptor := client.NewMockAcceptorImpl()
+	pool := replay.NewReplayPool(t.Context(), cmtlog.NewNopLogger(),
+		replay.ReplayPoolAcceptor(testTxAcceptor),
+		replay.ReplayPoolMaxConcurrent(5),
+	)
+
+	testBucket := mxutils.MakeAddress().String()
+	testBucketTxes := mxutils.MakeClientTransactions(t, "test-fingerprint", 10)
+
+	err := pool.Add(testBucket, testBucketTxes...)
+	require.NoError(t, err)
+
+	startErr := pool.Start()
+	require.NoError(t, startErr)
+
+	// Execute the broadcast loop
+	go pool.ReplayBroadcastLoop(testBucket)
+	go pool.WaitForBroadcastLoop(testBucket)
+
+	// Wait for processing to complete
+	time.Sleep(500 * time.Millisecond)
+
+	stopErr := pool.Stop()
+	require.NoError(t, stopErr)
+
+	// Verify the bucket was processed
+	assert.Equal(t, uint64(10), testTxAcceptor.TxReplayCalls.Load())
+	assert.Equal(t, uint64(0), pool.Size())
+
+	// Test broadcast loop with empty bucket
+	testTxAcceptor2 := client.NewMockAcceptorImpl()
+	pool2 := replay.NewReplayPool(t.Context(), cmtlog.NewNopLogger(),
+		replay.ReplayPoolAcceptor(testTxAcceptor2),
+	)
+
+	testBucket2 := mxutils.MakeAddress().String()
+	err = pool2.Add(testBucket2)
+	require.NoError(t, err)
+
+	startErr = pool2.Start()
+	require.NoError(t, startErr)
+
+	go pool2.ReplayBroadcastLoop(testBucket2)
+	go pool2.WaitForBroadcastLoop(testBucket2)
+
+	time.Sleep(300 * time.Millisecond)
+
+	stopErr = pool2.Stop()
+	require.NoError(t, stopErr)
+
+	// Should not have called replay since bucket was empty
+	assert.Equal(t, uint64(0), testTxAcceptor2.TxReplayCalls.Load())
+
+	// Test broadcast loop respects concurrent limits
+	testTxAcceptor3 := client.NewMockAcceptorImpl()
+	maxConcurrent := uint64(2)
+	pool3 := replay.NewReplayPool(t.Context(), cmtlog.NewNopLogger(),
+		replay.ReplayPoolAcceptor(testTxAcceptor3),
+		replay.ReplayPoolMaxConcurrent(maxConcurrent),
+	)
+
+	numBuckets := 5
+	testBuckets := []string{}
+	for i := 0; i < numBuckets; i++ {
+		testBucket := mxutils.MakeAddress().String()
+		testBuckets = append(testBuckets, testBucket)
+		testBucketTxes := mxutils.MakeClientTransactions(t, "test-fingerprint", 3)
+		err := pool3.Add(testBucket, testBucketTxes...)
+		require.NoError(t, err)
+	}
+
+	startErr = pool3.Start()
+	require.NoError(t, startErr)
+
+	// Start all broadcast loops
+	for _, bucket := range testBuckets {
+		go pool3.ReplayBroadcastLoop(bucket)
+		go pool3.WaitForBroadcastLoop(bucket)
+	}
+
+	// Check that concurrent count never exceeds max
+	for i := 0; i < 10; i++ {
+		time.Sleep(50 * time.Millisecond)
+		assert.LessOrEqual(t, pool3.NumConcurrent(), maxConcurrent)
+	}
+
+	stopErr = pool3.StopAfterProcessing()
+	require.NoError(t, stopErr)
+
+	// All buckets should be processed
+	assert.Equal(t, uint64(15), testTxAcceptor3.TxReplayCalls.Load())
+	assert.Equal(t, uint64(0), pool3.Size())
 }
 
 func TestMultiplexServerReplayPoolReplayBucket(t *testing.T) {
