@@ -8,6 +8,7 @@ import (
 
 	"github.com/ice-blockchain/cometbft/internal/cmap"
 	"github.com/ice-blockchain/cometbft/libs/log"
+	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/libs/service"
 	cmtconn "github.com/ice-blockchain/cometbft/p2p/conn"
 )
@@ -353,6 +354,12 @@ func (p *PeerImpl) RemoteAddr() net.Addr {
 func PeerMetrics(metrics *Metrics) PeerOption {
 	return func(p *PeerImpl) {
 		p.metrics = metrics
+	}
+}
+
+func PeerLogger(logger cmtlog.Logger) PeerOption {
+	return func(p *PeerImpl) {
+		p.SetLogger(logger)
 	}
 }
 

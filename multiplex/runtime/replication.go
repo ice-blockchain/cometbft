@@ -31,12 +31,30 @@ type ReplicationPool struct {
 	timeoutAcceptance  time.Duration
 	timeoutReplication time.Duration
 
-	acceptedChs     *cmap.CMap
+	// acceptedChs contains a buffered channel of size 1 `chan struct{}`,
+	// mapped by ChainID (string) keys.
+	// Used to indicate the remote acknowledgment of a replication for ChainID.
+	acceptedChs *cmap.CMap
+	// doneAcceptedChs contains a boolean value by ChainID (string) keys.
+	// Note that a ChainID key present in this map indicates that the above
+	// acceptedChs channel for this ChainID is *closed*.
 	doneAcceptedChs *cmap.CMap
-	completeChs     *cmap.CMap
+	// completeChs contains a buffered channel of size 1 `chan struct{}`,
+	// mapped by ChainID (string) keys.
+	// Used to indicate the remote completion of a replication for ChainID.
+	completeChs *cmap.CMap
+	// doneCompleteChs contains a boolean value by ChainID (string) keys.
+	// Note that a ChainID key present in this map indicates that the above
+	// completeChs channel for this ChainID is *closed*.
 	doneCompleteChs *cmap.CMap
 
-	relays   *cmap.CMap
+	// relays contains slices of `*helpers.RelayAddress` instances, mapped
+	// by ChainID (string) keys.
+	// CAUTION: These slices of relays are used to evaluate the super-majority of
+	// acknowledgments and completions of chain replications by ChainID.
+	relays *cmap.CMap
+	// partners contains slices of `cmtp2p.ID` instances, mapped
+	// by ChainID (string) keys.
 	partners *cmap.CMap
 
 	// Options

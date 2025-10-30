@@ -58,7 +58,9 @@ type Reactor struct {
 
 	peersMtx     cmtsync.Mutex
 	pendingPeers sync.Map
-	peerStates   *cmap.CMap
+
+	// peerStates contains *PeerState instance by cmtp2p.ID (string) keys.
+	peerStates *cmap.CMap
 
 	rsMtx         cmtsync.RWMutex
 	rs            cstypes.RoundState // copy of consensus state

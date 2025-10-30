@@ -33,7 +33,7 @@ const (
 // A server instance must be started before replication can happen and
 // before broadcast operations can be forwarded to a [client.Client].
 //
-// A server instance manages an instance of [IdleManagerr],
+// A server instance manages an instance of [IdleManager],
 // and one of [client.Acceptor], which are used by runtime processes.
 type Server interface {
 	service.Service // Start, Stop, Reset.

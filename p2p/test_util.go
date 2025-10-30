@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	protomem "github.com/ice-blockchain/cometbft/api/cometbft/mempool/v1"
 	tmp2p "github.com/ice-blockchain/cometbft/api/cometbft/p2p/v1"
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/crypto"
@@ -15,6 +17,7 @@ import (
 	cmtrand "github.com/ice-blockchain/cometbft/internal/rand"
 	cmtbytes "github.com/ice-blockchain/cometbft/libs/bytes"
 	"github.com/ice-blockchain/cometbft/libs/log"
+	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/libs/service"
 	"github.com/ice-blockchain/cometbft/p2p/conn"
 )
@@ -92,7 +95,7 @@ func (*mockPool) NodeInfo() NodeInfo                                     { retur
 func (*mockPool) NodeKey() *NodeKey                                      { return nil }
 func (*mockPool) Transport() *MultiplexTransport                         { return nil }
 func (*mockPool) Connector() Connector                                   { return &mockConnector{} }
-func (*mockPool) Dispatcher() Dispatcher                                 { return &mockDispatcher{} }
+func (*mockPool) Dispatcher() Dispatcher                                 { return &MockDispatcherImpl{} }
 func (*mockPool) Handshaker() Handshaker                                 { return &mockHandshaker{} }
 func (*mockPool) NumPeers(_ ...string) (inbound, outbound, dialing int)  { return 0, 0, 0 }
 func (*mockPool) Peers(_ ...string) *PeerSet                             { return &PeerSet{} }
@@ -104,6 +107,7 @@ func (*mockPool) HasPeerIP(ip net.IP) bool                               { retur
 func (*mockPool) Broadcast(e Envelope) error                             { return nil }
 func (*mockPool) TryBroadcast(e Envelope) error                          { return nil }
 func (*mockPool) HasConnection(peerID ID) bool                           { return false }
+func (*mockPool) Connection(peerID ID) *conn.MConnection                 { return nil }
 func (*mockPool) HasPeerForChainID(peerID ID, chainID string) bool       { return false }
 func (*mockPool) SetPeerForChainID(peerID ID, chainID string) int        { return 0 }
 func (*mockPool) InitPeerForChainID(peerID ID, chainID string) *PeerImpl { return nil }
@@ -125,7 +129,6 @@ func NewConnector(ctx context.Context) *mockConnector {
 func (*mockConnector) Pool() Pool                               { return nil }
 func (*mockConnector) Transport() *MultiplexTransport           { return nil }
 func (*mockConnector) Dispatcher() Dispatcher                   { return nil }
-func (*mockConnector) Connection(peerID ID) *conn.MConnection   { return nil }
 func (*mockConnector) Dial(addr *NetAddress) (*PeerImpl, error) { return nil, nil }
 func (*mockConnector) Listen() error                            { return nil }
 
@@ -149,22 +152,46 @@ func (*mockHandshaker) Handshake(c net.Conn, timeout time.Duration) (NodeInfo, e
 
 // ----------------------------------------------------------------------------
 
-type mockDispatcher struct {
+type MockDispatcherImpl struct {
+	NumDispatchedPackets atomic.Uint64
+
+	TestChannel *Channel
+	Logger      cmtlog.Logger
 }
 
-var _ Dispatcher = (*mockDispatcher)(nil)
+var _ Dispatcher = (*MockDispatcherImpl)(nil)
 
-func (*mockDispatcher) Target(packet tmp2p.PacketMsg) Reactor                       { return nil }
-func (*mockDispatcher) Dispatch(sourcePeer *PeerImpl, packet tmp2p.PacketMsg) error { return nil }
-func (*mockDispatcher) Reactors(chainID string) map[string]Reactor                  { return map[string]Reactor{} }
-func (*mockDispatcher) Reactor(chainID string, name string) Reactor                 { return nil }
-func (*mockDispatcher) SetReactor(chainID, name string, r Reactor)                  {}
-func (*mockDispatcher) SetMultiplexReactor(mxR Reactor)                             {}
-func (*mockDispatcher) GetMultiplexReactor() Reactor                                { return nil }
-func (*mockDispatcher) InitChannels()                                               {}
-func (*mockDispatcher) GetChannels() (channels []*Channel)                          { return }
-func (*mockDispatcher) GetChannel(chID byte) *Channel                               { return nil }
-func (*mockDispatcher) GetDescriptor(chID byte) *ChannelDescriptor                  { return nil }
+func (*MockDispatcherImpl) Target(packet tmp2p.PacketMsg) Reactor { return nil }
+func (d *MockDispatcherImpl) Dispatch(sourcePeer *PeerImpl, packet tmp2p.PacketMsg) error {
+	d.NumDispatchedPackets.Add(uint64(1))
+	return nil
+}
+func (*MockDispatcherImpl) Reactors(chainID string) map[string]Reactor  { return map[string]Reactor{} }
+func (*MockDispatcherImpl) Reactor(chainID string, name string) Reactor { return nil }
+func (*MockDispatcherImpl) SetReactor(chainID, name string, r Reactor)  {}
+func (*MockDispatcherImpl) SetMultiplexReactor(mxR Reactor)             {}
+func (*MockDispatcherImpl) GetMultiplexReactor() Reactor                { return nil }
+func (*MockDispatcherImpl) InitChannels()                               {}
+func (d *MockDispatcherImpl) GetChannels() (channels []*Channel) {
+	channels = make([]*Channel, 1)
+	channels[0] = d.GetChannel(conn.TestChannel)
+	return // channels
+}
+func (d *MockDispatcherImpl) GetChannel(chID byte) *Channel {
+	if d.TestChannel == nil {
+		d.TestChannel = conn.NewChannel(d.GetDescriptor(conn.TestChannel))
+		d.TestChannel.SetLogger(d.Logger)
+	}
+	return d.TestChannel
+}
+func (d *MockDispatcherImpl) GetDescriptor(chID byte) *ChannelDescriptor {
+	return &conn.ChannelDescriptor{
+		ID:                  conn.TestChannel,
+		Priority:            1,
+		RecvMessageCapacity: 1024 * 1024, // 1MiB
+		MessageType:         &protomem.Message{},
+	}
+}
 
 // ------------------------------------------------------------------
 // Connects switches via arbitrary net.Conn. Used for testing.

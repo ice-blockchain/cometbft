@@ -151,7 +151,13 @@ func ResetTestMultiplexPeerConnector(
 
 	// CAUTION: a connection pool is mandatory for the connector.
 	// Note that this also starts the Listen() method of MultiplexTransport.
-	testPool, poolShutdownFn := ResetTestMultiplexConnectionPool(tb, listenPort, nodeInfo, nodeKey, transport, customLogger)
+	testPool, poolShutdownFn := ResetTestMultiplexConnectionPool(tb,
+		listenPort,
+		nodeInfo,
+		nodeKey,
+		transport,
+		customLogger,
+	)
 	require.NotNil(tb, testPool)
 	require.NotNil(tb, poolShutdownFn)
 
@@ -181,5 +187,125 @@ func ResetTestMultiplexPeerConnector(
 	return testConnector, func() {
 		defer os.RemoveAll(tmpRootDir)
 		defer poolShutdownFn()
+	}
+}
+
+// ----------------------------------------------------------------------------
+
+func createPeerConnectors(
+	tb testing.TB,
+	numPeers int,
+	startPort int,
+	customLogger cmtlog.Logger,
+	withOptions ...p2p.ConnectorOption,
+) (
+	connectors []*p2p.PeerConnector,
+	addresses []*cmtp2p.NetAddress,
+	shutdownFns []func(),
+) {
+	tb.Helper()
+
+	connectors = make([]*p2p.PeerConnector, numPeers)
+	addresses = make([]*cmtp2p.NetAddress, numPeers)
+	shutdownFns = make([]func(), numPeers)
+
+	// create and start PeerConnector instances
+	for i := 0; i < numPeers; i++ {
+		testConnector, connShutdownFn := ResetTestMultiplexPeerConnector(tb,
+			uint16(1000*i+startPort), // e.g. 1000 * 2 + 30001
+			customLogger.With("process", "peer-"+strconv.Itoa(i+1)),
+			withOptions...,
+		)
+		require.NotNil(tb, testConnector)
+		require.NotNil(tb, connShutdownFn)
+
+		shouldStartErr := testConnector.Start()
+		require.NoError(tb, shouldStartErr, fmt.Sprintf("peer at %d should start", i))
+
+		// give both some time to start listening correctly.
+		time.Sleep(300 * time.Millisecond)
+		require.Equal(tb, true, testConnector.Transport().IsListening())
+
+		// create and store addresses for return.
+		peerNodeID := testConnector.Transport().NodeInfo().ID()
+		peerUsePort := startPort + (i * 1000) // see startPort
+		peerAddress, addrErr := cmtp2p.NewNetAddressString(
+			"tcp://" + string(peerNodeID) + "@127.0.0.1:" + strconv.Itoa(peerUsePort),
+		)
+		require.NoError(tb, addrErr)
+		require.NotNil(tb, peerAddress)
+
+		connectors[i] = testConnector
+		addresses[i] = peerAddress
+		shutdownFns[i] = func() {
+			defer connShutdownFn()
+			defer testConnector.Stop()
+
+			// ... and we must correctly cleanup afterwards (disconnect from all).
+			connPool := testConnector.Pool()
+			cPeerSet := connPool.Peers().Copy()
+			for i := 0; i < len(cPeerSet); i++ {
+				connPool.RemovePeer(cPeerSet[i].ID())
+			}
+		}
+	}
+
+	return // connectors, addresses, shutdownFns
+}
+
+func createConnectionPoolWithOtherPeers(
+	tb testing.TB,
+	numDialedPeers int, // total=1+numDialedPeers
+	startPort int,
+	customLogger cmtlog.Logger,
+	withPoolOptions []p2p.ConnectionPoolOption,
+	withConnOptions []p2p.ConnectorOption,
+) (
+	*p2p.ConnectionPool,
+	[]*p2p.PeerConnector,
+	[]*cmtp2p.NetAddress,
+	func(),
+) {
+	tb.Helper()
+
+	// CAUTION: we use peer-0 to test ConnectionPool, and other peers
+	// are created with the createPeerConnectors helper from PeerConnector.
+	testPool1, poolShutdownFn := ResetTestMultiplexConnectionPool(tb,
+		uint16(startPort),
+		nil, // nil-NodeKey
+		nil, // nil-NodeInfo
+		nil, // nil-Transport
+		customLogger.With("process", "peer-0"),
+		withPoolOptions...,
+	)
+	require.NotNil(tb, testPool1)
+	require.NotNil(tb, poolShutdownFn)
+
+	shouldNotErrStart := testPool1.Start()
+	require.NoError(tb, shouldNotErrStart)
+
+	// Creates numDialedPeers additional peer connectors that we can dial.
+	remoteStartPort := startPort + 1000
+	testConnectors,
+		peerAddresses,
+		shutdownFns := createPeerConnectors(tb,
+		numDialedPeers,
+		remoteStartPort,
+		customLogger,
+		withConnOptions...,
+	)
+	require.NotEmpty(tb, testConnectors)
+	require.NotEmpty(tb, shutdownFns)
+
+	return testPool1, testConnectors, peerAddresses, func() {
+		defer poolShutdownFn()
+		defer testPool1.Stop()
+
+		// ... and shutdown other peers.
+		defer func() {
+			for _, shutdownFn := range shutdownFns {
+				shutdownFn()
+			}
+		}()
 	}
 }

@@ -241,7 +241,10 @@ func (router *packetDispatcher) InitChannels() {
 
 		router.channelsIndex = make(map[byte]*cmtp2p.Channel, len(chDescs))
 		for chID, chDesc := range chDescs {
-			router.channelsIndex[chID] = cmtconn.NewChannel(chDesc)
+			channel := cmtconn.NewChannel(chDesc)
+			channel.SetLogger(router.logger)
+
+			router.channelsIndex[chID] = channel
 		}
 	}
 }

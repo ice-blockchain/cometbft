@@ -1,11 +1,9 @@
 package p2p_test
 
 import (
-	"fmt"
 	"math/rand"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -597,7 +595,7 @@ func TestMultiplexP2PPeerConnectorRoutines(t *testing.T) {
 	// ensure conn succeeded, adds to pool.connected and thus created *MConnection.
 	didConnectToPeer := testConnectors[0].Pool().HasConnection(testPeer2.ID())
 	assert.Equal(t, true, didConnectToPeer)
-	actualMConnectionPeer2 := testConnectors[0].Connection(testPeer2.ID())
+	actualMConnectionPeer2 := testConnectors[0].Pool().Connection(testPeer2.ID())
 	require.NotNil(t, actualMConnectionPeer2)
 	// MConnection should be running
 	assert.Equal(t, true, actualMConnectionPeer2.IsRunning(), "MConn should be running for peer-1 -> peer-2")
@@ -611,7 +609,7 @@ func TestMultiplexP2PPeerConnectorRoutines(t *testing.T) {
 	// ensure conn succeeded, adds to pool.connected and thus created *MConnection.
 	didConnectToPeer3 := testConnectors[0].Pool().HasConnection(testPeer3.ID())
 	assert.Equal(t, true, didConnectToPeer3)
-	actualMConnectionPeer3 := testConnectors[0].Connection(testPeer3.ID())
+	actualMConnectionPeer3 := testConnectors[0].Pool().Connection(testPeer3.ID())
 	require.NotNil(t, actualMConnectionPeer3)
 	// MConnection should be running
 	assert.Equal(t, true, actualMConnectionPeer3.IsRunning(), "MConn should be running for peer-1 -> peer-3")
@@ -621,67 +619,4 @@ func TestMultiplexP2PPeerConnectorRoutines(t *testing.T) {
 	testConnectors[0].Pool().RemovePeer(testPeer3.ID())
 	testConnectors[1].Pool().RemovePeer(peerAddresses[0].ID)
 	testConnectors[2].Pool().RemovePeer(peerAddresses[0].ID)
-}
-
-// ----------------------------------------------------------------------------
-
-func createPeerConnectors(
-	tb testing.TB,
-	numPeers int,
-	startPort int,
-	customLogger cmtlog.Logger,
-	withOptions ...p2p.ConnectorOption,
-) (
-	connectors []*p2p.PeerConnector,
-	addresses []*cmtp2p.NetAddress,
-	shutdownFns []func(),
-) {
-	tb.Helper()
-
-	connectors = make([]*p2p.PeerConnector, numPeers)
-	addresses = make([]*cmtp2p.NetAddress, numPeers)
-	shutdownFns = make([]func(), numPeers)
-
-	// create and start PeerConnector instances
-	for i := 0; i < numPeers; i++ {
-		testConnector, connShutdownFn := ResetTestMultiplexPeerConnector(tb,
-			uint16(1000*i+startPort), // e.g. 1000 * 2 + 30001
-			customLogger.With("process", "peer-"+strconv.Itoa(i+1)),
-			withOptions...,
-		)
-		require.NotNil(tb, testConnector)
-		require.NotNil(tb, connShutdownFn)
-
-		shouldStartErr := testConnector.Start()
-		require.NoError(tb, shouldStartErr, fmt.Sprintf("peer at %d should start", i))
-
-		// give both some time to start listening correctly.
-		time.Sleep(300 * time.Millisecond)
-		require.Equal(tb, true, testConnector.Transport().IsListening())
-
-		// create and store addresses for return.
-		peerNodeID := testConnector.Transport().NodeInfo().ID()
-		peerUsePort := startPort + (i * 1000) // see startPort
-		peerAddress, addrErr := cmtp2p.NewNetAddressString(
-			"tcp://" + string(peerNodeID) + "@127.0.0.1:" + strconv.Itoa(peerUsePort),
-		)
-		require.NoError(tb, addrErr)
-		require.NotNil(tb, peerAddress)
-
-		connectors[i] = testConnector
-		addresses[i] = peerAddress
-		shutdownFns[i] = func() {
-			defer connShutdownFn()
-			defer testConnector.Stop()
-
-			// ... and we must correctly cleanup afterwards (disconnect from all).
-			connPool := testConnector.Pool()
-			cPeerSet := connPool.Peers().Copy()
-			for i := 0; i < len(cPeerSet); i++ {
-				connPool.RemovePeer(cPeerSet[i].ID())
-			}
-		}
-	}
-
-	return // connectors, addresses, shutdownFns
 }

@@ -30,19 +30,44 @@ type BroadcastPool struct {
 	pool        *MessagePool
 	resourceMgr *ResourceRegistry
 
+	// chainIdsByTxHash contains ChainID values (string), mapped by hexadecimal
+	// tx hash keys.
 	chainIdsByTxHash *cmap.CMap
+	// eventSubscribers contains subscriber names (string) by ChainID keys.
 	eventSubscribers *cmap.CMap
 	timeoutIndex     time.Duration
 	timeoutAckTx     time.Duration
 
 	// Contains buffered channels of size 1 as we expect exactly 1
 	// update on those channels, per transaction hash.
-	acceptedChs     *cmap.CMap
-	doneAcceptedChs *cmap.CMap
-	indexedChs      *cmap.CMap
-	doneIndexedChs  *cmap.CMap
 
-	relays   *cmap.CMap
+	// acceptedChs contains a buffered channel of size 1 `chan struct{}`,
+	// mapped by hexadecimal tx hash keys. The size of 1 is because we expect
+	// exactly 1 update on these channels, i.e. 1 event per transaction hash.
+	// Used to indicate the remote acknowledgment of a txHash.
+	acceptedChs *cmap.CMap
+	// doneAcceptedChs contains a boolean value by hexadecimal tx hash keys.
+	// Note that a txHash key present in this map indicates that the above
+	// acceptedChs channel for this txHash is *closed*.
+	doneAcceptedChs *cmap.CMap
+
+	// indexedChs contains a buffered channel of size 1 `chan struct{}`,
+	// mapped by hexadecimal tx hash keys. The size of 1 is because we expect
+	// exactly 1 update on these channels, i.e. 1 event per transaction hash.
+	// Used to indicate the local indexing of a txHash.
+	indexedChs *cmap.CMap
+	// doneIndexedChs contains a boolean value by hexadecimal tx hash keys.
+	// Note that a txHash key present in this map indicates that the above
+	// indexedChs channel for this txHash is *closed*.
+	doneIndexedChs *cmap.CMap
+
+	// relays contains slices of `*helpers.RelayAddress` instances, mapped
+	// by hexadecimal tx hash keys.
+	// CAUTION: These slices of relays are used to evaluate the super-majority
+	// of remote acknowledgments of tx hashes.
+	relays *cmap.CMap
+	// partners contains slices of `cmtp2p.ID` instances, mapped by hexadecimal
+	// tx hash keys.
 	partners *cmap.CMap
 
 	// Unbuffered channel that may be written on to shutdown indexer routines.

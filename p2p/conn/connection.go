@@ -19,7 +19,6 @@ import (
 
 	tmp2p "github.com/ice-blockchain/cometbft/api/cometbft/p2p/v1"
 	"github.com/ice-blockchain/cometbft/config"
-	"github.com/ice-blockchain/cometbft/internal/cmap"
 	flow "github.com/ice-blockchain/cometbft/internal/flowrate"
 	cmtrand "github.com/ice-blockchain/cometbft/internal/rand"
 	"github.com/ice-blockchain/cometbft/internal/timer"
@@ -52,6 +51,7 @@ const (
 	defaultPongTimeout         = 45 * time.Second
 
 	SharedChannelsNamespace = "_shared_channels"
+	TestChannel             = byte(0x90)
 )
 
 type (
@@ -288,6 +288,8 @@ func (c *MConnection) startServices(ctx context.Context) error {
 		c.recvMonitor = flow.New(0, 0)
 		go c.sendRoutine()
 		go c.recvRoutine()
+
+		return nil // continue BaseService.Start()
 	}
 
 	c.Logger.Debug("routines start",
@@ -448,9 +450,9 @@ func (c *MConnection) Send(chainID string, chID byte, msgBytes []byte) bool {
 	}
 
 	c.Logger.Debug("MConnection#Send",
-		"chainId", chainID,
+		"chainID", chainID,
 		"channel", chID,
-		"conn", c,
+		"mconn", c,
 		"msgBytes", log.NewLazySprintf("%X", msgBytes))
 
 	var channel *Channel
@@ -459,7 +461,13 @@ func (c *MConnection) Send(chainID string, chID byte, msgBytes []byte) bool {
 		return false
 	}
 
-	//c.Logger.Debug("Channel", "msgBytes", log.NewLazySprintf("%X", msgBytes), "ch", channel)
+	// TODO(midas): remove debug logs.
+	c.Logger.Debug("Channel#sendBytes",
+		"chainID", chainID,
+		"channel", chID,
+		"mconn", c,
+		"msgBytes", log.NewLazySprintf("%X", msgBytes),
+	)
 
 	// Send message to channel.
 	success := channel.sendBytes(chainID, msgBytes)
@@ -576,6 +584,7 @@ FOR_LOOP:
 			break FOR_LOOP
 		case <-c.send:
 			// Send some PacketMsgs
+			// This also calls `c.flushTimer.Set()` if anything is written.
 			eof := c.sendSomePacketMsgs(protoWriter)
 			if !eof {
 				// Keep sendRoutine awake.
@@ -856,7 +865,7 @@ func (c *MConnection) Status() ConnectionStatus {
 		status.Channels = append(status.Channels, ChannelStatus{
 			ID:                channel.desc.ID,
 			SendQueueCapacity: channel.desc.SendQueueCapacity,
-			SendQueueSize:     int(atomic.LoadInt32(&channel.totalSendQueueSize)),
+			SendQueueSize:     int(atomic.LoadInt32(&channel.sendQueueSize)),
 			Priority:          channel.desc.Priority,
 			RecentlySent:      atomic.LoadInt64(&channel.recentlySent),
 		})
@@ -903,32 +912,35 @@ func (chDesc ChannelDescriptor) FillDefaults() (filled *ChannelDescriptor) {
 	return filled
 }
 
+// -----------------------------------------------------------------------------
+
+// QueuedMessage is a wrapper for messages being queued, and maps a ChainID and
+// Size to every message in the queue.
+type QueuedMessage struct {
+	ChainID string
+	Data    []byte
+	Size    int
+}
+
+// -----------------------------------------------------------------------------
+
 type Channel struct {
 	mtx *sync.Mutex
 
 	desc *ChannelDescriptor
 	rand *cmtrand.Rand
 
-	// sendQueues maps queued bytes to be sent by ChainID.
-	sendQueues *cmap.CMap
-	// queueSizes maps sending queue sizes by ChainID.
-	queueSizes *cmap.CMap
-	// totalSendQueueSize represents the total of queued send operations
-	// across all ChainIDs.
-	totalSendQueueSize int32 // atomic
-
 	// recving holds bytes being received, until read.
 	recving []byte
 	// sending holds bytes being sent, until sent.
-	sending []byte // under mtx
-	sendCID string // under mtx
+	sending      []byte // under mtx
+	sendCID      string // under mtx
+	recentlySent int64  // exponential moving average
 
-	// sendQueueChainID string
-	// sendQueue        chan []byte
-	// sendQueueSize    int32 // atomic.
-	// recving          []byte
-	// sending          []byte
-	recentlySent int64 // exponential moving average
+	// sendQueue is a queue of messages to be sent.
+	sendQueue chan QueuedMessage
+	// sendQueueSize contains the number of messages queued.
+	sendQueueSize int32 // atomic.
 
 	nextPacketMsg           *tmp2p.PacketMsg
 	nextP2pWrapperPacketMsg *tmp2p.Packet_PacketMsg
@@ -950,10 +962,10 @@ func NewChannel(desc *ChannelDescriptor) *Channel {
 		desc: desc,
 		rand: cmtrand.NewRand(),
 
-		sendQueues: cmap.NewCMap(),
-		queueSizes: cmap.NewCMap(),
-		sending:    []byte{},
-		recving:    make([]byte, 0, desc.RecvBufferCapacity),
+		sendQueue: make(chan QueuedMessage, desc.SendQueueCapacity),
+
+		sending: []byte{},
+		recving: make([]byte, 0, desc.RecvBufferCapacity),
 
 		nextPacketMsg: &tmp2p.PacketMsg{
 			ChannelID: int32(desc.ID),
@@ -972,35 +984,17 @@ func (ch *Channel) Desc() *ChannelDescriptor {
 	return ch.desc
 }
 
-func (ch *Channel) getQueue(chainID string) (
-	queue chan []byte,
-	size int32,
-) {
-	ch.mtx.Lock()
-	defer ch.mtx.Unlock()
-
-	if !ch.sendQueues.Has(chainID) {
-		queue = make(chan []byte, ch.desc.SendQueueCapacity)
-		atomic.StoreInt32(&size, 0)
-		ch.sendQueues.Set(chainID, queue)
-		ch.queueSizes.Set(chainID, size)
-	} else {
-		queue = ch.sendQueues.Get(chainID).(chan []byte)
-		size = ch.queueSizes.Get(chainID).(int32)
-	}
-
-	return // queue, size
-}
-
 // Queues message to send to this channel.
 // Times out (and returns false) after defaultSendTimeout.
 // Goroutine-safe.
 func (ch *Channel) sendBytes(chainID string, bytes []byte) bool {
-	queue, size := ch.getQueue(chainID)
 	select {
-	case queue <- bytes:
-		atomic.AddInt32(&size, 1)
-		atomic.AddInt32(&ch.totalSendQueueSize, 1)
+	case ch.sendQueue <- QueuedMessage{
+		ChainID: chainID,
+		Data:    bytes,
+		Size:    len(bytes),
+	}:
+		atomic.AddInt32(&ch.sendQueueSize, 1)
 		return true
 	case <-time.After(defaultSendTimeout):
 		return false
@@ -1011,11 +1005,13 @@ func (ch *Channel) sendBytes(chainID string, bytes []byte) bool {
 // Nonblocking, returns true if successful.
 // Goroutine-safe.
 func (ch *Channel) trySendBytes(chainID string, bytes []byte) bool {
-	queue, size := ch.getQueue(chainID)
 	select {
-	case queue <- bytes:
-		atomic.AddInt32(&size, 1)
-		atomic.AddInt32(&ch.totalSendQueueSize, 1)
+	case ch.sendQueue <- QueuedMessage{
+		ChainID: chainID,
+		Data:    bytes,
+		Size:    len(bytes),
+	}:
+		atomic.AddInt32(&ch.sendQueueSize, 1)
 		return true
 	default:
 		return false
@@ -1023,26 +1019,20 @@ func (ch *Channel) trySendBytes(chainID string, bytes []byte) bool {
 }
 
 // Goroutine-safe.
-func (ch *Channel) loadChainSendQueueSize(chainID string) (size int) {
-	_, s := ch.getQueue(chainID)
-	return int(atomic.LoadInt32(&s))
-}
-
-// Goroutine-safe.
-func (ch *Channel) loadTotalSendQueueSize() (size int) {
-	return int(atomic.LoadInt32(&ch.totalSendQueueSize))
+func (ch *Channel) loadSendQueueSize() (size int) {
+	return int(atomic.LoadInt32(&ch.sendQueueSize))
 }
 
 // Goroutine-safe
 // Use only as a heuristic.
 func (ch *Channel) canSend() bool {
-	return ch.loadTotalSendQueueSize() < defaultSendQueueCapacity
+	return ch.loadSendQueueSize() < defaultSendQueueCapacity
 }
 
 // Goroutine-safe
 // Use only as a heuristic.
-func (ch *Channel) canSendForChainID(chainID string) bool {
-	return ch.loadChainSendQueueSize(chainID) < defaultSendQueueCapacity
+func (ch *Channel) canSendForChainID(_ string) bool {
+	return ch.loadSendQueueSize() < defaultSendQueueCapacity
 }
 
 // Returns true if any PacketMsgs are pending to be sent.
@@ -1057,29 +1047,19 @@ func (ch *Channel) isSendPending() bool {
 	isResetAfterSend := ch.sending == nil
 	ch.mtx.Unlock()
 
-	if isResetAfterSend && ch.loadTotalSendQueueSize() == 0 {
+	if isResetAfterSend && ch.loadSendQueueSize() == 0 {
 		return false
 	}
-	if ch.sendQueues.Size() == 0 {
-		return false
-	}
-
-	// Randomize ChainIDs to avoid prioritizing queues when there is more than
-	// one ChainID in the send queues of this channel, which happens when
-	// the client sends transactions for multiple ChainIDs concurrently.
-	chainIds := ch.sendQueues.Keys()
-	randomAt := ch.rand.Intn(ch.sendQueues.Size())
-	rChainID := chainIds[randomAt]
 
 	ch.mtx.Lock()
 	defer ch.mtx.Unlock()
 
-	// Consuming queue for rChainID and setting current ChainID for send operation.
-	// Non-blocking consumer avoids getting stuck here during shutdown.
-	queueCID := ch.sendQueues.Get(rChainID).(chan []byte)
+	// Consuming send queue's next message (FIFO).
+	// Non-blocking consumer avoids getting stuck here, e.g. shutdown.
 	select {
-	case ch.sending = <-queueCID:
-		ch.sendCID = rChainID
+	case msg := <-ch.sendQueue:
+		ch.sendCID = msg.ChainID
+		ch.sending = msg.Data
 		return true
 	default:
 	}
@@ -1088,8 +1068,6 @@ func (ch *Channel) isSendPending() bool {
 
 // Updates the nextPacket proto message for us to send.
 func (ch *Channel) updateNextPacket() {
-	_, size := ch.getQueue(ch.sendCID)
-
 	ch.mtx.Lock()
 	defer ch.mtx.Unlock()
 
@@ -1100,8 +1078,7 @@ func (ch *Channel) updateNextPacket() {
 		ch.nextPacketMsg.EOF = true
 		ch.sending = nil
 
-		atomic.AddInt32(&size, -1) // decrement sendQueueSize
-		atomic.AddInt32(&ch.totalSendQueueSize, -1)
+		atomic.AddInt32(&ch.sendQueueSize, -1)
 	} else {
 		ch.nextPacketMsg.ChainID = ch.sendCID
 		ch.nextPacketMsg.Data = ch.sending[:maxSize]

@@ -9,11 +9,14 @@ import (
 	"sync"
 	"time"
 
+	tmp2p "github.com/ice-blockchain/cometbft/api/cometbft/p2p/v1"
 	"github.com/ice-blockchain/cometbft/internal/cmap"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/libs/service"
+	"github.com/ice-blockchain/cometbft/multiplex/helpers"
 	"github.com/ice-blockchain/cometbft/multiplex/types"
 	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
+	cmtconn "github.com/ice-blockchain/cometbft/p2p/conn"
 )
 
 // ConnectionPool defines a connection pool.
@@ -29,15 +32,20 @@ type ConnectionPool struct {
 	runtimeMgr types.RuntimeManager
 
 	// Resources
-	nodeInfo  *MultiNetworkNodeInfo
-	nodeKey   *cmtp2p.NodeKey
-	peers     *cmtp2p.PeerSet
-	dialing   *cmap.CMap
-	connected *cmap.CMap
+	nodeInfo *MultiNetworkNodeInfo
+	nodeKey  *cmtp2p.NodeKey
+	peers    *cmtp2p.PeerSet
+	// dialing contains *cmtp2p.PeerImpl mapped by cmtp2p.ID (string) keys.
+	dialing *cmap.CMap
 
+	// peerIdsByChainIds contains cmtp2p.ID mapped by ChainID keys.
 	peerIdsByChainIds *cmap.CMap
+	// initTimeByPeerKey contains timestamps by peer keys `peerID:chainID`.
 	initTimeByPeerKey *cmap.CMap
-	peersForReactors  *cmap.CMap
+	// peersForReactors contains *cmtp2p.PeerImpl by peer keys `peerID:chainID`.
+	peersForReactors *cmap.CMap
+	// peerConnections contains *cmtconn.MConnection by cmtp2p.ID (string) keys.
+	peerConnections *cmap.CMap
 
 	// Options
 	logger cmtlog.Logger
@@ -79,10 +87,10 @@ func NewConnectionManager(
 
 		peers:             cmtp2p.NewPeerSet(),
 		dialing:           cmap.NewCMap(),
-		connected:         cmap.NewCMap(),
 		peerIdsByChainIds: cmap.NewCMap(),
 		initTimeByPeerKey: cmap.NewCMap(),
 		peersForReactors:  cmap.NewCMap(),
+		peerConnections:   cmap.NewCMap(),
 
 		// Options
 		logger: logger,
@@ -142,12 +150,12 @@ func (pool *ConnectionPool) OnStop() {
 
 	peers := pool.peers.Copy()
 	for _, peer := range peers {
-		if pool.connected.Has(string(peer.ID())) {
-			if err := pool.connector.stopRoutines(peer); err != nil {
-				pool.logger.Error("Error stopping rouutines", "err", err, "peer", peer)
+		if pool.peerConnections.Has(string(peer.ID())) {
+			if err := pool.stopRoutines(peer); err != nil {
+				pool.logger.Error("Error stopping routines", "err", err, "peer", peer)
 			}
 
-			pool.connected.Delete(string(peer.ID()))
+			pool.peerConnections.Delete(string(peer.ID()))
 		}
 	}
 
@@ -166,10 +174,10 @@ func (pool *ConnectionPool) OnReset(ctx context.Context) error {
 	defer pool.mtx.Unlock()
 
 	pool.dialing = cmap.NewCMap()
-	pool.connected = cmap.NewCMap()
 	pool.peerIdsByChainIds = cmap.NewCMap()
 	pool.initTimeByPeerKey = cmap.NewCMap()
 	pool.peersForReactors = cmap.NewCMap()
+	pool.peerConnections = cmap.NewCMap()
 
 	// TODO(midas): remove debug logs
 	pool.logger.Debug("Connection pool reset",
@@ -272,47 +280,66 @@ func (pool *ConnectionPool) Peers(chainIds ...string) *cmtp2p.PeerSet {
 }
 
 // AddPeer registers a new peer in the peerset.
+//
+// Calling this method starts the internal MConnection routines if they
+// have not been started yet, i.e. creates cmtconn.MConnection and Start() it.
+// Called by [PeerConnector#Listen] and [PeerConnector#Dial] upon accepting
+// inbound/outbound peer connections, respectively.
 func (pool *ConnectionPool) AddPeer(peer *cmtp2p.PeerImpl) error {
 	pool.mtx.Lock()
-	defer pool.mtx.Unlock()
+	isKnownPeerID := pool.peers.Has(peer.ID())
+	pool.mtx.Unlock()
 
-	if pool.peers.Has(peer.ID()) {
-		return nil
+	if isKnownPeerID {
+		return nil // Nothing to do
 	}
 
-	peerLogger := pool.logger.With("self", string(pool.nodeInfo.ID()))
-	peerLogger.Info("Adding peer", "peer", peer)
+	peerLogger := peer.Logger
+	if peerLogger == nil {
+		peerLogger = pool.logger.With(
+			"self", string(pool.nodeInfo.ID())).With("peer", peer)
+		peer.SetLogger(peerLogger)
+	}
+
+	peerLogger.Info("Adding peer")
+
+	pool.mtx.Lock()
 	pool.peers.Add(peer)
+	pool.mtx.Unlock()
 
 	if !peer.IsRunning() {
 		// peer.Start does *not* start a MConnection anymore,
-		// instead the connection is started with PeerConnector.
+		// instead the connection is started with startRoutines.
 		if err := peer.Start(); err != nil {
-			peerLogger.Error("Error starting peer", "err", err, "peer", peer)
+			peerLogger.Error("Error starting peer", "err", err)
 			return err
 		}
 	}
 
-	if !pool.connected.Has(string(peer.ID())) {
-		// startRoutines requires us to take a lock on mutex.
-		pool.connector.Lock()
-		pool.connector.startRoutines(peer)
-		pool.connector.Unlock()
+	if !pool.peerConnections.Has(string(peer.ID())) {
+		pool.mtx.Lock()
+		defer pool.mtx.Unlock()
 
-		pool.connected.Set(string(peer.ID()), peer)
+		mconn, err := pool.startRoutines(peer)
+		if err != nil {
+			return fmt.Errorf("failed to AddPeer: %w", err)
+		}
+		pool.peerConnections.Set(string(peer.ID()), mconn)
 
 		// TODO(midas): remove debug logs.
-		peerLogger.Debug("Connected to peer", "peer", peer)
+		peerLogger.Debug("ConnectionPool#AddPeer; connected to peer",
+			"mconn", mconn,
+		)
 	}
 
 	return nil
 }
 
 // RemovePeer removes a peer from the peerset.
+//
+// Calling this method stops the internal MConnection routines if they
+// are currently running. Calls MConnection#Stop and MultiplexTransport#Cleanup.
 func (pool *ConnectionPool) RemovePeer(peerID cmtp2p.ID) error {
-	peerLogger := pool.logger.With("self", string(pool.nodeInfo.ID()))
-	peerLogger.Info("Removing peer", "peerId", peerID)
-
 	pool.mtx.Lock()
 	defer pool.mtx.Unlock()
 
@@ -322,17 +349,23 @@ func (pool *ConnectionPool) RemovePeer(peerID cmtp2p.ID) error {
 
 	peer := pool.peers.Get(peerID)
 
-	if pool.connected.Has(string(peerID)) {
-		// stopRoutines requires us to take a lock on mutex.
-		pool.connector.Lock()
-		if err := pool.connector.stopRoutines(peer); err != nil {
+	peerLogger := peer.Logger
+	if peerLogger == nil {
+		peerLogger = pool.logger.With(
+			"self", string(pool.nodeInfo.ID())).With("peer", peer)
+		peer.SetLogger(peerLogger)
+	}
+
+	if pool.peerConnections.Has(string(peerID)) {
+		if err := pool.stopRoutines(peer); err != nil {
 			peerLogger.Error("Error stopping routines", "err", err, "peer", peer)
 		}
-		pool.connector.Unlock()
-		pool.connected.Delete(string(peerID))
+		pool.peerConnections.Delete(string(peerID))
 
 		// TODO(midas): remove debug logs.
-		peerLogger.Debug("Disconnected from peer", "peer", peer)
+		peerLogger.Debug("ConnectionPool#RemovePeer; disconnected from peer",
+			"peer", peer,
+		)
 	}
 
 	pool.peers.Remove(peer)
@@ -369,16 +402,35 @@ func (pool *ConnectionPool) Broadcast(e cmtp2p.Envelope) error {
 	// TODO(midas): remove debug logs.
 	pool.logger.Debug("ConnectionPool#Broadcast",
 		"numPeers", peerSet.Size(),
+		"peers", peerSet.Copy(),
 		"msg", e.Message,
 	)
 
 	peers := peerSet.Copy()
+	sentWg := sync.WaitGroup{}
+	sentWg.Add(len(peers))
 	for _, p := range peers {
 		go func(peer *cmtp2p.PeerImpl) {
-			success := peer.Send(e.ChainID, e)
-			_ = success
+			defer sentWg.Done()
+
+			// TODO(midas): remove debug logs.
+			pool.logger.Debug("ConnectionPool#Broadcast; peer.Send()",
+				"peer", peer,
+				"msg", e.Message,
+			)
+
+			if success := peer.Send(e.ChainID, e); !success {
+				pool.logger.Error("Failed to broadcast message to peer",
+					"peer", p,
+					"chainId", e.ChainID,
+					"msg", e.Message,
+				)
+			}
 		}(p)
 	}
+
+	// Block this thread until all sent.
+	sentWg.Wait()
 
 	return nil
 }
@@ -394,16 +446,35 @@ func (pool *ConnectionPool) TryBroadcast(e cmtp2p.Envelope) error {
 	// TODO(midas): remove debug logs.
 	pool.logger.Debug("ConnectionPool#TryBroadcast",
 		"numPeers", peerSet.Size(),
+		"peers", peerSet.Copy(),
 		"msg", e.Message,
 	)
 
 	peers := peerSet.Copy()
+	sentWg := sync.WaitGroup{}
+	sentWg.Add(len(peers))
 	for _, p := range peers {
 		go func(peer *cmtp2p.PeerImpl) {
-			success := peer.TrySend(e.ChainID, e)
-			_ = success
+			defer sentWg.Done()
+
+			// TODO(midas): remove debug logs.
+			pool.logger.Debug("ConnectionPool#TryBroadcast; peer.TrySend()",
+				"peer", peer,
+				"msg", e.Message,
+			)
+
+			if success := peer.TrySend(e.ChainID, e); !success {
+				pool.logger.Error("Failed to broadcast message to peer",
+					"peer", p,
+					"chainId", e.ChainID,
+					"msg", e.Message,
+				)
+			}
 		}(p)
 	}
+
+	// Block this thread until all sent.
+	sentWg.Wait()
 
 	return nil
 }
@@ -412,15 +483,16 @@ func (pool *ConnectionPool) TryBroadcast(e cmtp2p.Envelope) error {
 func (pool *ConnectionPool) HasConnection(
 	peerID cmtp2p.ID,
 ) bool {
-	if isConnected := pool.connected.Has(string(peerID)); !isConnected {
-		return false
+	return pool.peerConnections.Has(string(peerID))
+}
+
+// Connection returns the MConnection instance for peerID.
+func (pool *ConnectionPool) Connection(peerID cmtp2p.ID) *cmtconn.MConnection {
+	if !pool.HasConnection(peerID) {
+		return nil
 	}
 
-	pool.mtx.Lock()
-	defer pool.mtx.Unlock()
-
-	mconn := pool.connector.Connection(peerID)
-	return mconn != nil
+	return pool.peerConnections.Get(string(peerID)).(*cmtconn.MConnection)
 }
 
 // HasPeerForChainID returns true if the peerID has been added to the
@@ -540,4 +612,78 @@ func (c *ConnectionPool) SetRuntimeManager(mgr types.RuntimeManager) {
 // RuntimeManager returns the idle manager instance.
 func (c *ConnectionPool) RuntimeManager() types.RuntimeManager {
 	return c.runtimeMgr
+}
+
+// ----------------------------------------------------------------------------
+
+// startRoutines starts the send and receive routines for peer.
+// The mutex must be locked by the caller.
+func (pool *ConnectionPool) startRoutines(peer *cmtp2p.PeerImpl) (
+	*cmtconn.MConnection,
+	error,
+) {
+	pool.logger.Debug("ConnectionPool#startRoutines",
+		"dispatcher", helpers.ReflectTypeName(pool.dispatcher))
+
+	mconn := cmtconn.NewMConnection(pool.Context(),
+		peer.Conn(),
+		pool.dispatcher,
+		// onReceive:
+		func(chainID string, chID byte, msgBytes []byte) {
+			pool.dispatcher.Dispatch(peer, tmp2p.PacketMsg{
+				ChainID:   chainID,
+				ChannelID: int32(chID),
+				Data:      msgBytes,
+			})
+		},
+		func(reason any) {
+			pool.stopPeerForError(peer, reason)
+		},
+	)
+	mconn.SetLogger(pool.logger)
+
+	if err := mconn.Start(); err != nil {
+		pool.logger.Error("failed to start routines",
+			"peer", peer,
+			"err", err,
+			"running", mconn.IsRunning(),
+			"started", mconn.IsStarted(),
+			"stopped", mconn.IsStopped(),
+			"routines", mconn.HasStartedRoutines(),
+		)
+	}
+
+	pool.logger.Debug("Storing mconn for connected peer", "peerID", peer.ID(), "mconn", mconn)
+	return mconn, nil
+}
+
+// stopRoutines stops the send and receive routines for peer.
+// The mutex must be locked by the caller.
+func (pool *ConnectionPool) stopRoutines(peer *cmtp2p.PeerImpl) error {
+	if !pool.HasConnection(peer.ID()) {
+		return nil
+	}
+
+	mconn := pool.peerConnections.Get(string(peer.ID())).(*cmtconn.MConnection)
+	if err := mconn.Stop(); err != nil {
+		pool.logger.Error("failed to stop routines",
+			"peer", peer,
+			"err", err,
+		)
+	}
+
+	pool.transport.Cleanup(peer)
+	return nil
+}
+
+// isPersistent returns false because multiplex doesn't allow persistent peers.
+func (pool *ConnectionPool) isPersistent(*cmtp2p.NetAddress) bool {
+	return false
+}
+
+// stopPeerForError removes a peer from the peer set after an error happened.
+func (pool *ConnectionPool) stopPeerForError(p *cmtp2p.PeerImpl, r any) {
+	pool.logger.Error("Stopping peer for error", "peer", p, "reason", r)
+
+	pool.RemovePeer(p.ID())
 }
