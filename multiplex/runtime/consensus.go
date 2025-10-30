@@ -41,6 +41,8 @@ type ConsensusPool struct {
 	runtimeComposer *runtimeComposer
 	resourceMgr     types.ResourceManager
 
+	injectedChainIds map[string]struct{}
+
 	// Options
 	logger cmtlog.Logger
 }
@@ -70,6 +72,8 @@ func NewConsensusHandler(
 
 		// Provides a default acceptor implementation
 		acceptorImpl: &client.DefaultAcceptor{},
+
+		injectedChainIds: map[string]struct{}{},
 
 		// Options
 		logger: logger,
@@ -102,8 +106,8 @@ func ConsensusPoolWithAcceptor(
 // ConsensusPool implements [service.Service]
 
 // OnStart implements [service.Service] by opening a database.
+// TODO(midas): we may want the abciClient to be managed by this pool.
 func (pool *ConsensusPool) OnStart(ctx context.Context) (err error) {
-	// TODO(midas): we may want the abciClient to be managed by this pool.
 	return nil
 }
 
@@ -114,8 +118,12 @@ func (pool *ConsensusPool) OnStop() {
 }
 
 // OnReset implements [service.Service] by resetting the service.
+// TODO(midas): we may want the abciClient to be managed by this pool.
 func (pool *ConsensusPool) OnReset(ctx context.Context) error {
-	// TODO(midas): we may want the abciClient to be managed by this pool.
+	pool.mtx.Lock()
+	defer pool.mtx.Unlock()
+
+	pool.injectedChainIds = map[string]struct{}{}
 	return nil
 }
 
@@ -215,6 +223,7 @@ func (pool *ConsensusPool) Inject(chainID string) error {
 		return err
 	}
 
+	pool.injectedChainIds[chainID] = struct{}{}
 	return nil
 }
 

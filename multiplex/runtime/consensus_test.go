@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"sync"
 	"testing"
@@ -169,40 +170,14 @@ func TestMultiplexRuntimeConsensusPoolHandshake(t *testing.T) {
 	require.NoError(t, injectionErr,
 		fmt.Sprintf("unexpected error injecting chainID in composer: %v", injectionErr))
 
-	databaseService := helpers.NewDBService(t.Context(),
+	chainConns,
+		shutdownFn := createLocalABCIClient(t,
 		"consensus-app-handshake",
-		baseCfg.DBDir(),
-		baseCfg.DBBackend,
-		cmtlog.NewNopLogger(),
+		chainID,
+		baseCfg,
+		logger,
 	)
-	dbStartErr := databaseService.Start()
-	require.NoError(t, dbStartErr,
-		fmt.Sprintf("unexpected error starting database service: %v", dbStartErr))
-
-	defer func() {
-		stopDbErr := databaseService.Stop()
-		assert.NoError(t, stopDbErr,
-			fmt.Sprintf("unexected error stopping database service: %v", stopDbErr))
-	}()
-
-	app := kvstore.NewApplication(databaseService.DB())
-	appCreator := proxy.NewLocalClientCreator(app)
-	appConns := proxy.NewAppConns(t.Context(), appCreator, proxy.PrometheusMetrics("ConsensusHandshakeTest"))
-	appConns.SetLogger(logger)
-
-	connStartErr := appConns.Start()
-	require.NoError(t, connStartErr,
-		fmt.Sprintf("unexpected error starting ABCI service: %v", connStartErr))
-
-	defer func() {
-		connStopErr := appConns.Stop()
-		assert.NoError(t, connStopErr,
-			fmt.Sprintf("unexpected error stopping ABCI service: %v", connStopErr))
-	}()
-
-	// configure a chainConns with the ABCI connection
-	chainConns := newMockChainConns()
-	chainConns.set(chainID, appConns)
+	defer shutdownFn()
 
 	stateStore := composer.StateStore(chainID)
 	initialState := composer.StateMachine(chainID)
@@ -223,6 +198,9 @@ func TestMultiplexRuntimeConsensusPoolHandshake(t *testing.T) {
 
 	nodeKey := &cmtp2p.NodeKey{}
 	pool := mxruntime.NewConsensusHandler(ctx, nodeKey, chainConns, resourceMgr, composer, logger)
+	startErr := pool.Start()
+	require.NoError(t, startErr)
+	defer pool.Stop()
 
 	handshakeErr := pool.Handshake(chainID)
 	assert.NoError(t, handshakeErr,
@@ -245,7 +223,114 @@ func TestMultiplexRuntimeConsensusPoolHandshake(t *testing.T) {
 }
 
 func TestMultiplexRuntimeConsensusPoolInject(t *testing.T) {
+	defer goleak.VerifyNone(t)
 
+	ctx := context.Background()
+	logger := cmtlog.NewNopLogger()
+
+	baseCfg := config.DefaultConfig()
+	baseCfg.RootDir = t.TempDir()
+	baseCfg.DBBackend = string(dbm.MemDBBackend)
+
+	resourceMgr := newMockResourceManager()
+
+	composer := mxruntime.NewComposer(ctx, baseCfg, nil, resourceMgr, logger)
+	composerErr := composer.Start()
+	require.NoError(t, composerErr,
+		fmt.Sprintf("unexpected error starting runtime composer: %v", composerErr))
+
+	defer func() {
+		stopErr := composer.Stop()
+		assert.NoError(t, stopErr,
+			fmt.Sprintf("unexpected error stopping runtime composer: %v", stopErr))
+	}()
+
+	// TEST 1:
+	// Compose and inject a ChainID with runtimeComposer, then create a
+	// local ABCI client with database and inject a specifically mutated
+	// state machine [sm.State].
+
+	chainID := helpers.MakeChainID("Handshake")
+
+	compositionErr := composer.Compose(chainID, nil, true)
+	require.NoError(t, compositionErr,
+		fmt.Sprintf("unexpected error composing chainID in composer: %v", compositionErr))
+
+	injectionErr := composer.Inject(chainID)
+	require.NoError(t, injectionErr,
+		fmt.Sprintf("unexpected error injecting chainID in composer: %v", injectionErr))
+
+	chainConns,
+		shutdownFn := createLocalABCIClient(t,
+		"consensus-app-inject-runtime",
+		chainID,
+		baseCfg,
+		logger,
+	)
+	defer shutdownFn()
+
+	// inject mutated state
+	stateStore := composer.StateStore(chainID)
+	initialState := composer.StateMachine(chainID)
+	mutatedState := initialState
+	mutatedState.Version.Consensus.App = initialState.Version.Consensus.App + 1
+
+	stateErr := stateStore.Save(mutatedState)
+	require.NoError(t, stateErr,
+		fmt.Sprintf("failed to save mutated state: %v", stateErr))
+
+	resErr := resourceMgr.Set(chainID, types.InstanceKeyStateMachine, initialState)
+	require.NoError(t, resErr,
+		fmt.Sprintf("unexpected error seeding state machine in resource manager: %v", resErr))
+
+	// creates a valid cmtp2p.NodeKey, required for PEX.
+	nodeKey, keyErr := cmtp2p.LoadOrGenNodeKey(filepath.Join(baseCfg.RootDir, "node_key.json"))
+	require.NotNil(t, nodeKey)
+	require.NoError(t, keyErr)
+
+	testConsensusPool := mxruntime.NewConsensusHandler(ctx,
+		nodeKey,
+		chainConns,
+		resourceMgr,
+		composer,
+		logger,
+	)
+	startErr := testConsensusPool.Start()
+	require.NoError(t, startErr)
+	defer testConsensusPool.Stop()
+
+	// TEST 2:
+	// Inject should setup the required reactors, notably mempool, blocksync,
+	// consensus and evidence.
+	injectErr := testConsensusPool.Inject(chainID)
+	require.NoError(t, injectErr,
+		fmt.Sprintf("unexpected error injecting ChainID in consensus pool: %v", injectErr))
+
+	require.Equal(t, true, resourceMgr.Has(chainID, types.ServiceKeyAddressesReactor),
+		"should inject address book and PEX reactor")
+	require.Equal(t, true, resourceMgr.Has(chainID, types.ServiceKeyMempoolReactor),
+		"should inject mempool reactor")
+	require.Equal(t, true, resourceMgr.Has(chainID, types.ServiceKeyEvidenceReactor),
+		"should inject evidence reactor")
+	require.Equal(t, true, resourceMgr.Has(chainID, types.ServiceKeyBlockSyncReactor),
+		"should inject blocksync reactor")
+	require.Equal(t, true, resourceMgr.Has(chainID, types.ServiceKeyConsensusReactor),
+		"should inject consensus reactor")
+
+	actualPexReactor := resourceMgr.Get(chainID, types.ServiceKeyAddressesReactor)
+	assert.NotNil(t, actualPexReactor)
+
+	actualMempoolReactor := resourceMgr.Get(chainID, types.ServiceKeyMempoolReactor)
+	assert.NotNil(t, actualMempoolReactor)
+
+	actualEvidenceReactor := resourceMgr.Get(chainID, types.ServiceKeyEvidenceReactor)
+	assert.NotNil(t, actualEvidenceReactor)
+
+	actualBlocksyncReactor := resourceMgr.Get(chainID, types.ServiceKeyBlockSyncReactor)
+	assert.NotNil(t, actualBlocksyncReactor)
+
+	actualConsensusReactor := resourceMgr.Get(chainID, types.ServiceKeyConsensusReactor)
+	assert.NotNil(t, actualConsensusReactor)
 }
 
 func TestMultiplexRuntimeConsensusPoolExecute(t *testing.T) {
@@ -254,6 +339,51 @@ func TestMultiplexRuntimeConsensusPoolExecute(t *testing.T) {
 
 func TestMultiplexRuntimeConsensusPoolShutdown(t *testing.T) {
 
+}
+
+// ----------------------------------------------------------------------------
+
+func createLocalABCIClient(
+	tb testing.TB,
+	dbName string,
+	chainID string,
+	baseCfg *config.Config,
+	customLogger cmtlog.Logger,
+) (proxy.ChainConns, func()) {
+	tb.Helper()
+
+	databaseService := helpers.NewDBService(tb.Context(),
+		tb.Name(),
+		baseCfg.DBDir(),
+		baseCfg.DBBackend,
+		cmtlog.NewNopLogger(),
+	)
+	dbStartErr := databaseService.Start()
+	require.NoError(tb, dbStartErr,
+		fmt.Sprintf("unexpected error starting database service: %v", dbStartErr))
+
+	app := kvstore.NewApplication(databaseService.DB())
+	appCreator := proxy.NewLocalClientCreator(app)
+	appConns := proxy.NewAppConns(tb.Context(), appCreator, proxy.PrometheusMetrics(tb.Name()))
+	appConns.SetLogger(customLogger)
+
+	connStartErr := appConns.Start()
+	require.NoError(tb, connStartErr,
+		fmt.Sprintf("unexpected error starting ABCI service: %v", connStartErr))
+
+	// configure a chainConns with the ABCI connection
+	chainConns := newMockChainConns()
+	chainConns.set(chainID, appConns)
+
+	return chainConns, func() {
+		connStopErr := appConns.Stop()
+		assert.NoError(tb, connStopErr,
+			fmt.Sprintf("unexpected error stopping ABCI service: %v", connStopErr))
+
+		stopDbErr := databaseService.Stop()
+		assert.NoError(tb, stopDbErr,
+			fmt.Sprintf("unexpected error stopping database service: %v", stopDbErr))
+	}
 }
 
 // ----------------------------------------------------------------------------
