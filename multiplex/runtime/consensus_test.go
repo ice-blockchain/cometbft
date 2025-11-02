@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"sync"
 	"testing"
 	"unsafe"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/helpers"
+	"github.com/ice-blockchain/cometbft/multiplex/p2p"
 	mxruntime "github.com/ice-blockchain/cometbft/multiplex/runtime"
 	"github.com/ice-blockchain/cometbft/multiplex/types"
 )
@@ -134,53 +136,28 @@ func TestMultiplexRuntimeConsensusPoolStartStop(t *testing.T) {
 func TestMultiplexRuntimeConsensusPoolHandshake(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	ctx := context.Background()
 	logger := cmtlog.NewNopLogger()
 
 	baseCfg := config.DefaultConfig()
 	baseCfg.RootDir = t.TempDir()
 	baseCfg.DBBackend = string(dbm.MemDBBackend)
 
-	resourceMgr := newMockResourceManager()
+	resourceMgr := mxruntime.NewResourceManager(t.Context(), logger)
 
-	composer := mxruntime.NewComposer(ctx, baseCfg, nil, resourceMgr, logger)
-	composerErr := composer.Start()
-	require.NoError(t, composerErr,
-		fmt.Sprintf("unexpected error starting runtime composer: %v", composerErr))
-
-	defer func() {
-		stopErr := composer.Stop()
-		assert.NoError(t, stopErr,
-			fmt.Sprintf("unexpected error stopping runtime composer: %v", stopErr))
-	}()
-
-	// TEST 1:
-	// Compose and inject a ChainID with composer, then setup a local ABCI
-	// client using `proxy.AppConns` and a `mockChainConns` in which we inject
-	// a test ChainID as well.
-	// Then save a mutated (testable) state machine.
-
-	chainID := helpers.MakeChainID("Handshake")
-
-	compositionErr := composer.Compose(chainID, nil, true)
-	require.NoError(t, compositionErr,
-		fmt.Sprintf("unexpected error composing chainID in composer: %v", compositionErr))
-
-	injectionErr := composer.Inject(chainID)
-	require.NoError(t, injectionErr,
-		fmt.Sprintf("unexpected error injecting chainID in composer: %v", injectionErr))
-
-	chainConns,
-		shutdownFn := createLocalABCIClient(t,
-		"consensus-app-handshake",
-		chainID,
+	// Uses a RANDOM ChainID, only fingerprint is deterministic.
+	withChainID := helpers.MakeChainID("ConsensusPool#Handshake")
+	testConsensusPool,
+		poolShutdownFn := ResetTestMultiplexRuntimeConsensusPool(t,
 		baseCfg,
+		resourceMgr,
 		logger,
+		withChainID,
 	)
-	defer shutdownFn()
+	defer poolShutdownFn()
 
-	stateStore := composer.StateStore(chainID)
-	initialState := composer.StateMachine(chainID)
+	// PREPARE: prepare and store a mutated state machine.
+	stateStore := testConsensusPool.Composer().StateStore(withChainID)
+	initialState := testConsensusPool.Composer().StateMachine(withChainID)
 	mutatedState := initialState
 	mutatedState.Version.Consensus.App = initialState.Version.Consensus.App + 1
 
@@ -188,25 +165,18 @@ func TestMultiplexRuntimeConsensusPoolHandshake(t *testing.T) {
 	require.NoError(t, stateErr,
 		fmt.Sprintf("failed to save mutated state: %v", stateErr))
 
-	resErr := resourceMgr.Set(chainID, types.InstanceKeyStateMachine, initialState)
+	resErr := resourceMgr.Set(withChainID, types.InstanceKeyStateMachine, initialState)
 	require.NoError(t, resErr,
 		fmt.Sprintf("unexpected error seeding state machine in resource manager: %v", resErr))
 
-	// TEST 2:
-	// Execute a Consensus Handshake, i.e. a handshake that compares the
-	// version of the app using the ABCI client and the state database.
-
-	nodeKey := &cmtp2p.NodeKey{}
-	pool := mxruntime.NewConsensusHandler(ctx, nodeKey, chainConns, resourceMgr, composer, logger)
-	startErr := pool.Start()
-	require.NoError(t, startErr)
-	defer pool.Stop()
-
-	handshakeErr := pool.Handshake(chainID)
+	// TEST 1: Execute an ABCI handshake by comparing the Consensus AppVersion
+	// and the ABCI returned AppVersion; since we mutated the default (initial)
+	// state machine, the returned AppVersion should be the one from mutatedState.
+	handshakeErr := testConsensusPool.Handshake(withChainID)
 	assert.NoError(t, handshakeErr,
 		fmt.Sprintf("unexpected error executing handshake with ABCI: %v", handshakeErr))
 
-	storedState := resourceMgr.Get(chainID, types.InstanceKeyStateMachine)
+	storedState := resourceMgr.Get(withChainID, types.InstanceKeyStateMachine)
 	require.NotNil(t, storedState,
 		"expected state machine to be stored after handshake")
 
@@ -218,127 +188,219 @@ func TestMultiplexRuntimeConsensusPoolHandshake(t *testing.T) {
 	actualAppVersion := stateAfter.Version.Consensus.App
 
 	assert.Equal(t, expectedAppVersion, actualAppVersion,
-		fmt.Sprintf("expected app version %d, got %d",
+		fmt.Sprintf("expected mutated app version %d, got %d",
 			expectedAppVersion, actualAppVersion))
 }
 
 func TestMultiplexRuntimeConsensusPoolInject(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	ctx := context.Background()
 	logger := cmtlog.NewNopLogger()
 
 	baseCfg := config.DefaultConfig()
 	baseCfg.RootDir = t.TempDir()
 	baseCfg.DBBackend = string(dbm.MemDBBackend)
 
-	resourceMgr := newMockResourceManager()
+	resourceMgr := mxruntime.NewResourceManager(t.Context(), logger)
 
-	composer := mxruntime.NewComposer(ctx, baseCfg, nil, resourceMgr, logger)
-	composerErr := composer.Start()
-	require.NoError(t, composerErr,
-		fmt.Sprintf("unexpected error starting runtime composer: %v", composerErr))
-
-	defer func() {
-		stopErr := composer.Stop()
-		assert.NoError(t, stopErr,
-			fmt.Sprintf("unexpected error stopping runtime composer: %v", stopErr))
-	}()
+	// Uses a RANDOM ChainID, only fingerprint is deterministic.
+	withChainID := helpers.MakeChainID("ConsensusPool#Inject")
+	testConsensusPool,
+		poolShutdownFn := ResetTestMultiplexRuntimeConsensusPool(t,
+		baseCfg,
+		resourceMgr,
+		logger,
+		withChainID,
+	)
+	defer poolShutdownFn()
 
 	// TEST 1:
-	// Compose and inject a ChainID with runtimeComposer, then create a
-	// local ABCI client with database and inject a specifically mutated
-	// state machine [sm.State].
-
-	chainID := helpers.MakeChainID("Handshake")
-
-	compositionErr := composer.Compose(chainID, nil, true)
-	require.NoError(t, compositionErr,
-		fmt.Sprintf("unexpected error composing chainID in composer: %v", compositionErr))
-
-	injectionErr := composer.Inject(chainID)
-	require.NoError(t, injectionErr,
-		fmt.Sprintf("unexpected error injecting chainID in composer: %v", injectionErr))
-
-	chainConns,
-		shutdownFn := createLocalABCIClient(t,
-		"consensus-app-inject-runtime",
-		chainID,
-		baseCfg,
-		logger,
-	)
-	defer shutdownFn()
-
-	// inject mutated state
-	stateStore := composer.StateStore(chainID)
-	initialState := composer.StateMachine(chainID)
-	mutatedState := initialState
-	mutatedState.Version.Consensus.App = initialState.Version.Consensus.App + 1
-
-	stateErr := stateStore.Save(mutatedState)
-	require.NoError(t, stateErr,
-		fmt.Sprintf("failed to save mutated state: %v", stateErr))
-
-	resErr := resourceMgr.Set(chainID, types.InstanceKeyStateMachine, initialState)
-	require.NoError(t, resErr,
-		fmt.Sprintf("unexpected error seeding state machine in resource manager: %v", resErr))
-
-	// creates a valid cmtp2p.NodeKey, required for PEX.
-	nodeKey, keyErr := cmtp2p.LoadOrGenNodeKey(filepath.Join(baseCfg.RootDir, "node_key.json"))
-	require.NotNil(t, nodeKey)
-	require.NoError(t, keyErr)
-
-	testConsensusPool := mxruntime.NewConsensusHandler(ctx,
-		nodeKey,
-		chainConns,
-		resourceMgr,
-		composer,
-		logger,
-	)
-	startErr := testConsensusPool.Start()
-	require.NoError(t, startErr)
-	defer testConsensusPool.Stop()
-
-	// TEST 2:
 	// Inject should setup the required reactors, notably mempool, blocksync,
 	// consensus and evidence.
-	injectErr := testConsensusPool.Inject(chainID)
+	injectErr := testConsensusPool.Inject(withChainID)
 	require.NoError(t, injectErr,
 		fmt.Sprintf("unexpected error injecting ChainID in consensus pool: %v", injectErr))
 
-	require.Equal(t, true, resourceMgr.Has(chainID, types.ServiceKeyAddressesReactor),
+	require.Equal(t, true, resourceMgr.Has(withChainID, types.ServiceKeyAddressesReactor),
 		"should inject address book and PEX reactor")
-	require.Equal(t, true, resourceMgr.Has(chainID, types.ServiceKeyMempoolReactor),
+	require.Equal(t, true, resourceMgr.Has(withChainID, types.ServiceKeyMempoolReactor),
 		"should inject mempool reactor")
-	require.Equal(t, true, resourceMgr.Has(chainID, types.ServiceKeyEvidenceReactor),
+	require.Equal(t, true, resourceMgr.Has(withChainID, types.ServiceKeyEvidenceReactor),
 		"should inject evidence reactor")
-	require.Equal(t, true, resourceMgr.Has(chainID, types.ServiceKeyBlockSyncReactor),
+	require.Equal(t, true, resourceMgr.Has(withChainID, types.ServiceKeyBlockSyncReactor),
 		"should inject blocksync reactor")
-	require.Equal(t, true, resourceMgr.Has(chainID, types.ServiceKeyConsensusReactor),
+	require.Equal(t, true, resourceMgr.Has(withChainID, types.ServiceKeyConsensusReactor),
 		"should inject consensus reactor")
 
-	actualPexReactor := resourceMgr.Get(chainID, types.ServiceKeyAddressesReactor)
+	actualPexReactor := resourceMgr.Get(withChainID, types.ServiceKeyAddressesReactor)
 	assert.NotNil(t, actualPexReactor)
 
-	actualMempoolReactor := resourceMgr.Get(chainID, types.ServiceKeyMempoolReactor)
+	actualMempoolReactor := resourceMgr.Get(withChainID, types.ServiceKeyMempoolReactor)
 	assert.NotNil(t, actualMempoolReactor)
 
-	actualEvidenceReactor := resourceMgr.Get(chainID, types.ServiceKeyEvidenceReactor)
+	actualEvidenceReactor := resourceMgr.Get(withChainID, types.ServiceKeyEvidenceReactor)
 	assert.NotNil(t, actualEvidenceReactor)
 
-	actualBlocksyncReactor := resourceMgr.Get(chainID, types.ServiceKeyBlockSyncReactor)
+	actualBlocksyncReactor := resourceMgr.Get(withChainID, types.ServiceKeyBlockSyncReactor)
 	assert.NotNil(t, actualBlocksyncReactor)
 
-	actualConsensusReactor := resourceMgr.Get(chainID, types.ServiceKeyConsensusReactor)
+	actualConsensusReactor := resourceMgr.Get(withChainID, types.ServiceKeyConsensusReactor)
 	assert.NotNil(t, actualConsensusReactor)
 }
 
+func TestMultiplexRuntimeConsensusPoolInjectThenComposerBuild(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	logger := cmtlog.NewNopLogger()
+
+	baseCfg := config.DefaultConfig()
+	baseCfg.RootDir = t.TempDir()
+	baseCfg.DBBackend = string(dbm.MemDBBackend)
+
+	resourceMgr := mxruntime.NewResourceManager(t.Context(), logger)
+
+	// Uses a RANDOM ChainID, only fingerprint is deterministic.
+	withChainID := helpers.MakeChainID("ConsensusPool#InjectThenBuild")
+	testConsensusPool,
+		poolShutdownFn := ResetTestMultiplexRuntimeConsensusPool(t,
+		baseCfg,
+		resourceMgr,
+		logger,
+		withChainID,
+	)
+	defer poolShutdownFn()
+
+	// TEST 1:
+	// Inject should setup the required reactors, notably mempool, blocksync,
+	// consensus and evidence.
+	injectErr := testConsensusPool.Inject(withChainID)
+	require.NoError(t, injectErr,
+		fmt.Sprintf("unexpected error injecting ChainID in consensus pool: %v", injectErr))
+
+	// ...and runtimeComposer.Build() should package all services in a [node.Node].
+	chainConns := testConsensusPool.ABCI()
+	buildErr := testConsensusPool.Composer().Build(withChainID, chainConns)
+	require.NoError(t, buildErr,
+		fmt.Sprintf("unexpected error building chainID runtime in composer: %v", buildErr))
+
+	require.Equal(t, true, resourceMgr.Has(withChainID, types.ServiceKeyAddressesReactor),
+		"should inject address book and PEX reactor")
+	require.Equal(t, true, resourceMgr.Has(withChainID, types.ServiceKeyMempoolReactor),
+		"should inject mempool reactor")
+	require.Equal(t, true, resourceMgr.Has(withChainID, types.ServiceKeyEvidenceReactor),
+		"should inject evidence reactor")
+	require.Equal(t, true, resourceMgr.Has(withChainID, types.ServiceKeyBlockSyncReactor),
+		"should inject blocksync reactor")
+	require.Equal(t, true, resourceMgr.Has(withChainID, types.ServiceKeyConsensusReactor),
+		"should inject consensus reactor")
+
+	require.Equal(t, true, resourceMgr.Has(withChainID, types.ServiceKeyNodeRuntime),
+		"should inject node.Node runtime service")
+
+	actualNodeRuntime := resourceMgr.Get(withChainID, types.ServiceKeyNodeRuntime)
+	assert.NotNil(t, actualNodeRuntime)
+}
+
 func TestMultiplexRuntimeConsensusPoolExecute(t *testing.T) {
+	// defer goleak.VerifyNone(t)
+
+	// logger := cmtlog.NewNopLogger()
+	// baseCfg := config.DefaultConfig()
+	// baseCfg.RootDir = t.TempDir()
+	// baseCfg.DBBackend = string(dbm.MemDBBackend)
 
 }
 
 func TestMultiplexRuntimeConsensusPoolShutdown(t *testing.T) {
 
+}
+
+// ----------------------------------------------------------------------------
+
+// CAUTION: This helper injects a connection pool mock, a pre-configured
+// runtimeComposer instance, and local ABCI clients for injectedChainIds.
+// The [ConsensusPool#Stop] method is part of the returned shutdownFn.
+func ResetTestMultiplexRuntimeConsensusPool(
+	tb testing.TB,
+	baseCfg *config.Config,
+	resourceMgr *mxruntime.ResourceRegistry,
+	customLogger cmtlog.Logger,
+	injectedChainIds ...string,
+) (testConsensusPool *mxruntime.ConsensusPool, shutdownFn func()) {
+	tb.Helper()
+
+	// creates a valid cmtp2p.NodeKey, required for Composer.Build().
+	nodeKey, keyErr := cmtp2p.LoadOrGenNodeKey(filepath.Join(baseCfg.RootDir, "node_key.json"))
+	require.NotNil(tb, nodeKey)
+	require.NoError(tb, keyErr)
+
+	// create a mock types.ConnectionManager.
+	mockConnPool := &mockConnectionPool{
+		nodeKey:  nodeKey,
+		nodeInfo: &p2p.MultiNetworkNodeInfo{DefaultNodeID: nodeKey.ID()},
+	}
+	// create a cmtp2p.Switch with nil-cmtp2p.Pool.
+	eventSwitch := cmtp2p.NewSwitch(tb.Context(), baseCfg.P2P, mockConnPool)
+
+	composer := mxruntime.NewComposer(tb.Context(),
+		baseCfg,
+		mockConnPool,
+		resourceMgr,
+		customLogger,
+	)
+	composer.SetSwitch(eventSwitch)
+
+	// create local multi-ChainID ABCI connector.
+	chainConns := newMockChainConns()
+
+	composerErr := composer.Start()
+	require.NoError(tb, composerErr,
+		fmt.Sprintf("unexpected error starting runtime composer: %v", composerErr))
+
+	abciShutdownFns := make([]func(), 0, len(injectedChainIds))
+	for i, chainID := range injectedChainIds {
+		compositionErr := composer.Compose(chainID, []string{}, true)
+		require.NoError(tb, compositionErr,
+			fmt.Sprintf("unexpected error composing chainID in composer: %v", compositionErr))
+
+		injectionErr := composer.Inject(chainID)
+		require.NoError(tb, injectionErr,
+			fmt.Sprintf("unexpected error injecting chainID in composer: %v", injectionErr))
+
+		chainAppConns,
+			abciShutdownFn := createLocalABCIClient(tb,
+			tb.Name()+strconv.Itoa(i),
+			chainID,
+			baseCfg,
+			customLogger,
+		)
+
+		abciShutdownFns = append(abciShutdownFns, abciShutdownFn)
+		chainConns.set(chainID, chainAppConns)
+	}
+
+	testConsensusPool = mxruntime.NewConsensusHandler(tb.Context(),
+		nodeKey,
+		chainConns,
+		resourceMgr,
+		composer,
+		customLogger,
+	)
+	testConsensusPool.SetSwitch(eventSwitch)
+
+	startErr := testConsensusPool.Start()
+	require.NoError(tb, startErr)
+
+	shutdownFn = func() {
+		testConsensusPool.Stop()
+		composer.Stop()
+
+		for _, abciShutdownFn := range abciShutdownFns {
+			abciShutdownFn()
+		}
+	}
+
+	return // testConsensusPool, shutdownFn
 }
 
 // ----------------------------------------------------------------------------
@@ -349,11 +411,11 @@ func createLocalABCIClient(
 	chainID string,
 	baseCfg *config.Config,
 	customLogger cmtlog.Logger,
-) (proxy.ChainConns, func()) {
+) (proxy.AppConns, func()) {
 	tb.Helper()
 
 	databaseService := helpers.NewDBService(tb.Context(),
-		tb.Name(),
+		dbName,
 		baseCfg.DBDir(),
 		baseCfg.DBBackend,
 		cmtlog.NewNopLogger(),
@@ -371,11 +433,7 @@ func createLocalABCIClient(
 	require.NoError(tb, connStartErr,
 		fmt.Sprintf("unexpected error starting ABCI service: %v", connStartErr))
 
-	// configure a chainConns with the ABCI connection
-	chainConns := newMockChainConns()
-	chainConns.set(chainID, appConns)
-
-	return chainConns, func() {
+	return appConns, func() {
 		connStopErr := appConns.Stop()
 		assert.NoError(tb, connStopErr,
 			fmt.Sprintf("unexpected error stopping ABCI service: %v", connStopErr))
@@ -501,62 +559,4 @@ func (m *mockChainConns) Snapshot(chainID string) proxy.AppConnSnapshot {
 		return conns.Snapshot()
 	}
 	return nil
-}
-
-// ----------------------------------------------------------------------------
-
-type mockResourceManager struct {
-	mu    sync.RWMutex
-	store map[string]map[string]any
-}
-
-func newMockResourceManager() *mockResourceManager {
-	return &mockResourceManager{
-		store: make(map[string]map[string]any),
-	}
-}
-
-func (m *mockResourceManager) Has(chainID, name string) bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	if chainResources, ok := m.store[chainID]; ok {
-		_, exists := chainResources[name]
-		return exists
-	}
-	return false
-}
-
-func (m *mockResourceManager) Set(chainID, name string, resource any) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if _, ok := m.store[chainID]; !ok {
-		m.store[chainID] = make(map[string]any)
-	}
-	m.store[chainID][name] = resource
-	return nil
-}
-
-func (m *mockResourceManager) Get(chainID, name string) any {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	if chainResources, ok := m.store[chainID]; ok {
-		return chainResources[name]
-	}
-	return nil
-}
-
-func (m *mockResourceManager) Multiplex(name string) helpers.MultiplexMap[any] {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	result := make(helpers.MultiplexMap[any])
-	for chainID, resources := range m.store {
-		if val, ok := resources[name]; ok {
-			result[chainID] = helpers.NewChainInstance(chainID, val)
-		}
-	}
-	return result
 }

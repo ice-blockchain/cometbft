@@ -127,13 +127,20 @@ func NewSwitch(
 	for _, option := range options {
 		option(sw)
 	}
-	sw.Transport().SetLogger(sw.Logger)
+
+	if sw.pool != nil {
+		sw.Transport().SetLogger(sw.Logger)
+	}
+
 	return sw
 }
 
 func (sw *Switch) SetLogger(l cmtlog.Logger) {
 	sw.Logger = l
-	sw.Transport().SetLogger(sw.Logger)
+
+	if sw.pool != nil {
+		sw.Transport().SetLogger(sw.Logger)
+	}
 }
 
 // WithMetrics sets the metrics.
@@ -223,6 +230,10 @@ func (sw *Switch) GetPeerConfig() PeerConfig {
 
 // Transport returns the switch's Transport.
 func (sw *Switch) Transport() *MultiplexTransport {
+	if sw.pool == nil {
+		return nil
+	}
+
 	return sw.pool.Transport()
 }
 

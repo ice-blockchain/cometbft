@@ -132,11 +132,23 @@ func (pool *ConsensusPool) OnReset(ctx context.Context) error {
 
 // SetSwitch is used to set a cmtp2p.Switch for CometBFT.
 func (pool *ConsensusPool) SetSwitch(sw *cmtp2p.Switch) {
+	pool.mtx.Lock()
+	defer pool.mtx.Unlock()
+
 	pool.cometbftSwitch = sw
 }
 
 // Switch returns the cmtp2p.Switch instance for CometBFT.
 func (pool *ConsensusPool) Switch() *cmtp2p.Switch {
+	pool.mtx.Lock()
+	defer pool.mtx.Unlock()
+
+	return pool.cometbftSwitch
+}
+
+// getSwitch returns the cmtp2p.Switch instance for CometBFT.
+// Note that the mutex must be locked by the caller.
+func (pool *ConsensusPool) getSwitch() *cmtp2p.Switch {
 	return pool.cometbftSwitch
 }
 
@@ -146,6 +158,14 @@ func (pool *ConsensusPool) ABCI() proxy.ChainConns {
 	defer pool.mtx.Unlock()
 
 	return pool.abciClient
+}
+
+// Composer returns the runtimeComposer instance.
+func (pool *ConsensusPool) Composer() *runtimeComposer {
+	pool.mtx.Lock()
+	defer pool.mtx.Unlock()
+
+	return pool.runtimeComposer
 }
 
 // Handshake executes the consensus/ABCI handshake to set the App version.
@@ -224,6 +244,10 @@ func (pool *ConsensusPool) Inject(chainID string) error {
 	}
 
 	pool.injectedChainIds[chainID] = struct{}{}
+
+	pool.logger.Debug("ConsensusPool#Inject; runtime successfully injected",
+		"chainID", chainID,
+	)
 	return nil
 }
 
@@ -339,6 +363,9 @@ func (pool *ConsensusPool) Execute(chainID string) error {
 		pool.cometbftSwitch.AddPeerForScope(peer, chainID)
 	}
 
+	pool.logger.Debug("ConsensusPool#Execute; runtime successfully started",
+		"chainID", chainID,
+	)
 	return nil
 }
 
@@ -388,12 +415,16 @@ func (pool *ConsensusPool) Shutdown(
 		}
 	}
 
+	pool.logger.Debug("ConsensusPool#Shutdown; runtime successfully stopped",
+		"chainID", chainID,
+	)
 	return nil
 }
 
 // ----------------------------------------------------------------------------
 // Orchestration methods
 
+// CAUTION: The pool.mtx should be locked by the caller.
 func (pool *ConsensusPool) makeNetworkAddressBook(
 	chainID string,
 ) error {
@@ -450,6 +481,7 @@ func (pool *ConsensusPool) makeNetworkAddressBook(
 	return nil
 }
 
+// CAUTION: The pool.mtx should be locked by the caller.
 func (pool *ConsensusPool) makeNetworkMempoolReactor(
 	chainID string,
 ) error {
@@ -497,12 +529,13 @@ func (pool *ConsensusPool) makeNetworkMempoolReactor(
 		mempool.EnableTxsAvailable()
 	}
 	mempoolReactor.SetLogger(pool.logger.With("module", "mempool"))
-	mempoolReactor.SetSwitch(pool.Switch())
+	mempoolReactor.SetSwitch(pool.getSwitch())
 
 	pool.resourceMgr.Set(chainID, types.ServiceKeyMempoolReactor, mempoolReactor)
 	return nil
 }
 
+// CAUTION: The pool.mtx should be locked by the caller.
 func (pool *ConsensusPool) makeNetworkEvidenceReactor(
 	chainID string,
 ) error {
@@ -533,7 +566,7 @@ func (pool *ConsensusPool) makeNetworkEvidenceReactor(
 			evidence.WithChainID(chainID),
 		)
 		evidenceReactor.SetLogger(pool.logger.With("module", "evidence"))
-		evidenceReactor.SetSwitch(pool.Switch())
+		evidenceReactor.SetSwitch(pool.getSwitch())
 
 		pool.resourceMgr.Set(chainID, types.ServiceKeyEvidenceReactor, evidenceReactor)
 	}
@@ -541,6 +574,7 @@ func (pool *ConsensusPool) makeNetworkEvidenceReactor(
 	return nil
 }
 
+// CAUTION: The pool.mtx should be locked by the caller.
 func (pool *ConsensusPool) makeNetworkBlocksyncReactor(
 	chainID string,
 ) error {
@@ -577,7 +611,7 @@ func (pool *ConsensusPool) makeNetworkBlocksyncReactor(
 			blocksync.WithChainID(chainID),
 		)
 		blockSyncReactor.SetLogger(pool.logger.With("module", "blocksync"))
-		blockSyncReactor.SetSwitch(pool.Switch())
+		blockSyncReactor.SetSwitch(pool.getSwitch())
 
 		pool.resourceMgr.Set(chainID, types.InstanceKeyBlockExecutor, blockExecutor)
 		pool.resourceMgr.Set(chainID, types.ServiceKeyBlockSyncReactor, blockSyncReactor)
@@ -586,6 +620,7 @@ func (pool *ConsensusPool) makeNetworkBlocksyncReactor(
 	return nil
 }
 
+// CAUTION: The pool.mtx should be locked by the caller.
 func (pool *ConsensusPool) makeNetworkConsensusReactor(
 	chainID string,
 ) error {
@@ -624,7 +659,7 @@ func (pool *ConsensusPool) makeNetworkConsensusReactor(
 			cs.WithChainID(chainID),
 		)
 		consensusReactor.SetLogger(pool.logger.With("module", "consensus"))
-		consensusReactor.SetSwitch(pool.Switch())
+		consensusReactor.SetSwitch(pool.getSwitch())
 
 		// services which will be publishing and/or subscribing for messages (events)
 		// consensusReactor will set it on consensusState and blockExecutor

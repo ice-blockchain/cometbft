@@ -621,6 +621,20 @@ func NewNodeWithServices(
 	stateSync bool,
 	stateSyncGenesis sm.State,
 ) *Node {
+	mempoolReactor := sw.Reactor(genDoc.ChainID, "MEMPOOL")
+	consensusReactor := sw.Reactor(genDoc.ChainID, "CONSENSUS")
+	pexReactor := sw.Reactor(genDoc.ChainID, "PEX")
+
+	if mempoolReactor == nil {
+		mempoolReactor = mempl.NewEmptyReactor(context.Background())
+	}
+	if consensusReactor == nil {
+		consensusReactor = cs.NewEmptyReactor(context.Background())
+	}
+	if pexReactor == nil {
+		pexReactor = pex.NewEmptyReactor(context.Background())
+	}
+
 	return &Node{
 		config:        config,
 		genesisDoc:    genDoc,
@@ -652,9 +666,9 @@ func NewNodeWithServices(
 		blockIndexer:     indexerService.GetBlockIndexer(),
 
 		bcReactor:        sw.Reactor(genDoc.ChainID, "BLOCKSYNC"),
-		mempoolReactor:   sw.Reactor(genDoc.ChainID, "MEMPOOL").(*mempl.Reactor),
-		consensusReactor: sw.Reactor(genDoc.ChainID, "CONSENSUS").(*cs.Reactor),
-		pexReactor:       sw.Reactor(genDoc.ChainID, "PEX").(*pex.Reactor),
+		mempoolReactor:   mempoolReactor.(*mempl.Reactor),
+		consensusReactor: consensusReactor.(*cs.Reactor),
+		pexReactor:       pexReactor.(*pex.Reactor),
 	}
 }
 
