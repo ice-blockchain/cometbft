@@ -56,7 +56,7 @@ type runtimeComposer struct {
 
 	// Services
 	resourceMgr    types.ResourceManager
-	connectionPool *p2p.ConnectionPool
+	connectionPool types.ConnectionManager
 
 	// Options
 	logger cmtlog.Logger
@@ -71,7 +71,7 @@ type ComposerOption func(*runtimeComposer)
 func NewComposer(
 	ctx context.Context,
 	baseConfig *config.Config,
-	connectionPool *p2p.ConnectionPool,
+	connectionPool types.ConnectionManager,
 	resourceMgr types.ResourceManager,
 	logger cmtlog.Logger,
 	options ...ComposerOption,
@@ -108,9 +108,17 @@ func ComposerWithLogger(logger cmtlog.Logger) ComposerOption {
 	}
 }
 
+// ComposerWithGenesisDocSet injects a custom genesis docset.
 func ComposerWithGenesisDocSet(docSet *helpers.ChecksummedGenesisDocSet) ComposerOption {
 	return func(c *runtimeComposer) {
 		c.genesisDocSet = docSet
+	}
+}
+
+// ComposerWithConnectionPool injects a custom connection manager.
+func ComposerWithConnectionPool(pool *p2p.ConnectionPool) ComposerOption {
+	return func(c *runtimeComposer) {
+		c.connectionPool = pool
 	}
 }
 

@@ -119,6 +119,20 @@ func ConnectionPoolWithConnector(c *PeerConnector) ConnectionPoolOption {
 	}
 }
 
+// ConnectionPoolWithNodeKey injects a custom [cmtp2p.NodeKey] instance.
+func ConnectionPoolWithNodeKey(k *cmtp2p.NodeKey) ConnectionPoolOption {
+	return func(pool *ConnectionPool) {
+		pool.nodeKey = k
+	}
+}
+
+// ConnectionPoolWithNodeInfo injects a custom [cmtp2p.NodeInfo] instance.
+func ConnectionPoolWithNodeInfo(i *MultiNetworkNodeInfo) ConnectionPoolOption {
+	return func(pool *ConnectionPool) {
+		pool.nodeInfo = i
+	}
+}
+
 // ----------------------------------------------------------------------------
 // ConnectionPool implements [service.Service]
 
