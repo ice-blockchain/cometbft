@@ -17,6 +17,7 @@ import (
 	"github.com/ice-blockchain/cometbft/multiplex/p2p"
 	mxruntime "github.com/ice-blockchain/cometbft/multiplex/runtime"
 	"github.com/ice-blockchain/cometbft/multiplex/types"
+	cmtnode "github.com/ice-blockchain/cometbft/node"
 	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/p2p/conn"
 	"github.com/stretchr/testify/assert"
@@ -187,7 +188,7 @@ func TestMultiplexRuntimeComposerUnload(t *testing.T) {
 		fmt.Sprintf("unexpected error starting runtime composer: %v", startErr))
 	defer shutdownFn()
 
-	withChainID := helpers.MakeChainID("RuntimeComposer#Compose")
+	withChainID := helpers.MakeChainID("RuntimeComposer#Unload")
 	composeErr := testComposer.Compose(withChainID, []string{}, true)
 	require.NoError(t, composeErr)
 	injectErr := testComposer.Inject(withChainID)
@@ -236,7 +237,7 @@ func TestMultiplexRuntimeComposerInject(t *testing.T) {
 		fmt.Sprintf("unexpected error starting runtime composer: %v", startErr))
 	defer shutdownFn()
 
-	withChainID := helpers.MakeChainID("RuntimeComposer#Compose")
+	withChainID := helpers.MakeChainID("RuntimeComposer#Inject")
 	composeErr := testComposer.Compose(withChainID, []string{}, true)
 	require.NoError(t, composeErr)
 
@@ -254,7 +255,77 @@ func TestMultiplexRuntimeComposerInject(t *testing.T) {
 }
 
 func TestMultiplexRuntimeComposerBuild(t *testing.T) {
+	defer goleak.VerifyNone(t)
 
+	ctx := context.Background()
+	logger := cmtlog.NewNopLogger()
+
+	cfg := config.DefaultConfig()
+	cfg.RootDir = t.TempDir()
+
+	resourceMgr := mxruntime.NewResourceManager(ctx, logger)
+
+	withChainID := helpers.MakeChainID("RuntimeComposer#Build")
+	chainConns := newMockChainConns()
+	chainAppConn, abciShutdownFn := createLocalABCIClient(t,
+		t.Name(),
+		withChainID,
+		cfg,
+		logger,
+	)
+	chainConns.set(withChainID, chainAppConn)
+	defer abciShutdownFn()
+
+	// CAUTION: also sets a &mockConnectionPool.
+	// CAUTION: we drop the shutdownFn to test it manually.
+	testComposer, shutdownFn := ResetTestMultiplexRuntimeComposer(t,
+		cfg,
+		resourceMgr,
+		logger,
+	)
+
+	require.NotNil(t, testComposer, "expected non-nil composer instance")
+	require.NotNil(t, shutdownFn)
+
+	startErr := testComposer.Start()
+	require.NoError(t, startErr,
+		fmt.Sprintf("unexpected error starting runtime composer: %v", startErr))
+	defer shutdownFn()
+
+	composeErr := testComposer.Compose(withChainID, []string{}, true)
+	require.NoError(t, composeErr)
+
+	injectErr := testComposer.Inject(withChainID)
+	require.NoError(t, injectErr)
+	defer testComposer.Unload(withChainID)
+
+	// CAUTION: we also need a ConsensusPool for mempool, blocksync, etc.
+	testConsensusPool,
+		poolShutdownFn := ResetTestMultiplexRuntimeConsensusPool(t,
+		cfg,
+		resourceMgr,
+		logger,
+		nil, // nil-Composer (auto-create)
+		withChainID,
+	)
+	defer poolShutdownFn()
+
+	consensusErr := testConsensusPool.Inject(withChainID)
+	require.NoError(t, consensusErr,
+		fmt.Sprintf("unexpected error injecting ChainID in consensus pool: %v", consensusErr))
+
+	// TEST 1: Should configure a node.Node instance.
+	buildErr := testComposer.Build(withChainID, chainConns)
+	require.NoError(t, buildErr,
+		fmt.Sprintf("unexpected error building chainID runtime in composer: %v", buildErr))
+
+	actualNodeRuntime := resourceMgr.Get(withChainID, types.ServiceKeyNodeRuntime)
+	require.NotNil(t, actualNodeRuntime)
+
+	actualNode, isType := actualNodeRuntime.(*cmtnode.Node)
+	assert.Equal(t, true, isType)
+	assert.NotNil(t, actualNode)
+	assert.Equal(t, false, actualNode.IsRunning()) // NOT started.
 }
 
 // ----------------------------------------------------------------------------

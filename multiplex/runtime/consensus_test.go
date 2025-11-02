@@ -156,6 +156,7 @@ func TestMultiplexRuntimeConsensusPoolHandshake(t *testing.T) {
 		baseCfg,
 		resourceMgr,
 		logger,
+		nil, // nil-Composer (auto-create)
 		withChainID,
 	)
 	defer poolShutdownFn()
@@ -215,6 +216,7 @@ func TestMultiplexRuntimeConsensusPoolInject(t *testing.T) {
 		baseCfg,
 		resourceMgr,
 		logger,
+		nil, // nil-Composer (auto-create)
 		withChainID,
 	)
 	defer poolShutdownFn()
@@ -271,6 +273,7 @@ func TestMultiplexRuntimeConsensusPoolInjectThenComposerBuild(t *testing.T) {
 		baseCfg,
 		resourceMgr,
 		logger,
+		nil, // nil-Composer (auto-create)
 		withChainID,
 	)
 	defer poolShutdownFn()
@@ -324,6 +327,7 @@ func TestMultiplexRuntimeConsensusPoolShutdown(t *testing.T) {
 		baseCfg,
 		resourceMgr,
 		logger,
+		nil, // nil-Composer (auto-create)
 		withChainID,
 	)
 	defer poolShutdownFn()
@@ -405,6 +409,7 @@ func TestMultiplexRuntimeConsensusPoolExecute(t *testing.T) {
 		baseCfg,
 		resourceMgr,
 		logger,
+		nil, // nil-Composer (auto-create)
 		withChainID,
 	)
 	defer poolShutdownFn()
@@ -457,6 +462,7 @@ func ResetTestMultiplexRuntimeConsensusPool(
 	baseCfg *config.Config,
 	resourceMgr *mxruntime.ResourceRegistry,
 	customLogger cmtlog.Logger,
+	withComposer *mxruntime.RuntimeComposer,
 	injectedChainIds ...string,
 ) (testConsensusPool *mxruntime.ConsensusPool, shutdownFn func()) {
 	tb.Helper()
@@ -474,13 +480,16 @@ func ResetTestMultiplexRuntimeConsensusPool(
 	// create a cmtp2p.Switch with nil-cmtp2p.Pool.
 	eventSwitch := cmtp2p.NewSwitch(tb.Context(), baseCfg.P2P, mockConnPool)
 
-	composer := mxruntime.NewComposer(tb.Context(),
-		baseCfg,
-		mockConnPool,
-		resourceMgr,
-		customLogger,
-	)
-	composer.SetSwitch(eventSwitch)
+	composer := withComposer
+	if composer == nil {
+		composer = mxruntime.NewComposer(tb.Context(),
+			baseCfg,
+			mockConnPool,
+			resourceMgr,
+			customLogger,
+		)
+		composer.SetSwitch(eventSwitch)
+	}
 
 	// create local multi-ChainID ABCI connector.
 	chainConns := newMockChainConns()
