@@ -56,7 +56,7 @@ type Registry struct {
 	resourceMgr     *ResourceRegistry
 	broadcastMgr    *BroadcastPool
 	replicationMgr  *ReplicationPool
-	runtimeComposer *runtimeComposer
+	runtimeComposer *RuntimeComposer
 	consensusPool   *ConsensusPool
 	discoveryPool   *p2p.ConnectionPool
 	cometbftPool    *p2p.ConnectionPool

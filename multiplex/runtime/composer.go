@@ -41,8 +41,8 @@ import (
 	"github.com/ice-blockchain/cometbft/multiplex/types"
 )
 
-// runtimeComposer defines a runtime composer.
-type runtimeComposer struct {
+// RuntimeComposer defines a runtime composer.
+type RuntimeComposer struct {
 	service.BaseService
 	mtx *sync.Mutex
 
@@ -63,9 +63,9 @@ type runtimeComposer struct {
 }
 
 // Ensure that our implementation satisfies interface.
-var _ types.RuntimeComposer = (*runtimeComposer)(nil)
+var _ types.RuntimeComposer = (*RuntimeComposer)(nil)
 
-type ComposerOption func(*runtimeComposer)
+type ComposerOption func(*RuntimeComposer)
 
 // NewComposer creates a new runtime composer.
 func NewComposer(
@@ -75,8 +75,8 @@ func NewComposer(
 	resourceMgr types.ResourceManager,
 	logger cmtlog.Logger,
 	options ...ComposerOption,
-) *runtimeComposer {
-	c := &runtimeComposer{
+) *RuntimeComposer {
+	c := &RuntimeComposer{
 		mtx: new(sync.Mutex),
 
 		// Resources
@@ -97,27 +97,27 @@ func NewComposer(
 	// Use option helpers
 	c.SetOptions(options...)
 
-	c.BaseService = *service.NewBaseService(ctx, logger, "runtimeComposer", c)
+	c.BaseService = *service.NewBaseService(ctx, logger, "RuntimeComposer", c)
 	return c
 }
 
 // ComposerWithLogger injects a custom logger instance.
 func ComposerWithLogger(logger cmtlog.Logger) ComposerOption {
-	return func(c *runtimeComposer) {
+	return func(c *RuntimeComposer) {
 		c.logger = logger
 	}
 }
 
 // ComposerWithGenesisDocSet injects a custom genesis docset.
 func ComposerWithGenesisDocSet(docSet *helpers.ChecksummedGenesisDocSet) ComposerOption {
-	return func(c *runtimeComposer) {
+	return func(c *RuntimeComposer) {
 		c.genesisDocSet = docSet
 	}
 }
 
 // ComposerWithConnectionPool injects a custom connection manager.
 func ComposerWithConnectionPool(pool *p2p.ConnectionPool) ComposerOption {
-	return func(c *runtimeComposer) {
+	return func(c *RuntimeComposer) {
 		c.connectionPool = pool
 	}
 }
@@ -125,39 +125,39 @@ func ComposerWithConnectionPool(pool *p2p.ConnectionPool) ComposerOption {
 // ----------------------------------------------------------------------------
 
 // UserChainID returns a parsed extended ChainID.
-func (c *runtimeComposer) UserChainID(chainID string) helpers.ExtendedChainID {
+func (c *RuntimeComposer) UserChainID(chainID string) helpers.ExtendedChainID {
 	return helpers.NewExtendedChainIDFromString(chainID)
 }
 
 // SetOptions uses custom option helpers.
-func (c *runtimeComposer) SetOptions(options ...ComposerOption) {
+func (c *RuntimeComposer) SetOptions(options ...ComposerOption) {
 	for _, option := range options {
 		option(c)
 	}
 }
 
 // Logger returns the logger instance.
-func (c *runtimeComposer) Logger() cmtlog.Logger {
+func (c *RuntimeComposer) Logger() cmtlog.Logger {
 	return c.logger
 }
 
 // SetSwitch is used to set a cmtp2p.Switch for CometBFT.
-func (c *runtimeComposer) SetSwitch(sw *cmtp2p.Switch) {
+func (c *RuntimeComposer) SetSwitch(sw *cmtp2p.Switch) {
 	c.cometbftSwitch = sw
 }
 
 // Switch returns the cmtp2p.Switch instance for CometBFT.
-func (c *runtimeComposer) Switch() *cmtp2p.Switch {
+func (c *RuntimeComposer) Switch() *cmtp2p.Switch {
 	return c.cometbftSwitch
 }
 
 // ----------------------------------------------------------------------------
-// runtimeComposer implements [service.Service]
+// RuntimeComposer implements [service.Service]
 
 // OnStart implements [service.Service] by opening a database.
 //
 // The mutex is locked during the execution time of this method.
-func (c *runtimeComposer) OnStart(ctx context.Context) error {
+func (c *RuntimeComposer) OnStart(ctx context.Context) error {
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
 
@@ -186,7 +186,7 @@ func (c *runtimeComposer) OnStart(ctx context.Context) error {
 }
 
 // OnStop implements [service.Service] by closing the database.
-func (c *runtimeComposer) OnStop() {
+func (c *RuntimeComposer) OnStop() {
 	c.mtx.Lock()
 	composedChainIds := c.composedChainIds
 	c.mtx.Unlock()
@@ -199,7 +199,7 @@ func (c *runtimeComposer) OnStop() {
 }
 
 // OnReset implements [service.Service] by resetting the service.
-func (c *runtimeComposer) OnReset(ctx context.Context) error {
+func (c *RuntimeComposer) OnReset(ctx context.Context) error {
 	c.mtx.Lock()
 	composedChainIds := c.composedChainIds
 	c.mtx.Unlock()
@@ -255,13 +255,13 @@ func (c *runtimeComposer) OnReset(ctx context.Context) error {
 // The mutex is locked during the execution time of the methods listed below.
 
 // Compose initializes a runtime for chainID.
-func (c *runtimeComposer) Compose(
+func (c *RuntimeComposer) Compose(
 	chainID string,
 	remoteValidatorPubKeys []string,
 	createNetworkGenesis bool,
 ) error {
 	// TODO(midas): remove debug logs
-	c.logger.Debug("runtimeComposer#Compose", "chainId", chainID)
+	c.logger.Debug("RuntimeComposer#Compose", "chainId", chainID)
 
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
@@ -303,9 +303,9 @@ func (c *runtimeComposer) Compose(
 }
 
 // Inject injects a running state machine and block store.
-func (c *runtimeComposer) Inject(chainID string) error {
+func (c *RuntimeComposer) Inject(chainID string) error {
 	// TODO(midas): remove debug logs
-	c.logger.Debug("runtimeComposer#Inject", "chainId", chainID)
+	c.logger.Debug("RuntimeComposer#Inject", "chainId", chainID)
 
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
@@ -336,12 +336,12 @@ func (c *runtimeComposer) Inject(chainID string) error {
 }
 
 // Build packages a node runtime and injects a [node.Node].
-func (c *runtimeComposer) Build(
+func (c *RuntimeComposer) Build(
 	chainID string,
 	abciClient proxy.ChainConns,
 ) error {
 	// TODO(midas): remove debug logs
-	c.logger.Debug("runtimeComposer#Build", "chainId", chainID)
+	c.logger.Debug("RuntimeComposer#Build", "chainId", chainID)
 
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
@@ -409,9 +409,9 @@ func (c *runtimeComposer) Build(
 }
 
 // Unload decomposes resources and services for chainID.
-func (c *runtimeComposer) Unload(chainID string) error {
+func (c *RuntimeComposer) Unload(chainID string) error {
 	// TODO(midas): remove debug logs
-	c.logger.Debug("runtimeComposer#Unload", "chainId", chainID)
+	c.logger.Debug("RuntimeComposer#Unload", "chainId", chainID)
 
 	defer func() {
 		c.mtx.Lock()
@@ -433,7 +433,7 @@ func (c *runtimeComposer) Unload(chainID string) error {
 			chainID,
 			dbServiceKey,
 		); dbS != nil {
-			dbService := dbS.(service.Service)
+			dbService := dbS.(*helpers.DBService)
 			if dbService.IsRunning() || dbService.IsStarted() {
 				go func() {
 					c.mtx.Lock()
@@ -467,7 +467,7 @@ func (c *runtimeComposer) Unload(chainID string) error {
 }
 
 // ConfPath returns the filesystem path to config for chainID.
-func (c *runtimeComposer) ConfPath(chainID string) string {
+func (c *RuntimeComposer) ConfPath(chainID string) string {
 	if !c.resourceMgr.Has(chainID, types.InstanceKeyPathConf) {
 		return ""
 	}
@@ -479,7 +479,7 @@ func (c *runtimeComposer) ConfPath(chainID string) string {
 }
 
 // DataPath returns the filesystem path to data for chainID.
-func (c *runtimeComposer) DataPath(chainID string) string {
+func (c *RuntimeComposer) DataPath(chainID string) string {
 	if !c.resourceMgr.Has(chainID, types.InstanceKeyPathData) {
 		return ""
 	}
@@ -491,7 +491,7 @@ func (c *runtimeComposer) DataPath(chainID string) string {
 }
 
 // Config returns the configuration instance for chainID.
-func (c *runtimeComposer) Config(chainID string) *config.Config {
+func (c *RuntimeComposer) Config(chainID string) *config.Config {
 	if !c.resourceMgr.Has(chainID, types.InstanceKeyConfig) {
 		return nil
 	}
@@ -503,7 +503,7 @@ func (c *runtimeComposer) Config(chainID string) *config.Config {
 }
 
 // GenesisDoc returns the genesis configuration for chainID.
-func (c *runtimeComposer) GenesisDoc(chainID string) cmttypes.GenesisDoc {
+func (c *RuntimeComposer) GenesisDoc(chainID string) cmttypes.GenesisDoc {
 	if !c.resourceMgr.Has(chainID, types.InstanceKeyGenesisDoc) {
 		return cmttypes.GenesisDoc{}
 	}
@@ -516,7 +516,7 @@ func (c *runtimeComposer) GenesisDoc(chainID string) cmttypes.GenesisDoc {
 
 // Database returns a database for chainID.
 // Uses dbServiceKey as registered service key.
-func (c *runtimeComposer) Database(chainID, dbServiceKey string) *helpers.DBService {
+func (c *RuntimeComposer) Database(chainID, dbServiceKey string) *helpers.DBService {
 	if !c.resourceMgr.Has(chainID, dbServiceKey) {
 		return nil
 	}
@@ -528,7 +528,7 @@ func (c *runtimeComposer) Database(chainID, dbServiceKey string) *helpers.DBServ
 }
 
 // Validator returns the priv validator for chainID.
-func (c *runtimeComposer) Validator(chainID string) cmttypes.PrivValidator {
+func (c *RuntimeComposer) Validator(chainID string) cmttypes.PrivValidator {
 	if !c.resourceMgr.Has(chainID, types.InstanceKeyPrivValidator) {
 		return nil
 	}
@@ -540,7 +540,7 @@ func (c *runtimeComposer) Validator(chainID string) cmttypes.PrivValidator {
 }
 
 // EventBus returns the event bus for chainID.
-func (c *runtimeComposer) EventBus(chainID string) *cmttypes.EventBus {
+func (c *RuntimeComposer) EventBus(chainID string) *cmttypes.EventBus {
 	if !c.resourceMgr.Has(chainID, types.ServiceKeyEventBus) {
 		return nil
 	}
@@ -552,7 +552,7 @@ func (c *runtimeComposer) EventBus(chainID string) *cmttypes.EventBus {
 }
 
 // IndexerService returns the tx indexer for chainID.
-func (c *runtimeComposer) IndexerService(chainID string) *txindex.IndexerService {
+func (c *RuntimeComposer) IndexerService(chainID string) *txindex.IndexerService {
 	if !c.resourceMgr.Has(chainID, types.ServiceKeyIndexers) {
 		return nil
 	}
@@ -564,7 +564,7 @@ func (c *runtimeComposer) IndexerService(chainID string) *txindex.IndexerService
 }
 
 // StateMachine returns the state machine for chainID.
-func (c *runtimeComposer) StateMachine(chainID string) sm.State {
+func (c *RuntimeComposer) StateMachine(chainID string) sm.State {
 	if !c.resourceMgr.Has(chainID, types.InstanceKeyStateMachine) {
 		return sm.State{}
 	}
@@ -576,7 +576,7 @@ func (c *runtimeComposer) StateMachine(chainID string) sm.State {
 }
 
 // StateStore returns the state store for chainID.
-func (c *runtimeComposer) StateStore(chainID string) sm.Store {
+func (c *RuntimeComposer) StateStore(chainID string) sm.Store {
 	if !c.resourceMgr.Has(chainID, types.InstanceKeyStateStore) {
 		return nil
 	}
@@ -588,7 +588,7 @@ func (c *runtimeComposer) StateStore(chainID string) sm.Store {
 }
 
 // BlockStore returns the blocks store for chainID.
-func (c *runtimeComposer) BlockStore(chainID string) *bs.BlockStore {
+func (c *RuntimeComposer) BlockStore(chainID string) *bs.BlockStore {
 	if !c.resourceMgr.Has(chainID, types.InstanceKeyBlockStore) {
 		return nil
 	}
@@ -600,7 +600,7 @@ func (c *runtimeComposer) BlockStore(chainID string) *bs.BlockStore {
 }
 
 // BlockPruner returns the blocks store for chainID.
-func (c *runtimeComposer) BlockPruner(chainID string) *sm.Pruner {
+func (c *RuntimeComposer) BlockPruner(chainID string) *sm.Pruner {
 	if !c.resourceMgr.Has(chainID, types.ServiceKeyPruner) {
 		return nil
 	}
@@ -612,7 +612,7 @@ func (c *runtimeComposer) BlockPruner(chainID string) *sm.Pruner {
 }
 
 // Mempool returns the mempool for chainID.
-func (c *runtimeComposer) Mempool(chainID string) mempl.Mempool {
+func (c *RuntimeComposer) Mempool(chainID string) mempl.Mempool {
 	if !c.resourceMgr.Has(chainID, types.ServiceKeyMempoolReactor) {
 		return nil
 	}
@@ -625,7 +625,7 @@ func (c *runtimeComposer) Mempool(chainID string) mempl.Mempool {
 }
 
 // EvidencePool returns the evidence pool for chainID.
-func (c *runtimeComposer) EvidencePool(chainID string) *evidence.Pool {
+func (c *RuntimeComposer) EvidencePool(chainID string) *evidence.Pool {
 	if !c.resourceMgr.Has(chainID, types.ServiceKeyEvidenceReactor) {
 		return nil
 	}
@@ -638,7 +638,7 @@ func (c *runtimeComposer) EvidencePool(chainID string) *evidence.Pool {
 }
 
 // BlockExecutor returns the blocks executor for chainID.
-func (c *runtimeComposer) BlockExecutor(chainID string) *sm.BlockExecutor {
+func (c *RuntimeComposer) BlockExecutor(chainID string) *sm.BlockExecutor {
 	if !c.resourceMgr.Has(chainID, types.InstanceKeyBlockExecutor) {
 		return nil
 	}
@@ -650,7 +650,7 @@ func (c *runtimeComposer) BlockExecutor(chainID string) *sm.BlockExecutor {
 }
 
 // Node returns the node service for chainID.
-func (c *runtimeComposer) Node(chainID string) *node.Node {
+func (c *RuntimeComposer) Node(chainID string) *node.Node {
 	if !c.resourceMgr.Has(chainID, types.ServiceKeyNodeRuntime) {
 		return nil
 	}
@@ -664,7 +664,7 @@ func (c *runtimeComposer) Node(chainID string) *node.Node {
 // ----------------------------------------------------------------------------
 // Orchestration methods
 
-func (c *runtimeComposer) makeNetworkConfig(
+func (c *RuntimeComposer) makeNetworkConfig(
 	chainID string,
 ) error {
 	// Ensures filesystem, i.e. %root%/(config|data)/%address%/%ChainID%.
@@ -690,7 +690,7 @@ func (c *runtimeComposer) makeNetworkConfig(
 	return nil
 }
 
-func (c *runtimeComposer) makeNetworkDatabases(
+func (c *RuntimeComposer) makeNetworkDatabases(
 	chainID string,
 ) error {
 	extChainID := c.UserChainID(chainID)
@@ -731,7 +731,7 @@ func (c *runtimeComposer) makeNetworkDatabases(
 	return nil
 }
 
-func (c *runtimeComposer) makeNetworkValidator(
+func (c *RuntimeComposer) makeNetworkValidator(
 	chainID string,
 ) error {
 	confDir := c.ConfPath(chainID)
@@ -757,7 +757,7 @@ func (c *runtimeComposer) makeNetworkValidator(
 	return nil
 }
 
-func (c *runtimeComposer) makeNetworkGenesis(
+func (c *RuntimeComposer) makeNetworkGenesis(
 	chainID string,
 ) error {
 	var genesisDoc cmttypes.GenesisDoc
@@ -812,7 +812,7 @@ func (c *runtimeComposer) makeNetworkGenesis(
 	return nil
 }
 
-func (c *runtimeComposer) makeNetworkPruner(
+func (c *RuntimeComposer) makeNetworkPruner(
 	chainID string,
 ) error {
 	if c.resourceMgr.Has(chainID, types.ServiceKeyPruner) {
@@ -847,7 +847,7 @@ func (c *runtimeComposer) makeNetworkPruner(
 // ----------------------------------------------------------------------------
 // Starter methods
 
-func (c *runtimeComposer) startNetworkStateMachine(
+func (c *RuntimeComposer) startNetworkStateMachine(
 	chainID string,
 ) error {
 	stateDatabaseService := c.resourceMgr.Get(chainID, types.ServiceKeyDatabaseState).(service.Service)
@@ -917,7 +917,7 @@ func (c *runtimeComposer) startNetworkStateMachine(
 	return nil
 }
 
-func (c *runtimeComposer) startNetworkEventBus(
+func (c *RuntimeComposer) startNetworkEventBus(
 	chainID string,
 ) error {
 	var eventBus *cmttypes.EventBus
@@ -945,7 +945,7 @@ func (c *runtimeComposer) startNetworkEventBus(
 	return nil
 }
 
-func (c *runtimeComposer) startNetworkIndexers(
+func (c *RuntimeComposer) startNetworkIndexers(
 	chainID string,
 ) error {
 	// Ensure that tx_index database is open.

@@ -38,7 +38,7 @@ type ConsensusPool struct {
 	acceptorImpl    client.Acceptor
 	abciClient      proxy.ChainConns
 	runtimeMgr      types.IdleManager
-	runtimeComposer *runtimeComposer
+	runtimeComposer *RuntimeComposer
 	resourceMgr     types.ResourceManager
 
 	injectedChainIds map[string]struct{}
@@ -68,7 +68,7 @@ func NewConsensusHandler(
 
 		abciClient:      abciClient,
 		resourceMgr:     resourceMgr,
-		runtimeComposer: composer.(*runtimeComposer),
+		runtimeComposer: composer.(*RuntimeComposer),
 
 		// Provides a default acceptor implementation
 		acceptorImpl: &client.DefaultAcceptor{},
@@ -161,7 +161,7 @@ func (pool *ConsensusPool) ABCI() proxy.ChainConns {
 }
 
 // Composer returns the runtimeComposer instance.
-func (pool *ConsensusPool) Composer() *runtimeComposer {
+func (pool *ConsensusPool) Composer() *RuntimeComposer {
 	pool.mtx.Lock()
 	defer pool.mtx.Unlock()
 
