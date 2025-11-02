@@ -19,8 +19,13 @@ import (
 
 	"github.com/ice-blockchain/cometbft/abci/example/kvstore"
 	"github.com/ice-blockchain/cometbft/config"
+	bc "github.com/ice-blockchain/cometbft/internal/blocksync"
+	cs "github.com/ice-blockchain/cometbft/internal/consensus"
+	"github.com/ice-blockchain/cometbft/internal/evidence"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/libs/service"
+	mempl "github.com/ice-blockchain/cometbft/mempool"
+	cmtnode "github.com/ice-blockchain/cometbft/node"
 	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/proxy"
 	sm "github.com/ice-blockchain/cometbft/state"
@@ -301,18 +306,145 @@ func TestMultiplexRuntimeConsensusPoolInjectThenComposerBuild(t *testing.T) {
 	assert.NotNil(t, actualNodeRuntime)
 }
 
-func TestMultiplexRuntimeConsensusPoolExecute(t *testing.T) {
-	// defer goleak.VerifyNone(t)
+func TestMultiplexRuntimeConsensusPoolShutdown(t *testing.T) {
+	defer goleak.VerifyNone(t)
 
-	// logger := cmtlog.NewNopLogger()
-	// baseCfg := config.DefaultConfig()
-	// baseCfg.RootDir = t.TempDir()
-	// baseCfg.DBBackend = string(dbm.MemDBBackend)
+	logger := cmtlog.NewNopLogger()
 
+	baseCfg := config.DefaultConfig()
+	baseCfg.RootDir = t.TempDir()
+	baseCfg.DBBackend = string(dbm.MemDBBackend)
+
+	resourceMgr := mxruntime.NewResourceManager(t.Context(), logger)
+
+	// Uses a RANDOM ChainID, only fingerprint is deterministic.
+	withChainID := helpers.MakeChainID("ConsensusPool#InjectThenBuild")
+	testConsensusPool,
+		poolShutdownFn := ResetTestMultiplexRuntimeConsensusPool(t,
+		baseCfg,
+		resourceMgr,
+		logger,
+		withChainID,
+	)
+	defer poolShutdownFn()
+
+	injectErr := testConsensusPool.Inject(withChainID)
+	require.NoError(t, injectErr,
+		fmt.Sprintf("unexpected error injecting ChainID in consensus pool: %v", injectErr))
+
+	// ...and runtimeComposer.Build() should package all services in a [node.Node].
+	chainConns := testConsensusPool.ABCI()
+	buildErr := testConsensusPool.Composer().Build(withChainID, chainConns)
+	require.NoError(t, buildErr,
+		fmt.Sprintf("unexpected error building chainID runtime in composer: %v", buildErr))
+
+	// force services to run, without Execute.
+	actualMempoolReactor := resourceMgr.Get(withChainID, types.ServiceKeyMempoolReactor)
+	require.NotNil(t, actualMempoolReactor)
+	actualEvidenceReactor := resourceMgr.Get(withChainID, types.ServiceKeyEvidenceReactor)
+	require.NotNil(t, actualEvidenceReactor)
+	actualBlocksyncReactor := resourceMgr.Get(withChainID, types.ServiceKeyBlockSyncReactor)
+	require.NotNil(t, actualBlocksyncReactor)
+	actualConsensusReactor := resourceMgr.Get(withChainID, types.ServiceKeyConsensusReactor)
+	require.NotNil(t, actualConsensusReactor)
+	actualNodeRuntime := resourceMgr.Get(withChainID, types.ServiceKeyNodeRuntime)
+	require.NotNil(t, actualNodeRuntime)
+
+	actualMempoolReactor.(*mempl.Reactor).Start()
+	actualEvidenceReactor.(*evidence.Reactor).Start()
+	actualBlocksyncReactor.(*bc.Reactor).Start()
+	actualConsensusReactor.(*cs.Reactor).Start()
+	actualNodeRuntime.(*cmtnode.Node).Start()
+	defer func() {
+		if actualMempoolReactor.(*mempl.Reactor).IsRunning() {
+			actualMempoolReactor.(*mempl.Reactor).Stop()
+		}
+		if actualEvidenceReactor.(*evidence.Reactor).IsRunning() {
+			actualEvidenceReactor.(*evidence.Reactor).Stop()
+		}
+		if actualBlocksyncReactor.(*bc.Reactor).IsRunning() {
+			actualBlocksyncReactor.(*bc.Reactor).Stop()
+		}
+		if actualConsensusReactor.(*cs.Reactor).IsRunning() {
+			actualConsensusReactor.(*cs.Reactor).Stop()
+		}
+		if actualNodeRuntime.(*cmtnode.Node).IsRunning() {
+			actualNodeRuntime.(*cmtnode.Node).Stop()
+		}
+	}()
+
+	// TEST 1:
+	// Shutdown a consensus instance, should call node.Node#Stop, and should
+	// call the services Stop method (mempool reactor, etc).
+	shutdownErr := testConsensusPool.Shutdown(withChainID)
+	require.NoError(t, shutdownErr,
+		fmt.Sprintf("unexpected error stopping runtime for ChainID in consensus pool: %v", shutdownErr))
+
+	assert.Equal(t, false, actualMempoolReactor.(*mempl.Reactor).IsRunning())
+	assert.Equal(t, false, actualEvidenceReactor.(*evidence.Reactor).IsRunning())
+	assert.Equal(t, false, actualBlocksyncReactor.(*bc.Reactor).IsRunning())
+	assert.Equal(t, false, actualConsensusReactor.(*cs.Reactor).IsRunning())
+	assert.Equal(t, false, actualNodeRuntime.(*cmtnode.Node).IsRunning())
 }
 
-func TestMultiplexRuntimeConsensusPoolShutdown(t *testing.T) {
+func TestMultiplexRuntimeConsensusPoolExecute(t *testing.T) {
+	defer goleak.VerifyNone(t)
 
+	logger := cmtlog.NewNopLogger()
+
+	baseCfg := config.DefaultConfig()
+	baseCfg.RootDir = t.TempDir()
+	baseCfg.DBBackend = string(dbm.MemDBBackend)
+
+	resourceMgr := mxruntime.NewResourceManager(t.Context(), logger)
+
+	// Uses a RANDOM ChainID, only fingerprint is deterministic.
+	withChainID := helpers.MakeChainID("ConsensusPool#InjectThenBuild")
+	testConsensusPool,
+		poolShutdownFn := ResetTestMultiplexRuntimeConsensusPool(t,
+		baseCfg,
+		resourceMgr,
+		logger,
+		withChainID,
+	)
+	defer poolShutdownFn()
+
+	injectErr := testConsensusPool.Inject(withChainID)
+	require.NoError(t, injectErr,
+		fmt.Sprintf("unexpected error injecting ChainID in consensus pool: %v", injectErr))
+
+	// ...and runtimeComposer.Build() should package all services in a [node.Node].
+	chainConns := testConsensusPool.ABCI()
+	buildErr := testConsensusPool.Composer().Build(withChainID, chainConns)
+	require.NoError(t, buildErr,
+		fmt.Sprintf("unexpected error building chainID runtime in composer: %v", buildErr))
+
+	// TEST 1:
+	// Start a consensus instance, should call node.Node#Start, and should
+	// call the services Start method (mempool reactor, etc).
+	executeErr := testConsensusPool.Execute(withChainID)
+	require.NoError(t, executeErr,
+		fmt.Sprintf("unexpected error starting runtime for ChainID in consensus pool: %v", executeErr))
+	defer testConsensusPool.Shutdown(withChainID)
+
+	actualNodeRuntime := resourceMgr.Get(withChainID, types.ServiceKeyNodeRuntime).(*cmtnode.Node)
+	assert.NotNil(t, actualNodeRuntime)
+	assert.Equal(t, true, actualNodeRuntime.IsRunning())
+	assert.Equal(t, false, actualNodeRuntime.IsStopped())
+
+	actualMempoolReactor := resourceMgr.Get(withChainID, types.ServiceKeyMempoolReactor)
+	assert.NotNil(t, actualMempoolReactor)
+	actualEvidenceReactor := resourceMgr.Get(withChainID, types.ServiceKeyEvidenceReactor)
+	assert.NotNil(t, actualEvidenceReactor)
+	actualBlocksyncReactor := resourceMgr.Get(withChainID, types.ServiceKeyBlockSyncReactor)
+	assert.NotNil(t, actualBlocksyncReactor)
+	actualConsensusReactor := resourceMgr.Get(withChainID, types.ServiceKeyConsensusReactor)
+	assert.NotNil(t, actualConsensusReactor)
+
+	assert.Equal(t, true, actualMempoolReactor.(*mempl.Reactor).IsRunning())
+	assert.Equal(t, true, actualEvidenceReactor.(*evidence.Reactor).IsRunning())
+	assert.Equal(t, true, actualBlocksyncReactor.(*bc.Reactor).IsRunning())
+	assert.Equal(t, true, actualConsensusReactor.(*cs.Reactor).IsRunning())
 }
 
 // ----------------------------------------------------------------------------

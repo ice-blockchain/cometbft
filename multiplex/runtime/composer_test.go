@@ -79,7 +79,7 @@ func (*mockConnectionPool) Handshaker() cmtp2p.Handshaker { return nil }
 func (*mockConnectionPool) NumPeers(chainIds ...string) (inbound, outbound, dialing int) {
 	return 0, 0, 0
 }
-func (*mockConnectionPool) Peers(chainIds ...string) *cmtp2p.PeerSet { return nil }
+func (*mockConnectionPool) Peers(chainIds ...string) *cmtp2p.PeerSet { return cmtp2p.NewPeerSet() }
 func (*mockConnectionPool) AddPeer(peer *cmtp2p.PeerImpl) error      { return nil }
 func (*mockConnectionPool) RemovePeer(peerID cmtp2p.ID) error        { return nil }
 func (*mockConnectionPool) HasPeer(peer *cmtp2p.PeerImpl) bool       { return false }
