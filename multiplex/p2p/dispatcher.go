@@ -27,7 +27,7 @@ type packetDispatcher struct {
 	multiplexReactor    cmtp2p.Reactor
 	reactorsByChIds     map[byte]string
 	reactorsServiceKeys map[string]string
-	channelsIndex       map[byte]*cmtp2p.Channel
+	channelsIndex       map[string]map[byte]*cmtp2p.Channel
 
 	initialized uint32 // atomic
 
@@ -61,7 +61,7 @@ func NewDispatcher(
 			"MEMPOOL":   types.ServiceKeyMempoolReactor,
 			"PEX":       types.ServiceKeyAddressesReactor,
 		},
-		channelsIndex: map[byte]*cmtp2p.Channel{},
+		channelsIndex: map[string]map[byte]*cmtp2p.Channel{},
 
 		// Options
 		logger: logger,
@@ -230,52 +230,84 @@ func (router *packetDispatcher) GetMultiplexReactor() cmtp2p.Reactor {
 // cmtp2p.ChannelProvider API implementation
 
 // InitChannels initializes the channels index for this dispatcher.
-func (router *packetDispatcher) InitChannels() {
-	if atomic.CompareAndSwapUint32(&router.initialized, 0, 1) {
-		mxR := router.GetMultiplexReactor()
-		chDescs := GetChannelDescriptors(mxR)
-		router.logger.Info("InitChannels", "len", len(chDescs))
+// func (router *packetDispatcher) InitChannels() {
+// 	// if atomic.CompareAndSwapUint32(&router.initialized, 0, 1) {
+// 	// 	mxR := router.GetMultiplexReactor()
+// 	// 	chDescs := GetChannelDescriptors(mxR)
+// 	// 	router.logger.Info("InitChannels", "len", len(chDescs))
+
+// 	// 	router.mtx.Lock()
+// 	// 	defer router.mtx.Unlock()
+
+// 	// 	router.channelsIndex = make(map[byte]*cmtp2p.Channel, len(chDescs))
+// 	// 	for chID, chDesc := range chDescs {
+// 	// 		channel := cmtconn.NewChannel(chDesc)
+// 	// 		channel.SetLogger(router.logger)
+
+// 	// 		router.channelsIndex[chID] = channel
+// 	// 	}
+// 	// }
+// }
+
+// // GetChannels returns a slice of Channel instances.
+func (router *packetDispatcher) GetChannels(
+	mconn *cmtconn.MConnection,
+) []*cmtp2p.Channel {
+	mxR := router.GetMultiplexReactor()
+	chDescs := GetChannelDescriptors(mxR)
+
+	channels := make([]*cmtp2p.Channel, len(chDescs))
+	if _, ok := router.channelsIndex[mconn.PeerID()]; !ok {
+		router.logger.Info("packetDispatcher#GetChannels",
+			"peerId", mconn.PeerID(),
+			"len", len(chDescs))
 
 		router.mtx.Lock()
 		defer router.mtx.Unlock()
 
-		router.channelsIndex = make(map[byte]*cmtp2p.Channel, len(chDescs))
+		connLogger := router.logger.With("conn", mconn)
+		router.channelsIndex[mconn.PeerID()] = make(map[byte]*cmtp2p.Channel, len(chDescs))
 		for chID, chDesc := range chDescs {
-			channel := cmtconn.NewChannel(chDesc)
-			channel.SetLogger(router.logger)
+			channel := cmtconn.NewChannel(mconn, chDesc)
+			channel.SetLogger(connLogger)
 
-			router.channelsIndex[chID] = channel
+			router.channelsIndex[mconn.PeerID()][chID] = channel
+			channels = append(channels, channel)
 		}
+		return channels
 	}
-}
 
-// GetChannels returns a slice of Channel instances.
-func (router *packetDispatcher) GetChannels() (channels []*cmtp2p.Channel) {
-	router.mtx.Lock()
-	channelsIdx := router.channelsIndex
-	router.mtx.Unlock()
-
-	channels = make([]*cmtp2p.Channel, len(channelsIdx))
-	for _, channel := range channelsIdx {
-		channels = append(channels, channel)
-	}
-	return // channels
-}
-
-// GetChannel returns a Channel by ID.
-func (router *packetDispatcher) GetChannel(chID byte) *cmtp2p.Channel {
 	router.mtx.Lock()
 	defer router.mtx.Unlock()
 
-	if len(router.channelsIndex) == 0 {
+	for _, channel := range router.channelsIndex[mconn.PeerID()] {
+		channels = append(channels, channel)
+	}
+	return channels
+}
+
+// GetChannel returns a Channel by ID.
+func (router *packetDispatcher) GetChannel(
+	mconn *cmtconn.MConnection,
+	chID byte,
+) *cmtp2p.Channel {
+	router.mtx.Lock()
+	_, hasChannelsForPeer := router.channelsIndex[mconn.PeerID()]
+	router.mtx.Unlock()
+
+	if !hasChannelsForPeer {
+		router.GetChannels(mconn)
+	}
+
+	router.mtx.Lock()
+	defer router.mtx.Unlock()
+
+	if _, ok := router.channelsIndex[mconn.PeerID()][chID]; !ok {
+		// TODO(midas): ErrorUnkownChannelID
 		return nil
 	}
 
-	if _, ok := router.channelsIndex[chID]; !ok {
-		return nil
-	}
-
-	return router.channelsIndex[chID]
+	return router.channelsIndex[mconn.PeerID()][chID]
 }
 
 // GetDescriptor returns a ChannelDescriptor by ID.
@@ -283,15 +315,13 @@ func (router *packetDispatcher) GetDescriptor(chID byte) *cmtp2p.ChannelDescript
 	router.mtx.Lock()
 	defer router.mtx.Unlock()
 
-	if len(router.channelsIndex) == 0 {
+	mxR := router.GetMultiplexReactor()
+	chDescs := GetChannelDescriptors(mxR)
+
+	if _, ok := chDescs[chID]; !ok {
 		return nil
 	}
-
-	if _, ok := router.channelsIndex[chID]; !ok {
-		return nil
-	}
-
-	return router.channelsIndex[chID].Desc()
+	return chDescs[chID]
 }
 
 // ----------------------------------------------------------------------------

@@ -14,7 +14,6 @@ import (
 // ----------------------------------------------------------------------------
 // TestMultiplexClient
 
-// XXX
 func TestMultiplexClientBroadcastTx(t *testing.T) {
 	defer goleak.VerifyNone(t)
 

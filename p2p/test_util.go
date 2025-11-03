@@ -172,14 +172,14 @@ func (*MockDispatcherImpl) SetReactor(chainID, name string, r Reactor)  {}
 func (*MockDispatcherImpl) SetMultiplexReactor(mxR Reactor)             {}
 func (*MockDispatcherImpl) GetMultiplexReactor() Reactor                { return nil }
 func (*MockDispatcherImpl) InitChannels()                               {}
-func (d *MockDispatcherImpl) GetChannels() (channels []*Channel) {
+func (d *MockDispatcherImpl) GetChannels(c *conn.MConnection) (channels []*Channel) {
 	channels = make([]*Channel, 1)
-	channels[0] = d.GetChannel(conn.TestChannel)
+	channels[0] = d.GetChannel(c, conn.TestChannel)
 	return // channels
 }
-func (d *MockDispatcherImpl) GetChannel(chID byte) *Channel {
+func (d *MockDispatcherImpl) GetChannel(c *conn.MConnection, chID byte) *Channel {
 	if d.TestChannel == nil {
-		d.TestChannel = conn.NewChannel(d.GetDescriptor(conn.TestChannel))
+		d.TestChannel = conn.NewChannel(c, d.GetDescriptor(conn.TestChannel))
 		d.TestChannel.SetLogger(d.Logger)
 	}
 	return d.TestChannel

@@ -107,10 +107,6 @@ func (conn *PeerConnector) OnStart(ctx context.Context) (err error) {
 		"nodeInfo", conn.pool.NodeInfo(),
 	)
 
-	// MultiplexBackend#NewServer sets a multiplex reactor such that
-	// InitChannels may be called here to initialize a channels store.
-	conn.dispatcher.InitChannels()
-
 	// Start accepting Peers.
 	go conn.Listen()
 

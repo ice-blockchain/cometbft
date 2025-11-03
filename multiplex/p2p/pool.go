@@ -640,6 +640,7 @@ func (pool *ConnectionPool) startRoutines(peer *cmtp2p.PeerImpl) (
 		"dispatcher", helpers.ReflectTypeName(pool.dispatcher))
 
 	mconn := cmtconn.NewMConnection(pool.Context(),
+		string(peer.ID()),
 		peer.Conn(),
 		pool.dispatcher,
 		// onReceive:

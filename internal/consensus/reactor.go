@@ -171,7 +171,10 @@ func (conR *Reactor) OnStart(ctx context.Context) error {
 		conR.AddPeer(value.(*p2p.PeerImpl))
 		return true
 	})
+
+	conR.peersMtx.Lock()
 	conR.pendingPeers.Clear()
+	conR.peersMtx.Unlock()
 
 	return nil
 }
@@ -526,7 +529,10 @@ func (conR *Reactor) RemovePeer(*p2p.PeerImpl, any) {
 // NOTE: blocks on consensus state for proposals, block parts, and votes.
 func (conR *Reactor) Receive(e p2p.Envelope) {
 	if !conR.IsRunning() {
-		conR.Logger.Debug("Receive", "src", e.Src, "chId", e.ChannelID)
+		conR.Logger.Debug("WARNING: ignored packet; consensus reactor is not yet running",
+			"src", e.Src,
+			"chainId", e.ChainID,
+		)
 		return
 	}
 
@@ -551,9 +557,15 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 		return
 	}
 
-	conR.Logger.Debug("Receive", "src", e.Src, "chId", e.ChannelID, "msg", msg)
+	// TODO(midas): remove debug logs.
+	conR.Logger.Debug("Receive",
+		"src", e.Src,
+		"chId", e.ChannelID,
+		"chainId", e.ChainID,
+		"msg", msg,
+	)
 
-	// Get peer states
+	// Get peer states from conR.peerStates
 	// NOTE(midas): In case the peer has no state, we try to send it some
 	// data through initialization and then read the state once more.
 	ps := conR.GetPeerState(e.Src)
@@ -563,7 +575,8 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 	}
 
 	if ps == nil {
-		panic(fmt.Sprintf("Source peer %v has no state for %v", e.Src, conR.PeerStateKey()))
+		conR.Logger.Error("Source peer %v has no state for %v", e.Src, conR.PeerStateKey())
+		return
 	}
 
 	switch e.ChannelID {
@@ -1040,15 +1053,14 @@ OUTER_LOOP:
 			sleeping = 0
 		}
 
-		// conR.conS.mtx.RLock()
-		// vote := pickVoteToSend(logger, conR.conS, &rs, ps, prs, rng)
-		// conR.conS.mtx.RUnlock()
+		conR.rsMtx.RLock()
+		vote := pickVoteToSend(logger, conR.conS, &rs, ps, prs, rng)
+		conR.rsMtx.RUnlock()
 
 		// logger.Debug("gossipVotesRoutine", "rsHeight", rs.Height, "rsRound", rs.Round,
 		// 	"prsHeight", prs.Height, "prsRound", prs.Round, "prsStep", prs.Step, "v", vote)
 
-		if vote := pickVoteToSend(logger, conR.conS, &rs, ps, prs, rng); vote != nil {
-			// if vote != nil {
+		if vote != nil {
 			if ps.sendVoteSetHasVote(cid, vote) {
 				// Update the stored *PeerState for detached retrieval in routines.
 				conR.peerStates.Set(string(peer.ID()), ps)
@@ -1057,6 +1069,7 @@ OUTER_LOOP:
 			logger.Error("Failed to send vote to peer",
 				"height", prs.Height,
 				"vote", vote,
+				"peer", ps.peer,
 			)
 		}
 
@@ -1787,14 +1800,14 @@ func (ps *PeerState) sendVoteSetHasVote(chainID string, vote *types.Vote) bool {
 // Returns true if a vote was picked.
 // NOTE: `votes` must be the correct Size() for the Height().
 func (ps *PeerState) PickVoteToSend(votes types.VoteSetReader, rng *rand.Rand) *types.Vote {
-	ps.mtx.Lock()
-	defer ps.mtx.Unlock()
-
 	if votes.Size() == 0 {
 		return nil
 	}
 
 	height, round, votesType, size := votes.GetHeight(), votes.GetRound(), types.SignedMsgType(votes.Type()), votes.Size()
+
+	ps.mtx.Lock()
+	defer ps.mtx.Unlock()
 
 	// Lazily set data using 'votes'.
 	if votes.IsCommit() {

@@ -364,6 +364,9 @@ func TestMultiplexP2PConnectionPoolNumPeers(t *testing.T) {
 
 	require.NotNil(t, testPeer0)
 
+	// Wait a little so that peer-1 has time to accept being dialed.
+	time.Sleep(500 * time.Millisecond)
+
 	// TEST 2: do we have the correct number of peers after adding inbound.
 	actualInbound2, actualOutbound2, actualDialing2 := testPool1.NumPeers()
 	assert.Equal(t, expectedInboundPeers, actualInbound2)

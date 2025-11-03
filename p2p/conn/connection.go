@@ -87,6 +87,8 @@ Inbound message bytes are handled with an onReceive callback function.
 type MConnection struct {
 	service.BaseService
 
+	connPeerId string
+
 	// conn contains a SecretConnection.
 	conn            net.Conn
 	bufConnReader   *bufio.Reader
@@ -173,6 +175,7 @@ func DefaultMConnConfig() MConnConfig {
 // NewMConnection wraps net.Conn and creates multiplex connection.
 func NewMConnection(
 	ctx context.Context,
+	peerId string,
 	conn net.Conn,
 	channelProvider ChannelProvider,
 	onReceive receiveCbFunc,
@@ -180,9 +183,9 @@ func NewMConnection(
 ) *MConnection {
 	return NewMConnectionWithConfig(
 		ctx,
+		peerId,
 		conn,
 		channelProvider,
-		// chDescs,
 		onReceive,
 		onError,
 		DefaultMConnConfig())
@@ -191,9 +194,9 @@ func NewMConnection(
 // NewMConnectionWithConfig wraps net.Conn and creates multiplex connection with a config.
 func NewMConnectionWithConfig(
 	ctx context.Context,
+	peerId string,
 	conn net.Conn,
 	channelProvider ChannelProvider,
-	// chDescs map[string][]*ChannelDescriptor,
 	onReceive receiveCbFunc,
 	onError errorCbFunc,
 	config MConnConfig,
@@ -203,6 +206,7 @@ func NewMConnectionWithConfig(
 	}
 
 	mconn := &MConnection{
+		connPeerId:      peerId,
 		conn:            conn,
 		bufConnReader:   bufio.NewReaderSize(conn, minReadBufferSize),
 		bufConnWriter:   bufio.NewWriterSize(conn, minWriteBufferSize),
@@ -245,6 +249,10 @@ func (c *MConnection) SocketAddr() net.Addr {
 
 func (c *MConnection) NumOpenChannels() uint32 {
 	return atomic.LoadUint32(&c.numOpenChannels)
+}
+
+func (c *MConnection) PeerID() string {
+	return c.connPeerId
 }
 
 // OnStart implements BaseService.
@@ -413,7 +421,7 @@ func (c *MConnection) String() string {
 	if c.conn == nil {
 		return fmt.Sprintf("nil-MConn")
 	}
-	return fmt.Sprintf("MConn{%v}", c.conn.RemoteAddr())
+	return fmt.Sprintf("MConn{%v@%v}", c.connPeerId, c.conn.RemoteAddr())
 }
 
 func (c *MConnection) flush() {
@@ -456,7 +464,7 @@ func (c *MConnection) Send(chainID string, chID byte, msgBytes []byte) bool {
 		"msgBytes", log.NewLazySprintf("%X", msgBytes))
 
 	var channel *Channel
-	channel = c.channelProvider.GetChannel(chID)
+	channel = c.channelProvider.GetChannel(c, chID)
 	if channel == nil {
 		return false
 	}
@@ -497,7 +505,7 @@ func (c *MConnection) TrySend(chainID string, chID byte, msgBytes []byte) bool {
 		"msgBytes", log.NewLazySprintf("%X", msgBytes))
 
 	var channel *Channel
-	channel = c.channelProvider.GetChannel(chID)
+	channel = c.channelProvider.GetChannel(c, chID)
 	if channel == nil {
 		return false
 	}
@@ -524,7 +532,7 @@ func (c *MConnection) CanSend(chainID string, chID byte) bool {
 	}
 
 	var channel *Channel
-	channel = c.channelProvider.GetChannel(chID)
+	channel = c.channelProvider.GetChannel(c, chID)
 	if channel == nil {
 		return false
 	}
@@ -634,7 +642,7 @@ func (c *MConnection) sendBatchPacketMsgs(w protoio.Writer, batchSize int) bool 
 			c.sendMonitor.Update(totalBytesWritten)
 		}
 	}()
-	channels := c.channelProvider.GetChannels()
+	channels := c.channelProvider.GetChannels(c)
 	for i := 0; i < batchSize; i++ {
 		channel := selectChannelToGossipOn(channels)
 		if channel == nil {
@@ -782,7 +790,7 @@ FOR_LOOP:
 			chainID := pkt.PacketMsg.ChainID
 			channelID := byte(pkt.PacketMsg.ChannelID)
 
-			channel := c.channelProvider.GetChannel(channelID)
+			channel := c.channelProvider.GetChannel(c, channelID)
 
 			msgBytes, err := channel.recvPacketMsg(*pkt.PacketMsg)
 			if err != nil {
@@ -861,7 +869,7 @@ func (c *MConnection) Status() ConnectionStatus {
 	status.SendMonitor = c.sendMonitor.Status()
 	status.RecvMonitor = c.recvMonitor.Status()
 	status.Channels = []ChannelStatus{}
-	for _, channel := range c.channelProvider.GetChannels() {
+	for _, channel := range c.channelProvider.GetChannels(c) {
 		status.Channels = append(status.Channels, ChannelStatus{
 			ID:                channel.desc.ID,
 			SendQueueCapacity: channel.desc.SendQueueCapacity,
@@ -877,12 +885,12 @@ func (c *MConnection) Status() ConnectionStatus {
 
 // ChannelProvider defines the contract for channel providers.
 type ChannelProvider interface {
-	// InitChannels should initialize the channels index of a provider.
-	InitChannels()
-	// GetChannels returns a slice of Channel instances.
-	GetChannels() []*Channel
-	// GetChannel returns a Channel by ID.
-	GetChannel(chID byte) *Channel
+	// // InitChannels should initialize the channels index of a provider.
+	// InitChannels()
+	// // GetChannels returns a slice of Channel instances.
+	GetChannels(mconn *MConnection) []*Channel
+	// GetChannel returns a Channel by ID for mconn.
+	GetChannel(mconn *MConnection, chID byte) *Channel
 	// GetDescriptor returns a ChannelDescriptor by ID.
 	GetDescriptor(chID byte) *ChannelDescriptor
 }
@@ -927,6 +935,7 @@ type QueuedMessage struct {
 type Channel struct {
 	mtx *sync.Mutex
 
+	conn *MConnection
 	desc *ChannelDescriptor
 	rand *cmtrand.Rand
 
@@ -951,7 +960,7 @@ type Channel struct {
 	Logger log.Logger
 }
 
-func NewChannel(desc *ChannelDescriptor) *Channel {
+func NewChannel(conn *MConnection, desc *ChannelDescriptor) *Channel {
 	desc = desc.FillDefaults()
 	if desc.Priority <= 0 {
 		panic("Channel default priority must be a positive integer")
@@ -959,6 +968,7 @@ func NewChannel(desc *ChannelDescriptor) *Channel {
 
 	return &Channel{
 		mtx:  new(sync.Mutex),
+		conn: conn,
 		desc: desc,
 		rand: cmtrand.NewRand(),
 
@@ -997,6 +1007,8 @@ func (ch *Channel) sendBytes(chainID string, bytes []byte) bool {
 		atomic.AddInt32(&ch.sendQueueSize, 1)
 		return true
 	case <-time.After(defaultSendTimeout):
+		return false
+	case <-ch.conn.Quit():
 		return false
 	}
 }
