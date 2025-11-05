@@ -511,6 +511,13 @@ func (pool *ConsensusPool) makeNetworkMempoolReactor(
 	)
 	mempool.SetLogger(pool.logger.With("module", "mempool"))
 
+	// TODO(midas): remove debug logs.
+	pool.logger.Debug("ConsensusPool#makeNetworkMempoolReactor",
+		"chainId", chainID,
+		"config", runtimeConfig.Mempool,
+		"waitSync", shouldBlockSync,
+	)
+
 	mempoolReactor = mempl.NewReactor(
 		pool.Context(),
 		runtimeConfig.Mempool,
@@ -649,6 +656,13 @@ func (pool *ConsensusPool) makeNetworkConsensusReactor(
 		)
 		consensusState.SetLogger(pool.logger.With("module", "consensus"))
 		consensusState.SetPrivValidator(privValidator)
+
+		// TODO(midas): remove debug logs.
+		pool.logger.Debug("ConsensusPool#makeNetworkConsensusReactor",
+			"chainId", chainID,
+			"config", runtimeConfig.Consensus,
+			"waitSync", shouldBlockSync,
+		)
 
 		consensusReactor := cs.NewReactor(
 			pool.Context(),

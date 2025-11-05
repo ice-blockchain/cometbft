@@ -134,6 +134,7 @@ func requireCompleteClientBroadcastTx(
 
 	// Separate goroutine for client broadcast process
 	notifyCh := make(chan client.BroadcastStatus)
+	defer close(notifyCh)
 
 	go clientBroadcastTx(tb,
 		broadcastCtx,
@@ -155,54 +156,112 @@ func requireCompleteClientBroadcastTx(
 		fmt.Sprintf("should not contain error status for transactions on: %s", withChainID))
 	assert.Len(tb, resultStatusMsg.TxHashes, numTransactions,
 		fmt.Sprintf("should contain all accepted transaction hashes on: %s", withChainID))
-	close(notifyCh)
 }
 
 func requireAcceptorCommitCalls(
 	tb testing.TB,
 	maxWaitTime time.Duration,
-	numTotalCommits uint64,
 	numRoundCommits uint64,
 	fromAcceptors ...*client.MockAcceptorImpl,
 ) {
 	tb.Helper()
 
-	hasExpectedCommits := false
+	numActualCommits := 0
 	startWaitTz := time.Now()
+
+	commitStatusCh := make(chan bool)
+	commitErrorCh := make(chan error, 1)
 
 	tb.Logf("Waiting for %d blocks commit (max %.0fsec)...", numRoundCommits, maxWaitTime.Seconds())
 
-BLOCK_COMMITS_LOOP:
-	for tb.Context().Err() == nil {
-		hasAcceptorCommits := true
-		for _, testAcceptor := range fromAcceptors {
-			numAcceptorCommits := testAcceptor.TxCommitCalls.Load()
-			hasExpectedCommits = hasAcceptorCommits && numAcceptorCommits == numTotalCommits
-			if !hasExpectedCommits {
-				break
+	// Loops for maxWaitTime and loads the acceptor`s TxCommitCalls.
+	// Note that ALL acceptors must report the *exact* numRoundCommits.
+	go func(ch *chan bool, errCh *chan error) {
+		hasExpectedCommits := false
+
+		defer func() {
+			*ch <- hasExpectedCommits
+		}()
+
+	BLOCK_COMMITS_LOOP:
+		for tb.Context().Err() == nil {
+			hasExpectedCommits = false
+			for i, testAcceptor := range fromAcceptors {
+				numAcceptorCommits := testAcceptor.TxCommitCalls.Load()
+				numActualCommits = int(numAcceptorCommits)
+
+				if numAcceptorCommits > numRoundCommits {
+					hasExpectedCommits = false
+					*errCh <- fmt.Errorf(
+						"too many commit calls for acceptor-%d; expected %d, got %d...",
+						i+1, numRoundCommits, numAcceptorCommits)
+					return
+				}
+
+				hasExpectedCommits = numAcceptorCommits == numRoundCommits
+				if !hasExpectedCommits {
+					tb.Logf("missing commit calls for acceptor-%d; expected %d, got %d...",
+						i+1, numRoundCommits, numAcceptorCommits)
+					break
+				} else {
+					tb.Logf("Acceptor-%d reported correct %d block commits",
+						i+1, numRoundCommits)
+				}
+			}
+
+			hasReachedTimeout := time.Since(startWaitTz) > maxWaitTime
+
+			switch {
+			case hasExpectedCommits == true: // has commits from all acceptors
+				return
+
+			case hasReachedTimeout == true: // reached timeout
+				*errCh <- fmt.Errorf(
+					"timeout reached to intercept %d block commits", numRoundCommits)
+				return
+
+			default:
+				time.Sleep(2 * time.Second)
+				continue BLOCK_COMMITS_LOOP
 			}
 		}
 
-		hasReachedTimeout := time.Since(startWaitTz) > maxWaitTime
+		return
+	}(&commitStatusCh, &commitErrorCh)
 
-		switch {
-		case hasExpectedCommits == true:
-			break BLOCK_COMMITS_LOOP
+	tb.Logf("Starting commit status consumer for %d commits...", numRoundCommits)
 
-		case hasReachedTimeout == true:
-			break BLOCK_COMMITS_LOOP
+	waitForStatus := sync.WaitGroup{}
+	waitForStatus.Add(1)
 
-		default:
-			time.Sleep(2 * time.Second)
-			continue BLOCK_COMMITS_LOOP
+	// Blocked until a status is transported on channel.
+	go func(wg *sync.WaitGroup, ch *chan bool, errCh *chan error) {
+		defer wg.Done()
+
+		var status bool
+		select {
+		case status = <-*ch:
+			elapsedSeconds := time.Since(startWaitTz).Seconds()
+			if status {
+				tb.Logf("Intercepted %d blocks commit after %.0fs", numRoundCommits, elapsedSeconds)
+			} else {
+				if err := <-*errCh; err != nil {
+					fatalErr := fmt.Errorf("ERROR: failed to commit %d blocks: %w",
+						numRoundCommits, err).Error()
+					tb.Log(fatalErr)
+				}
+				tb.Fatalf("failed to commit %d blocks", numRoundCommits)
+			}
 		}
-	}
+		close(*ch)
+	}(&waitForStatus, &commitStatusCh, &commitErrorCh)
 
-	if hasExpectedCommits {
-		tb.Logf("Intercepted %d blocks commit after %.0fs", numRoundCommits, time.Since(startWaitTz).Seconds())
-	} else {
-		tb.Fatalf("Failed to commit %d blocks", numRoundCommits)
-	}
+	// Block the main thread until an update has been processed.
+	waitForStatus.Wait()
+
+	// ... and use require to make sure about *exact* number of commits.
+	require.Equal(tb, int(numRoundCommits), numActualCommits,
+		fmt.Sprintf("expected %d block commits, got %d", numRoundCommits, numActualCommits))
 }
 
 // -----------------------------------------------------------------------------

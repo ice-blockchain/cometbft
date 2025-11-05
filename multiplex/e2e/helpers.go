@@ -59,6 +59,7 @@ func ResetTestMultiplexRelays(
 	tb testing.TB,
 	numRelays int,
 	customLogger cmtlog.Logger,
+	withAcceptors []client.Acceptor,
 	withOptions ...mx.MultiplexBackendOption,
 ) []*mx.MultiplexBackend {
 	tb.Helper()
@@ -75,9 +76,16 @@ func ResetTestMultiplexRelays(
 	relayConf1.RPC.ListenAddress = fmt.Sprintf("tcp://127.0.0.1:%v", 30000)
 	relayConf1.Instrumentation.Namespace += "_1"
 
+	var acceptorRelay1 client.Acceptor
+	if len(withAcceptors) > 0 {
+		acceptorRelay1 = withAcceptors[0]
+	} else {
+		acceptorRelay1 = &client.DefaultAcceptor{}
+	}
+
 	serverRelay1, err := mx.NewServer(
 		tb.Context(),
-		&client.DefaultAcceptor{},
+		acceptorRelay1,
 		relayConf1,
 		customLogger.With("process", "relay-1"),
 		withOptions...,
@@ -99,9 +107,16 @@ func ResetTestMultiplexRelays(
 		relayConfX.RPC.ListenAddress = fmt.Sprintf("tcp://127.0.0.1:%v", discoveryPort-1)
 		relayConfX.Instrumentation.Namespace += "_" + strconv.Itoa(r+1)
 
+		var acceptorRelayX client.Acceptor
+		if len(withAcceptors) > r {
+			acceptorRelayX = withAcceptors[r] // 1 and up
+		} else {
+			acceptorRelayX = &client.DefaultAcceptor{}
+		}
+
 		serverRelayX, err := mx.NewServer(
 			tb.Context(),
-			&client.DefaultAcceptor{},
+			acceptorRelayX,
 			relayConfX,
 			customLogger.With("process", "relay-"+strconv.Itoa(r+1)),
 			withOptions...,

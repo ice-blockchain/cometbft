@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 
+	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/types"
 
 	abcitypes "github.com/ice-blockchain/cometbft/abci/types"
@@ -35,6 +36,13 @@ func (app *SnapsApp) InitChain(
 	if !app.backend.HasNetwork(chainID) {
 		return nil, fmt.Errorf("invalid chain-id on InitChain: %s is not replicated", chainID)
 	}
+
+	// TODO(midas): remove debug logs
+	app.logger.Debug("SnapsApp#InitChain",
+		"chainId", chainID,
+		"initialHeight", req.InitialHeight,
+		"validators", req.Validators,
+	)
 
 	// On a new chain, we consider the init chain block height as 0, even though
 	// req.InitialHeight is 1 by default.
@@ -102,11 +110,19 @@ func (app *SnapsApp) Info(
 		return &abcitypes.InfoResponse{}, err
 	}
 
+	// TODO(midas): remove debug logs
+	app.logger.Debug("SnapsApp#Info",
+		"chainId", chainID,
+		"blockHeight", stateMachine.LastBlockHeight,
+		"appVersion", stateMachine.Version.Consensus.App,
+		"appHash", cmtlog.NewLazySprintf("%X", stateMachine.AppHash),
+	)
+
 	// The ChainID is included in the response data
 	return &abcitypes.InfoResponse{
 		Data:             chainID,
 		Version:          snapsappVersion,
-		AppVersion:       AppVersion,
+		AppVersion:       stateMachine.Version.Consensus.App,
 		LastBlockHeight:  stateMachine.LastBlockHeight,
 		LastBlockAppHash: stateMachine.AppHash,
 	}, nil
@@ -138,7 +154,7 @@ func (app *SnapsApp) PrepareProposal(
 	req *abcitypes.PrepareProposalRequest,
 ) (*abcitypes.PrepareProposalResponse, error) {
 	// Retrieve ChainID from context
-	// chainID := ctx.Value(client.KeyChainID).(string)
+	chainID := ctx.Value(client.KeyChainID).(string)
 
 	// CometBFT must never call PrepareProposal with a height of 0.
 	//
@@ -161,6 +177,13 @@ func (app *SnapsApp) PrepareProposal(
 
 	// Prepare the contract for PrepareProposal
 	preparedTxes := txs
+
+	// TODO(midas): remove debug logs
+	app.logger.Debug("SnapsApp#PrepareProposal",
+		"chainId", chainID,
+		"totalBytes", totalBytes,
+		"numTxes", len(preparedTxes),
+	)
 
 	return &abcitypes.PrepareProposalResponse{Txs: preparedTxes}, nil
 }
@@ -189,6 +212,13 @@ func (app *SnapsApp) ProcessProposal(
 	if !app.backend.HasNetwork(chainID) {
 		return nil, fmt.Errorf("received irrelevant chain identifier (ProcessProposal): %s", chainID)
 	}
+
+	// TODO(midas): remove debug logs
+	app.logger.Debug("SnapsApp#ProcessProposal",
+		"chainId", chainID,
+		"blockHeight", req.Height,
+		"numTxes", len(req.Txs),
+	)
 
 	// CometBFT must never call ProcessProposal with a height of 0.
 	//
@@ -253,8 +283,8 @@ func (app *SnapsApp) ProcessProposal(
 // being finalized.
 //
 // Note that given a non-nil [client.Acceptor] instance on the app, transaction
-// batches will be forwarded to the acceptor's `AcceptTx()` method. We do this
-// to ensure that blocks replay and block-sync always persist all batches.
+// batches will be forwarded to the acceptor's `CommitBroadcastTx()` method.
+// We do this to ensure that blocks- replay and sync always persist all batches.
 //
 // FinalizeBlock implements [abcitypes.Application].
 func (app *SnapsApp) FinalizeBlock(
@@ -271,6 +301,13 @@ func (app *SnapsApp) FinalizeBlock(
 		return resp, fmt.Errorf(
 			"invalid chain-id on FinalizeBlock: %s is not replicated", chainID)
 	}
+
+	// TODO(midas): remove debug logs
+	app.logger.Debug("SnapsApp#FinalizeBlock",
+		"chainId", chainID,
+		"blockHeight", req.Height,
+		"numTxes", len(req.Txs),
+	)
 
 	// Prepare the contract for FinalizeBlock
 	processedTxs := req.Txs
@@ -412,7 +449,14 @@ func (app *SnapsApp) CheckTx(
 	req *abcitypes.CheckTxRequest,
 ) (*abcitypes.CheckTxResponse, error) {
 	// Retrieve ChainID from context
-	// chainID := ctx.Value(client.KeyChainID).(string)
+	chainID := ctx.Value(client.KeyChainID).(string)
+
+	// TODO(midas): remove debug logs
+	app.logger.Debug("SnapsApp#CheckTx",
+		"chainId", chainID,
+		"txHash", cmtlog.NewLazySprintf("%X", types.Tx(req.Tx).Hash()),
+		"checkTx", req.Type,
+	)
 
 	// All transactions are valid here.
 	return &abcitypes.CheckTxResponse{Code: abcitypes.CodeTypeOK}, nil
@@ -444,9 +488,10 @@ func (app *SnapsApp) Commit(
 	workingHeight := app.finalizeBlockHeights[chainID]
 	app.mtx.RUnlock()
 
-	app.logger.Info("Committed block height",
-		"height", workingHeight,
+	// TODO(midas): remove debug logs
+	app.logger.Debug("SnapsApp#Commit",
 		"chainId", chainID,
+		"height", workingHeight,
 	)
 
 	return resp, nil

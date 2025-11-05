@@ -21,7 +21,6 @@ import (
 	cmtsync "github.com/ice-blockchain/cometbft/libs/sync"
 	mxtypes "github.com/ice-blockchain/cometbft/multiplex/types"
 	"github.com/ice-blockchain/cometbft/p2p"
-	"github.com/ice-blockchain/cometbft/p2p/conn"
 	sm "github.com/ice-blockchain/cometbft/state"
 	"github.com/ice-blockchain/cometbft/types"
 	cmterrors "github.com/ice-blockchain/cometbft/types/errors"
@@ -166,7 +165,7 @@ func (conR *Reactor) OnStart(ctx context.Context) error {
 		}
 	}
 
-	// Ensure that we have PeerState for all peers added during sync.
+	// Ensure that we have PeerState for all peers added during block-sync.
 	conR.pendingPeers.Range(func(key, value interface{}) bool {
 		conR.AddPeer(value.(*p2p.PeerImpl))
 		return true
@@ -537,10 +536,16 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 	}
 
 	if e.ChannelID == mxtypes.RuntimeChannel {
-		mxReactor := conR.Switch.Reactor(conn.SharedChannelsNamespace, "MULTIPLEX")
+		mxReactor := conR.Switch.Reactor(e.ChainID, "MULTIPLEX")
 		if mxReactor != nil && mxReactor.IsRunning() {
 			mxReactor.Receive(e)
 			return // Forwarded
+		} else {
+			conR.Logger.Debug("WARNING: ignored packet; multiplex reactor is not available",
+				"src", e.Src,
+				"chainId", e.ChainID,
+				"reactor", mxReactor,
+			)
 		}
 	}
 

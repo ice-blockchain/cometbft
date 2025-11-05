@@ -176,10 +176,13 @@ func (router *packetDispatcher) Dispatch(
 
 // Reactors returns reactors for chainID by name.
 func (router *packetDispatcher) Reactors(chainID string) map[string]cmtp2p.Reactor {
+	mxReactor := router.GetMultiplexReactor()
+
 	router.mtx.Lock()
 	defer router.mtx.Unlock()
 
-	reactors := make(map[string]cmtp2p.Reactor, len(router.reactorsServiceKeys))
+	reactors := make(map[string]cmtp2p.Reactor, len(router.reactorsServiceKeys)+1)
+	reactors["MULTIPLEX"] = mxReactor
 	for name, serviceKey := range router.reactorsServiceKeys {
 		if r := router.resourceMgr.Get(chainID, serviceKey); r != nil {
 			reactors[name] = r.(cmtp2p.Reactor)

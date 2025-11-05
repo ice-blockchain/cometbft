@@ -10,6 +10,7 @@ import (
 
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	mx "github.com/ice-blockchain/cometbft/multiplex"
+	"github.com/ice-blockchain/cometbft/multiplex/client"
 )
 
 // ----------------------------------------------------------------------------
@@ -19,7 +20,7 @@ func TestMultiplexBackendNewServer(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numRelays := 1
-	backends := ResetTestMultiplexRelays(t, numRelays, cmtlog.NewNopLogger())
+	backends := ResetTestMultiplexRelays(t, numRelays, cmtlog.NewNopLogger(), []client.Acceptor{})
 	require.NotEmpty(t, backends)
 	defer shutdownBackends(t, backends...)
 
@@ -40,7 +41,7 @@ func TestMultiplexBackendOnStart(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numRelays := 1
-	backends := ResetTestMultiplexRelays(t, numRelays, cmtlog.NewNopLogger())
+	backends := ResetTestMultiplexRelays(t, numRelays, cmtlog.NewNopLogger(), []client.Acceptor{})
 	require.NotEmpty(t, backends)
 	defer shutdownBackends(t, backends...)
 
@@ -65,7 +66,7 @@ func TestMultiplexBackendOnStartParallel(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
 	numRelays := 3
-	backends := ResetTestMultiplexRelays(t, numRelays, cmtlog.NewNopLogger())
+	backends := ResetTestMultiplexRelays(t, numRelays, cmtlog.NewNopLogger(), []client.Acceptor{})
 	require.NotEmpty(t, backends)
 	defer shutdownBackends(t, backends...)
 
@@ -100,8 +101,9 @@ func requireStartMultiplexRelays(
 	tb testing.TB,
 	numRelays int,
 	customLogger cmtlog.Logger,
+	withAcceptors []client.Acceptor,
 ) []*mx.MultiplexBackend {
-	backends := ResetTestMultiplexRelays(tb, numRelays, customLogger)
+	backends := ResetTestMultiplexRelays(tb, numRelays, customLogger, withAcceptors)
 	require.NotEmpty(tb, backends)
 
 	startWg := new(sync.WaitGroup)

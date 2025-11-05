@@ -17,16 +17,18 @@ import (
 func TestMultiplexClientBroadcastTx(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	numRelays := 3
-	backends := requireStartMultiplexRelays(t, numRelays, cmtlog.TestingLogger())
-	defer shutdownBackends(t, backends...)
-
 	testAcceptorRelay1 := client.NewMockAcceptorImpl()
 	testAcceptorRelay2 := client.NewMockAcceptorImpl()
 	testAcceptorRelay3 := client.NewMockAcceptorImpl()
-	backends[0].SetAcceptor(testAcceptorRelay1)
-	backends[1].SetAcceptor(testAcceptorRelay2)
-	backends[2].SetAcceptor(testAcceptorRelay3)
+	testWithAcceptors := []client.Acceptor{
+		testAcceptorRelay1,
+		testAcceptorRelay2,
+		testAcceptorRelay3,
+	}
+
+	numRelays := 3
+	backends := requireStartMultiplexRelays(t, numRelays, cmtlog.TestingLogger(), testWithAcceptors)
+	defer shutdownBackends(t, backends...)
 
 	relaysForTestCase := make([]string, 0, numRelays)
 	for _, b := range backends {
@@ -41,6 +43,8 @@ func TestMultiplexClientBroadcastTx(t *testing.T) {
 	numTransactions := 1
 	withChainID := helpers.MakeChainID("test-chain-1")
 
+	// This method blocks the main thread a maximum of firstTimeoutAfter and
+	// expects an update on notifyCh from client.BroadcastTx.
 	requireCompleteClientBroadcastTx(
 		t,
 		firstBroadcastCtx,
@@ -53,11 +57,13 @@ func TestMultiplexClientBroadcastTx(t *testing.T) {
 	// -------------------
 
 	// Test that client callbacks executed, i.e. Acceptor.CommitBroadcastTx.
-	totalExpectedCommits := uint64(1)
 	roundExpectedCommits := uint64(1)
 	maxCommitWaitTime := time.Duration(20 * time.Second)
 
-	requireAcceptorCommitCalls(t, maxCommitWaitTime, totalExpectedCommits, roundExpectedCommits,
+	// This method blocks the main thread maxCommitWaitTime and loads TxCommitCalls
+	// from all acceptors. Importantly the number of commits reported must be
+	// identical to roundExpectedCommits for ALL acceptors.
+	requireAcceptorCommitCalls(t, maxCommitWaitTime, roundExpectedCommits,
 		testAcceptorRelay1,
 		testAcceptorRelay2,
 		testAcceptorRelay3,

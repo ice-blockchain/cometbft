@@ -199,7 +199,6 @@ func NewServer(
 
 	nodeConfig.DBBackend = "goleveldb"
 	nodeConfig.Consensus.CreateEmptyBlocks = false // Force to create blocks only if there are transactions.
-	nodeConfig.Consensus.TimeoutCommit = 0         // Make progress as soon as the node has all the precommits.
 	nodeConfig.P2P.AllowDuplicateIP = true
 
 	// Creates or re-use config/ and data/ folders.

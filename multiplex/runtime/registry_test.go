@@ -12,6 +12,7 @@ import (
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 
 	mx "github.com/ice-blockchain/cometbft/multiplex"
+	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/e2e"
 	"github.com/ice-blockchain/cometbft/multiplex/runtime"
 )
@@ -24,6 +25,7 @@ func ResetTestMultiplexRuntimeManager(
 	testBackend := e2e.ResetTestMultiplexRelays(
 		tb, 1,
 		customLogger,
+		[]client.Acceptor{},
 		mx.WithRuntimeManagerOptions(
 			options...,
 		),
