@@ -156,12 +156,14 @@ func (wal *BaseWAL) OnStart(ctx context.Context) error {
 }
 
 func (wal *BaseWAL) processFlushTicks() {
-	for {
+	for wal.Context().Err() == nil {
 		select {
 		case <-wal.flushTicker.C:
 			if err := wal.FlushAndSync(); err != nil {
 				wal.Logger.Error("Periodic WAL flush failed", "err", err)
 			}
+		case <-wal.Context().Done():
+			return
 		case <-wal.Quit():
 			return
 		}
@@ -265,7 +267,7 @@ func (wal *BaseWAL) SearchForEndHeight(
 		}
 
 		dec := NewWALDecoder(gr)
-		for {
+		for wal.Context().Err() == nil {
 			msg, err = dec.Decode()
 			if errors.Is(err, io.EOF) {
 				// OPTIMISATION: no need to look for height in older files if we've seen h < height

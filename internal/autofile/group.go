@@ -240,11 +240,13 @@ func (g *Group) FlushAndSync() error {
 
 func (g *Group) processTicks() {
 	defer close(g.doneProcessTicks)
-	for {
+	for g.Context().Err() == nil {
 		select {
 		case <-g.ticker.C:
 			g.checkHeadSizeLimit()
 			g.checkTotalSizeLimit()
+		case <-g.Context().Done():
+			return
 		case <-g.Quit():
 			return
 		}
@@ -486,7 +488,7 @@ func (gr *GroupReader) Read(p []byte) (n int, err error) {
 
 	// Iterate over files until enough bytes are read
 	var nn int
-	for {
+	for gr.Context().Err() == nil {
 		nn, err = gr.curReader.Read(p[n:])
 		n += nn
 		switch {
@@ -504,6 +506,8 @@ func (gr *GroupReader) Read(p []byte) (n int, err error) {
 			return n, err
 		}
 	}
+
+	return n, nil
 }
 
 // IF index > gr.Group.maxIndex, returns io.EOF

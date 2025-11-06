@@ -150,9 +150,6 @@ func (conR *Reactor) OnStart(ctx context.Context) error {
 		conR.Logger.Info("Starting reactor in sync mode: consensus protocols will start once sync completes")
 	}
 
-	// start routine that computes peer statistics for evaluating peer quality
-	go conR.peerStatsRoutine(ctx)
-
 	conR.subscribeToBroadcastEvents()
 
 	if !conR.WaitSync() {
@@ -168,6 +165,9 @@ func (conR *Reactor) OnStart(ctx context.Context) error {
 		return true
 	})
 	conR.pendingPeers.Clear()
+
+	// start routine that computes peer statistics for evaluating peer quality
+	go conR.peerStatsRoutine(ctx)
 
 	return nil
 }
@@ -1999,7 +1999,9 @@ func (ps *PeerState) setHasVote(height int64, round int32, voteType types.Signed
 		"H/R",
 		log.NewLazySprintf("%d/%d", height, round),
 		"type", voteType, "index", index,
-		"peerPV", ps.PRS.Prevotes, "peerPC", ps.PRS.Precommits)
+		"peerPV", ps.PRS.Prevotes, "peerPC", ps.PRS.Precommits,
+		"step", ps.PRS.Step,
+	)
 
 	// NOTE: some may be nil BitArrays -> no side effects.
 	psVotes := ps.getVoteBitArray(height, round, voteType)

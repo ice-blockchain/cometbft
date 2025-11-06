@@ -847,7 +847,7 @@ func (cs *State) receiveRoutine(maxSteps int) {
 		}
 	}()
 
-	for {
+	for cs.Context().Err() == nil {
 		if maxSteps > 0 {
 			if cs.nSteps >= maxSteps {
 				cs.Logger.Debug("Reached max steps; exiting receive routine")
@@ -899,6 +899,10 @@ func (cs *State) receiveRoutine(maxSteps int) {
 			// go to the next step
 			rs := cs.getRoundState()
 			cs.handleTimeout(ti, rs)
+
+		case <-cs.Context().Done():
+			onExit(cs)
+			return
 
 		case <-cs.Quit():
 			onExit(cs)
