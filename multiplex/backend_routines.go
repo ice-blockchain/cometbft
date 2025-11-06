@@ -93,35 +93,38 @@ func (b *MultiplexBackend) DefaultCometBFTDialerRoutine() types.CometBFTDialerFn
 		// Opens peer connections for `DiscoveryPort+1`.
 		for _, relayAddr := range relays {
 			cometbftAddr, _ := helpers.NewRelayAddress(relayAddr.AddressForCometBFT())
-			for _, relevantChainID := range relevantChainIds {
+
+			go func(addr *helpers.RelayAddress) {
+				defer waitGroup.Done()
+				startTz := time.Now()
+
 				// TODO(midas): remove debug logs
 				logger.Debug("Now dialing relay for CometBFT",
 					"relay", cometbftAddr.String(),
-					"chainId", relevantChainID,
+					"time", startTz,
 				)
 
-				go func(addr *helpers.RelayAddress, chainID string) {
-					defer waitGroup.Done()
-					startTz := time.Now()
-
-					netAddress := addr.NetAddress()
-					if _, err := b.cometbftPool.Connector().Dial(netAddress); err != nil {
-						errorsCh <- types.RelayDialError{
-							Addr:  addr,
-							Error: err,
-						}
-						return
+				netAddress := addr.NetAddress()
+				if _, err := b.cometbftPool.Connector().Dial(netAddress); err != nil {
+					errorsCh <- types.RelayDialError{
+						Addr:  addr,
+						Error: err,
 					}
-					b.cometbftPool.SetPeerForChainID(addr.ID(), relevantChainID)
+					return
+				}
 
-					durationMs := time.Since(startTz).Milliseconds()
+				durationMs := time.Since(startTz).Milliseconds()
 
-					// TODO(midas): remove debug logs
-					logger.Debug("Successfully dialed relay for CometBFT",
-						"relay", addr.String(),
-						"time", strconv.Itoa(int(durationMs))+"ms",
-					)
-				}(cometbftAddr, relevantChainID)
+				// TODO(midas): remove debug logs
+				logger.Debug("Successfully dialed relay for CometBFT",
+					"relay", addr.String(),
+					"time", strconv.Itoa(int(durationMs))+"ms",
+				)
+			}(cometbftAddr)
+
+			// Enable PacketMsg.ChainID for relevant ChainIDs.
+			for _, relevantChainID := range relevantChainIds {
+				b.cometbftPool.SetPeerForChainID(cometbftAddr.ID(), relevantChainID)
 			}
 		}
 	}

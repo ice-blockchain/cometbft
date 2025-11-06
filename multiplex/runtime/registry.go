@@ -515,34 +515,32 @@ func (reg *Registry) WaitForChainReplications(
 		transactionsByChain,
 	)
 
-	txHashes := []string{}
+	// txHashes := []string{}
 
-	// CAUTION:
-	// This goroutine will be locked until relevant relays are done with replication.
-	completionWg := new(sync.WaitGroup)
-	completionWg.Add(len(relevantChainIds))
-	for _, syncingChainID := range relevantChainIds {
-		cliTxes := transactionsByChain[syncingChainID]
-		txHashes = append(txHashes, txHashesToHex(cliTxes...)...)
+	// // CAUTION:
+	// // This goroutine will be locked until relevant relays are done with replication.
+	// completionWg := new(sync.WaitGroup)
+	// completionWg.Add(len(relevantChainIds))
+	// for _, syncingChainID := range relevantChainIds {
+	// 	cliTxes := transactionsByChain[syncingChainID]
+	// 	txHashes = append(txHashes, txHashesToHex(cliTxes...)...)
 
-		go func() {
-			defer completionWg.Done()
+	// 	go func() {
+	// 		defer completionWg.Done()
 
-			//XXX add logs
-
-			// This blocks the goroutine until shutdown and/or replication done.
-			if ok := reg.replicationMgr.WaitCompleted(syncingChainID); ok {
-				numCompleted++
-			}
-		}()
-	}
-	completionWg.Wait()
+	// 		// This blocks the goroutine until shutdown and/or replication done.
+	// 		if ok := reg.replicationMgr.WaitCompleted(syncingChainID); ok {
+	// 			numCompleted++
+	// 		}
+	// 	}()
+	// }
+	// completionWg.Wait()
 
 	reg.logger.Info("All relays have caught up and completed chain replications",
 		"numNetworks", len(relevantChainIds),
 		"numSynced", numCompleted,
 		"chainIds", relevantChainIds,
-		"txHashes", txHashes,
+		// "txHashes", txHashes,
 	)
 
 	return // numCompleted

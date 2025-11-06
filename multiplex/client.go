@@ -548,7 +548,7 @@ func (c MultiplexClient) BroadcastTx(
 		"txBatch", transactionHashes)
 
 	dialingWg := new(sync.WaitGroup)
-	dialingWg.Add(len(relaysWithoutSelf) * len(relevantChainIds)) // each relay is dialed for each ChainID
+	dialingWg.Add(len(relaysWithoutSelf)) // each relay is dialed once
 
 	// Track completion and failures individually for dialing process.
 	errorPeersCh := make(chan types.RelayDialError, len(relaysWithoutSelf))

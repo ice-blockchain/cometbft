@@ -513,14 +513,14 @@ func (memR *Reactor) startWaitIndexedRoutine(chainID string, protoTxs [][]byte) 
 		return fmt.Errorf("ERROR: idle manager is not set for %s", memR.ChainID)
 	}
 
-	cliTxes := make([]client.Transaction, len(protoTxs))
+	cliTxes := make([]client.Transaction, 0, len(protoTxs))
 	for _, rawTx := range protoTxs {
 		cliTxes = append(cliTxes, client.RawTxToTransaction(types.Tx(rawTx)))
 	}
 
 	relevantChainIds := []string{chainID}
 	txesByChainIds := map[string][]client.Transaction{}
-	txesByChainIds[chainID] = cliTxes
+	txesByChainIds[chainID] = cliTxes[:]
 
 	// Creates a goroutine that completes runtimes when txes are indexed.
 	go memR.runtimeRegistry.WaitForIndexedTransactions(
