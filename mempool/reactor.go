@@ -15,6 +15,7 @@ import (
 	protomem "github.com/ice-blockchain/cometbft/api/cometbft/mempool/v1"
 	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
 	cfg "github.com/ice-blockchain/cometbft/config"
+	"github.com/ice-blockchain/cometbft/internal/cmap"
 	"github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 	mxtypes "github.com/ice-blockchain/cometbft/multiplex/types"
@@ -54,10 +55,15 @@ type Reactor struct {
 	dialerFn        RelayDialerFn
 	runtimeRegistry mxtypes.IdleManager
 
+	// ensuredActiveChains contains boolean values by ChainID (string) keys.
+	ensuredActiveChains *cmap.CMap
+	// batchesPendingIndex contains boolean values by concatenated tx hash (hex string) keys.
+	batchesPendingIndex *cmap.CMap
+
 	// Stores messages received during WaitSync() which are processed
 	// in [EnableInOutTxs] and then deleted.
-	pendingMsgsMtx *sync.RWMutex
-	pendingMsgs    map[string]p2p.Envelope
+	// pendingMsgs contains p2p.Envelope instance by tx hash (hex string) keys.
+	pendingMsgs *cmap.CMap
 
 	// Precalculated max batch size.
 	recvMessageCapacity int
@@ -72,11 +78,12 @@ func NewReactor(
 	options ...func(*Reactor),
 ) *Reactor {
 	memR := &Reactor{
-		config:         config,
-		mempool:        mempool,
-		waitSync:       atomic.Bool{},
-		pendingMsgsMtx: new(sync.RWMutex),
-		pendingMsgs:    make(map[string]p2p.Envelope),
+		config:              config,
+		mempool:             mempool,
+		waitSync:            atomic.Bool{},
+		pendingMsgs:         cmap.NewCMap(),
+		batchesPendingIndex: cmap.NewCMap(),
+		ensuredActiveChains: cmap.NewCMap(),
 	}
 
 	// Enable overwrite of some optional properties.
@@ -221,6 +228,10 @@ func (memR *Reactor) OnStart(ctx context.Context) error {
 // defined as it is called from [Service#Reset], which permits to later
 // start back the service with stopped/started correctly reset.
 func (memR *Reactor) OnReset(ctx context.Context) error {
+
+	memR.batchesPendingIndex = cmap.NewCMap()
+	memR.ensuredActiveChains = cmap.NewCMap()
+
 	memR.Logger.Info("Mempool reactor service reset",
 		"chain_id", memR.ChainID,
 	)
@@ -417,9 +428,8 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 		if memR.WaitSync() {
 			// TODO(midas): fix bottleneck here, should not use only first tx,
 			// but instead it should use a hash of the envelope or batch.
-			memR.pendingMsgsMtx.Lock()
-			memR.pendingMsgs[string(types.Tx(protoTxs[0]).Hash())] = e
-			memR.pendingMsgsMtx.Unlock()
+			txHash := string(types.Tx(protoTxs[0]).Hash())
+			memR.pendingMsgs.Set(txHash, e)
 
 			return
 		}
@@ -470,14 +480,29 @@ func (memR *Reactor) ensureActiveRuntime(chainID string, protoTxs [][]byte) erro
 		return fmt.Errorf("ERROR: idle manager is not set for %s", memR.ChainID)
 	}
 
+	txHashesStr := ""
+	for _, rawTx := range protoTxs {
+		txHashesStr += string(types.Tx(rawTx).Hash())
+	}
+
+	hasWaiterForTxIdx := memR.batchesPendingIndex.Has(txHashesStr)
+	if hasWaiterForTxIdx {
+		return nil // Nothing to do.
+	}
+
 	// CAUTION: This runtime for ChainID *must be long-living* because it
 	// is used to execute cometbft consensus (blocks proposal). Thus we shall
 	// wait for transactions to be **indexed** before the runtime is completed.
 	//
 	// Activate this runtime in idle manager.
-	memR.runtimeRegistry.OnActivate(chainID)
+	hasEnsuredChainID := memR.ensuredActiveChains.Has(chainID)
+	if !hasEnsuredChainID {
+		memR.runtimeRegistry.OnActivate(chainID)
+		memR.ensuredActiveChains.Set(chainID, true)
+	}
 
 	// Waits for transactions to be indexed before completing the runtime.
+	memR.batchesPendingIndex.Set(txHashesStr, true)
 	return memR.startWaitIndexedRoutine(chainID, protoTxs)
 }
 
@@ -494,9 +519,8 @@ func (memR *Reactor) startWaitIndexedRoutine(chainID string, protoTxs [][]byte) 
 	}
 
 	relevantChainIds := []string{chainID}
-	txesByChainIds := map[string][]client.Transaction{
-		chainID: cliTxes,
-	}
+	txesByChainIds := map[string][]client.Transaction{}
+	txesByChainIds[chainID] = cliTxes
 
 	// Creates a goroutine that completes runtimes when txes are indexed.
 	go memR.runtimeRegistry.WaitForIndexedTransactions(
@@ -519,7 +543,7 @@ func (memR *Reactor) processTxs(
 	for _, txBytes := range protoTxs {
 		tx := types.Tx(txBytes)
 		rawTx = append(rawTx, tx)
-		txHashes = append(txHashes, fmt.Sprintf("%X", tx.Hash()))
+		txHashes = append(txHashes, string(tx.Hash()))
 	}
 	if aErr := memR.clientAcceptTx(rawTx); aErr != nil {
 		return
@@ -579,7 +603,7 @@ func (memR *Reactor) clientAcceptTx(protoTxs []types.Tx) error {
 	txHashes := []string{}
 	for _, rawTx := range protoTxs {
 		tx := client.RawTxToTransaction(rawTx)
-		txHash := fmt.Sprintf("%X", tx.Hash())
+		txHash := string(tx.Hash())
 		batch = append(batch, tx)
 		txHashes = append(txHashes, txHash)
 	}
@@ -627,16 +651,15 @@ func (memR *Reactor) EnableInOutTxs() {
 	chainPeerSet := memR.Switch.Peers(memR.ChainID)
 
 	// Delayed processing of transactions that we received during WaitSync.
-	memR.pendingMsgsMtx.Lock()
-	for k, e := range memR.pendingMsgs {
+	for _, k := range memR.pendingMsgs.Keys() {
+		e := memR.pendingMsgs.Get(k).(p2p.Envelope)
 		peerForAckTx := e.Src
 		if chainPeerSet.Has(e.Src.ID()) {
 			peerForAckTx = chainPeerSet.Get(e.Src.ID())
 		}
 		memR.processTxs(peerForAckTx, e.Message.(*protomem.Txs).GetTxs()) // also, ACK this transaction
-		delete(memR.pendingMsgs, k)
+		memR.pendingMsgs.Delete(k)
 	}
-	memR.pendingMsgsMtx.Unlock()
 }
 
 func (memR *Reactor) WaitSync() bool {

@@ -477,6 +477,8 @@ func (cs *State) Wait() {
 	select {
 	case <-cs.done:
 		return
+	case <-cs.Quit():
+		return
 	}
 }
 
@@ -895,7 +897,7 @@ func (cs *State) receiveRoutine(maxSteps int) {
 
 			// if the timeout is relevant to the rs
 			// go to the next step
-			rs := cs.GetRoundState()
+			rs := cs.getRoundState()
 			cs.handleTimeout(ti, rs)
 
 		case <-cs.Quit():
@@ -944,10 +946,10 @@ func (cs *State) handleMsg(mi msgInfo) {
 		if added && cs.ProposalBlockParts.IsComplete() {
 			cs.handleCompleteProposal(msg.Height)
 		}
-		cs.mtx.Unlock()
 		if added {
 			cs.statsMsgQueue <- mi
 		}
+		cs.mtx.Unlock()
 
 		if err != nil && msg.Round != cs.Round {
 			cs.Logger.Debug(
@@ -964,10 +966,10 @@ func (cs *State) handleMsg(mi msgInfo) {
 		// attempt to add the vote and dupeout the validator if its a duplicate signature
 		// if the vote gives us a 2/3-any or 2/3-one, we transition
 		added, err = cs.tryAddVote(msg.Vote, peerID)
-		cs.mtx.Unlock()
 		if added {
 			cs.statsMsgQueue <- mi
 		}
+		cs.mtx.Unlock()
 
 		// if err == ErrAddingVote {
 		// TODO: punish peer

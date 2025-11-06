@@ -545,7 +545,7 @@ func (mgr *BroadcastPool) indexerRoutine(chainID string) {
 					close(ch)
 				}
 			}
-			return // DONE
+			return
 		case <-cancelTimer.C:
 			return
 		case <-mgr.goShutdownCh:

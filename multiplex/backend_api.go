@@ -218,6 +218,10 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 	//
 	// If any replication (sync) is in progress for one of the relevant
 	// ChainID values, then we must wait for completion before we may idle.
+	//
+	// NOTE: WaitForIndexedTransactions is called for transactionsByChain
+	// on-deferral of WaitForChainReplications, this will only manage to
+	// wait for transactions with ChainID in syncingPeersChainIds.
 	if len(syncingPeersChainIds) > 0 {
 		b.logger.Info("Delaying the idle manager until relays have caught up",
 			"requestId", broadcastID,
@@ -239,11 +243,14 @@ func (b *MultiplexBackend) OnBroadcastComplete(
 	// All other relays participated in consensus, thus transactions for
 	// these ChainID should have been indexed by now, if they were not
 	// we shall be listening for transaction events, i.e. `EventQueryTx`.
-
-	go b.runtimeRegistry.WaitForIndexedTransactions(
-		relevantChainIds,
-		transactionsByChain,
-	)
+	//
+	// NOTE: relevantChainIds does not contain syncingPeersChainIds.
+	if len(relevantChainIds) > 0 {
+		go b.runtimeRegistry.WaitForIndexedTransactions(
+			relevantChainIds,
+			transactionsByChain,
+		)
+	}
 
 	msgSuccess := "Consensus instance completed"
 	if len(syncingPeersChainIds) > 0 {

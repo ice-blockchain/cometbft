@@ -280,6 +280,7 @@ func closeAndRemoveAll(
 	if backend.IsRunning() {
 		err := backend.Stop()
 		assert.NoError(tb, err, "should shutdown backend gracefully")
+		backend.Wait()
 	}
 }
 

@@ -191,11 +191,15 @@ func (c *RuntimeComposer) OnStop() {
 	composedChainIds := c.composedChainIds
 	c.mtx.Unlock()
 
+	wgUnload := new(sync.WaitGroup)
+	wgUnload.Add(len(composedChainIds))
 	for chainID := range composedChainIds {
 		go func() {
+			defer wgUnload.Done()
 			c.Unload(chainID)
 		}()
 	}
+	wgUnload.Wait()
 }
 
 // OnReset implements [service.Service] by resetting the service.

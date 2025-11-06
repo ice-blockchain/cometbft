@@ -18,7 +18,6 @@ import (
 	cmtrand "github.com/ice-blockchain/cometbft/internal/rand"
 	cmtjson "github.com/ice-blockchain/cometbft/libs/json"
 	"github.com/ice-blockchain/cometbft/libs/log"
-	cmtsync "github.com/ice-blockchain/cometbft/libs/sync"
 	mxtypes "github.com/ice-blockchain/cometbft/multiplex/types"
 	"github.com/ice-blockchain/cometbft/p2p"
 	sm "github.com/ice-blockchain/cometbft/state"
@@ -55,13 +54,11 @@ type Reactor struct {
 	waitSync atomic.Bool
 	eventBus *types.EventBus
 
-	peersMtx     cmtsync.Mutex
 	pendingPeers sync.Map
 
 	// peerStates contains *PeerState instance by cmtp2p.ID (string) keys.
 	peerStates *cmap.CMap
 
-	rsMtx         cmtsync.RWMutex
 	rs            cstypes.RoundState // copy of consensus state
 	initialHeight atomic.Int64
 
@@ -170,10 +167,7 @@ func (conR *Reactor) OnStart(ctx context.Context) error {
 		conR.AddPeer(value.(*p2p.PeerImpl))
 		return true
 	})
-
-	conR.peersMtx.Lock()
 	conR.pendingPeers.Clear()
-	conR.peersMtx.Unlock()
 
 	return nil
 }
@@ -462,18 +456,20 @@ func (conR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 			"peer", peer,
 		)
 
-		conR.peersMtx.Lock()
 		conR.pendingPeers.Store(peer.ID(), peer)
-		conR.peersMtx.Unlock()
 		return
 	}
 
+	// Get peer states from conR.peerStates
+	// NOTE(midas): In case the peer has no state, we try to send it some
+	// data through initialization and then read the state once more.
 	peerState := conR.GetPeerState(peer)
 	if peerState == nil {
-		conR.Logger.Error("Failed to read peer state",
-			"peer", peer,
-		)
-		return
+		conR.InitPeer(peer)
+		if peerState = conR.GetPeerState(peer); peerState == nil {
+			conR.Logger.Error("Failed  to read peer state", "peer", peer)
+			return
+		}
 	}
 
 	if !peer.IsRunning() {
@@ -576,12 +572,10 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 	ps := conR.GetPeerState(e.Src)
 	if ps == nil {
 		conR.InitPeer(e.Src)
-		ps = conR.GetPeerState(e.Src)
-	}
-
-	if ps == nil {
-		conR.Logger.Error("Source peer %v has no state for %v", e.Src, conR.PeerStateKey())
-		return
+		if ps = conR.GetPeerState(e.Src); ps == nil {
+			conR.Logger.Error("Source peer %v has no state for %v", e.Src, conR.PeerStateKey())
+			return
+		}
 	}
 
 	switch e.ChannelID {
@@ -786,7 +780,7 @@ func (conR *Reactor) subscribeToBroadcastEvents() {
 			// NOTE this is safe to do without locking cs because the eventBus is
 			// synchronous. If it were not, we could pass rs in this event
 			// instead
-			rs := conR.conS.getRoundState()
+			rs := conR.conS.getRoundState() // no-lock
 			conR.updateRoundState(&rs)
 		}); err != nil {
 		conR.Logger.Error("Error adding listener for events (Vote)", "err", err)
@@ -800,7 +794,7 @@ func (conR *Reactor) subscribeToBroadcastEvents() {
 			// NOTE this is safe to do without locking cs because the eventBus is
 			// synchronous. If it were not, we could pass rs in this event
 			// instead
-			rs := conR.conS.getRoundState()
+			rs := conR.conS.getRoundState() // no-lock
 			conR.updateRoundState(&rs)
 		}); err != nil {
 		conR.Logger.Error("Error adding listener for events (ProposalBlockPart)", "err", err)
@@ -809,9 +803,7 @@ func (conR *Reactor) subscribeToBroadcastEvents() {
 
 // Safely update the reactor's view of round state.
 func (conR *Reactor) updateRoundState(rs *cstypes.RoundState) {
-	conR.rsMtx.Lock()
 	conR.rs = *rs // copy
-	conR.rsMtx.Unlock()
 }
 
 func (conR *Reactor) unsubscribeFromBroadcastEvents() {
@@ -938,8 +930,6 @@ func (conR *Reactor) sendNewRoundStepMessage(peer *p2p.PeerImpl) {
 }
 
 func (conR *Reactor) getRoundState() cstypes.RoundState {
-	conR.rsMtx.RLock()
-	defer conR.rsMtx.RUnlock()
 	return conR.rs
 }
 
@@ -973,8 +963,8 @@ OUTER_LOOP:
 
 		// Update the PeerState entry as it may become stale.
 		ps = conR.GetPeerState(peer)
-		rs := conR.getRoundState() // under conR.rsMtx
-		prs := ps.GetRoundState()  // under ps.mtx
+		rs := conR.getRoundState()
+		prs := ps.GetRoundState() // under ps.mtx
 		cid := conR.ChainID
 
 		// --------------------
@@ -1047,8 +1037,8 @@ OUTER_LOOP:
 
 		// Update the PeerState entry as it may become stale.
 		ps = conR.GetPeerState(peer)
-		rs := conR.getRoundState() // under conR.rsMtx
-		prs := ps.GetRoundState()  // under ps.mtx
+		rs := conR.getRoundState()
+		prs := ps.GetRoundState() // under ps.mtx
 		cid := conR.ChainID
 
 		switch sleeping {
@@ -1058,9 +1048,7 @@ OUTER_LOOP:
 			sleeping = 0
 		}
 
-		conR.rsMtx.RLock()
 		vote := pickVoteToSend(logger, conR.conS, &rs, ps, prs, rng)
-		conR.rsMtx.RUnlock()
 
 		// logger.Debug("gossipVotesRoutine", "rsHeight", rs.Height, "rsRound", rs.Round,
 		// 	"prsHeight", prs.Height, "prsRound", prs.Round, "prsStep", prs.Step, "v", vote)

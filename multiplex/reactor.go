@@ -262,6 +262,9 @@ func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
 						"err", err,
 					)
 				}
+
+				// The above may fail due to already connected partner but the
+				// following permits us to accept replRequest.ChainID in PacketMsg.
 				reactor.cometbftPool.SetPeerForChainID(cometbftAddr.ID(), replRequest.ChainID)
 			}
 

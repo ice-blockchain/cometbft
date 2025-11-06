@@ -183,18 +183,6 @@ func (bs *BaseService) Start() error {
 
 		bs.startedAt = time.Now()
 		bs.quit = make(chan struct{})
-
-		go func() {
-			select {
-			case <-bs.ctx.Done():
-				err = bs.Stop()
-				if bs.Logger != nil && err != nil && err != ErrAlreadyStopped {
-					bs.Logger.Error("Failed to close", "err", err, "service", bs.name)
-				}
-
-			case <-bs.quit: // OR already stopped
-			}
-		}()
 		return nil
 	}
 	bs.Logger.Debug("service start",

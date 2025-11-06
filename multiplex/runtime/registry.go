@@ -446,21 +446,29 @@ func (reg *Registry) WaitForIndexedTransactions(
 	chainsWg := new(sync.WaitGroup)
 	chainsWg.Add(len(relevantChainIds))
 
+	shutdownFn := func(chainID string) {
+		defer chainsWg.Done()
+		defer func() {
+			reg.OnComplete(chainID)
+		}()
+	}
+
 	for _, chainID := range relevantChainIds {
-		cliTxes := transactionsByChain[chainID]
+		cliTxes, ok := transactionsByChain[chainID]
+		if !ok || len(cliTxes) == 0 {
+			shutdownFn(chainID)
+			continue
+		}
 
 		// One goroutine per syncing ChainID, blocked until all txes indexed.
 		// The runtime is marked complete upon completion of all tx indexing.
-		go func() {
-			defer chainsWg.Done()
-			defer func() {
-				reg.OnComplete(chainID)
-			}()
+		go func(chainTxes []client.Transaction) {
+			defer shutdownFn(chainID)
 
 			txesWg := new(sync.WaitGroup)
-			txesWg.Add(len(cliTxes))
+			txesWg.Add(len(chainTxes))
 
-			for _, tx := range cliTxes {
+			for _, tx := range chainTxes {
 				// One goroutine per txHash, blocked until tx indexed.
 				go func() {
 					defer txesWg.Done()
@@ -474,7 +482,7 @@ func (reg *Registry) WaitForIndexedTransactions(
 				}()
 			}
 			txesWg.Wait()
-		}()
+		}(cliTxes)
 	}
 	chainsWg.Wait()
 

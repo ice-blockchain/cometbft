@@ -198,7 +198,14 @@ func NewServer(
 	initTime := time.Now()
 
 	nodeConfig.DBBackend = "goleveldb"
-	nodeConfig.Consensus.CreateEmptyBlocks = false // Force to create blocks only if there are transactions.
+	nodeConfig.Consensus.CreateEmptyBlocks = false               // Force to create blocks only if there are transactions.
+	nodeConfig.Consensus.TimeoutCommit = 0                       // Make progress as soon as the node has all the precommits.
+	nodeConfig.Consensus.TimeoutPropose = 500 * time.Millisecond // Give 500ms to receive proposal.
+	nodeConfig.Consensus.TimeoutProposeDelta = 50 * time.Millisecond
+	nodeConfig.Consensus.TimeoutPrevote = 300 * time.Millisecond // Give 300ms to receive proposal.
+	nodeConfig.Consensus.TimeoutPrevoteDelta = 50 * time.Millisecond
+	nodeConfig.Consensus.TimeoutPrecommit = 300 * time.Millisecond // Give 300ms to receive proposal.
+	nodeConfig.Consensus.TimeoutPrecommitDelta = 50 * time.Millisecond
 	nodeConfig.P2P.AllowDuplicateIP = true
 
 	// Creates or re-use config/ and data/ folders.
@@ -447,6 +454,23 @@ func (b *MultiplexBackend) OnStart(ctx context.Context) error {
 	go b.metricsReporter()
 	defer b.shutdownOnPanic()
 
+	// CAUTION:
+	// We only listen for the context expiry here, not in every BaseService
+	// implementation anymore because it is expected that MultiplexBackend#Stop
+	// shall shutdown the *complete* runtime processes and all its children.
+	go func() {
+		select {
+		case <-b.Context().Done():
+			err := b.Stop()
+			if b.Logger != nil && err != nil && err != service.ErrAlreadyStopped {
+				b.Logger.Error("context expired; failed to stop MultiplexBackend",
+					"err", err,
+					"service", b.Name())
+			}
+		case <-b.Quit(): // already stopped
+		}
+	}()
+
 	b.mtx.Lock()
 	{
 		// Channel used to intercept errors during startup.
@@ -489,6 +513,8 @@ func (b *MultiplexBackend) OnStart(ctx context.Context) error {
 		select {
 		case <-b.shutdownCh:
 			return
+		case <-b.Quit(): // already stopped
+			return
 		}
 	}(discoveryWg)
 
@@ -520,6 +546,8 @@ func (b *MultiplexBackend) OnStart(ctx context.Context) error {
 		// Keep this goroutine alive until shutdown explicitely.
 		select {
 		case <-b.shutdownCh:
+			return
+		case <-b.Quit(): // already stopped
 			return
 		}
 	}(monitoringWg)
@@ -561,6 +589,8 @@ func (b *MultiplexBackend) OnStart(ctx context.Context) error {
 		// Keep this goroutine alive until shutdown explicitely.
 		select {
 		case <-b.shutdownCh:
+			return
+		case <-b.Quit(): // already stopped
 			return
 		}
 	}(cometbftWg)
