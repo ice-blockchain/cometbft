@@ -273,7 +273,7 @@ func (pool *ConsensusPool) Execute(chainID string) error {
 			"rpc", n.Config().RPC.ListenAddress,
 		)
 
-		if err := n.Start(); err != nil {
+		if err := n.Start(); err != nil && err != service.ErrAlreadyStarted {
 			pool.logger.Error("failed to start node",
 				"err", err,
 			)
@@ -335,13 +335,10 @@ func (pool *ConsensusPool) Execute(chainID string) error {
 		}
 
 		if !r.IsRunning() {
-			if err := r.Start(); err != nil {
-				// Prevents erroring for concurrent calls to Start() method.
-				if err != service.ErrAlreadyStarted {
-					pool.logger.Error("Error starting reactor",
-						"reactor", name,
-						"err", err)
-				}
+			if err := r.Start(); err != nil && err != service.ErrAlreadyStarted {
+				pool.logger.Error("Error starting reactor",
+					"reactor", name,
+					"err", err)
 			}
 		}
 	}

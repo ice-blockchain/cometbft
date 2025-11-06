@@ -13,6 +13,7 @@ import (
 	"github.com/rs/cors"
 
 	cmtpubsub "github.com/ice-blockchain/cometbft/libs/pubsub"
+	"github.com/ice-blockchain/cometbft/libs/service"
 	"github.com/ice-blockchain/cometbft/node"
 	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/proxy"
@@ -247,7 +248,7 @@ func (b *MultiplexBackend) StartP2PServerDiscovery() error {
 	)
 
 	eventSwitch := b.discoverySwitch
-	if err := eventSwitch.Start(); err != nil {
+	if err := eventSwitch.Start(); err != nil && err != service.ErrAlreadyStarted {
 		return fmt.Errorf(
 			"could not start p2p switch: %w", err)
 	}
@@ -337,7 +338,7 @@ func (b *MultiplexBackend) StartP2PServerCometBFT() error {
 	)
 
 	eventSwitch := b.cometbftSwitch
-	if err := eventSwitch.Start(); err != nil {
+	if err := eventSwitch.Start(); err != nil && err != service.ErrAlreadyStarted {
 		return fmt.Errorf(
 			"could not start p2p switch: %w", err)
 	}
@@ -515,7 +516,7 @@ func (b *MultiplexBackend) StartSharedServices() error {
 
 	// We share one ABCI client amongst all replication chains.
 	if !b.chainConns.IsRunning() {
-		if err := b.chainConns.Start(); err != nil {
+		if err := b.chainConns.Start(); err != nil && err != service.ErrAlreadyStarted {
 			return fmt.Errorf(
 				"failed to start proxy app connections: %w", err)
 		}
@@ -523,7 +524,7 @@ func (b *MultiplexBackend) StartSharedServices() error {
 
 	// A runtime manager is responsible for activating/idling runtimes.
 	if !b.runtimeRegistry.IsRunning() {
-		if err := b.runtimeRegistry.Start(); err != nil {
+		if err := b.runtimeRegistry.Start(); err != nil && err != service.ErrAlreadyStarted {
 			return fmt.Errorf(
 				"failed to start runtime manager service: %w", err)
 		}
@@ -531,7 +532,7 @@ func (b *MultiplexBackend) StartSharedServices() error {
 
 	// A broadcast manager is responsible for evaluating ACK messages.
 	if !b.broadcastMgr.IsRunning() {
-		if err := b.broadcastMgr.Start(); err != nil {
+		if err := b.broadcastMgr.Start(); err != nil && err != service.ErrAlreadyStarted {
 			return fmt.Errorf(
 				"failed to start broadcast manager service: %w", err)
 		}
@@ -539,7 +540,7 @@ func (b *MultiplexBackend) StartSharedServices() error {
 
 	// A replication manager is responsible for evaluating replication messages.
 	if !b.replicationMgr.IsRunning() {
-		if err := b.replicationMgr.Start(); err != nil {
+		if err := b.replicationMgr.Start(); err != nil && err != service.ErrAlreadyStarted {
 			return fmt.Errorf(
 				"failed to start replication manager service: %w", err)
 		}
@@ -547,7 +548,7 @@ func (b *MultiplexBackend) StartSharedServices() error {
 
 	// A replay pool forwards missed events over to the acceptor.
 	if !b.replayPool.IsRunning() {
-		if err := b.replayPool.Start(); err != nil {
+		if err := b.replayPool.Start(); err != nil && err != service.ErrAlreadyStarted {
 			return fmt.Errorf(
 				"failed to start replay pool service: %w", err)
 		}
@@ -555,7 +556,7 @@ func (b *MultiplexBackend) StartSharedServices() error {
 
 	// The multiplex reactor receives messages on multiplex channels.
 	if !b.reactor.IsRunning() {
-		if err := b.reactor.Start(); err != nil {
+		if err := b.reactor.Start(); err != nil && err != service.ErrAlreadyStarted {
 			return fmt.Errorf(
 				"failed to start multiplex reactor: %w", err)
 		}

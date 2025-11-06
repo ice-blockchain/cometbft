@@ -144,7 +144,7 @@ func (pool *ConnectionPool) OnStart(ctx context.Context) (err error) {
 		"nodeInfo", pool.nodeInfo,
 	)
 
-	if err := pool.connector.Start(); err != nil {
+	if err := pool.connector.Start(); err != nil && err != service.ErrAlreadyStarted {
 		return fmt.Errorf("failed to start Connector: %w", err)
 	}
 
@@ -165,7 +165,7 @@ func (pool *ConnectionPool) OnStop() {
 	peers := pool.peers.Copy()
 	for _, peer := range peers {
 		if pool.peerConnections.Has(string(peer.ID())) {
-			if err := pool.stopRoutines(peer); err != nil {
+			if err := pool.stopRoutines(peer); err != nil && err != service.ErrAlreadyStopped {
 				pool.logger.Error("Error stopping routines", "err", err, "peer", peer)
 			}
 
@@ -173,7 +173,7 @@ func (pool *ConnectionPool) OnStop() {
 		}
 	}
 
-	if err := pool.connector.Stop(); err != nil {
+	if err := pool.connector.Stop(); err != nil && err != service.ErrAlreadyStopped {
 		pool.logger.Error("failed to stop PeerConnector",
 			"err", err,
 		)
@@ -324,7 +324,7 @@ func (pool *ConnectionPool) AddPeer(peer *cmtp2p.PeerImpl) error {
 	if !peer.IsRunning() {
 		// peer.Start does *not* start a MConnection anymore,
 		// instead the connection is started with startRoutines.
-		if err := peer.Start(); err != nil {
+		if err := peer.Start(); err != nil && err != service.ErrAlreadyStarted {
 			peerLogger.Error("Error starting peer", "err", err)
 			return err
 		}
@@ -657,7 +657,7 @@ func (pool *ConnectionPool) startRoutines(peer *cmtp2p.PeerImpl) (
 	)
 	mconn.SetLogger(pool.logger)
 
-	if err := mconn.Start(); err != nil {
+	if err := mconn.Start(); err != nil && err != service.ErrAlreadyStarted {
 		pool.logger.Error("failed to start routines",
 			"peer", peer,
 			"err", err,
@@ -680,7 +680,7 @@ func (pool *ConnectionPool) stopRoutines(peer *cmtp2p.PeerImpl) error {
 	}
 
 	mconn := pool.peerConnections.Get(string(peer.ID())).(*cmtconn.MConnection)
-	if err := mconn.Stop(); err != nil {
+	if err := mconn.Stop(); err != nil && err != service.ErrAlreadyStopped {
 		pool.logger.Error("failed to stop routines",
 			"peer", peer,
 			"err", err,

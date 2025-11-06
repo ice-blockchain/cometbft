@@ -928,7 +928,7 @@ func (c *RuntimeComposer) startNetworkEventBus(
 	if !c.resourceMgr.Has(chainID, types.ServiceKeyEventBus) {
 		eventBus = cmttypes.NewEventBus(c.Context())
 		eventBus.SetLogger(c.logger.With("module", "events"))
-		if err := eventBus.Start(); err != nil {
+		if err := eventBus.Start(); err != nil && err != service.ErrAlreadyStarted {
 			return fmt.Errorf("error starting event bus: %w", err)
 		}
 

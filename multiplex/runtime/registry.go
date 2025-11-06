@@ -197,19 +197,19 @@ func (reg *Registry) OnStart(ctx context.Context) error {
 		"timer", reg.CleanerInterval(),
 	)
 
-	if err := reg.discoveryPool.Start(); err != nil {
+	if err := reg.discoveryPool.Start(); err != nil && err != service.ErrAlreadyStarted {
 		return fmt.Errorf("failed to start discovery ConnectionManager: %w", err)
 	}
 
-	if err := reg.cometbftPool.Start(); err != nil {
+	if err := reg.cometbftPool.Start(); err != nil && err != service.ErrAlreadyStarted {
 		return fmt.Errorf("failed to start CometBFT ConnectionManager: %w", err)
 	}
 
-	if err := reg.runtimeComposer.Start(); err != nil {
+	if err := reg.runtimeComposer.Start(); err != nil && err != service.ErrAlreadyStarted {
 		return fmt.Errorf("failed to start RuntimeComposer: %w", err)
 	}
 
-	if err := reg.consensusPool.Start(); err != nil {
+	if err := reg.consensusPool.Start(); err != nil && err != service.ErrAlreadyStarted {
 		return fmt.Errorf("failed to start ConsensusHandler: %w", err)
 	}
 
@@ -225,25 +225,25 @@ func (reg *Registry) OnStop() {
 	reg.mtx.Lock()
 	defer reg.mtx.Unlock()
 
-	if err := reg.runtimeComposer.Stop(); err != nil {
+	if err := reg.runtimeComposer.Stop(); err != nil && err != service.ErrAlreadyStopped {
 		reg.logger.Error("failed to stop RuntimeComposer",
 			"err", err,
 		)
 	}
 
-	if err := reg.discoveryPool.Stop(); err != nil {
+	if err := reg.discoveryPool.Stop(); err != nil && err != service.ErrAlreadyStopped {
 		reg.logger.Error("failed to stop discovery ConnectionManager",
 			"err", err,
 		)
 	}
 
-	if err := reg.cometbftPool.Stop(); err != nil {
+	if err := reg.cometbftPool.Stop(); err != nil && err != service.ErrAlreadyStopped {
 		reg.logger.Error("failed to stop CometBFT ConnectionManager",
 			"err", err,
 		)
 	}
 
-	if err := reg.consensusPool.Stop(); err != nil {
+	if err := reg.consensusPool.Stop(); err != nil && err != service.ErrAlreadyStopped {
 		reg.logger.Error("failed to stop ConsensusHandler",
 			"err", err,
 		)
