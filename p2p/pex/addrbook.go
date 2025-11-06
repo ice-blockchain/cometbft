@@ -490,10 +490,12 @@ func (a *addrBook) saveRoutine() {
 
 	saveFileTicker := time.NewTicker(dumpAddressInterval)
 	defer saveFileTicker.Stop()
-	for {
+	for a.Context().Err() == nil {
 		select {
 		case <-saveFileTicker.C:
 			a.Save()
+		case <-a.Context().Done():
+			return
 		case <-a.Quit():
 			a.Save()
 			return

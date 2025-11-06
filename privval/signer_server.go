@@ -91,7 +91,7 @@ func (ss *SignerServer) servicePendingRequest() {
 }
 
 func (ss *SignerServer) serviceLoop() {
-	for {
+	for ss.Context().Err() == nil {
 		select {
 		default:
 			err := ss.endpoint.ensureConnection()
@@ -100,6 +100,8 @@ func (ss *SignerServer) serviceLoop() {
 			}
 			ss.servicePendingRequest()
 
+		case <-ss.Context().Done():
+			return
 		case <-ss.Quit():
 			return
 		}

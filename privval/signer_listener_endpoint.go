@@ -184,7 +184,7 @@ func (sl *SignerListenerEndpoint) triggerReconnect() {
 }
 
 func (sl *SignerListenerEndpoint) serviceLoop() {
-	for {
+	for sl.Context().Err() == nil {
 		select {
 		case <-sl.connectRequestCh:
 			// On start, listen timeouts can queue a duplicate connect request to queue
@@ -209,6 +209,8 @@ func (sl *SignerListenerEndpoint) serviceLoop() {
 			case <-sl.Quit():
 				return
 			}
+		case <-sl.Context().Done():
+			return
 		case <-sl.Quit():
 			return
 		}
@@ -216,7 +218,7 @@ func (sl *SignerListenerEndpoint) serviceLoop() {
 }
 
 func (sl *SignerListenerEndpoint) pingLoop() {
-	for {
+	for sl.Context().Err() == nil {
 		select {
 		case <-sl.pingTimer.C:
 			{
@@ -226,6 +228,8 @@ func (sl *SignerListenerEndpoint) pingLoop() {
 					sl.triggerReconnect()
 				}
 			}
+		case <-sl.Context().Done():
+			return
 		case <-sl.Quit():
 			return
 		}

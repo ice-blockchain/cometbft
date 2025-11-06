@@ -153,7 +153,7 @@ func (evR *Reactor) SetEventBus(b *types.EventBus) {
 // start iterating from the beginning again.
 func (evR *Reactor) broadcastEvidenceRoutine(peer *p2p.PeerImpl) {
 	var next *clist.CElement
-	for {
+	for evR.Context().Err() == nil {
 		// This happens because the CElement we were looking at got garbage
 		// collected (removed). That is, .NextWait() returned nil. Go ahead and
 		// start from the beginning.
@@ -202,6 +202,8 @@ func (evR *Reactor) broadcastEvidenceRoutine(peer *p2p.PeerImpl) {
 			// see the start of the for loop for nil check
 			next = next.Next()
 		case <-peer.Quit():
+			return
+		case <-evR.Context().Done():
 			return
 		case <-evR.Quit():
 			return

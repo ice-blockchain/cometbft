@@ -425,8 +425,10 @@ func (bcR *Reactor) poolRoutine(stateSynced bool) {
 	initialCommitHasExtensions := (bcR.initialState.LastBlockHeight > 0 && bcR.store.LoadBlockExtendedCommit(bcR.initialState.LastBlockHeight) != nil)
 
 	go func() {
-		for {
+		for bcR.Context().Err() == nil {
 			select {
+			case <-bcR.Context().Done():
+				return
 			case <-bcR.Quit():
 				return
 			case <-bcR.pool.Quit():
@@ -458,7 +460,7 @@ func (bcR *Reactor) poolRoutine(stateSynced bool) {
 	}()
 
 FOR_LOOP:
-	for {
+	for bcR.Context().Err() == nil {
 		select {
 		case <-switchToConsensusTicker.C:
 			outbound, inbound, _ := bcR.Switch.NumPeers(bcR.ChainID())
@@ -643,6 +645,8 @@ FOR_LOOP:
 
 			continue FOR_LOOP
 
+		case <-bcR.Context().Done():
+			break FOR_LOOP
 		case <-bcR.Quit():
 			break FOR_LOOP
 		case <-bcR.pool.Quit():

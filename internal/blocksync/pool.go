@@ -870,12 +870,14 @@ OUTER_LOOP:
 		retryTimer := time.NewTimer(requestRetrySeconds * time.Second)
 		defer retryTimer.Stop()
 
-		for {
+		for bpr.Context().Err() == nil {
 			select {
 			case <-bpr.pool.Quit():
 				if err := bpr.Stop(); err != nil {
 					bpr.Logger.Error("Error stopped requester", "err", err)
 				}
+				return
+			case <-bpr.Context().Done():
 				return
 			case <-bpr.Quit():
 				return

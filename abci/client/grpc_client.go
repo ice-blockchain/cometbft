@@ -86,7 +86,7 @@ func (cli *grpcClient) OnStart(ctx context.Context) error {
 	}()
 
 RETRY_LOOP:
-	for {
+	for cli.Context().Err() == nil {
 		conn, err := grpc.NewClient(cli.addr,
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
 			grpc.WithContextDialer(dialerFunc),
@@ -105,7 +105,7 @@ RETRY_LOOP:
 		cli.conn = conn
 
 	ENSURE_CONNECTED:
-		for {
+		for cli.Context().Err() == nil {
 			_, err := client.Echo(context.Background(), &types.EchoRequest{Message: "hello"}, grpc.WaitForReady(true))
 			if err == nil {
 				break ENSURE_CONNECTED
@@ -117,6 +117,8 @@ RETRY_LOOP:
 		cli.client = client
 		return nil
 	}
+
+	return nil
 }
 
 func (cli *grpcClient) OnStop() {

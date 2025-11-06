@@ -71,7 +71,7 @@ func (cli *socketClient) OnStart(ctx context.Context) error {
 		conn net.Conn
 	)
 
-	for {
+	for cli.Context().Err() == nil {
 		conn, err = cmtnet.Connect(cli.addr)
 		if err != nil {
 			if cli.mustConnect {
@@ -89,6 +89,8 @@ func (cli *socketClient) OnStart(ctx context.Context) error {
 
 		return nil
 	}
+
+	return nil
 }
 
 // OnStop implements Service by closing connection and flushing all queues.
@@ -128,7 +130,7 @@ func (cli *socketClient) CheckTxAsync(ctx context.Context, req *types.CheckTxReq
 
 func (cli *socketClient) sendRequestsRoutine(conn io.Writer) {
 	w := bufio.NewWriter(conn)
-	for {
+	for cli.Context().Err() == nil {
 		select {
 		case reqres := <-cli.reqQueue:
 			// N.B. We must enqueue before sending out the request, otherwise the
@@ -156,6 +158,8 @@ func (cli *socketClient) sendRequestsRoutine(conn io.Writer) {
 			default:
 				// Probably will fill the buffer, or retry later.
 			}
+		case <-cli.Context().Done():
+			return
 		case <-cli.Quit():
 			return
 		}
@@ -164,7 +168,7 @@ func (cli *socketClient) sendRequestsRoutine(conn io.Writer) {
 
 func (cli *socketClient) recvResponseRoutine(conn io.Reader) {
 	r := bufio.NewReader(conn)
-	for {
+	for cli.Context().Err() == nil {
 		if !cli.IsRunning() {
 			return
 		}
@@ -447,7 +451,7 @@ func (cli *socketClient) flushQueue() {
 
 	// mark all queued messages as resolved
 LOOP:
-	for {
+	for cli.Context().Err() == nil {
 		select {
 		case reqres := <-cli.reqQueue:
 			reqres.Done()

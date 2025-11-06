@@ -355,7 +355,7 @@ func (cs *State) OnStart(ctx context.Context) error {
 		repairAttempted := false
 
 	LOOP:
-		for {
+		for cs.Context().Err() == nil {
 			err := cs.catchupReplay(cs.Height)
 			switch {
 			case err == nil:

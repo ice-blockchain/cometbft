@@ -309,7 +309,7 @@ func (c *WSClient) reconnect() error {
 		c.mtx.Unlock()
 	}()
 
-	for {
+	for c.Context().Err() == nil {
 		jitter := time.Duration(cmtrand.Float64() * float64(time.Second)) // 1s == (1e9 ns)
 		backoffDuration := jitter + ((1 << uint(attempt)) * time.Second)
 
@@ -332,6 +332,8 @@ func (c *WSClient) reconnect() error {
 			return fmt.Errorf("reached maximum reconnect attempts: %w", err)
 		}
 	}
+
+	return nil
 }
 
 func (c *WSClient) startReadWriteRoutines() {
@@ -363,7 +365,7 @@ func (c *WSClient) processBacklog() error {
 }
 
 func (c *WSClient) reconnectRoutine() {
-	for {
+	for c.Context().Err() == nil {
 		select {
 		case originalError := <-c.reconnectAfter:
 			// wait until writeRoutine and readRoutine finish
@@ -378,7 +380,7 @@ func (c *WSClient) reconnectRoutine() {
 			}
 			// drain reconnectAfter
 		LOOP:
-			for {
+			for c.Context().Err() == nil {
 				select {
 				case <-c.reconnectAfter:
 				default:
@@ -390,6 +392,8 @@ func (c *WSClient) reconnectRoutine() {
 				c.startReadWriteRoutines()
 			}
 
+		case <-c.Context().Done():
+			return
 		case <-c.Quit():
 			return
 		}
@@ -418,7 +422,7 @@ func (c *WSClient) writeRoutine() {
 		c.wg.Done()
 	}()
 
-	for {
+	for c.Context().Err() == nil {
 		select {
 		case request := <-c.send:
 			if c.writeWait > 0 {
@@ -449,6 +453,14 @@ func (c *WSClient) writeRoutine() {
 			c.mtx.Unlock()
 			c.Logger.Debug("sent ping")
 		case <-c.readRoutineQuit:
+			return
+		case <-c.Context().Done():
+			if err := c.conn.WriteMessage(
+				websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+			); err != nil {
+				c.Logger.Error("failed to write message", "err", err)
+			}
 			return
 		case <-c.Quit():
 			if err := c.conn.WriteMessage(
@@ -486,7 +498,7 @@ func (c *WSClient) readRoutine() {
 		return nil
 	})
 
-	for {
+	for c.Context().Err() == nil {
 		// reset deadline for every message type (control or data)
 		if c.readWait > 0 {
 			if err := c.conn.SetReadDeadline(time.Now().Add(c.readWait)); err != nil {
@@ -537,6 +549,7 @@ func (c *WSClient) readRoutine() {
 		c.Logger.Info("got response", "id", response.ID, "result", log.NewLazySprintf("%X", response.Result))
 
 		select {
+		case <-c.Context().Done():
 		case <-c.Quit():
 		case c.ResponsesCh <- response:
 		}

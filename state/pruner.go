@@ -311,8 +311,10 @@ func (p *Pruner) GetBlockIndexerRetainHeight() (int64, error) {
 func (p *Pruner) pruneABCIResponses() {
 	p.logger.Info("Started pruning ABCI responses", "interval", p.interval.String())
 	lastRetainHeight := int64(0)
-	for {
+	for p.Context().Err() == nil {
 		select {
+		case <-p.Context().Done():
+			return
 		case <-p.Quit():
 			return
 		default:
@@ -331,6 +333,8 @@ func (p *Pruner) pruneABCIResponses() {
 		select {
 		case <-time.After(p.interval):
 			continue
+		case <-p.Context().Done():
+			return
 		case <-p.Quit():
 			return
 		}
@@ -340,8 +344,10 @@ func (p *Pruner) pruneABCIResponses() {
 func (p *Pruner) pruneBlocks() {
 	p.logger.Info("Started pruning blocks", "interval", p.interval.String())
 	lastRetainHeight := int64(0)
-	for {
+	for p.Context().Err() == nil {
 		select {
+		case <-p.Context().Done():
+			return
 		case <-p.Quit():
 			return
 		default:
@@ -360,6 +366,8 @@ func (p *Pruner) pruneBlocks() {
 		select {
 		case <-time.After(p.interval):
 			continue
+		case <-p.Context().Done():
+			return
 		case <-p.Quit():
 			return
 		}
@@ -370,8 +378,10 @@ func (p *Pruner) pruneIndexesRoutine() {
 	p.logger.Info("Index pruner started", "interval", p.interval.String())
 	lastTxIndexerRetainHeight := int64(0)
 	lastBlockIndexerRetainHeight := int64(0)
-	for {
+	for p.Context().Err() == nil {
 		select {
+		case <-p.Context().Done():
+			return
 		case <-p.Quit():
 			return
 		default:
@@ -384,6 +394,8 @@ func (p *Pruner) pruneIndexesRoutine() {
 		select {
 		case <-time.After(p.interval):
 			continue
+		case <-p.Context().Done():
+			return
 		case <-p.Quit():
 			return
 		}

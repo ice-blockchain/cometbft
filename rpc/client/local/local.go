@@ -250,7 +250,7 @@ func (c *Local) eventsRoutine(
 	q cmtpubsub.Query,
 	outc chan<- ctypes.ResultEvent,
 ) {
-	for {
+	for c.Context().Err() == nil {
 		select {
 		case msg := <-sub.Out():
 			result := ctypes.ResultEvent{Query: q.String(), Data: msg.Data(), Events: msg.Events()}
@@ -273,6 +273,8 @@ func (c *Local) eventsRoutine(
 			if sub == nil { // client was stopped
 				return
 			}
+		case <-c.Context().Done():
+			return
 		case <-c.Quit():
 			return
 		}
@@ -282,7 +284,7 @@ func (c *Local) eventsRoutine(
 // Try to resubscribe with exponential backoff.
 func (c *Local) resubscribe(subscriber string, q cmtpubsub.Query) types.Subscription {
 	attempts := 0
-	for {
+	for c.Context().Err() == nil {
 		if !c.IsRunning() {
 			return nil
 		}

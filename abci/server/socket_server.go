@@ -50,7 +50,7 @@ func NewSocketServer(protoAddr string, app types.Application) service.Service {
 		app:      app,
 		conns:    make(map[int]net.Conn),
 	}
-	s.BaseService = *service.NewBaseService(nil, "ABCIServer", s)
+	s.BaseService = *service.NewBaseService(nil, nil, "ABCIServer", s)
 	return s
 }
 
@@ -112,7 +112,7 @@ func (s *SocketServer) rmConn(connID int) error {
 }
 
 func (s *SocketServer) acceptConnectionsRoutine() {
-	for {
+	for s.Context().Err() == nil {
 		// Accept a connection
 		s.Logger.Info("Waiting for new connection...")
 		conn, err := s.listener.Accept()
@@ -182,7 +182,7 @@ func (s *SocketServer) handleRequests(closeConn chan error, conn io.Reader, resp
 		}
 	}()
 
-	for {
+	for s.Context().Err() == nil {
 		req := &types.Request{}
 		err := types.ReadMessage(bufReader, req)
 		if err != nil {
@@ -305,10 +305,10 @@ func (s *SocketServer) handleRequest(ctx context.Context, req *types.Request) (*
 }
 
 // Pull responses from 'responses' and write them to conn.
-func (*SocketServer) handleResponses(closeConn chan error, conn io.Writer, responses <-chan *types.Response) {
+func (s *SocketServer) handleResponses(closeConn chan error, conn io.Writer, responses <-chan *types.Response) {
 	var count int
 	bufWriter := bufio.NewWriter(conn)
-	for {
+	for s.Context().Err() == nil {
 		res := <-responses
 		err := types.WriteMessage(res, bufWriter)
 		if err != nil {

@@ -105,7 +105,7 @@ func (c *blockServiceClient) GetLatestHeight(ctx context.Context, opts ...GetLat
 
 	go func(client blocksvc.BlockService_GetLatestHeightClient) {
 		defer close(resultCh)
-		for {
+		for ctx.Err() == nil {
 			response, err := client.Recv()
 			if err != nil {
 				res := LatestHeightResult{Error: fmt.Errorf("error receiving the latest height from a stream: %w", err)}

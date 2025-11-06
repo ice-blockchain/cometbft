@@ -144,7 +144,7 @@ func (cs *State) catchupReplay(csHeight int64) error {
 	dec := WALDecoder{gr}
 
 LOOP:
-	for {
+	for cs.Context().Err() == nil {
 		msg, err = dec.Decode()
 		switch {
 		case errors.Is(err, io.EOF):

@@ -493,13 +493,15 @@ func (r *Reactor) ensurePeersRoutine() {
 	// fire periodically
 	ticker := time.NewTicker(r.ensurePeersPeriod)
 	defer ticker.Stop()
-	for {
+	for r.Context().Err() == nil {
 		select {
 		case <-ticker.C:
 			r.ensurePeers()
 		case <-r.ensurePeersCh:
 			r.ensurePeers()
 		case <-r.book.Quit():
+			return
+		case <-r.Context().Done():
 			return
 		case <-r.Quit():
 			return
@@ -741,13 +743,15 @@ func (r *Reactor) crawlPeersRoutine() {
 	// Fire periodically
 	ticker := time.NewTicker(crawlPeerPeriod)
 	defer ticker.Stop()
-	for {
+	for r.Context().Err() == nil {
 		select {
 		case <-ticker.C:
 			r.attemptDisconnects()
 			r.crawlPeers(r.book.GetSelection())
 			r.cleanupCrawlPeerInfos()
 		case <-r.book.Quit():
+			return
+		case <-r.Context().Done():
 			return
 		case <-r.Quit():
 			return

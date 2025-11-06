@@ -741,7 +741,7 @@ func isErrAlreadySubscribed(err error) bool {
 }
 
 func (w *WSEvents) eventListener() {
-	for {
+	for w.Context().Err() == nil {
 		select {
 		case resp, ok := <-w.ws.ResponsesCh:
 			if !ok {
@@ -782,6 +782,8 @@ func (w *WSEvents) eventListener() {
 				}
 			}
 			w.mtx.RUnlock()
+		case <-w.Context().Done():
+			return
 		case <-w.Quit():
 			return
 		}

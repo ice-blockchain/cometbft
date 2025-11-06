@@ -444,6 +444,7 @@ func (c *RuntimeComposer) Unload(chainID string) error {
 					defer c.mtx.Unlock()
 
 					dbService.Stop()
+					dbService.Wait()
 				}()
 			}
 		}

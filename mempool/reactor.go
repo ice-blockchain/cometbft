@@ -694,7 +694,7 @@ func (memR *Reactor) broadcastTxRoutine(peer *p2p.PeerImpl) {
 	}()
 
 	iter := memR.mempool.NewIterator(ctx)
-	for {
+	for memR.Context().Err() == nil {
 		// In case of both next.NextWaitChan() and peer.Quit() are variable at the same time
 		if !memR.IsRunning() || !peer.IsRunning() {
 			return
@@ -713,7 +713,7 @@ func (memR *Reactor) broadcastTxRoutine(peer *p2p.PeerImpl) {
 		// node. See [RFC 103] for an analysis on this optimization.
 		//
 		// [RFC 103]: https://github.com/CometBFT/cometbft/blob/main/docs/references/rfc/rfc-103-incoming-txs-when-catching-up.md
-		for {
+		for memR.Context().Err() == nil {
 			// Make sure the peer's state is up to date. The peer may not have a
 			// state yet. We set it in the consensus reactor, but when we add
 			// peer in Switch, the order we call reactors#AddPeer is different
@@ -727,6 +727,8 @@ func (memR *Reactor) broadcastTxRoutine(peer *p2p.PeerImpl) {
 			select {
 			case <-time.After(PeerCatchupSleepIntervalMS * time.Millisecond):
 			case <-peer.Quit():
+				return
+			case <-memR.Context().Done():
 				return
 			case <-memR.Quit():
 				return
@@ -748,7 +750,7 @@ func (memR *Reactor) broadcastTxRoutine(peer *p2p.PeerImpl) {
 			continue
 		}
 
-		for {
+		for memR.Context().Err() == nil {
 			memR.Logger.Debug("Sending transaction to peer",
 				"tx", log.NewLazySprintf("%X", txHash), "peer", peer.ID())
 
@@ -766,6 +768,8 @@ func (memR *Reactor) broadcastTxRoutine(peer *p2p.PeerImpl) {
 			select {
 			case <-time.After(PeerCatchupSleepIntervalMS * time.Millisecond):
 			case <-peer.Quit():
+				return
+			case <-memR.Context().Done():
 				return
 			case <-memR.Quit():
 				return
