@@ -2,12 +2,14 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/helpers"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
 
@@ -15,7 +17,10 @@ import (
 // TestMultiplexClient
 
 func TestMultiplexClientBroadcastTx(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer func() {
+		time.Sleep(2 * time.Second)
+		goleak.VerifyNone(t)
+	}()
 
 	testAcceptorRelay1 := client.NewMockAcceptorImpl()
 	testAcceptorRelay2 := client.NewMockAcceptorImpl()
@@ -63,11 +68,23 @@ func TestMultiplexClientBroadcastTx(t *testing.T) {
 	// This method blocks the main thread maxCommitWaitTime and loads TxCommitCalls
 	// from all acceptors. Importantly the number of commits reported must be
 	// identical to roundExpectedCommits for ALL acceptors.
-	requireAcceptorCommitCalls(t, maxCommitWaitTime, roundExpectedCommits,
+	startCommitWait := time.Now()
+	numActualCommits,
+		elapsedCommitDuration := requireAcceptorCommitCalls(t,
+		maxCommitWaitTime,
+		roundExpectedCommits,
 		testAcceptorRelay1,
 		testAcceptorRelay2,
 		testAcceptorRelay3,
 	)
+	endCommitWait := time.Now()
+
+	require.WithinDurationf(t, startCommitWait, endCommitWait, 6*time.Second,
+		fmt.Sprintf("expected %d block commits in under %ds, took %.0fs",
+			numActualCommits,
+			6*time.Second,
+			elapsedCommitDuration.Seconds(),
+		))
 
 	waitDuration := 2 * time.Second
 	t.Logf("Waiting %.0fsec to shutdown...", waitDuration.Seconds())

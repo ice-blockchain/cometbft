@@ -178,7 +178,7 @@ func requireAcceptorCommitCalls(
 	maxWaitTime time.Duration,
 	numRoundCommits uint64,
 	fromAcceptors ...*client.MockAcceptorImpl,
-) {
+) (int, time.Duration) {
 	tb.Helper()
 
 	numActualCommits := 0
@@ -277,6 +277,8 @@ func requireAcceptorCommitCalls(
 	// ... and use require to make sure about *exact* number of commits.
 	require.Equal(tb, int(numRoundCommits), numActualCommits,
 		fmt.Sprintf("expected %d block commits, got %d", numRoundCommits, numActualCommits))
+
+	return numActualCommits, time.Since(startWaitTz)
 }
 
 // -----------------------------------------------------------------------------

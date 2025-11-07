@@ -140,8 +140,14 @@ type ResourceManager interface {
 	// Get returns a resource or service by name and chainID.
 	Get(chainID, name string) any
 
+	// Delete removes a resource or service with name for ChainID.
+	Delete(chainID, name string) error
+
 	// Multiplex returns a resource map for name by ChainID.
 	Multiplex(name string) helpers.MultiplexMap[any]
+
+	// Reset resets the resource map and counter.
+	Reset() error
 }
 
 // MessageManager defines the contract for a message pool.

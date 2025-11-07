@@ -3,8 +3,10 @@ package runtime
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
+	"github.com/ice-blockchain/cometbft/libs/service"
 
 	"github.com/ice-blockchain/cometbft/multiplex/helpers"
 	"github.com/ice-blockchain/cometbft/multiplex/types"
@@ -15,7 +17,8 @@ type ResourceRegistry struct {
 	mtx *sync.Mutex
 
 	// resourceMap is a map which is searchable by resource name.
-	resourceMap helpers.NamedMultiplexMap[any]
+	resourceMap  helpers.NamedMultiplexMap[any]
+	numResources uint64 // atomic
 
 	// Options
 	logger cmtlog.Logger
@@ -39,6 +42,8 @@ func NewResourceManager(
 		// Options
 		logger: logger,
 	}
+
+	atomic.StoreUint64(&mgr.numResources, uint64(0))
 
 	// Use option helpers
 	mgr.SetOptions(options...)
@@ -73,6 +78,14 @@ func (reg *ResourceRegistry) Has(chainID, name string) bool {
 
 // Set adds a resource res with name for chainID.
 func (reg *ResourceRegistry) Set(chainID, name string, res any) error {
+	// TODO(midas): remove debug logs
+	reg.logger.Debug("ResourceRegistry#Set",
+		"chainId", chainID,
+		"name", name,
+	)
+
+	defer atomic.AddUint64(&reg.numResources, uint64(1))
+
 	reg.mtx.Lock()
 	defer reg.mtx.Unlock()
 
@@ -113,6 +126,61 @@ func (reg *ResourceRegistry) Multiplex(name string) helpers.MultiplexMap[any] {
 	}
 
 	return helpers.MultiplexMap[any]{}
+}
+
+// Delete removes a resource or service with name for ChainID.
+func (reg *ResourceRegistry) Delete(chainID, name string) error {
+	if !reg.Has(chainID, name) {
+		return nil
+	}
+
+	defer atomic.AddUint64(&reg.numResources, ^uint64(0)) // -1
+
+	reg.mtx.Lock()
+	defer reg.mtx.Unlock()
+
+	if res, ok := reg.resourceMap[name][chainID]; ok && res != nil {
+		s, isService := res.GetInstance().(service.Service)
+		if isService {
+			if s.IsRunning() || s.IsStarted() {
+				go s.Stop()
+			}
+		}
+
+		delete(reg.resourceMap[name], chainID)
+		if len(reg.resourceMap[name]) == 0 {
+			delete(reg.resourceMap, name)
+		}
+
+		// TODO(midas): remove debug logs
+		reg.logger.Debug("ResourceRegistry#Delete",
+			"chainId", chainID,
+			"name", name,
+		)
+		return nil
+	}
+
+	return nil
+}
+
+// Reset resets the resource map and counter.
+func (reg *ResourceRegistry) Reset() error {
+	reg.mtx.Lock()
+	allResources := reg.resourceMap
+	reg.mtx.Unlock()
+
+	for name, resources := range allResources {
+		for chainID := range resources {
+			reg.Delete(chainID, name)
+		}
+	}
+
+	reg.mtx.Lock()
+	reg.resourceMap = helpers.NamedMultiplexMap[any]{}
+	reg.mtx.Unlock()
+
+	atomic.StoreUint64(&reg.numResources, uint64(0))
+	return nil
 }
 
 // ----------------------------------------------------------------------------

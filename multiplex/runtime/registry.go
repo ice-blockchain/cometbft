@@ -249,7 +249,12 @@ func (reg *Registry) OnStop() {
 		)
 	}
 
-	// TODO(midas): should we free memory in ResourceManager?
+	// Deletes all allocated resources in resource map.
+	if err := reg.resourceMgr.Reset(); err != nil {
+		reg.logger.Error("failed to reset ResourceRegistry",
+			"err", err,
+		)
+	}
 
 	// Make sure all goroutines are stopped.
 	close(reg.goShutdownCh)
