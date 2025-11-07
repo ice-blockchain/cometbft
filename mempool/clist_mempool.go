@@ -542,7 +542,7 @@ func (mem *CListMempool) TxsAvailable() <-chan struct{} {
 }
 
 func (mem *CListMempool) notifyTxsAvailable() {
-	if mem.Size() == 0 {
+	if int(mem.numTxs) == 0 {
 		panic("notified txs available but mempool is empty!")
 	}
 	if mem.txsAvailable != nil && mem.notifiedTxsAvailable.CompareAndSwap(false, true) {

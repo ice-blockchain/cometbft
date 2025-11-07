@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"runtime"
+	"runtime/pprof"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +18,19 @@ import (
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/helpers"
 )
+
+// -----------------------------------------------------------------------------
+
+// To be called early in main/test
+func enableLockProfiling(tb testing.TB) {
+	runtime.SetMutexProfileFraction(1) // profile *every* mutex contention
+	runtime.SetBlockProfileRate(1)     // profile channel/mutex blocking
+
+	// When stuck, dump:
+	pprof.Lookup("goroutine").WriteTo(os.Stderr, 2)
+	pprof.Lookup("mutex").WriteTo(os.Stderr, 1)
+	pprof.Lookup("block").WriteTo(os.Stderr, 1)
+}
 
 // -----------------------------------------------------------------------------
 
