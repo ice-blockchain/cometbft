@@ -163,6 +163,7 @@ func (router *packetDispatcher) Dispatch(
 	router.logger.Debug("packetDispatcher#Dispatch; dispatching...",
 		"target", target,
 		"msg", msg,
+		"chainId", packet.ChainID,
 	)
 
 	target.Receive(cmtp2p.Envelope{

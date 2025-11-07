@@ -146,6 +146,9 @@ func (conR *Reactor) SetRuntimeRegistry(reg mxtypes.IdleManager) {
 // OnStart implements BaseService by subscribing to events, which later will be
 // broadcasted to other peers and starting state if we're not in block sync.
 func (conR *Reactor) OnStart(ctx context.Context) error {
+	conR.SetLogger(conR.Logger.With("chainId", conR.ChainID))
+	conR.conS.SetLogger(conR.Logger.With("chainId", conR.ChainID))
+
 	if conR.WaitSync() {
 		conR.Logger.Info("Starting reactor in sync mode: consensus protocols will start once sync completes")
 	}

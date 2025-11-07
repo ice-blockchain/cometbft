@@ -215,6 +215,8 @@ func (memR *Reactor) SetRuntimeRegistry(reg mxtypes.IdleManager) {
 
 // OnStart implements p2p.BaseReactor.
 func (memR *Reactor) OnStart(ctx context.Context) error {
+	memR.SetLogger(memR.Logger.With("chainId", memR.ChainID))
+
 	if memR.WaitSync() {
 		memR.Logger.Info("Starting reactor in sync mode: tx propagation will start once sync completes")
 	}
