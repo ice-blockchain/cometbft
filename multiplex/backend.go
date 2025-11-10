@@ -450,6 +450,16 @@ func (b *MultiplexBackend) OnStart(ctx context.Context) error {
 			"failed to start shared services: %w", err)
 	}
 
+	b.logger.Info("Started shared multiplex services",
+		"time", cmttime.Now(),
+		"id", b.nodeKey.ID(),
+		"abci", b.chainConns.IsRunning(),
+		"runtime", b.runtimeRegistry.IsRunning(),
+		"bpool", b.broadcastMgr.IsRunning(),
+		"rpool", b.replicationMgr.IsRunning(),
+		"mx", b.reactor.IsRunning(),
+	)
+
 	// Setup metrics exporter (prometheus) and panics recovery.
 	go b.metricsReporter()
 	defer b.shutdownOnPanic()

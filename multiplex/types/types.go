@@ -70,6 +70,10 @@ type RuntimeManager interface {
 	StartRuntime(chainID string) error
 	// StopRuntime should stop all services for chainID.
 	StopRuntime(chainID string) error
+
+	// IsRuntimeInitialized returns true when a chainID has been init'd,
+	// i.e. it shall return true after calling InitRuntime.
+	IsRuntimeInitialized(chainID string) bool
 }
 
 // RuntimeComposer defines the contract for the runtime orchestrator.
@@ -80,6 +84,9 @@ type RuntimeComposer interface {
 	SetSwitch(sw *cmtp2p.Switch)
 	// Switch returns the cmtp2p.Switch instance for CometBFT.
 	Switch() *cmtp2p.Switch
+
+	// IsComposed returns true given a chainID that has been previously Compose'd.
+	IsComposed(chainID string) bool
 
 	// Compose initializes a runtime for chainID.
 	Compose(chainID string, remoteValidatorPubKeys []string, createNetworkGenesis bool) error

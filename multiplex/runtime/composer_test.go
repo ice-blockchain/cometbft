@@ -159,6 +159,9 @@ func TestMultiplexRuntimeComposerCompose(t *testing.T) {
 
 	actualPrivValidator := resourceMgr.Get(withChainID, types.InstanceKeyPrivValidator)
 	require.NotNil(t, actualPrivValidator)
+
+	actualIsComposed := testComposer.IsComposed(withChainID)
+	assert.Equal(t, true, actualIsComposed)
 }
 
 func TestMultiplexRuntimeComposerUnload(t *testing.T) {

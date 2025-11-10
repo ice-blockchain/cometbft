@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -258,6 +259,15 @@ func (c *RuntimeComposer) OnReset(ctx context.Context) error {
 //
 // The mutex is locked during the execution time of the methods listed below.
 
+// IsComposed returns true given a chainID that has been previously Compose'd.
+func (c *RuntimeComposer) IsComposed(chainID string) bool {
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+
+	_, ok := c.composedChainIds[chainID]
+	return ok
+}
+
 // Compose initializes a runtime for chainID.
 func (c *RuntimeComposer) Compose(
 	chainID string,
@@ -289,11 +299,20 @@ func (c *RuntimeComposer) Compose(
 	localValidatorPubKey, _ := c.Validator(chainID).GetPubKey()
 	localValidatorPubKeyHex := strings.ToUpper(hex.EncodeToString(localValidatorPubKey.Bytes()))
 
-	if _, ok := c.validatorsByNet[chainID]; !ok {
-		c.validatorsByNet[chainID] = make([]string, 0, len(remoteValidatorPubKeys)+1) // add local
+	// validatorsByNet contains at minimum our own privval public key.
+	networkValidators, hasValidators := c.validatorsByNet[chainID]
+	if !hasValidators {
+		networkValidators = make([]string, 0, len(remoteValidatorPubKeys)+1) // add local
 	}
-	c.validatorsByNet[chainID] = remoteValidatorPubKeys[:]
-	c.validatorsByNet[chainID] = append(c.validatorsByNet[chainID], localValidatorPubKeyHex)
+	for _, remoteValPubKey := range remoteValidatorPubKeys {
+		if !slices.Contains(networkValidators, remoteValPubKey) {
+			networkValidators = append(networkValidators, remoteValPubKey)
+		}
+	}
+	networkValidators = append(networkValidators, localValidatorPubKeyHex)
+
+	c.validatorsByNet[chainID] = make([]string, 0, len(networkValidators))
+	c.validatorsByNet[chainID] = networkValidators[:]
 
 	if createNetworkGenesis {
 		// Create a cmttypes.GenesisDoc with validatorPubKeys.

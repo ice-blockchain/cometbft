@@ -2327,7 +2327,9 @@ func (cs *State) addVote(vote *types.Vote, peerID p2p.ID) (added bool, err error
 		"vote_height", vote.Height,
 		"vote_type", vote.Type,
 		"val_index", vote.ValidatorIndex,
+		"vote_round", vote.Round,
 		"cs_height", cs.Height,
+		"cs_round", cs.Round,
 		"extLen", len(vote.Extension),
 		"extSigLen", len(vote.ExtensionSignature),
 	)

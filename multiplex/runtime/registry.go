@@ -440,6 +440,8 @@ func (reg *Registry) OnIdle(chainID string) error {
 // the broadcast pool is shutdown (general shutdown).
 //
 // Additionally, runtimes are marked complete when all txes are indexed.
+//
+// TODO(midas): should use channel to report about tx/chain completions.
 func (reg *Registry) WaitForIndexedTransactions(
 	relevantChainIds []string,
 	transactionsByChain map[string][]client.Transaction,
@@ -448,6 +450,8 @@ func (reg *Registry) WaitForIndexedTransactions(
 
 	// CAUTION:
 	// The caller thread will be locked until transactions are indexed.
+	//
+	// TODO(midas): Use buffered channels for txes and chains.
 	chainsWg := new(sync.WaitGroup)
 	chainsWg.Add(len(relevantChainIds))
 
@@ -703,6 +707,15 @@ func (reg *Registry) StopRuntime(chainID string) error {
 	}
 
 	return nil
+}
+
+// IsRuntimeInitialized returns true when a chainID has been init'd,
+// i.e. it shall return true after calling InitRuntime.
+func (reg *Registry) IsRuntimeInitialized(chainID string) bool {
+	reg.mtx.Lock()
+	defer reg.mtx.Unlock()
+
+	return reg.runtimeComposer.IsComposed(chainID)
 }
 
 // ----------------------------------------------------------------------------

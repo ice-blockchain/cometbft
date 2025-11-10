@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strconv"
 	"time"
 
 	"github.com/ice-blockchain/cometbft/internal/cmap"
@@ -98,6 +99,35 @@ func (pc peerConn) RemoteIP() net.IP {
 	return pc.ip
 }
 
+// Conn returns the net.Conn instance.
+func (pc *peerConn) Conn() net.Conn {
+	return pc.conn
+}
+
+// CloseConn closes the underlying connection.
+func (pc *peerConn) CloseConn() {
+	pc.conn.Close()
+}
+
+// Port returns the net.Conn remote port.
+func (pc *peerConn) Port() uint16 {
+	remoteAddr := pc.conn.RemoteAddr()
+	if tcp, ok := remoteAddr.(*net.TCPAddr); ok {
+		return uint16(tcp.Port)
+	}
+
+	// fallback to parsing remote address
+	_, port, err := net.SplitHostPort(remoteAddr.String())
+	if err != nil {
+		panic(err)
+	}
+	pp, errP := strconv.Atoi(port)
+	if errP != nil {
+		panic(errP)
+	}
+	return uint16(pp)
+}
+
 // peer implements Peer.
 //
 // Before using a peer, you will need to perform a handshake on connection.
@@ -161,12 +191,13 @@ func newPeer(
 
 // String representation.
 func (p *PeerImpl) String() string {
+	port := p.peerConn.Port()
 	if p.outbound {
-		return fmt.Sprintf("Peer{%v out}", p.ID())
+		return fmt.Sprintf("Peer{%v out:%d}", p.ID(), port)
 	}
 
 	// return fmt.Sprintf("Peer{%v %v in}", p.mconn, p.ID())
-	return fmt.Sprintf("Peer{%v in}", p.ID())
+	return fmt.Sprintf("Peer{%v in:%d}", p.ID(), port)
 }
 
 // ---------------------------------------------------
@@ -326,16 +357,6 @@ func (p *PeerImpl) hasChannel(chID byte) bool {
 // ---------------------------------------------------
 // methods only used for testing
 // TODO: can we remove these?
-
-// Conn returns the net.Conn instance.
-func (pc *peerConn) Conn() net.Conn {
-	return pc.conn
-}
-
-// CloseConn closes the underlying connection.
-func (pc *peerConn) CloseConn() {
-	pc.conn.Close()
-}
 
 // RemoteAddr returns peer's remote network address.
 func (p *PeerImpl) RemoteAddr() net.Addr {
