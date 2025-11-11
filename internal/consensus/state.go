@@ -1012,7 +1012,10 @@ func (cs *State) handleTimeout(ti timeoutInfo, rs cstypes.RoundState) {
 
 	// timeouts must be for current height, round, step
 	if ti.Height != rs.Height || ti.Round < rs.Round || (ti.Round == rs.Round && ti.Step < rs.Step) {
-		cs.Logger.Debug("Ignoring tock because we are ahead", "height", rs.Height, "round", rs.Round, "step", rs.Step)
+		cs.Logger.Debug("Ignoring tock because we are ahead",
+			"csHRS", log.NewLazySprintf("%d/%d/%s", rs.Height, rs.Round, rs.Step),
+			"tiHRS", log.NewLazySprintf("%d/%d/%s", ti.Height, ti.Round, ti.Step),
+		)
 		return
 	}
 

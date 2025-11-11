@@ -2003,7 +2003,7 @@ func (ps *PeerState) setHasVote(height int64, round int32, voteType types.Signed
 		log.NewLazySprintf("%d/%d", height, round),
 		"type", voteType, "index", index,
 		"peerPV", ps.PRS.Prevotes, "peerPC", ps.PRS.Precommits,
-		"step", ps.PRS.Step,
+		"peerS", ps.PRS.Step,
 	)
 
 	// NOTE: some may be nil BitArrays -> no side effects.

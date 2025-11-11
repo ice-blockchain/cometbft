@@ -198,14 +198,14 @@ func NewServer(
 	initTime := time.Now()
 
 	nodeConfig.DBBackend = "goleveldb"
-	nodeConfig.Consensus.CreateEmptyBlocks = false                    // Force to create blocks only if there are transactions.
-	nodeConfig.Consensus.TimeoutCommit = 0                            // Make progress as soon as the node has all the precommits.
-	nodeConfig.Consensus.TimeoutPropose = 1500 * time.Millisecond     // Give 1500ms to receive proposal.
-	nodeConfig.Consensus.TimeoutProposeDelta = 1 * time.Millisecond   // How much to increase timeout_propose with every round.
-	nodeConfig.Consensus.TimeoutPrevote = 750 * time.Millisecond      // Hold 750ms after +2/3 of prevotes "anything" received.
-	nodeConfig.Consensus.TimeoutPrevoteDelta = 1 * time.Millisecond   // How much to increase timeout_prevote with every round.
-	nodeConfig.Consensus.TimeoutPrecommit = 750 * time.Millisecond    // Hold 750ms after +2/3 of precommits "anything" received.
-	nodeConfig.Consensus.TimeoutPrecommitDelta = 1 * time.Millisecond // How much to increase timeout_precommit with every round.
+	nodeConfig.Consensus.CreateEmptyBlocks = false                      // Force to create blocks only if there are transactions.
+	nodeConfig.Consensus.TimeoutCommit = 0                              // Make progress as soon as the node has all the precommits.
+	nodeConfig.Consensus.TimeoutPropose = 1500 * time.Millisecond       // Give 1500ms to receive proposal.
+	nodeConfig.Consensus.TimeoutProposeDelta = 250 * time.Millisecond   // How much to increase timeout_propose with every round.
+	nodeConfig.Consensus.TimeoutPrevote = 500 * time.Millisecond        // Hold 500ms after +2/3 of prevotes "anything" received.
+	nodeConfig.Consensus.TimeoutPrevoteDelta = 250 * time.Millisecond   // How much to increase timeout_prevote with every round.
+	nodeConfig.Consensus.TimeoutPrecommit = 500 * time.Millisecond      // Hold 500ms after +2/3 of precommits "anything" received.
+	nodeConfig.Consensus.TimeoutPrecommitDelta = 250 * time.Millisecond // How much to increase timeout_precommit with every round.
 	nodeConfig.P2P.AllowDuplicateIP = true
 
 	// Creates or re-use config/ and data/ folders.
