@@ -280,12 +280,21 @@ func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
 				return
 			}
 
-			// (4) Activate this runtime in our runtime registry.
+			// (4) This runtime is OnActivate'd
 			//
-			// In case of conR.WaitSync, OnComplete is called by conR.SwitchToConsensus,
-			// otherwise OnComplete is called by memR.sendChainReplicationComplete when
+			// In case of conR.WaitSync, OnComplete'd by conR.SwitchToConsensus,
+			// otherwise it is OnComplete'd by WaitForIndexedTransactions when
 			// transactions are successfully processed with memR.processTxs.
+			// See also: multiplex.runtime.Registry#WaitForIndexedTransactions.
 			reactor.IdleManager().OnActivate(replRequest.ChainID)
+
+			// .. and make sure the mempool won't re-activate.
+			if memS := reactor.runtimeMgr.Resources().Get(
+				replRequest.ChainID,
+				types.ServiceKeyMempoolReactor,
+			); memS != nil {
+				memS.(*mempl.Reactor).SetActivated(replRequest.ChainID)
+			}
 
 			// TODO(midas): remove debug logs.
 			reactor.logger.Debug("Dialing peer for Discovery",

@@ -213,6 +213,11 @@ func (memR *Reactor) SetRuntimeRegistry(reg mxtypes.IdleManager) {
 	memR.runtimeRegistry = reg
 }
 
+// SetActivated sets a chainID as activated in ensuredActiveChains.
+func (memR *Reactor) SetActivated(chainID string) {
+	memR.ensuredActiveChains.Set(chainID, true)
+}
+
 // OnStart implements p2p.BaseReactor.
 func (memR *Reactor) OnStart(ctx context.Context) error {
 	memR.SetLogger(memR.Logger.With("chainId", memR.ChainID))
