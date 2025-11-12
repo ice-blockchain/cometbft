@@ -673,7 +673,7 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 				"type", msg.Type,
 				"votes", ourVotes,
 			)
-			e.Src.TrySend(conR.ChainID, p2p.Envelope{
+			ps.peer.TrySend(conR.ChainID, p2p.Envelope{
 				ChainID:   conR.ChainID,
 				ChannelID: VoteSetBitsChannel,
 				Message:   eMsg,
@@ -690,7 +690,7 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 		switch msg := msg.(type) {
 		case *ProposalMessage:
 			ps.SetHasProposal(msg.Proposal)
-			conR.conS.peerMsgQueue <- msgInfo{msg, e.Src.ID(), cmttime.Now()}
+			conR.conS.peerMsgQueue <- msgInfo{msg, ps.peer.ID(), cmttime.Now()}
 		case *ProposalPOLMessage:
 			ps.ApplyProposalPOLMessage(msg)
 		case *BlockPartMessage:
@@ -815,7 +815,7 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 	}
 
 	// Update the stored *PeerState for detached retrieval in routines.
-	conR.peerStates.Set(string(e.Src.ID()), ps)
+	conR.peerStates.Set(string(ps.peer.ID()), ps)
 }
 
 // SetEventBus sets event bus.
