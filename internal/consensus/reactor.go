@@ -36,6 +36,13 @@ const (
 
 	blocksToContributeToBecomeGoodPeer = 10000
 	votesToContributeToBecomeGoodPeer  = 10000
+
+	// defaultAllowStaleStateDuration holds a duration that we shall be waiting
+	// for given a desync between conS.rs and ps.PRS. This happens more often
+	// when using the multiplex because of parallel message processing.
+	//
+	// TODO(midas): move to multiplex.runtime.ConsensusPool + add option helper.
+	defaultAllowStaleStateDuration = 100 * time.Millisecond
 )
 
 // -----------------------------------------------------------------------------
@@ -596,6 +603,35 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 			ps.ApplyNewValidBlockMessage(msg)
 		case *HasVoteMessage:
 			ps.ApplyHasVoteMessage(msg)
+
+			// Get the updated round state as our view may be stale
+			rs := conR.conS.GetRoundState()
+
+			// CAUTION: This authorizes a stall of 100ms for the conR.rs property.
+			//
+			// This measure is necessary because of the multiplex network usage
+			// which is higher than with legacy CometBFT networks, and it is common
+			// that some multiplex messages are received in parallel with conR
+			// still handling a consensus message that transitions conS.RoundState.
+			newRound := rs.Step == cstypes.RoundStepNewRound
+			if !newRound && rs.Step != ps.PRS.Step {
+				if rs.Step < ps.PRS.Step {
+					conR.Logger.Debug("HasVoteMessage: consensus/peer out-of-sync; consensus is lagging behind.",
+						"cs_HRS", log.NewLazySprintf("%d/%d/%s", rs.Height, rs.Round, rs.Step),
+						"ps_HRS", log.NewLazySprintf("%d/%d/%s", ps.PRS.Height, ps.PRS.Round, ps.PRS.Step),
+					)
+				} else {
+					conR.Logger.Debug("HasVoteMessage: consensus/peer out-of-sync; peer is lagging behind.",
+						"cs_HRS", log.NewLazySprintf("%d/%d/%s", rs.Height, rs.Round, rs.Step),
+						"ps_HRS", log.NewLazySprintf("%d/%d/%s", ps.PRS.Height, ps.PRS.Round, ps.PRS.Step),
+					)
+				}
+
+				// Sleep for 100ms to give consensus/peer some time to catch-up.
+				if ok := conR.sleepOrQuit(defaultAllowStaleStateDuration); !ok {
+					return
+				}
+			}
 		case *HasProposalBlockPartMessage:
 			ps.ApplyHasProposalBlockPartMessage(msg)
 		case *VoteSetMaj23Message:
@@ -659,8 +695,37 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 			ps.ApplyProposalPOLMessage(msg)
 		case *BlockPartMessage:
 			ps.SetHasProposalBlockPart(msg.Height, msg.Round, int(msg.Part.Index))
-			conR.Metrics.BlockParts.With("peer_id", string(e.Src.ID())).Add(1)
-			conR.conS.peerMsgQueue <- msgInfo{msg, e.Src.ID(), time.Time{}}
+			conR.Metrics.BlockParts.With("peer_id", string(ps.peer.ID())).Add(1)
+			conR.conS.peerMsgQueue <- msgInfo{msg, ps.peer.ID(), time.Time{}}
+
+			// Get the updated round state as our view may be stale
+			rs := conR.conS.GetRoundState()
+
+			// CAUTION: This authorizes a stall of 100ms for the conR.rs property.
+			//
+			// This measure is necessary because of the multiplex network usage
+			// which is higher than with legacy CometBFT networks, and it is common
+			// that some multiplex messages are received in parallel with conR
+			// still handling a consensus message that transitions conS.RoundState.
+			newRound := rs.Step == cstypes.RoundStepNewRound
+			if !newRound && rs.Step != ps.PRS.Step {
+				if rs.Step < ps.PRS.Step {
+					conR.Logger.Debug("BlockPartMessage: consensus/peer out-of-sync; consensus is lagging behind.",
+						"cs_HRS", log.NewLazySprintf("%d/%d/%s", rs.Height, rs.Round, rs.Step),
+						"ps_HRS", log.NewLazySprintf("%d/%d/%s", ps.PRS.Height, ps.PRS.Round, ps.PRS.Step),
+					)
+				} else {
+					conR.Logger.Debug("BlockPartMessage: consensus/peer out-of-sync; peer is lagging behind.",
+						"cs_HRS", log.NewLazySprintf("%d/%d/%s", rs.Height, rs.Round, rs.Step),
+						"ps_HRS", log.NewLazySprintf("%d/%d/%s", ps.PRS.Height, ps.PRS.Round, ps.PRS.Step),
+					)
+				}
+
+				// Sleep for 100ms to give consensus/peer some time to catch-up.
+				if ok := conR.sleepOrQuit(defaultAllowStaleStateDuration); !ok {
+					return
+				}
+			}
 		default:
 			conR.Logger.Error(fmt.Sprintf("Unknown message type %v", reflect.TypeOf(msg)))
 		}
@@ -678,7 +743,33 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 			height, valSize, lastCommitSize := rs.Height, rs.Validators.Size(), rs.LastCommit.Size()
 			ps.SetHasVoteFromPeer(msg.Vote, height, valSize, lastCommitSize)
 
-			conR.conS.peerMsgQueue <- msgInfo{msg, e.Src.ID(), time.Time{}}
+			conR.conS.peerMsgQueue <- msgInfo{msg, ps.peer.ID(), time.Time{}}
+
+			// CAUTION: This authorizes a stall of 100ms for the conR.rs property.
+			//
+			// This measure is necessary because of the multiplex network usage
+			// which is higher than with legacy CometBFT networks, and it is common
+			// that some multiplex messages are received in parallel with conR
+			// still handling a consensus message that transitions conS.RoundState.
+			newRound := rs.Step == cstypes.RoundStepNewRound
+			if !newRound && rs.Step != ps.PRS.Step {
+				if rs.Step < ps.PRS.Step {
+					conR.Logger.Debug("VoteMessage: consensus/peer out-of-sync; consensus is lagging behind.",
+						"cs_HRS", log.NewLazySprintf("%d/%d/%s", rs.Height, rs.Round, rs.Step),
+						"ps_HRS", log.NewLazySprintf("%d/%d/%s", ps.PRS.Height, ps.PRS.Round, ps.PRS.Step),
+					)
+				} else {
+					conR.Logger.Debug("VoteMessage: consensus/peer out-of-sync; peer is lagging behind.",
+						"cs_HRS", log.NewLazySprintf("%d/%d/%s", rs.Height, rs.Round, rs.Step),
+						"ps_HRS", log.NewLazySprintf("%d/%d/%s", ps.PRS.Height, ps.PRS.Round, ps.PRS.Step),
+					)
+				}
+
+				// Sleep for 100ms to give consensus/peer some time to catch-up.
+				if ok := conR.sleepOrQuit(defaultAllowStaleStateDuration); !ok {
+					return
+				}
+			}
 
 		default:
 			// don't punish (leave room for soft upgrades)
