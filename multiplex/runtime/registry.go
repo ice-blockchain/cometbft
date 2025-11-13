@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ice-blockchain/cometbft/config"
+	"github.com/ice-blockchain/cometbft/internal/cmap"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/libs/service"
 	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
@@ -435,33 +436,42 @@ func (reg *Registry) OnIdle(chainID string) error {
 // with relevantChainIds and all transactions for each ChainID.
 //
 // CAUTION:
-// The main thread is blocked using a WaitGroup, and this method completes
-// only when *all* transactions for relevantChainIds are indexed or when
-// the broadcast pool is shutdown (general shutdown).
+// The main thread is blocked using a selection loop `COMPLETION_LOOP`, and
+// this method completes only when *all* transactions for relevantChainIds are
+// indexed or the operation or pool are canceled (or general shutdown).
 //
 // Additionally, runtimes are marked complete when all txes are indexed.
-//
-// TODO(midas): should use channel to report about tx/chain completions.
 func (reg *Registry) WaitForIndexedTransactions(
 	relevantChainIds []string,
 	transactionsByChain map[string][]client.Transaction,
-) (numCompleted int) {
+) int {
 	txHashes := []string{}
+	var numCompleted atomic.Int64
 
-	// CAUTION:
-	// The caller thread will be locked until transactions are indexed.
+	// NOTES:
+	// (1) The caller thread will be locked until transactions are indexed
+	// through a selection with COMPLETION_LOOP.
 	//
-	// TODO(midas): Use buffered channels for txes and chains.
-	chainsWg := new(sync.WaitGroup)
-	chainsWg.Add(len(relevantChainIds))
+	// We should expect `len(relevantChainIds)` messages on chainsCh.
+	chainsCh := make(chan string, len(relevantChainIds))
 
+	// The shutdown func must be called once per ChainID in relevantChainIds.
 	shutdownFn := func(chainID string) {
-		defer chainsWg.Done()
 		defer func() {
-			reg.OnComplete(chainID)
+			chainsCh <- chainID
 		}()
+
+		defer reg.OnComplete(chainID)
 	}
 
+	// NOTES:
+	// (2) We spawn one goroutine per syncing ChainID, which are blocked until
+	// their respectived transactions are indexed. This goroutine is blocked
+	// with the selection in `INDEXER_LOOP`.
+	//
+	// (3) Additionally, we spawn one goroutine per each TxHash, which are blocked
+	// until the corresponding TxHash has been indexed. These goroutines are all
+	// blocked with the selection in `BroadcastPool#WaitIndexed`.
 	for _, chainID := range relevantChainIds {
 		cliTxes, ok := transactionsByChain[chainID]
 		if !ok || len(cliTxes) == 0 {
@@ -469,42 +479,107 @@ func (reg *Registry) WaitForIndexedTransactions(
 			continue
 		}
 
-		// One goroutine per syncing ChainID, blocked until all txes indexed.
-		// The runtime is marked complete upon completion of all tx indexing.
-		go func(chainTxes []client.Transaction) {
-			defer shutdownFn(chainID)
+		// One tx channel per ChainID, which expects `len(cliTxes)` messages.
+		txesCh := make(chan string, len(cliTxes))
 
-			txesWg := new(sync.WaitGroup)
-			txesWg.Add(len(chainTxes))
+		// (2) One goroutine per syncing ChainID.
+		go func(cid string, txes []client.Transaction, ch chan string) {
+			// Deferral pushes chainID on chainsCh and completes runtime.
+			defer shutdownFn(cid)
 
-			for _, tx := range chainTxes {
-				// One goroutine per txHash, blocked until tx indexed.
+			for _, tx := range txes {
+				// (3) One goroutine per txHash.
 				go func() {
-					defer txesWg.Done()
-
 					txHash := bytesToHex(tx.Hash())
 					txHashes = append(txHashes, txHash)
 
+					// Deferral pushes txHash on txesCh.
+					defer func() {
+						ch <- txHash
+					}()
+
+					// BroadcastPool blocks until txHash is indexed.
 					if ok := reg.broadcastMgr.WaitIndexed(txHash); ok {
-						numCompleted++
+						numCompleted.Add(1)
 					}
 				}()
 			}
-			txesWg.Wait()
-		}(cliTxes)
-	}
-	chainsWg.Wait()
 
-	if numCompleted > 0 && numCompleted == len(txHashes) {
+			// NOTES:
+			// (4) Blocking selection loop, expecting messages from goroutines
+			// spawned in (3). These updates are produced on indexing events
+			// and when the operation or pool is canceled (or general shutdown).
+			indexedTransactions := cmap.NewCMap()
+		INDEXER_LOOP:
+			for reg.Context().Err() == nil {
+				select {
+				case txHash, ok := <-ch:
+					if !ok { // channel closed (shutdown)
+						break INDEXER_LOOP
+					}
+
+					reg.logger.Debug("Registry#WaitForIndexedTransactions; indexed transaction",
+						"chainId", cid,
+						"txHash", txHash,
+					)
+
+					indexedTransactions.Set(txHash, true)
+					if indexedTransactions.Size() == len(txes) {
+						break INDEXER_LOOP
+					}
+				case <-reg.Context().Done():
+					break INDEXER_LOOP
+				case <-reg.Quit():
+					break INDEXER_LOOP
+				}
+			}
+
+			// ... defers shutdownFn now and pushes chainID on chainsCh.
+		}(chainID, cliTxes, txesCh)
+	}
+
+	// NOTES:
+	// (5) Blocking selection loop, expecting messages from goroutines
+	// spawned in (2). These updates are produced on completion of all
+	// indexing events for one ChainID and when the operation or pool
+	// is canceled (or general shutdown).
+	completedIndexingByChain := cmap.NewCMap()
+COMPLETION_LOOP:
+	for reg.Context().Err() == nil {
+		select {
+		case chainID, ok := <-chainsCh:
+			if !ok { // channel closed (shutdown)
+				break COMPLETION_LOOP
+			}
+
+			reg.logger.Debug("Registry#WaitForIndexedTransactions; received completion",
+				"numNetworks", len(relevantChainIds),
+				"chainId", chainID,
+				"txHashes", txHashes,
+			)
+
+			completedIndexingByChain.Set(chainID, true)
+			if completedIndexingByChain.Size() == len(relevantChainIds) {
+				break COMPLETION_LOOP
+			}
+		case <-reg.Context().Done():
+			break COMPLETION_LOOP
+		case <-reg.Quit():
+			break COMPLETION_LOOP
+		}
+	}
+
+	actualCompletions := int(numCompleted.Load())
+	if actualCompletions > 0 && actualCompletions == len(txHashes) {
 		reg.logger.Info("All transactions have been indexed locally",
 			"numNetworks", len(relevantChainIds),
-			"numIndexed", numCompleted,
+			"numIndexed", actualCompletions,
 			"chainIds", relevantChainIds,
 			"txHashes", txHashes,
 		)
 	}
 
-	return // numCompleted
+	return actualCompletions
 }
 
 // WaitForChainReplications creates goroutines that wait for replications
