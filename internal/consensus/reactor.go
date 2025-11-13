@@ -485,6 +485,8 @@ func (conR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 		return
 	}
 
+	peerLogger := conR.Logger.With("peer", peer)
+
 	// Get peer states from conR.peerStates
 	// NOTE(midas): In case the peer has no state, we try to send it some
 	// data through initialization and then read the state once more.
@@ -492,21 +494,18 @@ func (conR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 	if peerState == nil {
 		conR.InitPeer(peer)
 		if peerState = conR.GetPeerState(peer); peerState == nil {
-			conR.Logger.Error("Failed  to read peer state", "peer", peer)
+			peerLogger.Error("WARNING: Failed to read peer state")
 			return
 		}
 	}
 
 	if !peer.IsRunning() {
-		conR.Logger.Info("Not starting consensus routines - peer not running",
-			"peer", peer,
-		)
+		peerLogger.Error("WARNING: Failed to start consensus routines")
 		return
 	}
 
 	// TODO(midas): remove debug logs
-	conR.Logger.Debug("Starting consensus routines",
-		"peer", peer,
+	peerLogger.Debug("Starting consensus routines",
 		"wait", conR.WaitSync(),
 		"state", peerState,
 	)
@@ -521,8 +520,7 @@ func (conR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 	// If we're block_syncing, broadcast a RoundStepMessage later upon SwitchToConsensus().
 	if !conR.WaitSync() {
 		// TODO(midas): remove debug logs
-		conR.Logger.Debug("Sending NewRoundStepMessage",
-			"peer", peer,
+		peerLogger.Debug("Sending NewRoundStepMessage",
 			"state", peerState,
 		)
 		conR.sendNewRoundStepMessage(peer)
