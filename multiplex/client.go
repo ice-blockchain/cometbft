@@ -739,7 +739,7 @@ func (c MultiplexClient) BroadcastTx(
 
 	// NOTE(midas): The OnComplete callback must be executed only if
 	// all relays have completed the broadcast operation (+ sync).
-	defer c.backend.OnBroadcastComplete(context.Background(),
+	defer c.backend.OnBroadcastComplete(c.backend.Context(),
 		userAddress,
 		relaysWithoutSelf,
 		transactions...,

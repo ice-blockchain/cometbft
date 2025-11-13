@@ -38,6 +38,7 @@ const (
 type Server interface {
 	service.Service // Start, Stop, Reset.
 	GetLogger() cmtlog.Logger
+	Context() context.Context
 
 	// Discovery returns the switch listening on `DiscoveryPort`.
 	Discovery() *p2p.Switch
