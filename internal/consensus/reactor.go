@@ -66,6 +66,12 @@ type Reactor struct {
 	// peerStates contains *PeerState instance by cmtp2p.ID (string) keys.
 	peerStates *cmap.CMap
 
+	// peerContexts contains `*PeerContext` by cmtp2p.ID (string) keys.
+	// The contexts are passed along to data/votes/maj23 routines and
+	// the cancel funcs are used to shutdown the routines when peers
+	// are removed from the reactor.
+	peerContexts *cmap.CMap
+
 	rs            cstypes.RoundState // copy of consensus state
 	initialHeight atomic.Int64
 
@@ -85,6 +91,7 @@ func NewReactor(ctx context.Context, consensusState *State, waitSync bool, optio
 		Metrics:       NopMetrics(),
 		pendingPeers:  sync.Map{},
 		peerStates:    cmap.NewCMap(),
+		peerContexts:  cmap.NewCMap(),
 	}
 	conR.initialHeight.Store(consensusState.state.InitialHeight)
 	conR.BaseReactor = *p2p.NewBaseReactor(ctx, "Consensus", conR)
@@ -411,7 +418,7 @@ func (conR *Reactor) PeerStateKey() string {
 	return types.PeerStateKey + "_" + conR.ChainID
 }
 
-// GetPeerState reads the peer state or initializes it.
+// GetPeerState returns the PeerState pointer or nil.
 func (conR *Reactor) GetPeerState(peer *p2p.PeerImpl) *PeerState {
 	if conR.peerStates.Has(string(peer.ID())) {
 		return conR.peerStates.Get(string(peer.ID())).(*PeerState)
@@ -420,7 +427,8 @@ func (conR *Reactor) GetPeerState(peer *p2p.PeerImpl) *PeerState {
 	return nil
 }
 
-// GetPeerRoundState returns the PRS for peerID by reading its PeerState.
+// GetPeerRoundState returns the PRS for peerID by reading its PeerState
+// or initializes an empty PRS, i.e. !IsValid.
 func (conR *Reactor) GetPeerRoundState(peer *p2p.PeerImpl) cstypes.PeerRoundState {
 	if peerState := conR.GetPeerState(peer); peerState != nil {
 		return peerState.PRS
@@ -453,6 +461,13 @@ func (conR *Reactor) InitPeer(peer *p2p.PeerImpl) *p2p.PeerImpl {
 		)
 
 		conR.peerStates.Set(string(peer.ID()), peerState)
+
+		ctx, ctxCancel := context.WithCancel(context.Background())
+		peerCtx := &PeerContext{
+			ctx:      ctx,
+			cancelFn: ctxCancel,
+		}
+		conR.peerContexts.Set(string(peer.ID()), peerCtx)
 	}
 	return peer
 }
@@ -497,9 +512,10 @@ func (conR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 	)
 
 	// Begin routines for this peer.
-	go conR.gossipDataRoutine(peer, peerState)
-	go conR.gossipVotesRoutine(peer, peerState)
-	go conR.queryMaj23Routine(peer, peerState)
+	peerCtx := conR.peerContexts.Get(string(peer.ID())).(*PeerContext)
+	go conR.gossipDataRoutine(peer, peerState, *peerCtx)
+	go conR.gossipVotesRoutine(peer, peerState, *peerCtx)
+	go conR.queryMaj23Routine(peer, peerState, *peerCtx)
 
 	// Send our state to peer.
 	// If we're block_syncing, broadcast a RoundStepMessage later upon SwitchToConsensus().
@@ -514,7 +530,7 @@ func (conR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 }
 
 // RemovePeer is a noop.
-func (conR *Reactor) RemovePeer(*p2p.PeerImpl, any) {
+func (conR *Reactor) RemovePeer(peer *p2p.PeerImpl, _ any) {
 	if !conR.IsRunning() {
 		return
 	}
@@ -524,6 +540,12 @@ func (conR *Reactor) RemovePeer(*p2p.PeerImpl, any) {
 	// 	panic(fmt.Sprintf("Peer %v has no state", peer))
 	// }
 	// ps.Disconnect()
+
+	// Stop the data/votes/maj23 gossip routines for this peer.
+	if conR.peerContexts.Has(string(peer.ID())) {
+		peerCtx := conR.peerContexts.Get(string(peer.ID())).(*PeerContext)
+		peerCtx.cancelFn()
+	}
 }
 
 // Receive implements Reactor
@@ -841,7 +863,7 @@ func (conR *Reactor) SetPrivValidator(pv types.PrivValidator) {
 // using internal pubsub defined on state to broadcast
 // them to peers upon receiving.
 func (conR *Reactor) subscribeToBroadcastEvents() {
-	const subscriber = "consensus-reactor"
+	subscriber := "consensus-reactor-" + conR.ChainID
 	if err := conR.conS.evsw.AddListenerForEvent(subscriber, types.EventNewRoundStep,
 		func(data cmtevents.EventData) {
 			rs := data.(cstypes.RoundState)
@@ -1030,12 +1052,12 @@ func (conR *Reactor) getRoundState() cstypes.RoundState {
 // -----------------------------------------------------------------------------
 // Reactor gossip routines and helpers
 
-func (conR *Reactor) gossipDataRoutine(peer *p2p.PeerImpl, ps *PeerState) {
+func (conR *Reactor) gossipDataRoutine(peer *p2p.PeerImpl, ps *PeerState, peerCtx PeerContext) {
 	logger := conR.Logger.With("peer", peer)
 	rng := cmtrand.NewStdlibRand()
 
 OUTER_LOOP:
-	for conR.Context().Err() == nil {
+	for conR.Context().Err() == nil && peerCtx.ctx.Err() == nil {
 		// Manage disconnects from self or peer.
 		if !peer.IsRunning() || !conR.IsRunning() {
 			logger.Debug("Peer connection stopped; stopping gossipDataRoutine",
@@ -1101,7 +1123,7 @@ OUTER_LOOP:
 	}
 }
 
-func (conR *Reactor) gossipVotesRoutine(peer *p2p.PeerImpl, ps *PeerState) {
+func (conR *Reactor) gossipVotesRoutine(peer *p2p.PeerImpl, ps *PeerState, peerCtx PeerContext) {
 	logger := conR.Logger.With("peer", peer)
 	rng := cmtrand.NewStdlibRand()
 
@@ -1109,7 +1131,7 @@ func (conR *Reactor) gossipVotesRoutine(peer *p2p.PeerImpl, ps *PeerState) {
 	sleeping := 0
 
 OUTER_LOOP:
-	for conR.Context().Err() == nil {
+	for conR.Context().Err() == nil && peerCtx.ctx.Err() == nil {
 		// Manage disconnects from self or peer.
 		if !peer.IsRunning() || !conR.IsRunning() {
 			logger.Debug("Peer connection stopped; stopping gossipVotesRoutine",
@@ -1179,11 +1201,11 @@ OUTER_LOOP:
 
 // NOTE: `queryMaj23Routine` has a simple crude design since it only comes
 // into play for liveness when there's a signature DDoS attack happening.
-func (conR *Reactor) queryMaj23Routine(peer *p2p.PeerImpl, ps *PeerState) {
+func (conR *Reactor) queryMaj23Routine(peer *p2p.PeerImpl, ps *PeerState, peerCtx PeerContext) {
 	logger := conR.Logger.With("peer", peer)
 
 OUTER_LOOP:
-	for conR.Context().Err() == nil {
+	for conR.Context().Err() == nil && peerCtx.ctx.Err() == nil {
 		// Manage disconnects from self or peer.
 		if !peer.IsRunning() || !conR.IsRunning() {
 			logger.Debug("Peer connection stopped; stopping queryMaj23Routine",
@@ -1658,6 +1680,12 @@ func ReactorMetrics(metrics *Metrics) ReactorOption {
 }
 
 // -----------------------------------------------------------------------------
+
+// PeerContext contains a context.Context and its corresponding context.CancelFunc.
+type PeerContext struct {
+	ctx      context.Context
+	cancelFn context.CancelFunc
+}
 
 // PeerState contains the known state of a peer, including its connection and
 // threadsafe access to its PeerRoundState.
