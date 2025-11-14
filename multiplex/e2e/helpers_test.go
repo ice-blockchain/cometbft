@@ -64,9 +64,15 @@ func makeClientTransactions(
 
 	testTransactions := []client.Transaction{}
 	for i := 0; i < numTransactions; i++ {
-		randomData := randomizer.Intn(999999999)
+		randomSize := randomizer.Intn(1024-300+1) + 300 // 300<=x<=1024
+		randomData := make([]byte, randomSize+1)
+		randomData[0] = byte(i)
+		randomData[1] = byte(randomizer.Intn(255))
+		randomData[2] = byte(randomizer.Intn(255))
+		randomData[3] = byte(randomizer.Intn(255))
+
 		testTransactions = append(testTransactions, client.Transaction{
-			Data:        []byte{byte(i), byte(i + 1), byte(i + 2), byte(randomData)},
+			Data:        randomData,
 			Fingerprint: chainInfo.GetFingerprint(),
 		})
 	}
