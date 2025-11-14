@@ -29,7 +29,7 @@ import (
 )
 
 const (
-	defaultMaxPacketMsgPayloadSize = 1024
+	defaultMaxPacketMsgPayloadSize = 1 * 1024 * 1024 // 1 MiB
 
 	numBatchPacketMsgs = 10
 	minReadBufferSize  = 1024
@@ -982,7 +982,7 @@ func NewChannel(conn *MConnection, desc *ChannelDescriptor) *Channel {
 		},
 		nextP2pWrapperPacketMsg: &tmp2p.Packet_PacketMsg{},
 		nextPacket:              &tmp2p.Packet{},
-		maxPacketMsgPayloadSize: 1024, // defaultMaxPacketMsgPayloadSize
+		maxPacketMsgPayloadSize: defaultMaxPacketMsgPayloadSize,
 	}
 }
 
