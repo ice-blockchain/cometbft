@@ -550,7 +550,7 @@ func (memR *Reactor) processTxs(
 	for _, txBytes := range protoTxs {
 		tx := types.Tx(txBytes)
 		rawTx = append(rawTx, tx)
-		txHashes = append(txHashes, string(tx.Hash()))
+		txHashes = append(txHashes, strings.ToUpper(hex.EncodeToString(tx.Hash())))
 	}
 	if aErr := memR.clientAcceptTx(rawTx); aErr != nil {
 		return
@@ -562,7 +562,7 @@ func (memR *Reactor) processTxs(
 				memR.Logger.Debug("Tx already exists in cache", "tx", tx.Hash())
 			case errors.As(err, &ErrMempoolIsFull{}):
 				// using debug level to avoid flooding when traffic is high
-				memR.Logger.Debug(err.Error())
+				memR.Logger.Debug(err.Error(), "tx_batch", txHashes)
 			default:
 				memR.Logger.Info("Could not check tx", "tx", tx.Hash(), "err", err)
 			}
@@ -576,6 +576,7 @@ func (memR *Reactor) processTxs(
 			"err", err,
 			"chain", memR.ChainID,
 			"toPeer", peer,
+			"tx_batch", txHashes,
 		)
 		return
 	}
@@ -610,7 +611,7 @@ func (memR *Reactor) clientAcceptTx(protoTxs []types.Tx) error {
 	txHashes := []string{}
 	for _, rawTx := range protoTxs {
 		tx := client.RawTxToTransaction(rawTx)
-		txHash := string(tx.Hash())
+		txHash := strings.ToUpper(hex.EncodeToString(tx.Hash()))
 		batch = append(batch, tx)
 		txHashes = append(txHashes, txHash)
 	}
