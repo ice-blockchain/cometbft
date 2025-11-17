@@ -11,6 +11,7 @@ import (
 
 	tmp2p "github.com/ice-blockchain/cometbft/api/cometbft/p2p/v1"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
+	mempl "github.com/ice-blockchain/cometbft/mempool"
 	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
 	cmtconn "github.com/ice-blockchain/cometbft/p2p/conn"
 	cmttypes "github.com/ice-blockchain/cometbft/types"
@@ -105,8 +106,14 @@ func (router *packetDispatcher) Target(packet tmp2p.PacketMsg) cmtp2p.Reactor {
 	// Populated in NewDispatcher().
 	skey := router.reactorsServiceKeys[name]
 
-	if !router.resourceMgr.Has(packet.ChainID, skey) {
+	hasReactorForChain := router.resourceMgr.Has(packet.ChainID, skey)
+	isMempoolChannel := byte(packet.ChannelID) == mempl.MempoolChannel
+
+	if !hasReactorForChain && !isMempoolChannel {
 		return nil
+	} else if !hasReactorForChain && isMempoolChannel {
+		// mempool not yet running, mx must intercept.
+		return router.GetMultiplexReactor()
 	}
 
 	// Get the service instance from resources.
@@ -126,6 +133,8 @@ func (router *packetDispatcher) Dispatch(
 	target := router.Target(packet)
 	if target == nil {
 		router.logger.Error("failed to find target for message",
+			"chainId", packet.ChainID,
+			"chID", packet.ChannelID,
 			"msg", packet.Data)
 		err = fmt.Errorf("[CAUTION] ignoring message; too early, retry later")
 		return
@@ -260,31 +269,37 @@ func (router *packetDispatcher) GetChannels(
 	mxR := router.GetMultiplexReactor()
 	chDescs := GetChannelDescriptors(mxR)
 
+	router.logger.Info("packetDispatcher#GetChannels",
+		"peerId", mconn.PeerID(),
+		"mxR", mxR,
+		"len", len(chDescs))
+
+	// Access channelsIndex and return if possible.
+	router.mtx.Lock()
+	channelsIndex, hasChannelsForPeer := router.channelsIndex[mconn.PeerID()]
+	router.mtx.Unlock()
+
 	channels := make([]*cmtp2p.Channel, len(chDescs))
-	if _, ok := router.channelsIndex[mconn.PeerID()]; !ok {
-		router.logger.Info("packetDispatcher#GetChannels",
-			"peerId", mconn.PeerID(),
-			"len", len(chDescs))
-
-		router.mtx.Lock()
-		defer router.mtx.Unlock()
-
-		connLogger := router.logger.With("conn", mconn)
-		router.channelsIndex[mconn.PeerID()] = make(map[byte]*cmtp2p.Channel, len(chDescs))
-		for chID, chDesc := range chDescs {
-			channel := cmtconn.NewChannel(mconn, chDesc)
-			channel.SetLogger(connLogger)
-
-			router.channelsIndex[mconn.PeerID()][chID] = channel
+	if hasChannelsForPeer {
+		for _, channel := range channelsIndex {
 			channels = append(channels, channel)
 		}
 		return channels
 	}
 
+	// We shall transition channelsIndex down from here.
 	router.mtx.Lock()
 	defer router.mtx.Unlock()
 
-	for _, channel := range router.channelsIndex[mconn.PeerID()] {
+	router.channelsIndex[mconn.PeerID()] = make(map[byte]*cmtp2p.Channel, len(chDescs))
+
+	// Create new Channel instances for this MConnection.
+	connLogger := router.logger.With("conn", mconn)
+	for chID, chDesc := range chDescs {
+		channel := cmtconn.NewChannel(mconn, chDesc)
+		channel.SetLogger(connLogger)
+
+		router.channelsIndex[mconn.PeerID()][chID] = channel
 		channels = append(channels, channel)
 	}
 	return channels
@@ -307,6 +322,10 @@ func (router *packetDispatcher) GetChannel(
 	defer router.mtx.Unlock()
 
 	if _, ok := router.channelsIndex[mconn.PeerID()][chID]; !ok {
+		router.logger.Error("packetDispatcher#GetChannel; unknown ChannelID",
+			"peerId", mconn.PeerID(),
+			"chID", chID)
+
 		// TODO(midas): ErrorUnkownChannelID
 		return nil
 	}
@@ -316,13 +335,12 @@ func (router *packetDispatcher) GetChannel(
 
 // GetDescriptor returns a ChannelDescriptor by ID.
 func (router *packetDispatcher) GetDescriptor(chID byte) *cmtp2p.ChannelDescriptor {
-	router.mtx.Lock()
-	defer router.mtx.Unlock()
-
 	mxR := router.GetMultiplexReactor()
 	chDescs := GetChannelDescriptors(mxR)
 
 	if _, ok := chDescs[chID]; !ok {
+		router.logger.Error("packetDispatcher#GetDescriptor; unknown ChannelID",
+			"chID", chID)
 		return nil
 	}
 	return chDescs[chID]

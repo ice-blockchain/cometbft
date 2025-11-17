@@ -205,9 +205,7 @@ func (conR *Reactor) OnStop() {
 // defined as it is called from [Service#Reset], which permits to later
 // start back the service with stopped/started correctly reset.
 func (conR *Reactor) OnReset(ctx context.Context) error {
-	conR.Logger.Info("Consensus reactor service reset",
-		"chain_id", conR.ChainID,
-	)
+	conR.Logger.Info("Consensus reactor service reset")
 	if err := conR.conS.Reset(ctx); err != nil {
 		conR.Logger.Error("Error resetting consensus state", "err", err)
 	}
@@ -320,7 +318,6 @@ func (conR *Reactor) announceReplicationToPeers(
 		"from_id", myPeerID,
 		"num_peers", len(peersToSend),
 		"peers", peersToSend,
-		"chain_id", chainID,
 	)
 
 	var wg sync.WaitGroup
@@ -338,7 +335,6 @@ func (conR *Reactor) announceReplicationToPeers(
 
 			if err := sendReplCompleteToPeer(myPeerID, peer); err != nil {
 				conR.Logger.Error("Failed to send ChainReplicationComplete",
-					"chain_id", chainID,
 					"from", conR.nodeKey.ID(),
 					"to", peer.ID(),
 					"err", err,
@@ -353,7 +349,6 @@ func (conR *Reactor) announceReplicationToPeers(
 		"from_id", myPeerID,
 		"num_peers", len(peersToSend),
 		"peers", peersToSend,
-		"chain_id", chainID,
 	)
 
 	if conR.runtimeRegistry != nil {
@@ -1173,10 +1168,11 @@ OUTER_LOOP:
 				conR.peerStates.Set(string(peer.ID()), ps)
 				continue OUTER_LOOP
 			}
-			logger.Error("Failed to send vote to peer",
+
+			// not-an-error, shall retry later.
+			logger.Debug("Failed to send vote to peer",
 				"height", prs.Height,
 				"vote", vote,
-				"peer", ps.peer,
 			)
 		}
 
@@ -1207,7 +1203,6 @@ OUTER_LOOP:
 		// Manage disconnects from self or peer.
 		if !peer.IsRunning() || !conR.IsRunning() {
 			logger.Debug("Peer connection stopped; stopping queryMaj23Routine",
-				"peer", peer,
 				"ps", ps,
 			)
 			return
@@ -1226,7 +1221,6 @@ OUTER_LOOP:
 					conR.peerStates.Set(string(peer.ID()), ps)
 					// TODO(midas): remove debug logs.
 					logger.Debug("Found 2/3+1 prevotes for round; sending to peer",
-						"peer", peer,
 						"localHRS", fmt.Sprintf("%d/%d/%s", rs.Height, rs.Round, rs.Step),
 						"peerHRS", fmt.Sprintf("%d/%d/%s", prs.Height, prs.Round, prs.Step),
 					)
@@ -1257,7 +1251,6 @@ OUTER_LOOP:
 					conR.peerStates.Set(string(peer.ID()), ps)
 					// TODO(midas): remove debug logs.
 					logger.Debug("Found 2/3+1 precommits for round; sending to peer",
-						"peer", peer,
 						"localHRS", fmt.Sprintf("%d/%d/%s", rs.Height, rs.Round, rs.Step),
 						"peerHRS", fmt.Sprintf("%d/%d/%s", prs.Height, prs.Round, prs.Step),
 					)
@@ -1288,7 +1281,6 @@ OUTER_LOOP:
 					conR.peerStates.Set(string(peer.ID()), ps)
 					// TODO(midas): remove debug logs.
 					logger.Debug("Found 2/3+1 non-nil votes for round; sending to peer",
-						"peer", peer,
 						"localHRS", fmt.Sprintf("%d/%d/%s", rs.Height, rs.Round, rs.Step),
 						"peerHRS", fmt.Sprintf("%d/%d/%s", prs.Height, prs.ProposalPOLRound, prs.Step),
 					)
@@ -1320,7 +1312,6 @@ OUTER_LOOP:
 				if commit := conR.conS.LoadCommit(prs.Height); commit != nil {
 					// TODO(midas): remove debug logs.
 					logger.Debug("Found commit for height; sending to peer",
-						"peer", peer,
 						"peerHRS", fmt.Sprintf("%d/%d/%s", prs.Height, prs.Round, prs.Step),
 					)
 					peer.TrySend(conR.ChainID, p2p.Envelope{
@@ -1832,7 +1823,12 @@ func (ps *PeerState) setHasProposalBlockPart(height int64, round int32, index in
 // Returns true and marks the peer as having the part if the part was sent.
 func (ps *PeerState) SendPartSetHasPart(chainID string, part *types.Part, prs *cstypes.PeerRoundState) bool {
 	// Send the part
-	ps.logger.Debug("Sending block part", "chain_id", chainID, "height", prs.Height, "round", prs.Round, "index", part.Index)
+	ps.logger.Debug("Sending block part",
+		"height", prs.Height,
+		"round", prs.Round,
+		"index", part.Index,
+		"peer", ps.peer,
+	)
 	pp, err := part.ToProto()
 	if err != nil {
 		// NOTE: only returns error if part is nil, which it should never be by here
@@ -1864,7 +1860,10 @@ func (ps *PeerState) SendProposalSetHasProposal(
 	prs *cstypes.PeerRoundState,
 ) {
 	// Proposal: share the proposal metadata with peer.
-	logger.Debug("Sending proposal", "chain_id", chainID, "height", prs.Height, "round", prs.Round)
+	logger.Debug("Sending proposal",
+		"height", prs.Height,
+		"round", prs.Round,
+	)
 	if ps.peer.Send(chainID, p2p.Envelope{
 		ChainID:   chainID,
 		ChannelID: DataChannel,
@@ -1879,7 +1878,7 @@ func (ps *PeerState) SendProposalSetHasProposal(
 	// rs.Proposal was validated, so rs.Proposal.POLRound <= rs.Round,
 	// so we definitely have rs.Votes.Prevotes(rs.Proposal.POLRound).
 	if 0 <= rs.Proposal.POLRound {
-		logger.Debug("Sending POL", "chain_id", chainID, "height", prs.Height, "round", prs.Round)
+		logger.Debug("Sending POL", "height", prs.Height, "round", prs.Round)
 		ps.peer.Send(chainID, p2p.Envelope{
 			ChainID:   chainID,
 			ChannelID: DataChannel,
@@ -1895,7 +1894,10 @@ func (ps *PeerState) SendProposalSetHasProposal(
 // sendVoteSetHasVote sends the vote to the peer.
 // Returns true and marks the peer as having the vote if the vote was sent.
 func (ps *PeerState) sendVoteSetHasVote(chainID string, vote *types.Vote) bool {
-	ps.logger.Debug("Sending vote message", "chain_id", chainID, "ps", ps, "vote", vote)
+	ps.logger.Debug("Sending vote message",
+		"vote", vote,
+		"peer", ps.peer,
+	)
 	if ps.peer.Send(chainID, p2p.Envelope{
 		ChainID:   chainID,
 		ChannelID: VoteChannel,

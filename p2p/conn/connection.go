@@ -1038,13 +1038,13 @@ func (ch *Channel) loadSendQueueSize() (size int) {
 // Goroutine-safe
 // Use only as a heuristic.
 func (ch *Channel) canSend() bool {
-	return ch.loadSendQueueSize() < defaultSendQueueCapacity
+	return ch.loadSendQueueSize() < ch.desc.SendQueueCapacity
 }
 
 // Goroutine-safe
 // Use only as a heuristic.
 func (ch *Channel) canSendForChainID(_ string) bool {
-	return ch.loadSendQueueSize() < defaultSendQueueCapacity
+	return ch.loadSendQueueSize() < ch.desc.SendQueueCapacity
 }
 
 // Returns true if any PacketMsgs are pending to be sent.

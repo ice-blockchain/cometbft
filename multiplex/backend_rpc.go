@@ -305,7 +305,11 @@ func (b *MultiplexBackend) connectToRemoteRelayInfoRPC(
 	relayAddress *helpers.RelayAddress,
 ) (*rpcclient.Client, error) {
 	rpcAddress := relayAddress.AddressForRelayInfo()
-	if c, ok := b.jsonRpcClients[rpcAddress]; ok {
+
+	b.mtx.Lock()
+	c, hasClient := b.jsonRpcClients[rpcAddress]
+	b.mtx.Unlock()
+	if hasClient {
 		return c, nil
 	}
 

@@ -3,6 +3,7 @@
 *.log
 *.swo
 *.swp
+__debug_*
 */.glide
 */vendor
 .DS_Store

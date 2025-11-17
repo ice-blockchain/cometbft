@@ -278,7 +278,7 @@ func (p *PeerImpl) SocketAddr() *NetAddress {
 // thread safe.
 func (p *PeerImpl) Send(chainID string, e Envelope) bool {
 	if p.msgr == nil {
-		p.Logger.Error("failed to send message; missing Messager",
+		p.Logger.Error("Peer#Send: failed to send message; missing Messager",
 			"peer", p,
 			"msg", e,
 		)
@@ -286,9 +286,7 @@ func (p *PeerImpl) Send(chainID string, e Envelope) bool {
 	}
 
 	if err := p.msgr.Send(p.ID(), e); err != nil {
-		p.Logger.Error("failed to send message",
-			"peer", p,
-			"msg", e,
+		p.Logger.Error("Peer#Send: failed to send message",
 			"err", err,
 		)
 		return false
@@ -303,7 +301,7 @@ func (p *PeerImpl) Send(chainID string, e Envelope) bool {
 // thread safe.
 func (p *PeerImpl) TrySend(chainID string, e Envelope) bool {
 	if p.msgr == nil {
-		p.Logger.Error("failed to try-send message; missing Messager",
+		p.Logger.Error("Peer#TrySend: failed to send message; missing Messager",
 			"peer", p,
 			"msg", e,
 		)
@@ -311,9 +309,7 @@ func (p *PeerImpl) TrySend(chainID string, e Envelope) bool {
 	}
 
 	if err := p.msgr.TrySend(p.ID(), e); err != nil {
-		p.Logger.Error("failed to try-send message",
-			"peer", p,
-			"msg", e,
+		p.Logger.Error("Peer#TrySend: failed to send message",
 			"err", err,
 		)
 		return false

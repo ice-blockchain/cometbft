@@ -253,6 +253,7 @@ func (memR *Reactor) GetChannels() []*p2p.ChannelDescriptor {
 			ID:                  MempoolChannel,
 			Priority:            5,
 			RecvMessageCapacity: memR.recvMessageCapacity,
+			SendQueueCapacity:   1000, // max. 1000 for same ChainID
 			MessageType:         &protomem.Message{},
 		},
 		{

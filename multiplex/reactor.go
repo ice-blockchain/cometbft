@@ -156,6 +156,7 @@ func (reactor *Reactor) GetChannels() []*cmtp2p.ChannelDescriptor {
 			ID:                  mempl.MempoolChannel,
 			Priority:            5,
 			RecvMessageCapacity: reactor.recvMempoolTxMessageCapacity,
+			SendQueueCapacity:   1000, // max. 1000 for same ChainID
 			MessageType:         &protomem.Message{},
 		},
 	}
@@ -190,7 +191,6 @@ func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
 		// IMPORTANT:
 		//
 		// Forwards this message for processing to mempool.Reactor.
-		// servicesProvider := r.GetServicesProvider()
 		reactor.logger.Info("Forwarding Tx",
 			"memR", mempoolReactor,
 			"running", mempoolReactor.IsRunning(),
