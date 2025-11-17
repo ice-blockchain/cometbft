@@ -513,6 +513,7 @@ func (b *MultiplexBackend) WaitForRelaysAckChainReplications(
 	}
 
 	// Waits until we have all required results (or errors).
+REPL_LOOP:
 	for i := 0; i < numChainReplications; i++ {
 		select {
 		case result := <-asyncResultsCh:
@@ -522,20 +523,35 @@ func (b *MultiplexBackend) WaitForRelaysAckChainReplications(
 				"requestId", broadcastID,
 				"chainId", result.ChainID,
 				"txBatch", transactionHashes,
+				"numExpected", numExpected,
 				"numReceived", numReceived,
 			)
+			continue REPL_LOOP
+
+		case <-ctx.Done():
+			err = errors.New("interrupted by context expiration")
+			b.logger.Error("Stopped replication response processor with timeout",
+				"requestId", broadcastID,
+				"txBatch", transactionHashes,
+				"numExpected", numExpected,
+				"numReceived", numReceived,
+			)
+			break REPL_LOOP
 
 		case <-b.Quit():
 			err = errors.New("interrupted by shutdown process")
 			b.logger.Error("Stopped replication response processor with error",
 				"requestId", broadcastID,
 				"txBatch", transactionHashes,
+				"numExpected", numExpected,
+				"numReceived", numReceived,
 				"err", err,
 			)
+			break REPL_LOOP
 		}
 	}
 
-	return
+	return // numExpected, numReceived, err
 }
 
 // WaitForRelaysAckTransactionBatch should wait for *remote* relays transaction
@@ -610,6 +626,7 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 	}
 
 	// Waits until we have all required results (or errors).
+TX_LOOP:
 	for i := 0; i < len(transactions); i++ {
 		select {
 		case result := <-asyncResultsCh:
@@ -619,18 +636,33 @@ func (b *MultiplexBackend) WaitForRelaysAckTransactionBatch(
 				"requestId", broadcastID,
 				"txHash", result.TxHash,
 				"txBatch", transactionHashes,
+				"numExpected", numExpected,
 				"numReceived", numReceived,
 			)
+			continue TX_LOOP
+
+		case <-ctx.Done():
+			err = errors.New("interrupted by context expiration")
+			b.logger.Error("Stopped transaction ACK processor with timeout",
+				"requestId", broadcastID,
+				"txBatch", transactionHashes,
+				"numExpected", numExpected,
+				"numReceived", numReceived,
+			)
+			break TX_LOOP
 
 		case <-b.Quit():
 			err = errors.New("interrupted by shutdown process")
 			b.logger.Error("Stopped transaction ACK processor with error",
 				"requestId", broadcastID,
 				"txBatch", transactionHashes,
+				"numExpected", numExpected,
+				"numReceived", numReceived,
 				"err", err,
 			)
+			break TX_LOOP
 		}
 	}
 
-	return
+	return // numExpected, numReceived, err
 }
