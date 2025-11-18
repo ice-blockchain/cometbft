@@ -43,6 +43,13 @@ const (
 	//
 	// TODO(midas): move to multiplex.runtime.ConsensusPool + add option helper.
 	defaultAllowStaleStateDuration = 100 * time.Millisecond
+
+	// defaultMaxErrorsBeforeDisconnect holds a maximum number of errors that
+	// may be observed for one peerID before we disconnect from it.
+	//
+	// TODO(midas): may need a cleaner implementation given success-after-error.
+	// TODO(midas): allow overwrite with options helper.
+	defaultMaxErrorsBeforeDisconnect = 5
 )
 
 // -----------------------------------------------------------------------------
@@ -1054,6 +1061,12 @@ OUTER_LOOP:
 			return
 		}
 
+		if peer.NumErrors() >= defaultMaxErrorsBeforeDisconnect {
+			conR.RemovePeer(peer, fmt.Errorf(
+				"too many errors from peer %s; got: %w", peer.ID(), peer.GetError()))
+			return
+		}
+
 		// sleep random amount to give reactor a chance to receive HasProposalBlockPart messages
 		// so we can reduce the amount of redundant block parts we send
 		if conR.conS.config.PeerGossipIntraloopSleepDuration > 0 {
@@ -1125,6 +1138,12 @@ OUTER_LOOP:
 				"peer", peer,
 				"ps", ps,
 			)
+			return
+		}
+
+		if peer.NumErrors() >= defaultMaxErrorsBeforeDisconnect {
+			conR.RemovePeer(peer, fmt.Errorf(
+				"too many errors from peer %s; got: %w", peer.ID(), peer.GetError()))
 			return
 		}
 
@@ -1200,6 +1219,12 @@ OUTER_LOOP:
 			logger.Debug("Peer connection stopped; stopping queryMaj23Routine",
 				"ps", ps,
 			)
+			return
+		}
+
+		if peer.NumErrors() >= defaultMaxErrorsBeforeDisconnect {
+			conR.RemovePeer(peer, fmt.Errorf(
+				"too many errors from peer %s; got: %w", peer.ID(), peer.GetError()))
 			return
 		}
 
@@ -2060,7 +2085,6 @@ func (ps *PeerState) RecordVote() int {
 	defer ps.mtx.Unlock()
 
 	ps.Stats.Votes++
-
 	return ps.Stats.Votes
 }
 

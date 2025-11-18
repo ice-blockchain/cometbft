@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ice-blockchain/cometbft/internal/cmap"
@@ -130,39 +132,55 @@ func (pc *peerConn) Port() uint16 {
 
 // ----------------------------------------------------------
 
-type ErrorStack interface {
-	HasError() bool
-	SetError(error)
-	GetError() error
-}
-
-// peerErrorStack contains a stack (LIFO) of errors.
-type peerErrorStack struct {
+// peerErrors contains a stack (LIFO) of errors.
+// Goroutine safe.
+type peerErrors struct {
+	mtx    sync.Mutex
 	errors []error
+
+	size int32 // atomic
 }
 
-// Type-assertion to validate that we satisfy contract.
-var _ ErrorStack = (*peerErrorStack)(nil)
+func (s *peerErrors) clearErrors() {
+	defer atomic.StoreInt32(&s.size, 0)
 
-func (s *peerErrorStack) clearErrors() {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+
 	s.errors = []error{}
 }
 
-func (s *peerErrorStack) HasError() bool {
-	return len(s.errors) > 0
+func (s *peerErrors) NumErrors() int {
+	num := atomic.LoadInt32(&s.size)
+	return int(num)
 }
 
-func (s *peerErrorStack) SetError(e error) {
+func (s *peerErrors) HasError() bool {
+	return s.NumErrors() > 0
+}
+
+func (s *peerErrors) SetError(e error) {
+	defer atomic.AddInt32(&s.size, 1)
+
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+
 	s.errors = append(s.errors, e)
 }
 
-func (s *peerErrorStack) GetError() error {
+func (s *peerErrors) GetError() error {
 	if !s.HasError() {
 		return nil
 	}
 
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+
 	// always reads last element
-	return s.errors[len(s.errors)-1]
+	numElms := len(s.errors)
+	lastErr := s.errors[numElms-1]
+
+	return lastErr
 }
 
 // ----------------------------------------------------------
@@ -174,7 +192,7 @@ type PeerImpl struct {
 	service.BaseService
 
 	// embeds an errors stack.
-	peerErrorStack
+	peerErrors
 
 	// raw peerConn and the multiplex connection
 	peerConn
@@ -206,7 +224,11 @@ func NewPeerWithoutConn(
 		nodeInfo: &DefaultNodeInfo{
 			DefaultNodeID: id,
 		},
+		peerErrors: peerErrors{
+			errors: []error{},
+		},
 	}
+	atomic.StoreInt32(&p.peerErrors.size, 0)
 
 	return p
 }
@@ -224,8 +246,11 @@ func newPeer(
 		Data:           cmap.NewCMap(),
 		metrics:        NopMetrics(),
 		pendingMetrics: newPeerPendingMetricsCache(),
-		peerErrorStack: peerErrorStack{},
+		peerErrors: peerErrors{
+			errors: []error{},
+		},
 	}
+	atomic.StoreInt32(&p.peerErrors.size, 0)
 
 	p.BaseService = *service.NewBaseService(ctx, nil, "Peer", p)
 	for _, option := range options {
@@ -284,7 +309,7 @@ func (p *PeerImpl) OnStop() {
 
 // OnReset implements service.Service.
 func (p *PeerImpl) OnReset(ctx context.Context) error {
-	p.clearErrors() // peerErrorStack
+	p.clearErrors() // peerErrors
 	p.Logger.Debug("Peer reset")
 	return nil
 }
