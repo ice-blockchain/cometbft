@@ -298,7 +298,7 @@ func (conn *PeerConnector) Send(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 
 	if sent := mconn.Send(e.ChainID, e.ChannelID, msgBytes); !sent {
 		return fmt.Errorf(
-			"failed to send message; Timeout after 10s.")
+			"failed to send message (Send)")
 	}
 	return nil
 }
@@ -339,7 +339,7 @@ func (conn *PeerConnector) TrySend(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 
 	if sent := mconn.TrySend(e.ChainID, e.ChannelID, msgBytes); !sent {
 		return fmt.Errorf(
-			"failed to send message; Send queue for %s is full.", e.ChainID)
+			"failed to send message (TrySend)")
 	}
 	return nil
 }

@@ -128,11 +128,53 @@ func (pc *peerConn) Port() uint16 {
 	return uint16(pp)
 }
 
+// ----------------------------------------------------------
+
+type ErrorStack interface {
+	HasError() bool
+	SetError(error)
+	GetError() error
+}
+
+// peerErrorStack contains a stack (LIFO) of errors.
+type peerErrorStack struct {
+	errors []error
+}
+
+// Type-assertion to validate that we satisfy contract.
+var _ ErrorStack = (*peerErrorStack)(nil)
+
+func (s *peerErrorStack) clearErrors() {
+	s.errors = []error{}
+}
+
+func (s *peerErrorStack) HasError() bool {
+	return len(s.errors) > 0
+}
+
+func (s *peerErrorStack) SetError(e error) {
+	s.errors = append(s.errors, e)
+}
+
+func (s *peerErrorStack) GetError() error {
+	if !s.HasError() {
+		return nil
+	}
+
+	// always reads last element
+	return s.errors[len(s.errors)-1]
+}
+
+// ----------------------------------------------------------
+
 // peer implements Peer.
 //
 // Before using a peer, you will need to perform a handshake on connection.
 type PeerImpl struct {
 	service.BaseService
+
+	// embeds an errors stack.
+	peerErrorStack
 
 	// raw peerConn and the multiplex connection
 	peerConn
@@ -152,6 +194,9 @@ type PeerImpl struct {
 }
 
 type PeerOption func(*PeerImpl)
+
+// Type-assertion to validate that we satisfy contract.
+var _ Peer = (*PeerImpl)(nil)
 
 func NewPeerWithoutConn(
 	id ID,
@@ -179,6 +224,7 @@ func newPeer(
 		Data:           cmap.NewCMap(),
 		metrics:        NopMetrics(),
 		pendingMetrics: newPeerPendingMetricsCache(),
+		peerErrorStack: peerErrorStack{},
 	}
 
 	p.BaseService = *service.NewBaseService(ctx, nil, "Peer", p)
@@ -218,6 +264,7 @@ func (p *PeerImpl) GetLogger() log.Logger {
 func (p *PeerImpl) OnStart(ctx context.Context) error {
 	if err := p.BaseService.OnStart(ctx); err != nil {
 		p.Logger.Error("Error starting peer service", "err", err)
+		p.SetError(err)
 	}
 
 	p.Logger.Debug("Peer started", "peer", p)
@@ -237,6 +284,7 @@ func (p *PeerImpl) OnStop() {
 
 // OnReset implements service.Service.
 func (p *PeerImpl) OnReset(ctx context.Context) error {
+	p.clearErrors() // peerErrorStack
 	p.Logger.Debug("Peer reset")
 	return nil
 }
@@ -278,10 +326,9 @@ func (p *PeerImpl) SocketAddr() *NetAddress {
 // thread safe.
 func (p *PeerImpl) Send(chainID string, e Envelope) bool {
 	if p.msgr == nil {
-		p.Logger.Error("Peer#Send: failed to send message; missing Messager",
-			"peer", p,
-			"msg", e,
-		)
+		err := fmt.Errorf("Peer#Send: failed to send message; missing Messager")
+		p.Logger.Error(err.Error(), "msg", e)
+		p.SetError(err)
 		return false
 	}
 
@@ -289,6 +336,7 @@ func (p *PeerImpl) Send(chainID string, e Envelope) bool {
 		p.Logger.Error("Peer#Send: failed to send message",
 			"err", err,
 		)
+		p.SetError(err)
 		return false
 	}
 
@@ -301,10 +349,9 @@ func (p *PeerImpl) Send(chainID string, e Envelope) bool {
 // thread safe.
 func (p *PeerImpl) TrySend(chainID string, e Envelope) bool {
 	if p.msgr == nil {
-		p.Logger.Error("Peer#TrySend: failed to send message; missing Messager",
-			"peer", p,
-			"msg", e,
-		)
+		err := fmt.Errorf("Peer#TrySend: failed to send message; missing Messager")
+		p.Logger.Error(err.Error(), "msg", e)
+		p.SetError(err)
 		return false
 	}
 
@@ -312,6 +359,7 @@ func (p *PeerImpl) TrySend(chainID string, e Envelope) bool {
 		p.Logger.Error("Peer#TrySend: failed to send message",
 			"err", err,
 		)
+		p.SetError(err)
 		return false
 	}
 

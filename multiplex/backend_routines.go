@@ -378,6 +378,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() types.RelaysBroadcast
 			// Encode and get transaction hash
 			rawTx := client.TransactionToRawTx(transaction)
 			txHash := strings.ToUpper(hex.EncodeToString(rawTx.Hash()))
+			txLogger := logger.With("chainId", chainID, "txHash", txHash)
 
 			// For NEW networks, we don't need to wait for acknowledgments.
 			if _, ok := relaysByChain[chainID]; !ok {
@@ -412,9 +413,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() types.RelaysBroadcast
 			sentWg.Add(len(peersForMempool))
 
 			// TODO(midas): remove debug logs
-			logger.Debug("Preparing to send mempool.Tx",
-				"chainId", chainID,
-				"txHash", txHash,
+			txLogger.Debug("Preparing to send mempool.Tx",
 				"numBroadcast", len(peersForMempool),
 				"numPeersChain", chainPeerSet.Size(),
 			)
@@ -439,9 +438,7 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() types.RelaysBroadcast
 					}
 
 					// TODO(midas): remove debug logs
-					logger.Debug("Sending transaction to remote mempool",
-						"chainId", chainID,
-						"txHash", txHash,
+					txLogger.Debug("Sending transaction to remote mempool",
 						"peer", peer,
 						"isOutbound", peer.IsOutbound(),
 						"isRunning", peer.IsRunning(),
@@ -454,12 +451,11 @@ func (b *MultiplexBackend) DefaultRelaysBroadcastRoutine() types.RelaysBroadcast
 						ChannelID: mempl.MempoolChannel,
 						Message:   &memp2p.Txs{Txs: [][]byte{rawTx}},
 					}); !success {
-						logger.Error("failed to send transaction to remote mempool",
-							"chainId", chainID,
-							"txHash", txHash,
+						txLogger.Error("failed to send transaction to remote mempool",
 							"peer", peer,
 							"isOutbound", peer.IsOutbound(),
 							"isRunning", peer.IsRunning(),
+							"err", peer.GetError(),
 						)
 						return
 					}

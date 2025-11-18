@@ -498,9 +498,9 @@ func (conR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 
 	// Begin routines for this peer.
 	peerCtx := conR.peerContexts.Get(string(peer.ID())).(*PeerContext)
-	go conR.gossipDataRoutine(peer, peerState, *peerCtx)
-	go conR.gossipVotesRoutine(peer, peerState, *peerCtx)
-	go conR.queryMaj23Routine(peer, peerState, *peerCtx)
+	go conR.gossipDataRoutine(peer, peerState, peerCtx)
+	go conR.gossipVotesRoutine(peer, peerState, peerCtx)
+	go conR.queryMaj23Routine(peer, peerState, peerCtx)
 
 	// Send our state to peer.
 	// If we're block_syncing, broadcast a RoundStepMessage later upon SwitchToConsensus().
@@ -594,6 +594,9 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 		}
 	}
 
+	// peerCtx is created with conR.InitPeer()
+	peerCtx := conR.peerContexts.Get(string(e.Src.ID())).(*PeerContext)
+
 	switch e.ChannelID {
 	case StateChannel:
 		switch msg := msg.(type) {
@@ -634,7 +637,7 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 				}
 
 				// Sleep for 100ms to give consensus/peer some time to catch-up.
-				if ok := conR.sleepOrQuit(defaultAllowStaleStateDuration); !ok {
+				if ok := conR.sleepOrQuit(peerCtx, defaultAllowStaleStateDuration); !ok {
 					return
 				}
 			}
@@ -728,7 +731,7 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 				}
 
 				// Sleep for 100ms to give consensus/peer some time to catch-up.
-				if ok := conR.sleepOrQuit(defaultAllowStaleStateDuration); !ok {
+				if ok := conR.sleepOrQuit(peerCtx, defaultAllowStaleStateDuration); !ok {
 					return
 				}
 			}
@@ -772,7 +775,7 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 				}
 
 				// Sleep for 100ms to give consensus/peer some time to catch-up.
-				if ok := conR.sleepOrQuit(defaultAllowStaleStateDuration); !ok {
+				if ok := conR.sleepOrQuit(peerCtx, defaultAllowStaleStateDuration); !ok {
 					return
 				}
 			}
@@ -1036,7 +1039,7 @@ func (conR *Reactor) getRoundState() cstypes.RoundState {
 // -----------------------------------------------------------------------------
 // Reactor gossip routines and helpers
 
-func (conR *Reactor) gossipDataRoutine(peer *p2p.PeerImpl, ps *PeerState, peerCtx PeerContext) {
+func (conR *Reactor) gossipDataRoutine(peer *p2p.PeerImpl, ps *PeerState, peerCtx *PeerContext) {
 	logger := conR.Logger.With("peer", peer)
 	rng := cmtrand.NewStdlibRand()
 
@@ -1056,7 +1059,7 @@ OUTER_LOOP:
 		if conR.conS.config.PeerGossipIntraloopSleepDuration > 0 {
 			// the config sets an upper bound for how long we sleep.
 			randDuration := rng.Int63n(int64(conR.conS.config.PeerGossipIntraloopSleepDuration))
-			if ok := conR.sleepOrQuit(time.Duration(randDuration)); !ok {
+			if ok := conR.sleepOrQuit(peerCtx, time.Duration(randDuration)); !ok {
 				return
 			}
 		}
@@ -1101,13 +1104,13 @@ OUTER_LOOP:
 		}
 
 		// Nothing to do. Sleep.
-		if ok := conR.sleepOrQuit(conR.conS.config.PeerGossipSleepDuration); !ok {
+		if ok := conR.sleepOrQuit(peerCtx, conR.conS.config.PeerGossipSleepDuration); !ok {
 			return
 		}
 	}
 }
 
-func (conR *Reactor) gossipVotesRoutine(peer *p2p.PeerImpl, ps *PeerState, peerCtx PeerContext) {
+func (conR *Reactor) gossipVotesRoutine(peer *p2p.PeerImpl, ps *PeerState, peerCtx *PeerContext) {
 	logger := conR.Logger.With("peer", peer)
 	rng := cmtrand.NewStdlibRand()
 
@@ -1130,7 +1133,7 @@ OUTER_LOOP:
 		if conR.conS.config.PeerGossipIntraloopSleepDuration > 0 {
 			// the config sets an upper bound for how long we sleep.
 			randDuration := rng.Int63n(int64(conR.conS.config.PeerGossipIntraloopSleepDuration))
-			if ok := conR.sleepOrQuit(time.Duration(randDuration)); !ok {
+			if ok := conR.sleepOrQuit(peerCtx, time.Duration(randDuration)); !ok {
 				return
 			}
 		}
@@ -1164,6 +1167,7 @@ OUTER_LOOP:
 			logger.Debug("Failed to send vote to peer",
 				"height", prs.Height,
 				"vote", vote,
+				"err", ps.peer.GetError(),
 			)
 		}
 
@@ -1178,7 +1182,7 @@ OUTER_LOOP:
 			sleeping = 1
 		}
 
-		if ok := conR.sleepOrQuit(conR.conS.config.PeerGossipSleepDuration); !ok {
+		if ok := conR.sleepOrQuit(peerCtx, conR.conS.config.PeerGossipSleepDuration); !ok {
 			return
 		}
 	}
@@ -1186,7 +1190,7 @@ OUTER_LOOP:
 
 // NOTE: `queryMaj23Routine` has a simple crude design since it only comes
 // into play for liveness when there's a signature DDoS attack happening.
-func (conR *Reactor) queryMaj23Routine(peer *p2p.PeerImpl, ps *PeerState, peerCtx PeerContext) {
+func (conR *Reactor) queryMaj23Routine(peer *p2p.PeerImpl, ps *PeerState, peerCtx *PeerContext) {
 	logger := conR.Logger.With("peer", peer)
 
 OUTER_LOOP:
@@ -1225,7 +1229,7 @@ OUTER_LOOP:
 							BlockID: maj23.ToProto(),
 						},
 					})
-					if ok := conR.sleepOrQuit(conR.conS.config.PeerQueryMaj23SleepDuration); !ok {
+					if ok := conR.sleepOrQuit(peerCtx, conR.conS.config.PeerQueryMaj23SleepDuration); !ok {
 						return
 					}
 				}
@@ -1255,7 +1259,7 @@ OUTER_LOOP:
 							BlockID: maj23.ToProto(),
 						},
 					})
-					if ok := conR.sleepOrQuit(conR.conS.config.PeerQueryMaj23SleepDuration); !ok {
+					if ok := conR.sleepOrQuit(peerCtx, conR.conS.config.PeerQueryMaj23SleepDuration); !ok {
 						return
 					}
 				}
@@ -1285,7 +1289,7 @@ OUTER_LOOP:
 							BlockID: maj23.ToProto(),
 						},
 					})
-					if ok := conR.sleepOrQuit(conR.conS.config.PeerQueryMaj23SleepDuration); !ok {
+					if ok := conR.sleepOrQuit(peerCtx, conR.conS.config.PeerQueryMaj23SleepDuration); !ok {
 						return
 					}
 				}
@@ -1315,7 +1319,7 @@ OUTER_LOOP:
 							BlockID: commit.BlockID.ToProto(),
 						},
 					})
-					if ok := conR.sleepOrQuit(conR.conS.config.PeerQueryMaj23SleepDuration); !ok {
+					if ok := conR.sleepOrQuit(peerCtx, conR.conS.config.PeerQueryMaj23SleepDuration); !ok {
 						return
 					}
 				}
@@ -1327,7 +1331,7 @@ OUTER_LOOP:
 
 		// NOTE(midas): instead of time.Sleep, we select the interval to permit
 		// the shutdown routine to stop waiting here as well.
-		if ok := conR.sleepOrQuit(conR.conS.config.PeerQueryMaj23SleepDuration); !ok {
+		if ok := conR.sleepOrQuit(peerCtx, conR.conS.config.PeerQueryMaj23SleepDuration); !ok {
 			return
 		}
 
@@ -1335,10 +1339,16 @@ OUTER_LOOP:
 	}
 }
 
-func (conR *Reactor) sleepOrQuit(duration time.Duration) bool {
+func (conR *Reactor) sleepOrQuit(
+	peerCtx *PeerContext,
+	duration time.Duration,
+) bool {
 	select {
 	case <-time.After(duration):
 		return true
+
+	case <-peerCtx.ctx.Done():
+		return false
 
 	case <-conR.Context().Done():
 		return false
@@ -1839,7 +1849,8 @@ func (ps *PeerState) SendPartSetHasPart(chainID string, part *types.Part, prs *c
 		ps.SetHasProposalBlockPart(prs.Height, prs.Round, int(part.Index))
 		return true
 	}
-	ps.logger.Debug("Sending block part failed")
+	ps.logger.Debug("Sending block part failed",
+		"err", ps.peer.GetError())
 	return false
 }
 

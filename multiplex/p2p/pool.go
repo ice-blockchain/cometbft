@@ -401,6 +401,19 @@ func (pool *ConnectionPool) HasPeerIP(ip net.IP) bool {
 	return pool.peers.HasIP(ip)
 }
 
+// GetPeer returns the *cmtp2p.PeerImpl instance by peerID, if available.
+func (pool *ConnectionPool) GetPeer(peerID cmtp2p.ID) *cmtp2p.PeerImpl {
+	pool.mtx.Lock()
+	defer pool.mtx.Unlock()
+
+	if !pool.peers.Has(peerID) {
+		return nil // Nothing to do
+	}
+
+	peer := pool.peers.Get(peerID)
+	return peer
+}
+
 // Broadcast sends a message to all peers.
 func (pool *ConnectionPool) Broadcast(e cmtp2p.Envelope) error {
 	peerSet := pool.Peers(e.ChainID)
