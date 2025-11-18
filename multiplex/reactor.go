@@ -203,6 +203,7 @@ func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
 	// preProcessInit is an internal helper function that initializes
 	// and starts a runtime for e.ChainID, i.e. mempool, consensus, etc.
 	preProcessInit := func(e cmtp2p.Envelope) {
+		reactor.runtimeMgr.EnableBlockSync(e.ChainID)
 		reactor.runtimeMgr.InitRuntime(e.ChainID, []string{}, true)
 		reactor.runtimeMgr.StartRuntime(e.ChainID)
 

@@ -306,6 +306,22 @@ func (reg *Registry) Logger() cmtlog.Logger {
 	return reg.logger
 }
 
+// EnableBlockSync enables block-sync process for chainID.
+func (reg *Registry) EnableBlockSync(chainID string) {
+	reg.mtx.Lock()
+	defer reg.mtx.Unlock()
+
+	reg.consensusPool.shouldBlockSync.Set(chainID, true)
+}
+
+// ShouldBlockSync returns true if block-sync is enabled for chainID.
+func (reg *Registry) ShouldBlockSync(chainID string) bool {
+	reg.mtx.Lock()
+	defer reg.mtx.Unlock()
+
+	return reg.consensusPool.shouldBlockSync.Has(chainID)
+}
+
 // ----------------------------------------------------------------------------
 // IdleManager API implementation
 

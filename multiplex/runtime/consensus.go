@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/ice-blockchain/cometbft/config"
+	"github.com/ice-blockchain/cometbft/crypto"
 	"github.com/ice-blockchain/cometbft/internal/blocksync"
+	"github.com/ice-blockchain/cometbft/internal/cmap"
 	cs "github.com/ice-blockchain/cometbft/internal/consensus"
 	"github.com/ice-blockchain/cometbft/internal/evidence"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
@@ -41,7 +43,10 @@ type ConsensusPool struct {
 	runtimeComposer *RuntimeComposer
 	resourceMgr     types.ResourceManager
 
-	injectedChainIds map[string]struct{}
+	injectedChainIds map[string]struct{} // under pool.mtx
+
+	// shouldBlockSync contains boool values per ChainID (string) keys.
+	shouldBlockSync *cmap.CMap
 
 	// Options
 	logger cmtlog.Logger
@@ -74,6 +79,7 @@ func NewConsensusHandler(
 		acceptorImpl: &client.DefaultAcceptor{},
 
 		injectedChainIds: map[string]struct{}{},
+		shouldBlockSync:  cmap.NewCMap(),
 
 		// Options
 		logger: logger,
@@ -124,6 +130,7 @@ func (pool *ConsensusPool) OnReset(ctx context.Context) error {
 	defer pool.mtx.Unlock()
 
 	pool.injectedChainIds = map[string]struct{}{}
+	pool.shouldBlockSync.Clear()
 	return nil
 }
 
@@ -200,6 +207,8 @@ func (pool *ConsensusPool) Handshake(chainID string) error {
 	// The state machine will have the Version.Consensus.App set by the Handshake,
 	// and may have other modifications as well, ie. depending on what happened
 	// during block replay.
+	//
+	// i.e. Recover from failure during consensus or while applying a block.
 
 	reloadedState, err := stateStore.Load()
 	if err != nil {
@@ -419,6 +428,24 @@ func (pool *ConsensusPool) Shutdown(
 }
 
 // ----------------------------------------------------------------------------
+
+// shouldNetworkBlockSync returns true if block-sync process is forced via
+// the shouldBlockSync map or if we are *not* the only validator and if we
+// are not a validator of the network, i.e. block-sync for new peers.
+func (pool *ConsensusPool) shouldNetworkBlockSync(
+	stateMachine sm.State,
+	privValPubKey crypto.PubKey,
+) bool {
+	if pool.shouldBlockSync.Has(stateMachine.ChainID) {
+		return true // isForcedBlockSync
+	}
+
+	isSoloValidator := onlyValidatorIsUs(stateMachine, privValPubKey)
+	isNetworkValidator := validatorsIncludesUs(stateMachine, privValPubKey)
+	return !isSoloValidator && !isNetworkValidator
+}
+
+// ----------------------------------------------------------------------------
 // Orchestration methods
 
 // CAUTION: The pool.mtx should be locked by the caller.
@@ -492,7 +519,7 @@ func (pool *ConsensusPool) makeNetworkMempoolReactor(
 	stateMachine := pool.runtimeComposer.StateMachine(chainID)
 
 	privValPubKey, _ := privValidator.GetPubKey()
-	shouldBlockSync := !onlyValidatorIsUs(stateMachine.Copy(), privValPubKey) && !validatorsIncludesUs(stateMachine.Copy(), privValPubKey)
+	shouldBlockSync := pool.shouldNetworkBlockSync(stateMachine.Copy(), privValPubKey)
 
 	var (
 		mempool        *mempl.CListMempool
@@ -590,7 +617,7 @@ func (pool *ConsensusPool) makeNetworkBlocksyncReactor(
 	privValidator := pool.runtimeComposer.Validator(chainID)
 
 	privValPubKey, _ := privValidator.GetPubKey()
-	shouldBlockSync := !onlyValidatorIsUs(stateMachine.Copy(), privValPubKey) && !validatorsIncludesUs(stateMachine.Copy(), privValPubKey)
+	shouldBlockSync := pool.shouldNetworkBlockSync(stateMachine.Copy(), privValPubKey)
 
 	// Create the [sm.BlockExecutor] and [blocksync.Reactor].
 	if !pool.resourceMgr.Has(chainID, types.ServiceKeyBlockSyncReactor) {
@@ -637,7 +664,7 @@ func (pool *ConsensusPool) makeNetworkConsensusReactor(
 	privValidator := pool.runtimeComposer.Validator(chainID)
 
 	privValPubKey, _ := privValidator.GetPubKey()
-	shouldBlockSync := !onlyValidatorIsUs(stateMachine.Copy(), privValPubKey) && !validatorsIncludesUs(stateMachine.Copy(), privValPubKey)
+	shouldBlockSync := pool.shouldNetworkBlockSync(stateMachine.Copy(), privValPubKey)
 
 	// Create the [cs.State] and [cs.Reactor].
 	if !pool.resourceMgr.Has(chainID, types.ServiceKeyConsensusReactor) {

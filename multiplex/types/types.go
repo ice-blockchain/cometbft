@@ -74,6 +74,11 @@ type RuntimeManager interface {
 	// IsRuntimeInitialized returns true when a chainID has been init'd,
 	// i.e. it shall return true after calling InitRuntime.
 	IsRuntimeInitialized(chainID string) bool
+
+	// EnableBlockSync enables block-sync process for chainID.
+	EnableBlockSync(chainID string)
+	// ShouldBlockSync returns true if block-sync is enabled for chainID.
+	ShouldBlockSync(chainID string) bool
 }
 
 // RuntimeComposer defines the contract for the runtime orchestrator.
