@@ -185,7 +185,16 @@ func (conR *Reactor) OnStart(ctx context.Context) error {
 // OnStop implements BaseService by unsubscribing from events and stopping
 // state.
 func (conR *Reactor) OnStop() {
+	// stop all consensus goroutines with peers
+	for _, peerID := range conR.peerContexts.Keys() {
+		peerCtx := conR.peerContexts.Get(peerID).(*PeerContext)
+		conR.RemovePeer(peerCtx.peer, nil)
+	}
+
+	// stop event bus subscriptions
 	conR.unsubscribeFromBroadcastEvents()
+
+	// stop consensus state
 	if err := conR.conS.Stop(); err != nil {
 		conR.Logger.Error("Error stopping consensus state", "err", err)
 	}
@@ -440,6 +449,7 @@ func (conR *Reactor) InitPeer(peer *p2p.PeerImpl) *p2p.PeerImpl {
 
 		ctx, ctxCancel := context.WithCancel(context.Background())
 		peerCtx := &PeerContext{
+			peer:     peer,
 			ctx:      ctx,
 			cancelFn: ctxCancel,
 		}
@@ -503,7 +513,7 @@ func (conR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 	}
 }
 
-// RemovePeer is a noop.
+// RemovePeer calls the context cancel func stored for peer.
 func (conR *Reactor) RemovePeer(peer *p2p.PeerImpl, _ any) {
 	if !conR.IsRunning() {
 		return
@@ -1653,6 +1663,7 @@ func ReactorMetrics(metrics *Metrics) ReactorOption {
 
 // PeerContext contains a context.Context and its corresponding context.CancelFunc.
 type PeerContext struct {
+	peer     *p2p.PeerImpl
 	ctx      context.Context
 	cancelFn context.CancelFunc
 }
