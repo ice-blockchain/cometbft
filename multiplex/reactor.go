@@ -9,7 +9,10 @@ import (
 	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
 	"github.com/ice-blockchain/cometbft/config"
 	"github.com/ice-blockchain/cometbft/crypto/tmhash"
+	"github.com/ice-blockchain/cometbft/internal/cmap"
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
+	"github.com/ice-blockchain/cometbft/libs/service"
+	"github.com/ice-blockchain/cometbft/mempool"
 	mempl "github.com/ice-blockchain/cometbft/mempool"
 	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
 
@@ -45,6 +48,9 @@ type Reactor struct {
 	discoveryPool  *p2p.ConnectionPool
 	cometbftPool   *p2p.ConnectionPool
 
+	// announceRepl contains boolean values by ChainID (string) keys.
+	announceRepl *cmap.CMap
+
 	// Internal
 	logger cmtlog.Logger
 
@@ -73,6 +79,7 @@ func NewReactor(
 		resourceMgr:    resourceMgr,
 		replicationMgr: replicationMgr,
 		broadcastMgr:   broadcastMgr,
+		announceRepl:   cmap.NewCMap(),
 
 		logger: logger,
 	}
@@ -123,8 +130,29 @@ func (reactor *Reactor) SetRuntimePool(pool *p2p.ConnectionPool) {
 	reactor.cometbftPool = pool
 }
 
+// IdleManager returns the [types.IdleManager] instance.
 func (reactor *Reactor) IdleManager() types.IdleManager {
 	return reactor.runtimeMgr
+}
+
+// ShouldAnnounceReplication returns true if a completed replication
+// for chainID must be announced to peers.
+func (reactor *Reactor) ShouldAnnounceReplication(chainID string) bool {
+	if !reactor.announceRepl.Has(chainID) {
+		return false
+	}
+	v, ok := reactor.announceRepl.Get(chainID).(bool)
+	return ok && v
+}
+
+// SetAnnounceReplication updates the announcement flag for chainID.
+func (reactor *Reactor) SetAnnounceReplication(chainID string, announce bool) {
+	reactor.announceRepl.Set(chainID, announce)
+}
+
+// UnsetAnnounceReplication removes the announcement flag for chainID.
+func (reactor *Reactor) UnsetAnnounceReplication(chainID string) {
+	reactor.announceRepl.Delete(chainID)
 }
 
 // ----------------------------------------------------------------------------
@@ -172,6 +200,16 @@ func (*Reactor) RemovePeer(peer *cmtp2p.PeerImpl, _ any) {}
 func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
 	reactor.logger.Debug("Receive", "src", e.Src, "chId", e.ChannelID, "chainID", e.ChainID)
 
+	// preProcessInit is an internal helper function that initializes
+	// and starts a runtime for e.ChainID, i.e. mempool, consensus, etc.
+	preProcessInit := func(e cmtp2p.Envelope) {
+		reactor.runtimeMgr.InitRuntime(e.ChainID, []string{}, true)
+		reactor.runtimeMgr.StartRuntime(e.ChainID)
+
+		// Makes sure that we will tell peers about block-sync completion.
+		reactor.SetAnnounceReplication(e.ChainID, true)
+	}
+
 	// CAUTION:
 	//
 	// Due to the MempoolChannel also being added to multiplex Reactor,
@@ -179,24 +217,32 @@ func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
 	//
 	// TODO(midas): refactor this with BaseReactor.ForwardMessage("MEMPOOL", e).
 	if e.ChannelID == mempl.MempoolChannel && len(e.ChainID) > 0 {
-		mempoolReactor, ok := reactor.resourceMgr.Get(
+		mempoolService := reactor.resourceMgr.Get(
 			e.ChainID,
 			types.ServiceKeyMempoolReactor,
-		).(*mempl.Reactor)
-		if !ok || !mempoolReactor.IsRunning() {
-			reactor.runtimeMgr.InitRuntime(e.ChainID, []string{}, true)
-			reactor.runtimeMgr.StartRuntime(e.ChainID)
+		)
+		switch {
+		case mempoolService == nil:
+			preProcessInit(e)
+		case !mempoolService.(service.Service).IsRunning():
+			preProcessInit(e)
+		default:
 		}
 
-		// IMPORTANT:
-		//
+		// CAUTION:
 		// Forwards this message for processing to mempool.Reactor.
-		reactor.logger.Info("Forwarding Tx",
-			"memR", mempoolReactor,
-			"running", mempoolReactor.IsRunning(),
-			"msg", e.Message)
-		mempoolReactor.Receive(e)
-		return // Forwarded
+		if mempoolService = reactor.resourceMgr.Get(
+			e.ChainID,
+			types.ServiceKeyMempoolReactor,
+		); mempoolService != nil {
+			mempoolReactor := mempoolService.(*mempool.Reactor)
+			reactor.logger.Info("Forwarding Tx",
+				"memR", mempoolReactor,
+				"running", mempoolReactor.IsRunning(),
+				"msg", fmt.Sprintf("%X", e.Message))
+			mempoolReactor.Receive(e)
+			return // Forwarded
+		}
 	}
 
 	// Determine public source address from secret connection.
@@ -236,6 +282,9 @@ func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
 				)
 				return
 			}
+
+			// Makes sure that we will tell peers about block-sync completion.
+			reactor.SetAnnounceReplication(replRequest.ChainID, true)
 
 			// (2) IMPORTANT:
 			//
@@ -347,6 +396,16 @@ func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
 		case *mxp2p.Message_ChainReplicationComplete:
 			replComplete := extMsg.GetChainReplicationComplete()
 			reactor.logger.Debug("Received ChainReplicationComplete", "msg", replComplete)
+
+			// Dial the peer for CometBFT to permit faster consensus building.
+			if _, err := reactor.cometbftPool.Connector().Dial(sourceAddr); err != nil {
+				reactor.logger.Error(
+					"failed to process ChainReplicationComplete: error dialing source peer",
+					"chainId", replComplete.ChainID,
+					"err", err,
+				)
+			}
+			reactor.cometbftPool.SetPeerForChainID(sourceAddr.ID, replComplete.ChainID)
 
 			// NOTE: Don't dial back replication partner here, since we may
 			// approach runtime idling due to completion of the replication.

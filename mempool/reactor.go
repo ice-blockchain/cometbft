@@ -239,9 +239,7 @@ func (memR *Reactor) OnReset(ctx context.Context) error {
 	memR.batchesPendingIndex = cmap.NewCMap()
 	memR.ensuredActiveChains = cmap.NewCMap()
 
-	memR.Logger.Info("Mempool reactor service reset",
-		"chain_id", memR.ChainID,
-	)
+	memR.Logger.Info("Mempool reactor service reset")
 	return nil
 }
 
@@ -331,7 +329,7 @@ func (memR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 // Receive implements Reactor.
 // It adds any received transactions to the mempool.
 func (memR *Reactor) Receive(e p2p.Envelope) {
-	memR.Logger.Debug("Receive", "src", e.Src, "chId", e.ChannelID, "msg", e.Message)
+	memR.Logger.Debug("Receive", "src", e.Src, "chId", e.ChannelID, "msg", fmt.Sprintf("%X", e.Message))
 
 	if e.ChannelID == mxtypes.AckBroadcastChannel {
 		mxReactor := memR.Switch.GetMultiplexReactor()
@@ -619,7 +617,6 @@ func (memR *Reactor) clientAcceptTx(protoTxs []types.Tx) error {
 
 	// TODO(midas): remove debug logs
 	memR.Logger.Debug("Forward transaction batch to acceptor: AcceptBroadcastTx",
-		"chain_id", memR.ChainID,
 		"tx_batch", txHashes,
 	)
 
@@ -629,7 +626,6 @@ func (memR *Reactor) clientAcceptTx(protoTxs []types.Tx) error {
 	); err != nil {
 		memR.Logger.Error(
 			"Acceptor callback AcceptBroadcastTx rejected transaction batch",
-			"chain_id", memR.ChainID,
 			"tx_batch", txHashes,
 			"err", err,
 		)
@@ -873,11 +869,10 @@ func (memR *Reactor) sendChainReplicationComplete(
 	peersToSend := peerSet.Copy()
 
 	// TODO(midas): remove debug logs
-	memR.Logger.Debug("Sending ChainReplicationComplete to peers",
-		"from_id", myPeerID,
-		"num_peers", len(peersToSend),
+	memR.Logger.Debug("Now sending ChainReplicationComplete",
+		"from", myPeerID,
+		"numPeers", len(peersToSend),
 		"peers", peersToSend,
-		"chain_id", chainID,
 	)
 
 	var wg sync.WaitGroup
@@ -895,7 +890,6 @@ func (memR *Reactor) sendChainReplicationComplete(
 
 			if err := sendReplCompleteToPeer(myPeerID, peer); err != nil {
 				memR.Logger.Error("Failed to send ChainReplicationComplete",
-					"chain_id", chainID,
 					"from", memR.nodeKey.ID(),
 					"to", peer.ID(),
 					"err", err,
@@ -904,14 +898,6 @@ func (memR *Reactor) sendChainReplicationComplete(
 		}(p)
 	}
 	wg.Wait()
-
-	// TODO(midas): remove debug logs
-	memR.Logger.Debug("Done sending ChainReplicationComplete to peers",
-		"from_id", myPeerID,
-		"num_peers", len(peersToSend),
-		"peers", peersToSend,
-		"chain_id", chainID,
-	)
 
 	if memR.runtimeRegistry != nil {
 		// CAUTION: This runtime for ChainID *is not* the one that will be used

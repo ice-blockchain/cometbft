@@ -55,8 +55,7 @@ type Reactor struct {
 	conS    *State
 	nodeKey *p2p.NodeKey
 
-	msgStatusToPeers atomic.Bool
-	runtimeRegistry  mxtypes.IdleManager
+	runtimeRegistry mxtypes.IdleManager
 
 	waitSync atomic.Bool
 	eventBus *types.EventBus
@@ -103,7 +102,6 @@ func NewReactor(ctx context.Context, consensusState *State, waitSync bool, optio
 		option(conR)
 	}
 
-	conR.msgStatusToPeers.Store(false)
 	return conR
 }
 
@@ -140,11 +138,6 @@ func WithChainID(
 	return func(r *Reactor) {
 		r.ChainID = chainID
 	}
-}
-
-// SetSendStatusToPeer updates the atomic value of msgStatusToPeers bool.
-func (conR *Reactor) SetSendStatusToPeers(b bool) {
-	conR.msgStatusToPeers.Swap(b)
 }
 
 // GetState returns a pointer to the consensus state instance.
@@ -215,7 +208,7 @@ func (conR *Reactor) OnReset(ctx context.Context) error {
 // SwitchToConsensus switches from block sync or state sync mode to consensus
 // mode.
 func (conR *Reactor) SwitchToConsensus(state sm.State, skipWAL bool) {
-	conR.Logger.Info("SwitchToConsensus", "announce", conR.msgStatusToPeers.Load())
+	conR.Logger.Info("SwitchToConsensus")
 
 	// reset the state
 	func() {
@@ -254,28 +247,23 @@ conR:
 	}
 
 	// TODO(midas): consensus reactor to selectively send ChainReplicationComplete.
-	// TODO(midas): and remove msgStatusToPeers, also from StartConsensusInstance.
 
 	// If we received a ChainReplicationRequest for this ChainID, we should also
 	// report to the sender relay that the replication is complete.
 
-	// if multiplexReactor := conR.Switch.GetMultiplexReactor(); multiplexReactor != nil {
-	// 	type inlineCompletionAnnouncer interface {
-	// 		ShouldAnnounceReplication(chainID string) bool
-	// 		UnsetAnnounceReplication(chainID string)
-	// 	}
+	if multiplexReactor := conR.Switch.GetMultiplexReactor(); multiplexReactor != nil {
+		type inlineCompletionAnnouncer interface {
+			ShouldAnnounceReplication(chainID string) bool
+			UnsetAnnounceReplication(chainID string)
+		}
 
-	// 	// Use type assertion to access multiplex reactor methods.
-	// 	if mxR, ok := multiplexReactor.(inlineCompletionAnnouncer); ok {
-	// 		if mxR.ShouldAnnounceReplication(conR.ChainID) {
-	// 			conR.announceReplicationToPeers(conR.ChainID)
-	// 			mxR.UnsetAnnounceReplication(conR.ChainID)
-	// 		}
-	// 	}
-	// }
-
-	if conR.msgStatusToPeers.Load() {
-		go conR.announceReplicationToPeers(state.ChainID)
+		// Use type assertion to access multiplex reactor methods.
+		if mxR, ok := multiplexReactor.(inlineCompletionAnnouncer); ok {
+			if mxR.ShouldAnnounceReplication(conR.ChainID) {
+				conR.announceReplicationToPeers(conR.ChainID)
+				mxR.UnsetAnnounceReplication(conR.ChainID)
+			}
+		}
 	}
 
 	// TODO(midas): Complete the runtime activated in [mempool.Reactor#Receive]
@@ -314,9 +302,9 @@ func (conR *Reactor) announceReplicationToPeers(
 	peersToSend := peerSet.Copy()
 
 	// TODO(midas): remove debug logs
-	conR.Logger.Debug("Sending ChainReplicationComplete to peers",
-		"from_id", myPeerID,
-		"num_peers", len(peersToSend),
+	conR.Logger.Debug("Now sending ChainReplicationComplete",
+		"from", myPeerID,
+		"numPeers", len(peersToSend),
 		"peers", peersToSend,
 	)
 
@@ -343,13 +331,6 @@ func (conR *Reactor) announceReplicationToPeers(
 		}(p)
 	}
 	wg.Wait()
-
-	// TODO(midas): remove debug logs
-	conR.Logger.Debug("Done sending ChainReplicationComplete to peers",
-		"from_id", myPeerID,
-		"num_peers", len(peersToSend),
-		"peers", peersToSend,
-	)
 
 	if conR.runtimeRegistry != nil {
 		// CAUTION: This runtime for ChainID *is not* the one that will be used

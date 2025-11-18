@@ -170,9 +170,9 @@ func (router *packetDispatcher) Dispatch(
 
 	// TODO(midas): remove debug logs.
 	router.logger.Debug("packetDispatcher#Dispatch; dispatching...",
-		"target", target,
-		"msg", msg,
 		"chainId", packet.ChainID,
+		"target", target,
+		"msg", fmt.Sprintf("%X", packet.Data),
 	)
 
 	target.Receive(cmtp2p.Envelope{
