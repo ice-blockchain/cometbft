@@ -407,15 +407,17 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 			return
 		}
 
-		// We must dial back the source to send AckTransactionBroadcast.
-		// Creates a OUTBOUND peer from the INBOUND (dialing back).
-		if err := memR.ensureConnectionToPeer(e.Src); err != nil {
-			memR.Logger.Error("failed to dial back broadcast partner",
-				"chainId", memR.ChainID,
-				"numTxes", len(protoTxs),
-				"peer", e.Src,
-				"err", err)
-			// error MAY be ignored
+		if memR.dialerFn != nil {
+			// We must dial back the source to send AckTransactionBroadcast.
+			// Creates a OUTBOUND peer from the INBOUND (dialing back).
+			if err := memR.ensureConnectionToPeer(e.Src); err != nil {
+				memR.Logger.Debug("failed to dial back broadcast partner",
+					"chainId", memR.ChainID,
+					"numTxes", len(protoTxs),
+					"peer", e.Src,
+					"err", err)
+				// error MAY be ignored
+			}
 		}
 
 		// We must locally activate this ChainID for consensus routines.
@@ -461,10 +463,6 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 // messages. Creates a OUTBOUND peer.
 // See also: [multiplex.Reactor#GetRelayDialerForCometBFT].
 func (memR *Reactor) ensureConnectionToPeer(p *p2p.PeerImpl) error {
-	if memR.dialerFn == nil {
-		return fmt.Errorf("custom dialer function is not set for %s", memR.ChainID)
-	}
-
 	// dialerFn is an extension that permits to run a custom dialer.
 	if _, err := memR.dialerFn(memR.Switch, p, memR.ChainID); err != nil {
 		memR.Logger.Error("failed to dial peer with dialer extension",
@@ -768,7 +766,8 @@ func (memR *Reactor) broadcastTxRoutine(peer *p2p.PeerImpl) {
 			}
 
 			memR.Logger.Debug("Failed sending transaction to peer",
-				"tx", log.NewLazySprintf("%X", txHash), "peer", peer.ID())
+				"tx", log.NewLazySprintf("%X", txHash), "peer", peer.ID(),
+				"err", peer.GetError())
 
 			select {
 			case <-time.After(PeerCatchupSleepIntervalMS * time.Millisecond):
@@ -811,15 +810,15 @@ func (memR *Reactor) sendAckTransactionBroadcast(
 			},
 		}); !success {
 			return fmt.Errorf(
-				"could not send message to peer, sender: %s, recipient: %s",
-				string(fromID), string(toPeer.ID()))
+				"failed to send AckTransactionBroadcast to %s; got: %w",
+				string(toPeer.ID()), toPeer.GetError())
 		}
 		return nil
 	}
 
 	if peer == nil {
 		return fmt.Errorf(
-			"failed sending AckTransactionBroadcast, got empty peer for ChainID %s and txHash %v",
+			"failed to send AckTransactionBroadcast; got empty peer for ChainID %s and txHash %v",
 			string(memR.ChainID), txHashHex)
 	}
 
@@ -858,8 +857,8 @@ func (memR *Reactor) sendChainReplicationComplete(
 			},
 		}); !success {
 			return fmt.Errorf(
-				"could not send message to peer, sender: %s, recipient: %s",
-				string(fromID), string(toPeer.ID()))
+				"failed to send ChainReplicationComplete to %s; got: %w",
+				string(toPeer.ID()), toPeer.GetError())
 		}
 		return nil
 	}

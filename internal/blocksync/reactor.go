@@ -29,7 +29,7 @@ const (
 	// ask for best height every 10s.
 	statusUpdateIntervalSeconds = 10
 	// check if we should switch to consensus reactor.
-	switchToConsensusIntervalSeconds = 5
+	switchToConsensusIntervalSeconds = 1
 )
 
 type consensusReactor interface {
@@ -183,6 +183,10 @@ func (bcR *Reactor) SetBlockStore(store *store.BlockStore) {
 
 // OnStart implements service.Service.
 func (bcR *Reactor) OnStart(ctx context.Context) error {
+	netLogger := bcR.Logger.With("chainId", bcR.ChainID())
+	bcR.SetLogger(netLogger.With("module", "blocksync"))
+	bcR.pool.SetLogger(netLogger.With("module", "blockpool"))
+
 	if bcR.blockSync {
 		err := bcR.pool.Start()
 		if err != nil {
@@ -375,6 +379,13 @@ func (bcR *Reactor) Receive(e p2p.Envelope) {
 			},
 		})
 	case *bcproto.StatusResponse:
+		// TODO(midas): remove debug logs.
+		bcR.Logger.Debug("Received blocksync StatusResponse (Unverified)",
+			"peer", e.Src,
+			"base", msg.Base,
+			"height", msg.Height,
+		)
+
 		// Got a peer status. Unverified.
 		bcR.pool.SetPeerRange(e.Src.ID(), msg.Base, msg.Height)
 	case *bcproto.NoBlockResponse:

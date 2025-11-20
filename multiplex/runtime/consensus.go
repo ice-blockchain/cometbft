@@ -343,6 +343,7 @@ func (pool *ConsensusPool) Execute(chainID string) error {
 			r.Reset(pool.Context()) // allows re-start
 		}
 
+		r.SetSwitch(pool.cometbftSwitch)
 		if !r.IsRunning() {
 			if err := r.Start(); err != nil && err != service.ErrAlreadyStarted {
 				pool.logger.Error("Error starting reactor",
@@ -365,6 +366,10 @@ func (pool *ConsensusPool) Execute(chainID string) error {
 	// Mark peers active in CONSENSUS and BLOCKSYNC reactors.
 	peerSet := pool.cometbftSwitch.Peers(chainID)
 	for _, peer := range peerSet.Copy() {
+		if peer == nil {
+			continue
+		}
+
 		pool.cometbftSwitch.InitPeerForScope(peer, chainID)
 		pool.cometbftSwitch.AddPeerForScope(peer, chainID)
 	}
@@ -513,6 +518,9 @@ func (pool *ConsensusPool) makeNetworkMempoolReactor(
 		return nil // Nothing to do
 	}
 
+	netLogger := pool.logger.With("chainId", chainID)
+	memLogger := netLogger.With("module", "mempool")
+
 	extChainID := pool.runtimeComposer.UserChainID(chainID)
 	privValidator := pool.runtimeComposer.Validator(chainID)
 	runtimeConfig := pool.runtimeComposer.Config(chainID)
@@ -533,11 +541,10 @@ func (pool *ConsensusPool) makeNetworkMempoolReactor(
 		mempl.WithPreCheck(sm.TxPreCheck(stateMachine.Copy())),
 		mempl.WithPostCheck(sm.TxPostCheck(stateMachine.Copy())),
 	)
-	mempool.SetLogger(pool.logger.With("module", "mempool"))
+	mempool.SetLogger(memLogger)
 
 	// TODO(midas): remove debug logs.
-	pool.logger.Debug("ConsensusPool#makeNetworkMempoolReactor",
-		"chainId", chainID,
+	netLogger.Debug("ConsensusPool#makeNetworkMempoolReactor",
 		"config", runtimeConfig.Mempool,
 		"waitSync", shouldBlockSync,
 	)
@@ -570,6 +577,8 @@ func (pool *ConsensusPool) makeNetworkMempoolReactor(
 func (pool *ConsensusPool) makeNetworkEvidenceReactor(
 	chainID string,
 ) error {
+	netLogger := pool.logger.With("chainId", chainID)
+
 	evidenceDBService := pool.resourceMgr.Get(chainID, types.ServiceKeyDatabaseEvidence).(service.Service)
 	if err := helpers.EnsureStartDBService(pool.Context(), evidenceDBService); err != nil {
 		return fmt.Errorf(
@@ -599,6 +608,9 @@ func (pool *ConsensusPool) makeNetworkEvidenceReactor(
 		evidenceReactor.SetLogger(pool.logger.With("module", "evidence"))
 		evidenceReactor.SetSwitch(pool.getSwitch())
 
+		// TODO(midas): remove debug logs.
+		netLogger.Debug("ConsensusPool#makeNetworkEvidenceReactor")
+
 		pool.resourceMgr.Set(chainID, types.ServiceKeyEvidenceReactor, evidenceReactor)
 	}
 
@@ -609,6 +621,8 @@ func (pool *ConsensusPool) makeNetworkEvidenceReactor(
 func (pool *ConsensusPool) makeNetworkBlocksyncReactor(
 	chainID string,
 ) error {
+	netLogger := pool.logger.With("chainId", chainID)
+
 	stateStore := pool.runtimeComposer.StateStore(chainID)
 	blockStore := pool.runtimeComposer.BlockStore(chainID)
 	mempoolPtr := pool.runtimeComposer.Mempool(chainID)
@@ -623,7 +637,7 @@ func (pool *ConsensusPool) makeNetworkBlocksyncReactor(
 	if !pool.resourceMgr.Has(chainID, types.ServiceKeyBlockSyncReactor) {
 		blockExecutor := sm.NewBlockExecutor(
 			stateStore,
-			pool.logger.With("module", "state"),
+			netLogger.With("module", "state"),
 			pool.abciClient.Consensus(chainID),
 			mempoolPtr,
 			evidencePtr,
@@ -641,8 +655,14 @@ func (pool *ConsensusPool) makeNetworkBlocksyncReactor(
 			0, // offlineStateSyncHeight (state-sync disabled)
 			blocksync.WithChainID(chainID),
 		)
-		blockSyncReactor.SetLogger(pool.logger.With("module", "blocksync"))
+		blockSyncReactor.SetLogger(netLogger.With("module", "blocksync"))
 		blockSyncReactor.SetSwitch(pool.getSwitch())
+
+		// TODO(midas): remove debug logs.
+		netLogger.Debug("ConsensusPool#makeNetworkBlocksyncReactor",
+			"state", stateMachine.Copy(),
+			"waitSync", shouldBlockSync,
+		)
 
 		pool.resourceMgr.Set(chainID, types.InstanceKeyBlockExecutor, blockExecutor)
 		pool.resourceMgr.Set(chainID, types.ServiceKeyBlockSyncReactor, blockSyncReactor)
@@ -655,6 +675,9 @@ func (pool *ConsensusPool) makeNetworkBlocksyncReactor(
 func (pool *ConsensusPool) makeNetworkConsensusReactor(
 	chainID string,
 ) error {
+	netLogger := pool.logger.With("chainId", chainID)
+	conLogger := netLogger.With("module", "consensus")
+
 	runtimeConfig := pool.runtimeComposer.Config(chainID)
 	stateMachine := pool.runtimeComposer.StateMachine(chainID)
 	blockStore := pool.runtimeComposer.BlockStore(chainID)
@@ -678,12 +701,11 @@ func (pool *ConsensusPool) makeNetworkConsensusReactor(
 			evidencePtr,
 			cs.OfflineStateSyncHeight(0), // offlineStateSyncHeight (state-sync disabled)
 		)
-		consensusState.SetLogger(pool.logger.With("module", "consensus"))
+		consensusState.SetLogger(conLogger)
 		consensusState.SetPrivValidator(privValidator)
 
 		// TODO(midas): remove debug logs.
-		pool.logger.Debug("ConsensusPool#makeNetworkConsensusReactor",
-			"chainId", chainID,
+		netLogger.Debug("ConsensusPool#makeNetworkConsensusReactor",
 			"config", runtimeConfig.Consensus,
 			"waitSync", shouldBlockSync,
 		)
@@ -696,7 +718,7 @@ func (pool *ConsensusPool) makeNetworkConsensusReactor(
 			cs.WithIdleManager(pool.runtimeMgr),
 			cs.WithChainID(chainID),
 		)
-		consensusReactor.SetLogger(pool.logger.With("module", "consensus"))
+		consensusReactor.SetLogger(conLogger)
 		consensusReactor.SetSwitch(pool.getSwitch())
 
 		// services which will be publishing and/or subscribing for messages (events)

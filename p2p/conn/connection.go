@@ -87,6 +87,7 @@ Inbound message bytes are handled with an onReceive callback function.
 type MConnection struct {
 	service.BaseService
 
+	fromPeerId string
 	connPeerId string
 
 	// conn contains a SecretConnection.
@@ -175,6 +176,7 @@ func DefaultMConnConfig() MConnConfig {
 // NewMConnection wraps net.Conn and creates multiplex connection.
 func NewMConnection(
 	ctx context.Context,
+	fromId string,
 	peerId string,
 	conn net.Conn,
 	channelProvider ChannelProvider,
@@ -183,6 +185,7 @@ func NewMConnection(
 ) *MConnection {
 	return NewMConnectionWithConfig(
 		ctx,
+		fromId,
 		peerId,
 		conn,
 		channelProvider,
@@ -194,6 +197,7 @@ func NewMConnection(
 // NewMConnectionWithConfig wraps net.Conn and creates multiplex connection with a config.
 func NewMConnectionWithConfig(
 	ctx context.Context,
+	fromId string,
 	peerId string,
 	conn net.Conn,
 	channelProvider ChannelProvider,
@@ -206,6 +210,7 @@ func NewMConnectionWithConfig(
 	}
 
 	mconn := &MConnection{
+		fromPeerId:      fromId,
 		connPeerId:      peerId,
 		conn:            conn,
 		bufConnReader:   bufio.NewReaderSize(conn, minReadBufferSize),
@@ -249,6 +254,10 @@ func (c *MConnection) SocketAddr() net.Addr {
 
 func (c *MConnection) NumOpenChannels() uint32 {
 	return atomic.LoadUint32(&c.numOpenChannels)
+}
+
+func (c *MConnection) SourceID() string {
+	return c.fromPeerId
 }
 
 func (c *MConnection) PeerID() string {
@@ -474,7 +483,9 @@ func (c *MConnection) Send(chainID string, chID byte, msgBytes []byte) bool {
 		"chainID", chainID,
 		"channel", chID,
 		"mconn", c,
+		"connected", c.IsRunning(),
 		"msgBytes", log.NewLazySprintf("%X", msgBytes),
+		"queueSize", channel.loadSendQueueSize(),
 	)
 
 	// Send message to channel.

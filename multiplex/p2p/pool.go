@@ -653,6 +653,7 @@ func (pool *ConnectionPool) startRoutines(peer *cmtp2p.PeerImpl) (
 		"dispatcher", helpers.ReflectTypeName(pool.dispatcher))
 
 	mconn := cmtconn.NewMConnection(pool.Context(),
+		string(pool.nodeKey.ID()),
 		string(peer.ID()),
 		peer.Conn(),
 		pool.dispatcher,
@@ -711,7 +712,7 @@ func (pool *ConnectionPool) isPersistent(*cmtp2p.NetAddress) bool {
 
 // stopPeerForError removes a peer from the peer set after an error happened.
 func (pool *ConnectionPool) stopPeerForError(p *cmtp2p.PeerImpl, r any) {
-	pool.logger.Error("Stopping peer for error", "peer", p, "reason", r)
+	pool.logger.Error("Stopping peer for error", "peer", p, "err", p.GetError(), "reason", r)
 
 	pool.RemovePeer(p.ID())
 }

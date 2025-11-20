@@ -365,7 +365,7 @@ func (sw *Switch) AddPeerForScope(peer *PeerImpl, chainID string) {
 // If the peer is persistent, it will attempt to reconnect.
 // TODO: make record depending on reason.
 func (sw *Switch) StopPeerForError(peer *PeerImpl, reason any) {
-	sw.Logger.Error("Stopping peer for error", "peer", peer, "err", reason)
+	sw.Logger.Error("Stopping peer for error", "peer", peer, "err", peer.GetError(), "reason", reason)
 
 	if err := sw.pool.RemovePeer(peer.ID()); err != nil {
 		sw.Logger.Error("failed to remove peer",

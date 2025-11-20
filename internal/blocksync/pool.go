@@ -137,20 +137,22 @@ func (pool *BlockPool) OnReset(ctx context.Context) error {
 }
 
 func (pool *BlockPool) makeRequestersRoutine(ctx context.Context) {
-	for ctx.Err() == nil {
-		if !pool.IsRunning() {
-			return
-		}
-
-		// Check if we are within peerConnWait seconds of start time
-		// This gives us some time to connect to peers before starting a wave of requests
-		if time.Since(pool.startTime) < peerConnWait {
-			// Calculate the duration to sleep until peerConnWait seconds have passed since pool.startTime
-			sleepDuration := peerConnWait - time.Since(pool.startTime)
-			if ok := pool.WaitForInterval(sleepDuration); !ok {
-				return
-			}
-		}
+	for pool.Context().Err() == nil && ctx.Err() == nil {
+		// BREAKING(midas):
+		//
+		// We do not wait for peerConnWait before sending requests to peers,
+		// because we manually dial peers *before* block-sync is started;
+		// Thus making it obsolete to wait more time here.
+		//
+		// // Check if we are within peerConnWait seconds of start time
+		// // This gives us some time to connect to peers before starting a wave of requests
+		// if time.Since(pool.startTime) < peerConnWait {
+		// 	// Calculate the duration to sleep until peerConnWait seconds have passed since pool.startTime
+		// 	sleepDuration := peerConnWait - time.Since(pool.startTime)
+		// 	if ok := pool.WaitForInterval(sleepDuration); !ok {
+		// 		return
+		// 	}
+		// }
 
 		// NOTE(midas): non-blocking select on shutdown channel makes
 		// sure every time before handling a requester, we know to shutdown.
@@ -199,6 +201,8 @@ func (pool *BlockPool) WaitForInterval(duration time.Duration) bool {
 		select {
 		case <-time.After(duration):
 			return true
+		case <-pool.Context().Done():
+			return false
 		case <-pool.Quit():
 			return false
 		}
@@ -802,10 +806,7 @@ func (bpr *bpRequester) pickPeerAndSendRequest() {
 
 	var peer *bpPeer
 PICK_PEER_LOOP:
-	for bpr.Context().Err() == nil {
-		if !bpr.IsRunning() || !bpr.pool.IsRunning() {
-			return
-		}
+	for bpr.pool.Context().Err() == nil && bpr.Context().Err() == nil {
 		peer = bpr.pool.pickIncrAvailablePeer(bpr.height, secondPeerID)
 		if peer == nil {
 			bpr.Logger.Debug("No peers currently available; will retry shortly", "height", bpr.height)

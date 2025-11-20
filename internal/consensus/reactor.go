@@ -49,7 +49,7 @@ const (
 	//
 	// TODO(midas): may need a cleaner implementation given success-after-error.
 	// TODO(midas): allow overwrite with options helper.
-	defaultMaxErrorsBeforeDisconnect = 5
+	defaultMaxErrorsBeforeDisconnect = 50
 )
 
 // -----------------------------------------------------------------------------
