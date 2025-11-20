@@ -79,6 +79,11 @@ func (e errTooEarlyToDial) Error() string {
 //
 // Only accept pexAddrsMsg from peers we sent a corresponding pexRequestMsg too.
 // Only accept one pexRequestMsg every ~defaultEnsurePeersPeriod.
+//
+// BREAKING(midas):
+// We disable the PEX reactor's ensurePeersRoutine and RequestAddrs
+// calls because the list of relays may be used dynamically. The PEX
+// reactor is merely used to validate addresses and store in a book.
 type Reactor struct {
 	p2p.BaseReactor
 
@@ -254,18 +259,16 @@ func (r *Reactor) AddPeer(p *p2p.PeerImpl) {
 		// }
 	} else {
 		// inbound peer is its own source
-		addr, err := p.NodeInfo().NetAddress()
-		if err != nil {
-			r.Logger.Error("Failed to get peer NetAddress", "err", err, "peer", p)
-			return
-		}
+		addr := p.RemoteAddr()
+		id := p.ID()
+		netAddr := p2p.NewNetAddress(id, addr)
 
 		// Make it explicit that addr and src are the same for an inbound peer.
-		src := addr
+		src := netAddr
 
 		// add to book. dont RequestAddrs right away because
 		// we don't trust inbound as much - let ensurePeersRoutine handle it.
-		err = r.book.AddAddress(addr, src)
+		err := r.book.AddAddress(netAddr, src)
 		r.logErrAddrBook(err)
 	}
 }

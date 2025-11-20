@@ -424,7 +424,7 @@ func (mt *MultiplexTransport) acceptPeers() {
 					netAddr = NewNetAddress(id, addr)
 					if mt.Logger != nil {
 						mt.Logger.Debug("Handshake with peer took (inbound)",
-							"remote", addr,
+							"remote", netAddr,
 							"peerID", nodeInfo.ID(),
 							"duration", time.Since(hsStart),
 						)

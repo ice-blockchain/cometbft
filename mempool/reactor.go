@@ -433,10 +433,11 @@ func (memR *Reactor) Receive(e p2p.Envelope) {
 		memR.Switch.InitPeerForScope(e.Src, memR.ChainID)
 		memR.Switch.AddPeerForScope(e.Src, memR.ChainID)
 
+		txBatch := client.NewTransactionBatch(protoTxs)
 		if memR.WaitSync() {
-			// TODO(midas): fix bottleneck here, should not use only first tx,
-			// but instead it should use a hash of the envelope or batch.
-			txHash := string(types.Tx(protoTxs[0]).Hash())
+			// NOTE: This is using the transaction batch hash because it is
+			// possible that protoTxs contains more than one transaction from e.
+			txHash := strings.ToUpper(hex.EncodeToString(txBatch.Hash()))
 			memR.pendingMsgs.Set(txHash, e)
 
 			return
@@ -782,20 +783,29 @@ func (memR *Reactor) broadcastTxRoutine(peer *p2p.PeerImpl) {
 	}
 }
 
-// sendAckTransactionBroadcast sends a AckTransactionBroadcast message.
-// This object may be used to determine that a relay acknowledges
-// the receipt (and will process acceptance) of a transaction broadcast.
+// sendAckTransactionBroadcast sends AckTransactionBroadcast message(s).
 func (memR *Reactor) sendAckTransactionBroadcast(
 	peer *p2p.PeerImpl,
 	protoTxs [][]byte,
 ) error {
-	myPeerID := memR.nodeKey.ID()
-	txHash := types.Tx(protoTxs[0]).Hash()
-	txHashHex := strings.ToUpper(
-		hex.EncodeToString(txHash),
-	)
+	if peer == nil {
+		return fmt.Errorf(
+			"failed to send AckTransactionBroadcast; got empty peer for ChainID %s",
+			string(memR.ChainID))
+	}
 
-	sendToPeer := func(fromID p2p.ID, toPeer *p2p.PeerImpl) error {
+	myPeerID := memR.nodeKey.ID()
+
+	sendToPeer := func(fromID p2p.ID, toPeer *p2p.PeerImpl, txHash []byte) error {
+		// TODO(midas): remove debug logs
+		memR.Logger.Debug("Sending AckTransactionBroadcast to peer",
+			"from", fromID,
+			"to", toPeer.ID(),
+			"peer", toPeer,
+			"chainId", memR.ChainID,
+			"txHash", fmt.Sprintf("%X", txHash),
+		)
+
 		if success := toPeer.Send(memR.ChainID, p2p.Envelope{
 			ChainID:   memR.ChainID,
 			ChannelID: mxtypes.AckBroadcastChannel,
@@ -816,23 +826,17 @@ func (memR *Reactor) sendAckTransactionBroadcast(
 		return nil
 	}
 
-	if peer == nil {
-		return fmt.Errorf(
-			"failed to send AckTransactionBroadcast; got empty peer for ChainID %s and txHash %v",
-			string(memR.ChainID), txHashHex)
-	}
+	// IMPORTANT:
+	// This will send AckTransactionBroadcast for each transaction in a batch.
+	// i.e. The peer will receive multiple message if the batch has more txes.
+	for _, rawTx := range protoTxs {
+		txHash := types.Tx(rawTx).Hash()
 
-	// TODO(midas): remove debug logs
-	memR.Logger.Debug("Sending AckTransactionBroadcast to peer",
-		"from", myPeerID,
-		"to", peer.ID(),
-		"peer", peer,
-		"chainId", memR.ChainID,
-		"txHash", txHashHex,
-	)
-
-	if err := sendToPeer(myPeerID, peer); err != nil {
-		return err
+		// TODO(midas): improve concurrency here, there is no need for this
+		// message sending to happen on main thread, move it to a goroutine.
+		if err := sendToPeer(myPeerID, peer, txHash); err != nil {
+			return err
+		}
 	}
 
 	return nil

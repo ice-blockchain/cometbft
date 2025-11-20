@@ -486,6 +486,7 @@ func (c *MConnection) Send(chainID string, chID byte, msgBytes []byte) bool {
 		"connected", c.IsRunning(),
 		"msgBytes", log.NewLazySprintf("%X", msgBytes),
 		"queueSize", channel.loadSendQueueSize(),
+		"queueCap", channel.desc.SendQueueCapacity,
 	)
 
 	// Send message to channel.
@@ -1018,8 +1019,10 @@ func (ch *Channel) sendBytes(chainID string, bytes []byte) bool {
 		atomic.AddInt32(&ch.sendQueueSize, 1)
 		return true
 	case <-time.After(defaultSendTimeout):
+		ch.Logger.Error("failed to sendBytes; send timeout", "t", defaultSendTimeout)
 		return false
 	case <-ch.conn.Quit():
+		ch.Logger.Error("failed to sendBytes; MConnection quit")
 		return false
 	}
 }
