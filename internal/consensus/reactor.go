@@ -1054,10 +1054,7 @@ OUTER_LOOP:
 	for conR.Context().Err() == nil && peerCtx.ctx.Err() == nil {
 		// Manage disconnects from self or peer.
 		if !peer.IsRunning() || !conR.IsRunning() {
-			logger.Debug("Peer connection stopped; stopping gossipDataRoutine",
-				"peer", peer,
-				"ps", ps,
-			)
+			defer peerCtx.Cancel() // stop other gossip* routines.
 			return
 		}
 
@@ -1134,10 +1131,7 @@ OUTER_LOOP:
 	for conR.Context().Err() == nil && peerCtx.ctx.Err() == nil {
 		// Manage disconnects from self or peer.
 		if !peer.IsRunning() || !conR.IsRunning() {
-			logger.Debug("Peer connection stopped; stopping gossipVotesRoutine",
-				"peer", peer,
-				"ps", ps,
-			)
+			defer peerCtx.Cancel() // stop other gossip* routines.
 			return
 		}
 
@@ -1216,9 +1210,7 @@ OUTER_LOOP:
 	for conR.Context().Err() == nil && peerCtx.ctx.Err() == nil {
 		// Manage disconnects from self or peer.
 		if !peer.IsRunning() || !conR.IsRunning() {
-			logger.Debug("Peer connection stopped; stopping queryMaj23Routine",
-				"ps", ps,
-			)
+			defer peerCtx.Cancel() // stop other gossip* routines.
 			return
 		}
 
@@ -1701,6 +1693,10 @@ type PeerContext struct {
 	peer     *p2p.PeerImpl
 	ctx      context.Context
 	cancelFn context.CancelFunc
+}
+
+func (pc *PeerContext) Cancel() {
+	pc.cancelFn()
 }
 
 // PeerState contains the known state of a peer, including its connection and
