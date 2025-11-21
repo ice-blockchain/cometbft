@@ -330,10 +330,10 @@ func (pool *ConnectionPool) AddPeer(peer *cmtp2p.PeerImpl) error {
 		}
 	}
 
-	if !pool.peerConnections.Has(string(peer.ID())) {
-		pool.mtx.Lock()
-		defer pool.mtx.Unlock()
+	pool.mtx.Lock()
+	defer pool.mtx.Unlock()
 
+	if !pool.peerConnections.Has(string(peer.ID())) {
 		mconn, err := pool.startRoutines(peer)
 		if err != nil {
 			return fmt.Errorf("failed to AddPeer: %w", err)
@@ -510,12 +510,18 @@ func (pool *ConnectionPool) TryBroadcast(e cmtp2p.Envelope) error {
 func (pool *ConnectionPool) HasConnection(
 	peerID cmtp2p.ID,
 ) bool {
+	pool.mtx.Lock()
+	defer pool.mtx.Unlock()
+
 	return pool.peerConnections.Has(string(peerID))
 }
 
 // Connection returns the MConnection instance for peerID.
 func (pool *ConnectionPool) Connection(peerID cmtp2p.ID) *cmtconn.MConnection {
-	if !pool.HasConnection(peerID) {
+	pool.mtx.Lock()
+	defer pool.mtx.Unlock()
+
+	if !pool.peerConnections.Has(string(peerID)) {
 		return nil
 	}
 
@@ -689,7 +695,7 @@ func (pool *ConnectionPool) startRoutines(peer *cmtp2p.PeerImpl) (
 // stopRoutines stops the send and receive routines for peer.
 // The mutex must be locked by the caller.
 func (pool *ConnectionPool) stopRoutines(peer *cmtp2p.PeerImpl) error {
-	if !pool.HasConnection(peer.ID()) {
+	if !pool.peerConnections.Has(string(peer.ID())) {
 		return nil
 	}
 

@@ -189,3 +189,14 @@ type ErrCurrentlyDialingOrExistingAddress struct {
 func (e ErrCurrentlyDialingOrExistingAddress) Error() string {
 	return fmt.Sprintf("connection with %s has been established or dialed", e.Addr)
 }
+
+// ErrConnectionNotAvailable indicates that a [MConnection] is not available.
+type ErrConnectionNotAvailable struct {
+	PeerID ID
+}
+
+var _ error = (*ErrConnectionNotAvailable)(nil)
+
+func (e ErrConnectionNotAvailable) Error() string {
+	return fmt.Sprintf("missing MConnection for %v", e.PeerID)
+}

@@ -11,6 +11,7 @@ import (
 	cmtlog "github.com/ice-blockchain/cometbft/libs/log"
 	"github.com/ice-blockchain/cometbft/libs/service"
 	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
+	cmtconn "github.com/ice-blockchain/cometbft/p2p/conn"
 	"github.com/ice-blockchain/cometbft/types"
 )
 
@@ -266,8 +267,7 @@ func (conn *PeerConnector) Send(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 	peerLogger := conn.logger.With("self", string(conn.transport.NodeInfo().ID()))
 
 	if !conn.pool.HasConnection(dest) {
-		return fmt.Errorf(
-			"failed to send message; missing MConnection for peer %s", dest)
+		return cmtp2p.ErrConnectionNotAvailable{PeerID: dest}
 	}
 
 	msgBytes, err := conn.wrapMsgBytes(e.Message)
@@ -307,9 +307,9 @@ func (conn *PeerConnector) Send(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 func (conn *PeerConnector) TrySend(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 	peerLogger := conn.logger.With("self", string(conn.transport.NodeInfo().ID()))
 
-	if !conn.pool.HasConnection(dest) {
-		return fmt.Errorf(
-			"failed to send message; missing MConnection for peer %s", dest)
+	var mconn *cmtconn.MConnection
+	if mconn = conn.pool.Connection(dest); mconn == nil {
+		return cmtp2p.ErrConnectionNotAvailable{PeerID: dest}
 	}
 
 	msgBytes, err := conn.wrapMsgBytes(e.Message)
@@ -325,9 +325,6 @@ func (conn *PeerConnector) TrySend(dest cmtp2p.ID, e cmtp2p.Envelope) error {
 		dest,
 		e.ChainID,
 	)
-
-	// Retrieve the cmtconn.MConnection instance.
-	mconn := conn.pool.Connection(dest)
 
 	// TODO(midas): remove debug logs
 	peerLogger.Debug("PeerConnector#TrySend",
