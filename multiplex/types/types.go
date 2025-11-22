@@ -1,6 +1,8 @@
 package types
 
 import (
+	"context"
+
 	"github.com/cosmos/gogoproto/proto"
 
 	mxp2p "github.com/ice-blockchain/cometbft/api/cometbft/multiplex/v1"
@@ -13,6 +15,17 @@ import (
 	"github.com/ice-blockchain/cometbft/multiplex/client"
 	"github.com/ice-blockchain/cometbft/multiplex/helpers"
 )
+
+type (
+	PrivValidator = cmttypes.PrivValidator
+	EventBus      = cmttypes.EventBus
+	GenesisDoc    = cmttypes.GenesisDoc
+	Subscription  = cmttypes.Subscription
+	EventDataTx   = cmttypes.EventDataTx
+	Tx            = cmttypes.Tx
+)
+
+var EventQueryTx = cmttypes.EventQueryTx
 
 // IdleManager defines the contract for the runtime idle manager.
 type IdleManager interface {
@@ -61,6 +74,10 @@ type RuntimeManager interface {
 	Composer() RuntimeComposer
 	// ConsensusPool returns the consensus pool.
 	ConsensusPool() ConsensusHandler
+	// BroadcastPool returns the broadcast manager.
+	BroadcastPool() BroadcastManager
+	// ReplicationPool returns the replication manager.
+	ReplicationPool() ReplicationManager
 
 	// AddRuntime should add a genesisDoc for chainID.
 	AddRuntime(chainID string, genesisDoc cmttypes.GenesisDoc) error
@@ -247,6 +264,9 @@ type BroadcastManager interface {
 
 	// WaitAccepted blocks the thread until txHash has 2/3+1 ACK messages.
 	WaitAccepted(txHash string) bool
-	// WaitIndexed blocks the thread until txHash got indexed locally.
+	// WaitIndexed blocks the thread until txHash gets indexed, uses EventBus.
 	WaitIndexed(txHash string) bool
+
+	// FindIndexed blocks the thread until txHash has been indexed, uses CMap store.
+	FindIndexed(ctx context.Context, txHash string) bool
 }

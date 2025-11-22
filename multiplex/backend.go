@@ -366,6 +366,15 @@ func (b *MultiplexBackend) IdleManager() types.IdleManager {
 	return b.runtimeRegistry
 }
 
+// RuntimeComposer returns a node composer to orchestrate services.
+func (b *MultiplexBackend) RuntimeComposer() types.RuntimeComposer {
+	if b.runtimeRegistry == nil {
+		return nil
+	}
+
+	return b.runtimeRegistry.Composer()
+}
+
 // Discovery returns the switch listening on `DiscoveryPort`.
 func (b *MultiplexBackend) Discovery() *cmtp2p.Switch {
 	b.mtx.Lock()

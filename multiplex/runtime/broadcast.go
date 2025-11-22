@@ -445,7 +445,7 @@ func (mgr *BroadcastPool) WaitAccepted(txHash string) bool {
 	return mgr.doneAcceptedChs.Has(txHash)
 }
 
-// WaitIndexed blocks the thread until txHash got indexed locally
+// WaitIndexed blocks the thread for timeoutIndex or until txHash got indexed.
 func (mgr *BroadcastPool) WaitIndexed(txHash string) bool {
 	txIndexedCh := mgr.Indexed(txHash)
 
@@ -470,6 +470,27 @@ func (mgr *BroadcastPool) WaitIndexed(txHash string) bool {
 	}
 
 	return mgr.doneIndexedChs.Has(txHash)
+}
+
+// FindIndexed blocks the thread for timeoutIndex or until doneIndexedChs has
+// been set for txHash, i.e. after the transaction got indexed.
+func (mgr *BroadcastPool) FindIndexed(ctx context.Context, txHash string) bool {
+	for mgr.Context().Err() == nil && ctx.Err() == nil {
+		if ok := mgr.doneIndexedChs.Has(txHash); ok {
+			return true
+		}
+
+		select {
+		case <-time.After(500 * time.Millisecond):
+			continue
+		case <-ctx.Done():
+			return false
+		case <-mgr.Context().Done():
+			return false
+		}
+	}
+
+	return false
 }
 
 // ----------------------------------------------------------------------------
@@ -519,33 +540,28 @@ func (mgr *BroadcastPool) indexerRoutine(chainID string) {
 		mgr.eventSubscribers.Delete(chainID)
 	}(subsName)
 
-	for mgr.Context().Err() == nil {
+	for mgr.Context().Err() == nil && txsSub.Err() == nil {
 		select {
-		case tx, ok := <-txsSub.Out():
-			if !ok {
-				return
-			}
-
+		case tx := <-txsSub.Out():
 			// Interpret received transaction result
 			txResult := tx.Data().(cmttypes.EventDataTx).TxResult
 			rawTx := cmttypes.Tx(txResult.Tx)
 			txHash := bytesToHex(rawTx.Hash())
 
 			if mgr.doneIndexedChs.Has(txHash) {
-				return // Already indexed, stop here.
+				continue
 			}
 
-			mgr.mtx.Lock()
-			defer mgr.mtx.Unlock()
-
 			// Close the "Completion" channel when we have 2/3+1 responses (self included).
+			mgr.mtx.Lock()
 			if !mgr.doneIndexedChs.Has(txHash) {
 				if ch := mgr.Indexed(txHash); ch != nil {
 					mgr.doneIndexedChs.Set(txHash, true)
 					close(ch)
 				}
 			}
-			return
+			mgr.mtx.Unlock()
+			continue
 		case <-cancelTimer.C:
 			return
 		case <-mgr.goShutdownCh:

@@ -322,6 +322,16 @@ func (reg *Registry) ShouldBlockSync(chainID string) bool {
 	return reg.consensusPool.shouldBlockSync.Has(chainID)
 }
 
+// BroadcastPool returns the broadcast manager.
+func (reg *Registry) BroadcastPool() types.BroadcastManager {
+	return reg.broadcastMgr
+}
+
+// ReplicationPool returns the replication manager.
+func (reg *Registry) ReplicationPool() types.ReplicationManager {
+	return reg.replicationMgr
+}
+
 // ----------------------------------------------------------------------------
 // IdleManager API implementation
 

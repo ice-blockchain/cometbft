@@ -45,6 +45,8 @@ type Server interface {
 	// CometBFT returns the switch listening on `DiscoveryPort+2`.
 	CometBFT() *p2p.Switch
 
+	// RuntimeComposer returns a node composer to orchestrate services.
+	RuntimeComposer() RuntimeComposer
 	// RuntimeManager returns a node runtime manager, i.e. StartRuntime.
 	RuntimeManager() RuntimeManager
 	// IdleManager returns a node idle manager, i.e. OnActivate, OnIdle.
