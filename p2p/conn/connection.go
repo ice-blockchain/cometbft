@@ -1006,6 +1006,12 @@ func (ch *Channel) Desc() *ChannelDescriptor {
 	return ch.desc
 }
 
+func (ch *Channel) UpdateConn(c *MConnection) {
+	ch.mtx.Lock()
+	ch.conn = c
+	ch.mtx.Unlock()
+}
+
 // Queues message to send to this channel.
 // Times out (and returns false) after defaultSendTimeout.
 // Goroutine-safe.

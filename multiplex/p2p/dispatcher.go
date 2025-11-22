@@ -282,6 +282,7 @@ func (router *packetDispatcher) GetChannels(
 	channels := make([]*cmtp2p.Channel, len(chDescs))
 	if hasChannelsForPeer {
 		for _, channel := range channelsIndex {
+			channel.UpdateConn(mconn) // update MConn to reflect active conn.
 			channels = append(channels, channel)
 		}
 		return channels
@@ -296,7 +297,7 @@ func (router *packetDispatcher) GetChannels(
 	// Create new Channel instances for this MConnection.
 	connLogger := router.logger.With("conn", mconn)
 	for chID, chDesc := range chDescs {
-		channel := cmtconn.NewChannel(mconn, chDesc)
+		channel := cmtconn.NewChannel(mconn, chDesc) // mconn reflects active conn.
 		channel.SetLogger(connLogger)
 
 		router.channelsIndex[mconn.PeerID()][chID] = channel
@@ -310,13 +311,8 @@ func (router *packetDispatcher) GetChannel(
 	mconn *cmtconn.MConnection,
 	chID byte,
 ) *cmtp2p.Channel {
-	router.mtx.Lock()
-	_, hasChannelsForPeer := router.channelsIndex[mconn.PeerID()]
-	router.mtx.Unlock()
-
-	if !hasChannelsForPeer {
-		router.GetChannels(mconn)
-	}
+	// Read/Update/Init channels first (*MConnection).
+	router.GetChannels(mconn)
 
 	router.mtx.Lock()
 	defer router.mtx.Unlock()

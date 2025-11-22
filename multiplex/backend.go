@@ -225,12 +225,12 @@ func NewServer(
 	//
 	// NOTE(midas): For a production environment, it is recommended to set
 	// this timeout to 0 using `ReplicationPoolWithReplicationTimeout(0)`.
-	resourceMgr := runtime.NewResourceManager(ctx, nodeLogger)
-	replicationMgr := runtime.NewReplicationManager(ctx, nodeLogger,
+	resourceMgr := runtime.NewResourceManager(ctx, nodeLogger.With("module", "mx/resources"))
+	replicationMgr := runtime.NewReplicationManager(ctx, nodeLogger.With("module", "mx/replication"),
 		runtime.ReplicationPoolWithAcceptanceTimeout(runtime.DefaultReplicationResponseTimeout), // 10s
 		runtime.ReplicationPoolWithReplicationTimeout(runtime.DefaultReplicationTimeout),        // 2h
 	)
-	broadcastMgr := runtime.NewBroadcastManager(ctx, resourceMgr, nodeLogger,
+	broadcastMgr := runtime.NewBroadcastManager(ctx, resourceMgr, nodeLogger.With("module", "mx/broadcast"),
 		runtime.BroadcastPoolWithTransactionTimeout(runtime.DefaultTransactionTimeout),   // 60s
 		runtime.BroadcastPoolWithAckBroadcastTimeout(runtime.DefaultAckBroadcastTimeout), // 10s
 	)
@@ -243,7 +243,7 @@ func NewServer(
 		resourceMgr,
 		replicationMgr,
 		broadcastMgr,
-		nodeLogger.With("module", "multiplex"),
+		nodeLogger.With("module", "mx/reactor"),
 	)
 
 	backend := &MultiplexBackend{
@@ -263,7 +263,7 @@ func NewServer(
 		knownRPCRoutes: map[string]*rpcserver.RPCFunc{},
 		knownRelayInfo: map[string]*mxrpc.RPCResultRelayInfo{},
 
-		logger:     nodeLogger.With("module", "multiplex"),
+		logger:     nodeLogger.With("module", "mx/backend"),
 		backendCfg: nodeConfig,
 	}
 

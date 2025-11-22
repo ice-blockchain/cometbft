@@ -79,7 +79,7 @@ func (b *MultiplexBackend) Init() error {
 // InitSnapsAppClient initializes the local SnapsApp application.
 func (b *MultiplexBackend) InitSnapsAppClient() error {
 	b.snapsApp = snapsapp.NewSnapsApplication(b,
-		b.logger.With("module", "snapsapp"),
+		b.logger.With("module", "mx/snapsapp"),
 		snapsapp.WithAcceptor(b.acceptor),
 	)
 
@@ -90,14 +90,14 @@ func (b *MultiplexBackend) InitSnapsAppClient() error {
 		clientCreator,
 		proxy.PrometheusMetrics(metricsName),
 	)
-	b.chainConns.SetLogger(b.logger.With("module", "proxy"))
+	b.chainConns.SetLogger(b.logger.With("module", "mx/snapsapp"))
 
 	return nil
 }
 
 // InitDiscoverySwitch initializes the Discovery event switch.
 func (b *MultiplexBackend) InitDiscoverySwitch() error {
-	discoveryLogger := b.logger.With("module", "discovery")
+	discoveryLogger := b.logger.With("module", "mx/discovery")
 
 	// Prepare the discovery NodeInfo and connection manager.
 	b.discoveryInfo = p2p.NewMultiNetworkNodeInfoWithConfig(
@@ -133,7 +133,7 @@ func (b *MultiplexBackend) InitDiscoverySwitch() error {
 
 // InitCometBFTSwitch initializes the CometBFT event switch.
 func (b *MultiplexBackend) InitCometBFTSwitch() error {
-	cometLogger := b.logger.With("module", "cometbft")
+	cometLogger := b.logger.With("module", "mx/cometbft")
 
 	// Prepare the CometBFT NodeInfo and connection manager.
 	b.cometbftInfo = p2p.NewMultiNetworkNodeInfoWithConfig(
@@ -179,11 +179,11 @@ func (b *MultiplexBackend) InitRuntimeManager() error {
 		b.resourceMgr,
 		b.broadcastMgr,
 		b.replicationMgr,
-		b.logger.With("module", "runtime"),
+		b.logger.With("module", "mx/runtime"),
 		b.runtimeOptions...,
 	)
 	b.replayPool = replay.NewReplayPool(b.Context(),
-		b.logger.With("module", "replay"),
+		b.logger.With("module", "mx/replay"),
 		replay.ReplayPoolThreshold(10),
 		replay.ReplayPoolAcceptor(b.acceptor),
 	)
@@ -289,7 +289,7 @@ func (b *MultiplexBackend) StartRPCServerDiscovery() error {
 	rpcConf.MaxOpenConnections = nodeRpc.MaxOpenConnections
 
 	mux := http.NewServeMux()
-	rpcLogger := b.logger.With("module", "rpc-server")
+	rpcLogger := b.logger.With("module", "mx/discovery/rpc")
 
 	// Enabled procedures:
 	// - "info": POST /info to retrieve RelayInfo.
@@ -371,7 +371,7 @@ func (b *MultiplexBackend) StartP2PServerCometBFT() error {
 // Creates a transport listening on `DiscoveryPort+2`.
 func (b *MultiplexBackend) StartRPCServerCometBFT() error {
 	rpcRelayAddr, _ := helpers.NewRelayAddress(b.relayAddr.AddressForLightRPC())
-	rpcLogger := b.logger.With("module", "rpc-server")
+	rpcLogger := b.logger.With("module", "mx/cometbft/rpc")
 	wmLogger := rpcLogger.With("protocol", "websocket")
 
 	// TODO(midas): remove debug logs
