@@ -335,12 +335,10 @@ func (app *SnapsApp) FinalizeBlock(
 	// we are finalizing a block received through blocksync. In this case,
 	// instead of executing the CommitBroadcastTx callback, we forward the
 	// transaction batch to the replay pool to execute ReplayBroadcastTxBatch.
-	app.mtx.RLock()
-	isReplayMode := false
-	if workingHeight, ok := app.workingHeights[chainID]; ok {
-		isReplayMode = workingHeight != req.Height
+	var isReplayMode, ok bool
+	if isReplayMode, ok = ctx.Value(client.KeyReplayMode).(bool); !ok {
+		isReplayMode = false
 	}
-	app.mtx.RUnlock()
 
 	// Forward the transaction batch to an Acceptor if any is available.
 	if app.txAcceptor != nil && len(processedTxs) > 0 {

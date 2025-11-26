@@ -59,6 +59,8 @@ type Service interface {
 
 	// Quit returns a channel, which is closed once service is stopped.
 	Quit() <-chan struct{}
+	// Wait waits for a selection on the quit channel (or closing message).
+	Wait()
 
 	// String representation of the service
 	String() string

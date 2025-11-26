@@ -799,7 +799,10 @@ func ExecCommitBlock(
 ) ([]byte, error) {
 	commitInfo := buildLastCommitInfoFromStore(block, store, initialHeight)
 
-	resp, err := appConnConsensus.FinalizeBlock(context.TODO(), &abci.FinalizeBlockRequest{
+	// ephemeral context with replay mode enabled (1 commit)
+	replayCtx := context.WithValue(context.TODO(), client.KeyReplayMode, true)
+
+	resp, err := appConnConsensus.FinalizeBlock(replayCtx, &abci.FinalizeBlockRequest{
 		Hash:               block.Hash(),
 		NextValidatorsHash: block.NextValidatorsHash,
 		ProposerAddress:    block.ProposerAddress,

@@ -9,8 +9,9 @@ type ContextKey string
 
 // We will attach a user address and ChainID inside the context.
 const (
-	KeyAddress ContextKey = "Address"
-	KeyChainID ContextKey = "ChainID"
+	KeyAddress    ContextKey = "Address"
+	KeyChainID    ContextKey = "ChainID"
+	KeyReplayMode ContextKey = "IsReplay"
 )
 
 // Transaction defines a wrapper for data attached to a fingerprint.

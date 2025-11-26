@@ -198,12 +198,12 @@ func (*Reactor) RemovePeer(peer *cmtp2p.PeerImpl, _ any) {}
 
 // Receive implements cmtp2p.Reactor.
 func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
-	reactor.logger.Debug("Receive", "src", e.Src, "chId", e.ChannelID, "chainID", e.ChainID)
+	reactor.logger.Debug("Receive", "src", e.Src, "chId", e.ChannelID, "chainID", e.ChainID, "msg", fmt.Sprintf("%X", e.Message))
 
 	// preProcessInit is an internal helper function that initializes
 	// and starts a runtime for e.ChainID, i.e. mempool, consensus, etc.
 	preProcessInit := func(e cmtp2p.Envelope) {
-		reactor.runtimeMgr.EnableBlockSync(e.ChainID)
+		// reactor.runtimeMgr.EnableBlockSync(e.ChainID)
 		reactor.runtimeMgr.InitRuntime(e.ChainID, []string{}, true)
 		reactor.runtimeMgr.StartRuntime(e.ChainID)
 
