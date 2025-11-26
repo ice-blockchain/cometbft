@@ -15,6 +15,7 @@ import (
 	"github.com/ice-blockchain/cometbft/libs/service"
 	cmtp2p "github.com/ice-blockchain/cometbft/p2p"
 	"github.com/ice-blockchain/cometbft/proxy"
+	sm "github.com/ice-blockchain/cometbft/state"
 	cmttypes "github.com/ice-blockchain/cometbft/types"
 
 	"github.com/ice-blockchain/cometbft/multiplex/client"
@@ -666,6 +667,16 @@ func (reg *Registry) Resources() types.ResourceManager {
 	return reg.resourceMgr
 }
 
+// Composer returns the runtime composer instance.
+func (reg *Registry) Composer() types.RuntimeComposer {
+	return reg.runtimeComposer
+}
+
+// ConsensusPool returns the consensus pool.
+func (reg *Registry) ConsensusPool() types.ConsensusHandler {
+	return reg.consensusPool
+}
+
 // Validators returns a map of [cmttypes.PrivValidator] by ChainID.
 func (reg *Registry) Validators() (out map[string]cmttypes.PrivValidator) {
 	privValMultiplex := reg.Resources().Multiplex(types.InstanceKeyPrivValidator)
@@ -676,14 +687,16 @@ func (reg *Registry) Validators() (out map[string]cmttypes.PrivValidator) {
 	return // out
 }
 
-// Composer returns the runtime composer instance.
-func (reg *Registry) Composer() types.RuntimeComposer {
-	return reg.runtimeComposer
-}
-
-// ConsensusPool returns the consensus pool.
-func (reg *Registry) ConsensusPool() types.ConsensusHandler {
-	return reg.consensusPool
+// BlockHeights returns a map of uint64 block heights by ChainID.
+func (reg *Registry) BlockHeights() (out map[string]uint64) {
+	stateMultiplex := reg.Resources().Multiplex(types.InstanceKeyStateMachine)
+	out = make(map[string]uint64, len(stateMultiplex))
+	for chainID, instance := range stateMultiplex {
+		if stateMachine, ok := instance.GetInstance().(sm.State); ok {
+			out[chainID] = uint64(stateMachine.LastBlockHeight)
+		}
+	}
+	return // out
 }
 
 // AddRuntime should add a genesisDoc for chainID.
@@ -817,6 +830,37 @@ func (reg *Registry) IsRuntimeInitialized(chainID string) bool {
 	defer reg.mtx.Unlock()
 
 	return reg.runtimeComposer.IsComposed(chainID)
+}
+
+// LoadStateMachine forces reading the state database to load the state
+// machine, and may be used to read the offline state of a relay.
+func (reg *Registry) LoadStateMachine(chainID string) (sm.State, error) {
+	// TODO(midas): remove debug logs
+	reg.logger.Debug("Registry#LoadStateMachine", "chainId", chainID)
+
+	reg.runtimeComposer.mtx.Lock()
+	defer reg.runtimeComposer.mtx.Unlock()
+
+	var (
+		stateMachine sm.State
+		stateErr     error
+	)
+
+	// Create helpers.DBService instances for this ChainID.
+	if stateErr = reg.runtimeComposer.makeNetworkDatabases(chainID); stateErr != nil {
+		return stateMachine, fmt.Errorf(
+			"failed to open databases for %s: %w", chainID, stateErr)
+	}
+
+	// Try loading from database if possible.
+	if stateMachine, stateErr = reg.runtimeComposer.loadNetworkStateMachine(
+		chainID,
+	); stateErr != nil {
+		return stateMachine, fmt.Errorf(
+			"failed to load state machine from database for %s: %w", chainID, stateErr)
+	}
+
+	return stateMachine, nil
 }
 
 // ----------------------------------------------------------------------------

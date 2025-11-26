@@ -640,7 +640,10 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 			}
 
 			// ... should apply vote after some time to catch-up.
-			if !newRound && rs.Height != ps.PRS.Height {
+			shouldStallApply := !newRound &&
+				ps.PRS.Step > cstypes.RoundStepPropose && // peer is voting
+				ps.PRS.Height > rs.Height // consensus is lagging
+			if shouldStallApply {
 				if ok := conR.sleepOrQuit(peerCtx, defaultAllowStaleStateDuration); !ok {
 					return
 				}
@@ -728,12 +731,8 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 				)
 			}
 
-			// ... should apply block part after some time to catch-up.
-			if !newRound && rs.Height != ps.PRS.Height {
-				if ok := conR.sleepOrQuit(peerCtx, defaultAllowStaleStateDuration); !ok {
-					return
-				}
-			}
+			// NOTE: we don't stall applying block parts.
+
 			ps.SetHasProposalBlockPart(msg.Height, msg.Round, int(msg.Part.Index))
 			conR.Metrics.BlockParts.With("peer_id", string(ps.peer.ID())).Add(1)
 			conR.conS.peerMsgQueue <- msgInfo{msg, ps.peer.ID(), time.Time{}}
@@ -769,7 +768,10 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 			}
 
 			// ... should apply vote after some time to catch-up.
-			if !newRound && rs.Height != ps.PRS.Height {
+			shouldStallApply := !newRound &&
+				ps.PRS.Step > cstypes.RoundStepPropose && // peer is voting
+				ps.PRS.Height > rs.Height // consensus is lagging
+			if shouldStallApply {
 				if ok := conR.sleepOrQuit(peerCtx, defaultAllowStaleStateDuration); !ok {
 					return
 				}

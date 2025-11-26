@@ -49,9 +49,14 @@ func (b *MultiplexBackend) GetRelayInfo(relayID cmtp2p.ID) *mxrpc.RPCResultRelay
 func (b *MultiplexBackend) GetLocalNetworkHeights(
 	userAddress string,
 	transactions ...client.Transaction,
-) (requiredNetworks []string, mustCreateNetworks []string) {
+) (
+	requiredNetworks []string,
+	mustCreateNetworks []string,
+	lastBlockHeights map[string]uint64,
+) {
 	requiredNetworks = []string{}
 	mustCreateNetworks = []string{}
+	lastBlockHeights = b.GetLastBlockHeights()
 
 	uniqueNetworks := map[string]bool{}
 	unknownNetworks := map[string]bool{}
@@ -59,10 +64,19 @@ func (b *MultiplexBackend) GetLocalNetworkHeights(
 		chainID := client.GetChainID(userAddress, tx.Fingerprint)
 		uniqueNetworks[chainID] = true
 
+		// If GetLastBlockHeights() already has this ChainID
+		if h, ok := lastBlockHeights[chainID]; ok && h > 0 {
+			continue
+		}
+
 		// If we don't know this network, we either need a background-sync
 		// or we must create a new network if other relays also don't know it.
-		if !b.HasNetwork(chainID) {
+		if stateMachine, err := b.runtimeRegistry.LoadStateMachine(
+			chainID,
+		); err != nil || stateMachine.IsEmpty() {
 			unknownNetworks[chainID] = true
+		} else {
+			lastBlockHeights[chainID] = uint64(stateMachine.LastBlockHeight)
 		}
 	}
 
@@ -75,7 +89,7 @@ func (b *MultiplexBackend) GetLocalNetworkHeights(
 		requiredNetworks = append(requiredNetworks, requiredChainID)
 	}
 
-	return requiredNetworks, mustCreateNetworks
+	return requiredNetworks, mustCreateNetworks, lastBlockHeights
 }
 
 // GetLocalNetworkValidators initializes validators for networks and returns a map
@@ -411,6 +425,7 @@ func (b *MultiplexBackend) ApplyFilterReplRequestRelays(
 	requiredNetworks []string,
 	relays []*helpers.RelayAddress,
 	chainRelays map[string][]*helpers.RelayAddress,
+	lastBlockHeights map[string]uint64,
 ) map[string][]*helpers.RelayAddress {
 	// Makes sure to avoid mistakenly including self.
 	relaysWithoutSelf := []*helpers.RelayAddress{}
@@ -422,15 +437,29 @@ func (b *MultiplexBackend) ApplyFilterReplRequestRelays(
 
 	catchupRelays := map[string][]*helpers.RelayAddress{}
 	for chainID, relaysByChain := range chainRelays {
-		// Did all relays report to know this ChainID?
-		if len(relaysByChain) >= len(relaysWithoutSelf) {
+		syncdRelays := make([]*helpers.RelayAddress, len(relaysByChain))
+		copy(syncdRelays, relaysByChain)
+
+		localBlockHeight := lastBlockHeights[chainID]
+		if localBlockHeight > 0 {
+			syncdRelays = slices.DeleteFunc(syncdRelays, func(a *helpers.RelayAddress) bool {
+				if info := b.GetRelayInfo(a.ID()); info != nil {
+					remoteBlockHeight := info.LastBlockHeights[chainID]
+					return localBlockHeight != remoteBlockHeight
+				}
+				return false
+			})
+		}
+
+		// Did all relays report to know this ChainID + are syncd?
+		if len(syncdRelays) >= len(relaysWithoutSelf) {
 			catchupRelays[chainID] = nil
 			continue
 		}
 
-		// Build a (searchable) slice of relay IDs
+		// Build a (searchable) slice of relay IDs (which are syncd).
 		relayIdsByChain := []string{}
-		for _, relayAddr := range relaysByChain {
+		for _, relayAddr := range syncdRelays {
 			if relayAddr.ID() != b.nodeKey.ID() {
 				relayIdsByChain = append(relayIdsByChain, string(relayAddr.ID()))
 			}

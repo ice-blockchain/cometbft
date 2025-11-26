@@ -189,7 +189,7 @@ type RelayHelpers interface {
 	GetLocalNetworkHeights(
 		userAddress string,
 		transactions ...client.Transaction,
-	) ([]string, []string)
+	) ([]string, []string, map[string]uint64)
 
 	// GetValidatorsByNetwork should find the supported networks, then map each
 	// of the ChainID to a slice of validator public keys.
@@ -228,6 +228,7 @@ type BroadcastHelpers interface {
 		requiredNetworks []string,
 		relays []*helpers.RelayAddress,
 		chainRelays map[string][]*helpers.RelayAddress,
+		lastBlockHeights map[string]uint64,
 	) map[string][]*helpers.RelayAddress
 
 	// ApplyFilterAckTransactionRelayIds should filter relay IDs and return a

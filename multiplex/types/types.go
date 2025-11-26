@@ -68,8 +68,6 @@ type RuntimeManager interface {
 
 	// Resources returns the [ResourceManager].
 	Resources() ResourceManager
-	// Validators returns a map of [cmttypes.PrivValidator] by ChainID.
-	Validators() map[string]cmttypes.PrivValidator
 	// Composer returns the runtime composer instance.
 	Composer() RuntimeComposer
 	// ConsensusPool returns the consensus pool.
@@ -78,6 +76,11 @@ type RuntimeManager interface {
 	BroadcastPool() BroadcastManager
 	// ReplicationPool returns the replication manager.
 	ReplicationPool() ReplicationManager
+
+	// Validators returns a map of [cmttypes.PrivValidator] by ChainID.
+	Validators() map[string]cmttypes.PrivValidator
+	// BlockHeights returns a map of uint64 block heights by ChainID.
+	BlockHeights() map[string]uint64
 
 	// AddRuntime should add a genesisDoc for chainID.
 	AddRuntime(chainID string, genesisDoc cmttypes.GenesisDoc) error

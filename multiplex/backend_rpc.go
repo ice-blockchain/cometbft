@@ -61,6 +61,14 @@ func (b *MultiplexBackend) GetValidatorPubs() map[string]string {
 	return validatorPubs
 }
 
+// GetLastBlockHeights returns the last block heights per ChainID.
+func (b *MultiplexBackend) GetLastBlockHeights() map[string]uint64 {
+	b.mtx.Lock()
+	defer b.mtx.Unlock()
+
+	return b.runtimeRegistry.BlockHeights()
+}
+
 // EnableNewRuntimeRPC adds RPC routes for networks in a running
 // http request multiplexer.
 func (b *MultiplexBackend) EnableNewRuntimeRPC(networks []string) error {

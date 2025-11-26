@@ -171,16 +171,23 @@ func (c MultiplexClient) BroadcastTx(
 	// Determine required ChainIDs and unknown ChainIDs.
 	// The second return value is a subset of the first return value.
 	requiredNetworks,
-		mustCreateNetworks := c.backend.GetLocalNetworkHeights(
+		mustCreateNetworks,
+		lastBlockHeights := c.backend.GetLocalNetworkHeights(
 		userAddress,
 		transactions...,
 	)
+
+	// Exclude undesired ChainID from lastBlockHeights.
+	maps.DeleteFunc(lastBlockHeights, func(network string, _ uint64) bool {
+		return !slices.Contains(requiredNetworks, network)
+	})
 
 	// TODO(midas): remove debug logs
 	c.backend.GetLogger().Debug("Found network heights locally",
 		"requestId", broadcastID,
 		"numRequired", len(requiredNetworks),
 		"numUnknowns", len(mustCreateNetworks),
+		"blockHeights", lastBlockHeights,
 		"txBatch", transactionHashes)
 
 	// TODO(midas): remove debug logs
@@ -204,7 +211,7 @@ func (c MultiplexClient) BroadcastTx(
 	numHealthyRemote := numHealthyRelays
 
 	// Exclude undesired ChainID from chainRelays.
-	maps.DeleteFunc(chainRelays, func(network string, addresses []*helpers.RelayAddress) bool {
+	maps.DeleteFunc(chainRelays, func(network string, _ []*helpers.RelayAddress) bool {
 		return !slices.Contains(requiredNetworks, network)
 	})
 
@@ -438,6 +445,7 @@ func (c MultiplexClient) BroadcastTx(
 		requiredNetworks,
 		relaysWithoutSelf,
 		chainRelays,
+		lastBlockHeights,
 	)
 
 	totalNumReplRequests := 0

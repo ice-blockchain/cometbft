@@ -9,11 +9,12 @@ import (
 
 // RPCResultRelayInfo describes relays information.
 type RPCResultRelayInfo struct {
-	DefaultNodeID p2p.ID            `json:"id"` // authenticated identifier
-	Networks      []string          `json:"networks"`
-	ListenAddress string            `json:"listen_address"`
-	DiscoveryPort uint16            `json:"discovery_port"`
-	ValidatorPubs map[string]string `json:"validator_pubkeys"`
+	DefaultNodeID    p2p.ID            `json:"id"` // authenticated identifier
+	Networks         []string          `json:"networks"`
+	ListenAddress    string            `json:"listen_address"`
+	DiscoveryPort    uint16            `json:"discovery_port"`
+	ValidatorPubs    map[string]string `json:"validator_pubkeys"`
+	LastBlockHeights map[string]uint64 `json:"last_block_heights"`
 }
 
 // RPCResultInitValidators describes the result of validators orchestration.
@@ -39,6 +40,9 @@ type Backend interface {
 	// GetValidatorPubs should return the validator public keys by ChainID.
 	// NOTE: For convenience, public keys should be hexadecimal format.
 	GetValidatorPubs() map[string]string
+
+	// GetLastBlockHeights should return the last block heights by ChainID.
+	GetLastBlockHeights() map[string]uint64
 
 	// GetLocalNetworkValidators should initialize validators for networks and
 	// should return a map of public keys by ChainID.

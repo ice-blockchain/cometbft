@@ -31,11 +31,12 @@ func NewRPCServer(b Backend) *RPCServer {
 // TLS secret connections with handshakes, e.g. transport of P2P requests.
 func (s *RPCServer) GetRelayInfo(*rpctypes.Context) (*RPCResultRelayInfo, error) {
 	result := &RPCResultRelayInfo{
-		DefaultNodeID: s.backend.GetRelayID(),
-		Networks:      s.backend.GetNetworks(),
-		ListenAddress: s.backend.GetListenAddress(),
-		DiscoveryPort: s.backend.GetDiscoveryPort(),
-		ValidatorPubs: s.backend.GetValidatorPubs(),
+		DefaultNodeID:    s.backend.GetRelayID(),
+		Networks:         s.backend.GetNetworks(),
+		ListenAddress:    s.backend.GetListenAddress(),
+		DiscoveryPort:    s.backend.GetDiscoveryPort(),
+		ValidatorPubs:    s.backend.GetValidatorPubs(),
+		LastBlockHeights: s.backend.GetLastBlockHeights(),
 	}
 
 	return result, nil

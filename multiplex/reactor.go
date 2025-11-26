@@ -203,7 +203,6 @@ func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
 	// preProcessInit is an internal helper function that initializes
 	// and starts a runtime for e.ChainID, i.e. mempool, consensus, etc.
 	preProcessInit := func(e cmtp2p.Envelope) {
-		// reactor.runtimeMgr.EnableBlockSync(e.ChainID)
 		reactor.runtimeMgr.InitRuntime(e.ChainID, []string{}, true)
 		reactor.runtimeMgr.StartRuntime(e.ChainID)
 
@@ -371,7 +370,6 @@ func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
 					"err", err,
 				)
 			}
-
 			return
 
 		// ChainReplicationResponse
@@ -389,7 +387,6 @@ func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
 				)
 			}
 			reactor.cometbftPool.SetPeerForChainID(sourceAddr.ID, replResponse.ChainID)
-
 			return
 
 		// ChainReplicationComplete
@@ -407,9 +404,6 @@ func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
 				)
 			}
 			reactor.cometbftPool.SetPeerForChainID(sourceAddr.ID, replComplete.ChainID)
-
-			// NOTE: Don't dial back replication partner here, since we may
-			// approach runtime idling due to completion of the replication.
 			return
 
 		default:

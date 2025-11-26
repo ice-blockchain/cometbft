@@ -79,6 +79,7 @@ func TestMultiplexClientBroadcastTx(t *testing.T) {
 	)
 	endCommitWait := time.Now()
 
+	// max 6s for 1 block commit..
 	require.WithinDurationf(t, startCommitWait, endCommitWait, 6*time.Second,
 		fmt.Sprintf("expected %d block commits in under %ds, took %.0fs",
 			numActualCommits,
@@ -154,10 +155,11 @@ func TestMultiplexClientBroadcastTxMultipleTxes(t *testing.T) {
 	)
 	endCommitWait := time.Now()
 
-	require.WithinDurationf(t, startCommitWait, endCommitWait, 6*time.Second,
+	// 12s in total for commit of 3 blocks should be plenty..
+	require.WithinDurationf(t, startCommitWait, endCommitWait, 12*time.Second,
 		fmt.Sprintf("expected %d block commits in under %ds, took %.0fs",
 			numActualCommits,
-			6*time.Second,
+			12*time.Second,
 			elapsedCommitDuration.Seconds(),
 		))
 

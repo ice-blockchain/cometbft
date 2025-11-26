@@ -590,6 +590,11 @@ func (c *RuntimeComposer) IndexerService(chainID string) *txindex.IndexerService
 // StateMachine returns the state machine for chainID.
 func (c *RuntimeComposer) StateMachine(chainID string) sm.State {
 	if !c.resourceMgr.Has(chainID, types.InstanceKeyStateMachine) {
+		// Try loading from database if possible.
+		if stateMachine, err := c.loadNetworkStateMachine(chainID); err == nil {
+			return stateMachine
+		}
+
 		return sm.State{}
 	}
 
@@ -868,6 +873,36 @@ func (c *RuntimeComposer) makeNetworkPruner(
 	return nil
 }
 
+func (c *RuntimeComposer) loadNetworkStateMachine(
+	chainID string,
+) (sm.State, error) {
+	stateDatabaseService := c.resourceMgr.Get(chainID, types.ServiceKeyDatabaseState).(service.Service)
+
+	// Ensure that state and blockstore databases are open.
+	if err := helpers.EnsureStartDBService(c.Context(), stateDatabaseService); err != nil {
+		return sm.State{}, fmt.Errorf(
+			"failed to open state database for %s: %w", chainID, err)
+	}
+
+	stateDB := stateDatabaseService.(*helpers.DBService).DB()
+
+	dbCfg := c.runtimeBaseConf.Storage
+	dbKeyLayoutVersion := dbCfg.ExperimentalKeyLayout
+
+	// Initialize a replicable [sm.Store].
+	stateStore := sm.NewStore(stateDB, sm.StoreOptions{
+		DBKeyLayout: dbKeyLayoutVersion,
+	})
+
+	// Try to load state machine from database.
+	stateMachine, err := stateStore.Load()
+	if err != nil {
+		return sm.State{}, fmt.Errorf(
+			"error loading state machine for ChainID %s: %w", chainID, err)
+	}
+	return stateMachine, nil
+}
+
 // ----------------------------------------------------------------------------
 // Starter methods
 
@@ -935,7 +970,7 @@ func (c *RuntimeComposer) startNetworkStateMachine(
 		bs.WithDBKeyLayout(dbKeyLayoutVersion),
 	)
 
-	c.resourceMgr.Set(chainID, types.InstanceKeyStateMachine, stateMachine) // *sm.State
+	c.resourceMgr.Set(chainID, types.InstanceKeyStateMachine, stateMachine) // sm.State
 	c.resourceMgr.Set(chainID, types.InstanceKeyStateStore, stateStore)
 	c.resourceMgr.Set(chainID, types.InstanceKeyBlockStore, blockStore)
 	return nil

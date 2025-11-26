@@ -237,6 +237,8 @@ func (mgr *BroadcastPool) Init(
 	var prev []*helpers.RelayAddress
 	if mgr.relays.Has(txHash) {
 		prev = mgr.relays.Get(txHash).([]*helpers.RelayAddress)
+	} else {
+		prev = []*helpers.RelayAddress{}
 	}
 
 	if len(relays) > 0 {
@@ -542,7 +544,11 @@ func (mgr *BroadcastPool) indexerRoutine(chainID string) {
 
 	for mgr.Context().Err() == nil && txsSub.Err() == nil {
 		select {
-		case tx := <-txsSub.Out():
+		case tx, ok := <-txsSub.Out():
+			if !ok || tx.Data() == nil {
+				return
+			}
+
 			// Interpret received transaction result
 			txResult := tx.Data().(cmttypes.EventDataTx).TxResult
 			rawTx := cmttypes.Tx(txResult.Tx)
