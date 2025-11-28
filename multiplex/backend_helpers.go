@@ -229,6 +229,7 @@ func (b *MultiplexBackend) GetValidatorsByNetwork(
 func (b *MultiplexBackend) GetRelaysByNetwork(
 	clientCtx context.Context,
 	relayAddresses []*helpers.RelayAddress,
+	localBlockHeights map[string]uint64,
 ) (
 	healthyRelays []*helpers.RelayAddress,
 	chainRelays map[string][]*helpers.RelayAddress,
@@ -303,10 +304,11 @@ func (b *MultiplexBackend) GetRelaysByNetwork(
 		// TODO(midas): remove debug logs
 		b.logger.Debug("Retrieved networks information from relay",
 			"relay", relayAddr,
-			"node_id", result.result.DefaultNodeID,
+			"nodeId", result.result.DefaultNodeID,
 			"networks", result.result.Networks,
 			"laddr", result.result.ListenAddress,
 			"dport", strconv.FormatUint(uint64(result.result.DiscoveryPort), 10),
+			"numHeights", len(result.result.LastBlockHeights),
 			"time", strconv.Itoa(int(durationMs))+"ms",
 		)
 
@@ -425,7 +427,7 @@ func (b *MultiplexBackend) ApplyFilterReplRequestRelays(
 	requiredNetworks []string,
 	relays []*helpers.RelayAddress,
 	chainRelays map[string][]*helpers.RelayAddress,
-	lastBlockHeights map[string]uint64,
+	localBlockHeights map[string]uint64,
 ) map[string][]*helpers.RelayAddress {
 	// Makes sure to avoid mistakenly including self.
 	relaysWithoutSelf := []*helpers.RelayAddress{}
@@ -437,36 +439,44 @@ func (b *MultiplexBackend) ApplyFilterReplRequestRelays(
 
 	catchupRelays := map[string][]*helpers.RelayAddress{}
 	for chainID, relaysByChain := range chainRelays {
-		syncdRelays := make([]*helpers.RelayAddress, len(relaysByChain))
-		copy(syncdRelays, relaysByChain)
+		catchupRelays[chainID] = make([]*helpers.RelayAddress, 0, len(relaysByChain))
 
-		localBlockHeight := lastBlockHeights[chainID]
+		// (1) We have a local block height to compare the remote
+		// block height to determine sync status of the relay.
+		localBlockHeight := localBlockHeights[chainID]
 		if localBlockHeight > 0 {
-			syncdRelays = slices.DeleteFunc(syncdRelays, func(a *helpers.RelayAddress) bool {
-				if info := b.GetRelayInfo(a.ID()); info != nil {
+			for _, relayAddr := range relaysByChain {
+				if info := b.GetRelayInfo(relayAddr.ID()); info != nil {
 					remoteBlockHeight := info.LastBlockHeights[chainID]
-					return localBlockHeight != remoteBlockHeight
+					if localBlockHeight != remoteBlockHeight {
+						catchupRelays[chainID] = append(catchupRelays[chainID], relayAddr)
+					}
 				}
-				return false
-			})
+			}
+
+			continue
 		}
 
+		// (2) We don't have a local block height to compare the remote
+		// block height, instead use chainRelays to determine whether a
+		// relay is up (and has responded to RelayInfo).
+
 		// Did all relays report to know this ChainID + are syncd?
-		if len(syncdRelays) >= len(relaysWithoutSelf) {
+		if len(relaysByChain) >= len(relaysWithoutSelf) {
 			catchupRelays[chainID] = nil
 			continue
 		}
 
-		// Build a (searchable) slice of relay IDs (which are syncd).
+		// Build a (searchable) slice of relay IDs (which are "up").
 		relayIdsByChain := []string{}
-		for _, relayAddr := range syncdRelays {
+		for _, relayAddr := range relaysByChain {
 			if relayAddr.ID() != b.nodeKey.ID() {
 				relayIdsByChain = append(relayIdsByChain, string(relayAddr.ID()))
 			}
 		}
 
 		// Find out which relays are missing for this chain.
-		// Those are relays that need to catchup with the chain.
+		// Those are relays that also need to catchup with the chain.
 		for _, relayAddr := range relaysWithoutSelf {
 			if !slices.Contains(relayIdsByChain, string(relayAddr.ID())) {
 				catchupRelays[chainID] = append(catchupRelays[chainID], relayAddr)

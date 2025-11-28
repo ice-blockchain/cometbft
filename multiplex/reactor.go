@@ -621,6 +621,14 @@ func (reactor *Reactor) handleChainReplicationRequest(
 		validatorPubKeys = append(validatorPubKeys, pubKeyToHex(validator.PubKey))
 	}
 
+	// In case we have a heights difference, we must enable blocksync.
+	localBlockHeights := reactor.runtimeMgr.BlockHeights()
+	if localBlockHeight, ok := localBlockHeights[replRequest.ChainID]; ok {
+		if replRequest.MinHeight > int64(localBlockHeight) {
+			reactor.runtimeMgr.EnableBlockSync(replRequest.ChainID)
+		}
+	}
+
 	// Initializes the runtime services (not starting).
 	reactor.runtimeMgr.InitRuntime(replRequest.ChainID, validatorPubKeys, true)
 

@@ -815,11 +815,14 @@ PICK_PEER_LOOP:
 		}
 		break PICK_PEER_LOOP
 	}
-	bpr.mtx.Lock()
-	bpr.peerID = peer.id
-	bpr.mtx.Unlock()
 
-	bpr.pool.sendRequest(bpr.height, peer.id)
+	if peer != nil {
+		bpr.mtx.Lock()
+		bpr.peerID = peer.id
+		bpr.mtx.Unlock()
+
+		bpr.pool.sendRequest(bpr.height, peer.id)
+	}
 }
 
 // Picks a second peer and sends a request to it. If the second peer is already

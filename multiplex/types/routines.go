@@ -45,6 +45,7 @@ type NodeReplRequestFn func(
 	[]*helpers.RelayAddress, // remoteRelays
 	[]*helpers.RelayAddress, // catchupRelays
 	string,
+	uint64, // senderBlockHeight
 	chan<- client.BroadcastStatus,
 	cmtlog.Logger,
 )

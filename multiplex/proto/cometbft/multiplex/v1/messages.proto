@@ -30,8 +30,9 @@ message ChainParams {
 // ChainReplicationRequest requests to replicate a new chain with replication details.
 message ChainReplicationRequest {
   string      chain_id     = 1 [(gogoproto.customname) = "ChainID"];
-  ChainParams chain_params = 2;
-  repeated string relays   = 3;
+  int64       min_height   = 2;
+  ChainParams chain_params = 3;
+  repeated string relays   = 4;
 }
 
 // ChainReplicationResponse acknowledges the replication of a new chain.

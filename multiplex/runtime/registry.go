@@ -387,9 +387,6 @@ func (reg *Registry) IdleDuration() time.Duration {
 // If the runtime is found sleeping, we re-activate it and remove its'
 // scheduler entry so that a re-activation delays its idling to completion.
 func (reg *Registry) OnActivate(chainID string) error {
-	// TODO(midas): remove debug logs
-	reg.logger.Debug("Registry#OnActivate", "chainId", chainID)
-
 	reg.mtx.Lock()
 	defer reg.mtx.Unlock()
 
@@ -407,6 +404,12 @@ func (reg *Registry) OnActivate(chainID string) error {
 
 	reg.Runtimes[chainID] += uint64(1)
 	atomic.AddUint64(&reg.numr, uint64(1))
+
+	// TODO(midas): remove debug logs
+	reg.logger.Debug("Registry#OnActivate",
+		"chainId", chainID,
+		"actives", reg.Runtimes[chainID],
+	)
 	return nil
 }
 
@@ -415,9 +418,6 @@ func (reg *Registry) OnActivate(chainID string) error {
 // If after decrementing the counter, we find no more active runtimes for
 // chainID, we shall put it asleep so that it gets idled after runIdleDuration.
 func (reg *Registry) OnComplete(chainID string) error {
-	// TODO(midas): remove debug logs
-	reg.logger.Debug("Registry#OnComplete", "chainId", chainID)
-
 	reg.mtx.Lock()
 	defer reg.mtx.Unlock()
 
@@ -440,6 +440,12 @@ func (reg *Registry) OnComplete(chainID string) error {
 
 	// Update scheduler to the last time we called OnComplete.
 	reg.Scheduler[chainID] = time.Now()
+
+	// TODO(midas): remove debug logs
+	reg.logger.Debug("Registry#OnComplete",
+		"chainId", chainID,
+		"actives", reg.Runtimes[chainID],
+	)
 	return nil
 }
 
@@ -688,15 +694,25 @@ func (reg *Registry) Validators() (out map[string]cmttypes.PrivValidator) {
 }
 
 // BlockHeights returns a map of uint64 block heights by ChainID.
-func (reg *Registry) BlockHeights() (out map[string]uint64) {
-	stateMultiplex := reg.Resources().Multiplex(types.InstanceKeyStateMachine)
-	out = make(map[string]uint64, len(stateMultiplex))
-	for chainID, instance := range stateMultiplex {
-		if stateMachine, ok := instance.GetInstance().(sm.State); ok {
-			out[chainID] = uint64(stateMachine.LastBlockHeight)
+func (reg *Registry) BlockHeights() map[string]uint64 {
+	// We need at least one ChainID to be init'd, otherwise return empty.
+	reg.runtimeComposer.mtx.Lock()
+	knownChainIds := reg.chainRegistry.GetChains()
+	reg.runtimeComposer.mtx.Unlock()
+	if len(knownChainIds) == 0 {
+		return map[string]uint64{}
+	}
+
+	// state machine multiplex requires injection; instead we read from db.
+	out := make(map[string]uint64, len(knownChainIds))
+	for _, chainID := range knownChainIds {
+		if dbsm, err := reg.LoadStateMachine(chainID); err != nil || dbsm.IsEmpty() {
+			out[chainID] = uint64(0) // unknown ChainID
+		} else {
+			out[chainID] = uint64(dbsm.LastBlockHeight)
 		}
 	}
-	return // out
+	return out
 }
 
 // AddRuntime should add a genesisDoc for chainID.

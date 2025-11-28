@@ -202,7 +202,7 @@ func (c MultiplexClient) BroadcastTx(
 	startRelaysByNetwork := time.Now()
 	healthyRelays,
 		chainRelays,
-		errorRelays := c.backend.GetRelaysByNetwork(ctx, relayAddresses)
+		errorRelays := c.backend.GetRelaysByNetwork(ctx, relayAddresses, lastBlockHeights)
 	durationRelaysByNetwork := time.Since(startRelaysByNetwork).Milliseconds()
 
 	// Now we know how many relays are actually healthy.
@@ -453,12 +453,8 @@ func (c MultiplexClient) BroadcastTx(
 		totalNumReplRequests += len(addrs)
 	}
 
-	// We shall concurrently assess the replication of networks but shall
-	// wait for completion of *all* replication responses before we proceed.
-	chainCatchupsWg := new(sync.WaitGroup)
-	chainCatchupsWg.Add(totalNumReplRequests)
-
 	// Ask the relays to catch-up with the chain by replicating it.
+	var localBlockHeight uint64
 	for chainID, chainCatchupRelays := range catchupRelays {
 		if len(chainCatchupRelays) == 0 {
 			continue
@@ -472,11 +468,13 @@ func (c MultiplexClient) BroadcastTx(
 			"chainId", chainID,
 			"txBatch", transactionHashes)
 
+		localBlockHeight = lastBlockHeights[chainID]
 		routineNodeReplRequest := c.backend.Routines().NodeReplRequest
 		go routineNodeReplRequest(ctx,
 			relaysWithSelf,
 			chainCatchupRelays,
 			chainID,
+			localBlockHeight,
 			notifyCh,
 			c.backend.GetLogger().With(
 				"requestId", broadcastID,

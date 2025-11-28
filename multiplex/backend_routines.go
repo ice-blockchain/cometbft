@@ -146,6 +146,7 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() types.NodeReplRequest
 		remoteRelays []*helpers.RelayAddress,
 		catchupRelays []*helpers.RelayAddress,
 		chainID string,
+		senderBlockHeight uint64,
 		notifyCh chan<- client.BroadcastStatus,
 		logger cmtlog.Logger,
 	) {
@@ -184,6 +185,7 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() types.NodeReplRequest
 		discoveryPeers := b.discoveryPool.Peers()
 		replicationReq := &mxp2p.ChainReplicationRequest{
 			ChainID:     chainID,
+			MinHeight:   int64(senderBlockHeight),
 			ChainParams: chainParams,
 		}
 
@@ -226,7 +228,7 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() types.NodeReplRequest
 				b.logger.Debug("Now sending ChainReplicationRequest",
 					"chainId", chainID,
 					"peerId", peerID,
-					"relays", cometbftPeers,
+					"dialRelays", cometbftPeers,
 				)
 
 				e := cmtp2p.Envelope{

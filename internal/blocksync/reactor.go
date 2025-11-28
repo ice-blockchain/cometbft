@@ -183,9 +183,8 @@ func (bcR *Reactor) SetBlockStore(store *store.BlockStore) {
 
 // OnStart implements service.Service.
 func (bcR *Reactor) OnStart(ctx context.Context) error {
-	netLogger := bcR.Logger.With("chainId", bcR.ChainID())
-	bcR.SetLogger(netLogger.With("module", "blocksync"))
-	bcR.pool.SetLogger(netLogger.With("module", "blockpool"))
+	bcR.SetLogger(bcR.Logger.With("module", "blocksync"))
+	bcR.pool.SetLogger(bcR.Logger.With("module", "blockpool"))
 
 	if bcR.blockSync {
 		err := bcR.pool.Start()

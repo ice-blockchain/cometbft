@@ -205,6 +205,7 @@ type RelayHelpers interface {
 	GetRelaysByNetwork(
 		ctx context.Context,
 		relays []*helpers.RelayAddress,
+		localBlockHeights map[string]uint64,
 	) ([]*helpers.RelayAddress, map[string][]*helpers.RelayAddress, []string)
 
 	// CheckDialCompatibleRelay should dial a relay, executing a P2P handshake
@@ -228,7 +229,7 @@ type BroadcastHelpers interface {
 		requiredNetworks []string,
 		relays []*helpers.RelayAddress,
 		chainRelays map[string][]*helpers.RelayAddress,
-		lastBlockHeights map[string]uint64,
+		localBlockHeights map[string]uint64,
 	) map[string][]*helpers.RelayAddress
 
 	// ApplyFilterAckTransactionRelayIds should filter relay IDs and return a
