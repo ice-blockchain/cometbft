@@ -706,7 +706,8 @@ func (reg *Registry) BlockHeights() map[string]uint64 {
 	// state machine multiplex requires injection; instead we read from db.
 	out := make(map[string]uint64, len(knownChainIds))
 	for _, chainID := range knownChainIds {
-		if dbsm, err := reg.LoadStateMachine(chainID); err != nil || dbsm.IsEmpty() {
+		dbsm, err := reg.LoadStateMachine(chainID)
+		if err != nil || dbsm.IsEmpty() {
 			out[chainID] = uint64(0) // unknown ChainID
 		} else {
 			out[chainID] = uint64(dbsm.LastBlockHeight)

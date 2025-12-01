@@ -590,7 +590,17 @@ func (c *RuntimeComposer) IndexerService(chainID string) *txindex.IndexerService
 // StateMachine returns the state machine for chainID.
 func (c *RuntimeComposer) StateMachine(chainID string) sm.State {
 	if !c.resourceMgr.Has(chainID, types.InstanceKeyStateMachine) {
+		c.mtx.Lock()
+		defer c.mtx.Unlock()
+
 		// Try loading from database if possible.
+		// Create helpers.DBService instances for this ChainID if necessary.
+		if err := c.makeNetworkDatabases(chainID); err != nil {
+			c.logger.Error("failed to open databases from composer",
+				"chainId", chainID,
+				"err", err)
+			return sm.State{}
+		}
 		if stateMachine, err := c.loadNetworkStateMachine(chainID); err == nil {
 			return stateMachine
 		}
@@ -876,7 +886,7 @@ func (c *RuntimeComposer) makeNetworkPruner(
 func (c *RuntimeComposer) loadNetworkStateMachine(
 	chainID string,
 ) (sm.State, error) {
-	stateDatabaseService := c.resourceMgr.Get(chainID, types.ServiceKeyDatabaseState).(service.Service)
+	stateDatabaseService := c.resourceMgr.Get(chainID, types.ServiceKeyDatabaseState).(*helpers.DBService)
 
 	// Ensure that state and blockstore databases are open.
 	if err := helpers.EnsureStartDBService(c.Context(), stateDatabaseService); err != nil {
@@ -884,7 +894,7 @@ func (c *RuntimeComposer) loadNetworkStateMachine(
 			"failed to open state database for %s: %w", chainID, err)
 	}
 
-	stateDB := stateDatabaseService.(*helpers.DBService).DB()
+	stateDB := stateDatabaseService.DB()
 
 	dbCfg := c.runtimeBaseConf.Storage
 	dbKeyLayoutVersion := dbCfg.ExperimentalKeyLayout
@@ -909,8 +919,8 @@ func (c *RuntimeComposer) loadNetworkStateMachine(
 func (c *RuntimeComposer) startNetworkStateMachine(
 	chainID string,
 ) error {
-	stateDatabaseService := c.resourceMgr.Get(chainID, types.ServiceKeyDatabaseState).(service.Service)
-	blockDatabaseService := c.resourceMgr.Get(chainID, types.ServiceKeyDatabaseBlock).(service.Service)
+	stateDatabaseService := c.resourceMgr.Get(chainID, types.ServiceKeyDatabaseState).(*helpers.DBService)
+	blockDatabaseService := c.resourceMgr.Get(chainID, types.ServiceKeyDatabaseBlock).(*helpers.DBService)
 
 	// Ensure that state and blockstore databases are open.
 	if err := helpers.EnsureStartDBService(c.Context(), stateDatabaseService); err != nil {
@@ -923,8 +933,8 @@ func (c *RuntimeComposer) startNetworkStateMachine(
 			"failed to open block database for %s: %w", chainID, err)
 	}
 
-	stateDB := stateDatabaseService.(*helpers.DBService).DB()
-	blockDB := blockDatabaseService.(*helpers.DBService).DB()
+	stateDB := stateDatabaseService.DB()
+	blockDB := blockDatabaseService.DB()
 
 	dbCfg := c.runtimeBaseConf.Storage
 	dbKeyLayoutVersion := dbCfg.ExperimentalKeyLayout
@@ -1008,7 +1018,7 @@ func (c *RuntimeComposer) startNetworkIndexers(
 	chainID string,
 ) error {
 	// Ensure that tx_index database is open.
-	indexerDbService := c.resourceMgr.Get(chainID, types.ServiceKeyDatabaseIndex).(service.Service)
+	indexerDbService := c.resourceMgr.Get(chainID, types.ServiceKeyDatabaseIndex).(*helpers.DBService)
 	if err := helpers.EnsureStartDBService(c.Context(), indexerDbService); err != nil {
 		return fmt.Errorf(
 			"failed to open tx_index database for %s: %w", chainID, err)
@@ -1020,7 +1030,7 @@ func (c *RuntimeComposer) startNetworkIndexers(
 	)
 
 	if !c.resourceMgr.Has(chainID, types.ServiceKeyIndexers) {
-		indexerDatabase := indexerDbService.(*helpers.DBService).DB()
+		indexerDatabase := indexerDbService.DB()
 		txIndexer = txidxkv.NewTxIndex(indexerDatabase)
 		blockIndexer = blockidxkv.New(
 			dbm.NewPrefixDB(indexerDatabase, []byte("block_events")),

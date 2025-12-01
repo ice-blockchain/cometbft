@@ -129,17 +129,16 @@ func (ps *PeerSet) HasIP(peerIP net.IP) bool {
 }
 
 // Get looks up a peer by the provided peerID. Returns nil if peer is not
-// found. Outbound peer entries have precedence.
+// found. Inbound peer entries have precedence.
 func (ps *PeerSet) Get(peerID ID) *PeerImpl {
-	getterFn := ps.getInbound
-	if ps.HasOutbound(peerID) {
-		getterFn = ps.getOutbound
-	}
-
 	ps.mtx.Lock()
 	defer ps.mtx.Unlock()
 
-	return getterFn(peerID)
+	if p := ps.getInbound(peerID); p != nil {
+		return p
+	}
+
+	return ps.getOutbound(peerID)
 }
 
 // GetInbound looks up a peer byt the provided peerID and IN direction.

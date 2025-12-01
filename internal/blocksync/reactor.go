@@ -444,7 +444,8 @@ func (bcR *Reactor) poolRoutine(stateSynced bool) {
 			case <-bcR.pool.Quit():
 				return
 			case request := <-bcR.pool.requestsCh:
-				peer := bcR.Switch.Peers(bcR.ChainID()).Get(request.PeerID)
+				peerSet := bcR.Switch.Peers()
+				peer := peerSet.Get(request.PeerID)
 				if peer == nil {
 					continue
 				}

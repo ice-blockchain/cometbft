@@ -240,9 +240,6 @@ func (pool *ConnectionPool) Handshaker() cmtp2p.Handshaker {
 // NumPeers returns the number of inbound and outbound peers.
 // Return order: inbound, outbound, dialing.
 func (pool *ConnectionPool) NumPeers(chainIds ...string) (inbound, outbound, dialing int) {
-	pool.mtx.Lock()
-	defer pool.mtx.Unlock()
-
 	var peers []*cmtp2p.PeerImpl
 	if len(chainIds) > 0 {
 		peers = pool.Peers(chainIds...).Copy()
@@ -264,33 +261,30 @@ func (pool *ConnectionPool) NumPeers(chainIds ...string) (inbound, outbound, dia
 
 // Peers returns a peerset by its chainID.
 func (pool *ConnectionPool) Peers(chainIds ...string) *cmtp2p.PeerSet {
-	pool.mtx.Lock()
-	defer pool.mtx.Unlock()
-
-	if len(chainIds) > 0 {
-		allPeers := pool.peers.Copy()
-		outPeers := make([]*cmtp2p.PeerImpl, 0, len(allPeers))
-
-		chainPeerSet := cmtp2p.NewPeerSet()
-		for _, chainID := range chainIds {
-			if !pool.peerIdsByChainIds.Has(chainID) {
-				continue
-			}
-
-			peerIds := pool.peerIdsByChainIds.Get(chainID).([]string)
-			outPeers = append(outPeers, slices.DeleteFunc(allPeers, func(p *cmtp2p.PeerImpl) bool {
-				return !slices.Contains(peerIds, string(p.ID()))
-			})...)
-		}
-
-		for _, peer := range outPeers {
-			chainPeerSet.Add(peer)
-		}
-
-		return chainPeerSet
+	if len(chainIds) == 0 {
+		return pool.peers
 	}
 
-	return pool.peers
+	allPeers := pool.peers.Copy()
+	outPeers := make([]*cmtp2p.PeerImpl, 0, len(allPeers))
+
+	chainPeerSet := cmtp2p.NewPeerSet()
+	for _, chainID := range chainIds {
+		if !pool.peerIdsByChainIds.Has(chainID) {
+			continue
+		}
+
+		peerIds := pool.peerIdsByChainIds.Get(chainID).([]string)
+		outPeers = append(outPeers, slices.DeleteFunc(allPeers, func(p *cmtp2p.PeerImpl) bool {
+			return !slices.Contains(peerIds, string(p.ID()))
+		})...)
+	}
+
+	for _, peer := range outPeers {
+		chainPeerSet.Add(peer)
+	}
+
+	return chainPeerSet
 }
 
 // AddPeer registers a new peer in the peerset.
@@ -300,11 +294,7 @@ func (pool *ConnectionPool) Peers(chainIds ...string) *cmtp2p.PeerSet {
 // Called by [PeerConnector#Listen] and [PeerConnector#Dial] upon accepting
 // inbound/outbound peer connections, respectively.
 func (pool *ConnectionPool) AddPeer(peer *cmtp2p.PeerImpl) error {
-	pool.mtx.Lock()
-	isKnownPeerID := pool.peers.Has(peer.ID())
-	pool.mtx.Unlock()
-
-	if isKnownPeerID {
+	if pool.peers.Has(peer.ID()) {
 		return nil // Nothing to do
 	}
 
@@ -317,10 +307,7 @@ func (pool *ConnectionPool) AddPeer(peer *cmtp2p.PeerImpl) error {
 
 	peerLogger.Info("Adding peer")
 
-	pool.mtx.Lock()
 	pool.peers.Add(peer)
-	pool.mtx.Unlock()
-
 	if !peer.IsRunning() {
 		// peer.Start does *not* start a MConnection anymore,
 		// instead the connection is started with startRoutines.
@@ -354,9 +341,6 @@ func (pool *ConnectionPool) AddPeer(peer *cmtp2p.PeerImpl) error {
 // Calling this method stops the internal MConnection routines if they
 // are currently running. Calls MConnection#Stop and MultiplexTransport#Cleanup.
 func (pool *ConnectionPool) RemovePeer(peerID cmtp2p.ID) error {
-	pool.mtx.Lock()
-	defer pool.mtx.Unlock()
-
 	if !pool.peers.Has(peerID) {
 		return nil // Nothing to do
 	}
@@ -370,6 +354,7 @@ func (pool *ConnectionPool) RemovePeer(peerID cmtp2p.ID) error {
 		peer.SetLogger(peerLogger)
 	}
 
+	pool.mtx.Lock()
 	if pool.peerConnections.Has(string(peerID)) {
 		if err := pool.stopRoutines(peer); err != nil {
 			peerLogger.Error("Error stopping routines", "err", err, "peer", peer)
@@ -381,6 +366,7 @@ func (pool *ConnectionPool) RemovePeer(peerID cmtp2p.ID) error {
 			"peer", peer,
 		)
 	}
+	defer pool.mtx.Unlock()
 
 	pool.peers.Remove(peer)
 	return nil
@@ -403,9 +389,6 @@ func (pool *ConnectionPool) HasPeerIP(ip net.IP) bool {
 
 // GetPeer returns the *cmtp2p.PeerImpl instance by peerID, if available.
 func (pool *ConnectionPool) GetPeer(peerID cmtp2p.ID) *cmtp2p.PeerImpl {
-	pool.mtx.Lock()
-	defer pool.mtx.Unlock()
-
 	if !pool.peers.Has(peerID) {
 		return nil // Nothing to do
 	}

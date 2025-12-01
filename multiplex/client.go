@@ -576,6 +576,8 @@ func (c MultiplexClient) BroadcastTx(
 	dialingWg.Wait()
 	close(errorPeersCh) // No more errors expected.
 
+	// errorRelays to track failing CometBFT peers for this step.
+	errorRelays = []string{}
 	for dialRelayErr := range errorPeersCh {
 		errRelayAddr := dialRelayErr.Addr
 

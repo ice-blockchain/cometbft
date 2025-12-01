@@ -160,9 +160,6 @@ func (bs *BaseService) SetContext(c context.Context) {
 // Start implements Service by calling OnStart (if defined). An error will be returned if the
 // service is already running or stopped. Not to start the stopped service, you need to call Reset.
 func (bs *BaseService) Start() error {
-	bs.mtx.Lock()
-	defer bs.mtx.Unlock()
-
 	if atomic.CompareAndSwapUint32(&bs.started, 0, 1) {
 		if atomic.LoadUint32(&bs.stopped) == 1 {
 			bs.Logger.Error(fmt.Sprintf("Not starting %v service -- already stopped", bs.name),
@@ -171,6 +168,8 @@ func (bs *BaseService) Start() error {
 			atomic.StoreUint32(&bs.started, 0)
 			return ErrAlreadyStopped
 		}
+
+		bs.mtx.Lock()
 		bs.Logger.Info("service start",
 			"msg",
 			log.NewLazySprintf("Starting %v service", bs.name),
@@ -178,6 +177,7 @@ func (bs *BaseService) Start() error {
 			bs.impl.String())
 		err := bs.impl.OnStart(bs.ctx)
 		if err != nil {
+			bs.mtx.Unlock()
 			// revert flag
 			atomic.StoreUint32(&bs.started, 0)
 			return err
@@ -185,6 +185,7 @@ func (bs *BaseService) Start() error {
 
 		bs.startedAt = time.Now()
 		bs.quit = make(chan struct{})
+		bs.mtx.Unlock()
 		return nil
 	}
 	bs.Logger.Debug("service start",
@@ -208,9 +209,6 @@ func (bs *BaseService) StartedAt() time.Time {
 // Stop implements Service by calling OnStop (if defined) and closing quit
 // channel. An error will be returned if the service is already stopped.
 func (bs *BaseService) Stop() error {
-	bs.mtx.Lock()
-	defer bs.mtx.Unlock()
-
 	if atomic.CompareAndSwapUint32(&bs.stopped, 0, 1) {
 		if atomic.LoadUint32(&bs.started) == 0 {
 			bs.Logger.Error(fmt.Sprintf("Not stopping %v service -- has not been started yet", bs.name),
@@ -219,6 +217,10 @@ func (bs *BaseService) Stop() error {
 			atomic.StoreUint32(&bs.stopped, 0)
 			return ErrNotStarted
 		}
+
+		bs.mtx.Lock()
+		defer bs.mtx.Unlock()
+
 		bs.Logger.Info("service stop",
 			"msg",
 			log.NewLazySprintf("Stopping %v service", bs.name),
@@ -251,9 +253,6 @@ func (bs *BaseService) StoppedAt() time.Time {
 // Reset implements Service by calling OnReset callback (if defined). An error
 // will be returned if the service is running.
 func (bs *BaseService) Reset(ctx context.Context) error {
-	bs.mtx.Lock()
-	defer bs.mtx.Unlock()
-
 	if !bs.IsStopped() && bs.IsStarted() {
 		bs.Logger.Debug("service reset",
 			"msg",
@@ -266,6 +265,9 @@ func (bs *BaseService) Reset(ctx context.Context) error {
 	// whether or not we've started, we can reset
 	atomic.StoreUint32(&bs.started, 0)
 	atomic.StoreUint32(&bs.stopped, 0)
+
+	bs.mtx.Lock()
+	defer bs.mtx.Unlock()
 
 	bs.quit = make(chan struct{})
 	bs.parentCtx = ctx

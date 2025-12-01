@@ -66,19 +66,14 @@ func DBServiceWithLogger(logger cmtlog.Logger) DBServiceOption {
 // EnsureStartDBService asserts the type of s for it being a DBService and
 // makes sure that it will be reset & started if it is necessary.
 func EnsureStartDBService(ctx context.Context, s service.Service) error {
-	if dbS, ok := s.(*DBService); ok {
-		dbS.SetContext(ctx)
-		if !dbS.IsRunning() {
-			if dbS.IsStopped() {
-				dbS.Reset(ctx) // reset stopped flag
-			}
-			dbS.Start()
-		}
-
+	if s.IsRunning() {
 		return nil
 	}
 
-	return fmt.Errorf("failed to open database: %v", s)
+	if s.IsStopped() {
+		s.Reset(ctx) // reset stopped flag
+	}
+	return s.Start()
 }
 
 // ----------------------------------------------------------------------------
