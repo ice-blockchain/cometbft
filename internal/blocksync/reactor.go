@@ -97,10 +97,6 @@ func NewReactor(
 			storeHeight))
 	}
 
-	// It's okay to block since sendRequest is called from a separate goroutine
-	// (bpRequester#requestRoutine; 1 per each peer).
-	requestsCh := make(chan BlockRequest)
-
 	const capacity = 1000                      // must be bigger than peers count
 	errorsCh := make(chan peerError, capacity) // so we don't block in #Receive#pool.AddBlock
 
@@ -108,7 +104,7 @@ func NewReactor(
 	if startHeight == 1 {
 		startHeight = state.InitialHeight
 	}
-	pool := NewBlockPool(ctx, startHeight, requestsCh, errorsCh)
+	pool := NewBlockPool(ctx, startHeight, errorsCh)
 
 	bcR := &Reactor{
 		initialState: state,
@@ -117,7 +113,6 @@ func NewReactor(
 		pool:         pool,
 		blockSync:    blockSync,
 		localAddr:    localAddr,
-		requestsCh:   requestsCh,
 		errorsCh:     errorsCh,
 		metrics:      metrics,
 	}
@@ -275,8 +270,12 @@ func (bcR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 	})
 	// it's OK if send fails. will try later in poolRoutine
 
-	// peer is added to the pool once we receive the first
-	// bcStatusResponseMessage from the peer and call pool.SetPeerRange
+	// NOTE(midas):
+	//
+	// Add the peer to the pool *as soon as possible*. Note that we assume
+	// that Height will be available on peer just to fasten up poolRoutine.
+	// We set updateMaxHeight=false to avoid using Height for IsCaughtUp().
+	bcR.pool.SetPeerRange(peer.ID(), bcR.store.Base(), bcR.store.Height(), false)
 }
 
 // RemovePeer implements Reactor by removing peer from the pool.
@@ -386,7 +385,8 @@ func (bcR *Reactor) Receive(e p2p.Envelope) {
 		)
 
 		// Got a peer status. Unverified.
-		bcR.pool.SetPeerRange(e.Src.ID(), msg.Base, msg.Height)
+		// We set updateMaxHeight=true to make sure IsCaughtUp() uses this Height.
+		bcR.pool.SetPeerRange(e.Src.ID(), msg.Base, msg.Height, true) // updateMaxHeight=true
 	case *bcproto.NoBlockResponse:
 		bcR.Logger.Debug("Peer does not have requested block", "peer", e.Src, "height", msg.Height)
 		bcR.pool.RedoRequestFrom(msg.Height, e.Src.ID())
@@ -443,7 +443,7 @@ func (bcR *Reactor) poolRoutine(stateSynced bool) {
 				return
 			case <-bcR.pool.Quit():
 				return
-			case request := <-bcR.requestsCh:
+			case request := <-bcR.pool.requestsCh:
 				peer := bcR.Switch.Peers(bcR.ChainID()).Get(request.PeerID)
 				if peer == nil {
 					continue

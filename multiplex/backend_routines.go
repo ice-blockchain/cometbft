@@ -206,9 +206,6 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() types.NodeReplRequest
 			func(addr *helpers.RelayAddress) {
 				defer requestsWg.Done()
 
-				peer := discoveryPeers.Get(addr.ID())
-				peerID := string(addr.ID())
-
 				// NOTE(midas):
 				// The receiving end (peerID) may have to dial all other
 				// CometBFT peers that are involved in this broadcast to permit
@@ -224,10 +221,20 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() types.NodeReplRequest
 				}
 				replicationReq.Relays = cometbftPeers
 
+				var peer *cmtp2p.PeerImpl
+				if peer = b.discoveryPool.Peers().Get(addr.ID()); peer == nil {
+					// TODO(midas): remove debug logs
+					b.logger.Error("failed to find peer; not sending ChainReplicationRequest",
+						"chainId", chainID,
+						"peerId", string(addr.ID()),
+					)
+					return
+				}
+
 				// TODO(midas): remove debug logs
 				b.logger.Debug("Now sending ChainReplicationRequest",
 					"chainId", chainID,
-					"peerId", peerID,
+					"peerId", string(addr.ID()),
 					"dialRelays", cometbftPeers,
 				)
 
@@ -241,11 +248,11 @@ func (b *MultiplexBackend) DefaultNodeReplRequestRoutine() types.NodeReplRequest
 					},
 				}
 
-				peer.SetLogger(b.logger.With("peerId", peerID))
+				peer.SetLogger(b.logger.With("peerId", string(addr.ID())))
 				peer.Send(chainID, e)
 				b.replicationMgr.Process(addr.ID(), e)
 
-				requestSentPeerIds = append(requestSentPeerIds, peerID)
+				requestSentPeerIds = append(requestSentPeerIds, string(addr.ID()))
 			}(relay)
 		}
 

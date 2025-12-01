@@ -85,13 +85,13 @@ type BlockPool struct {
 	sortedPeers   []*bpPeer // sorted by curRate, highest first
 	maxPeerHeight int64     // the biggest reported height
 
-	requestsCh chan<- BlockRequest
+	requestsCh chan BlockRequest
 	errorsCh   chan<- peerError
 }
 
 // NewBlockPool returns a new BlockPool with the height equal to start. Block
 // requests and errors will be sent to requestsCh and errorsCh accordingly.
-func NewBlockPool(ctx context.Context, start int64, requestsCh chan<- BlockRequest, errorsCh chan<- peerError) *BlockPool {
+func NewBlockPool(ctx context.Context, start int64, errorsCh chan<- peerError) *BlockPool {
 	bp := &BlockPool{
 		peers:       make(map[p2p.ID]*bpPeer),
 		bannedPeers: make(map[p2p.ID]time.Time),
@@ -99,10 +99,14 @@ func NewBlockPool(ctx context.Context, start int64, requestsCh chan<- BlockReque
 		height:      start,
 		startHeight: start,
 
-		requestsCh: requestsCh,
-		errorsCh:   errorsCh,
+		errorsCh: errorsCh,
 	}
 	bp.BaseService = *service.NewBaseService(ctx, nil, "BlockPool", bp)
+
+	// It's okay to block since sendRequest is called from a separate goroutine
+	// (bpRequester#requestRoutine; 1 per each peer).
+	bp.requestsCh = make(chan BlockRequest)
+
 	return bp
 }
 
@@ -410,7 +414,12 @@ func (pool *BlockPool) MaxPeerHeight() int64 {
 }
 
 // SetPeerRange sets the peer's alleged blockchain base and height.
-func (pool *BlockPool) SetPeerRange(peerID p2p.ID, base int64, height int64) {
+func (pool *BlockPool) SetPeerRange(
+	peerID p2p.ID,
+	base int64,
+	height int64,
+	updateMaxHeight bool,
+) {
 	pool.mtx.Lock()
 	defer pool.mtx.Unlock()
 
@@ -431,7 +440,7 @@ func (pool *BlockPool) SetPeerRange(peerID p2p.ID, base int64, height int64) {
 		pool.sortedPeers = append([]*bpPeer{peer}, pool.sortedPeers...)
 	}
 
-	if height > pool.maxPeerHeight {
+	if updateMaxHeight && height > pool.maxPeerHeight {
 		pool.maxPeerHeight = height
 	}
 }
