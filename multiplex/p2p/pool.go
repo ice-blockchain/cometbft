@@ -553,6 +553,14 @@ func (pool *ConnectionPool) InitPeerForChainID(
 	peerID cmtp2p.ID,
 	chainID string,
 ) (peerForReactor *cmtp2p.PeerImpl) {
+	if !pool.peers.Has(peerID) {
+		pool.logger.Error("failed to initialize peer; unknown peer ID",
+			"chainId", chainID,
+			"peerId", peerID,
+		)
+		return nil
+	}
+
 	pool.SetPeerForChainID(peerID, chainID)
 
 	peerKey := strings.Join([]string{string(peerID), chainID}, ":")

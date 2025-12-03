@@ -158,39 +158,21 @@ func (pool *BlockPool) makeRequestersRoutine(ctx context.Context) {
 		// 	}
 		// }
 
-		// NOTE(midas): non-blocking select on shutdown channel makes
-		// sure every time before handling a requester, we know to shutdown.
-		select {
-		case <-pool.Quit():
-			return
-		default: // Proceed to handle requesters
-		}
-
 		pool.mtx.Lock()
 		var (
-			maxRequestersCreated = len(pool.requesters) >= len(pool.peers)*maxPendingRequestsPerPeer
-
-			nextHeight           = pool.height + int64(len(pool.requesters))
+			numRequesters        = len(pool.requesters)
+			nextHeight           = pool.height + int64(numRequesters)
 			maxPeerHeightReached = nextHeight > pool.maxPeerHeight
 		)
 		pool.mtx.Unlock()
 
-		switch {
-		case maxRequestersCreated: // If we have enough requesters, wait for them to finish.
-			if ok := pool.WaitForInterval(requestInterval); !ok {
-				return
-			}
-			pool.removeTimedoutPeers()
-		case maxPeerHeightReached: // If we're caught up, wait for a bit so reactor could finish or a higher height is reported.
-			if ok := pool.WaitForInterval(requestInterval); !ok {
-				return
-			}
-		default:
+		if !maxPeerHeightReached {
 			pool.makeNextRequester(ctx, nextHeight)
-			// Sleep for a bit to make the requests more ordered.
-			if ok := pool.WaitForInterval(requestInterval); !ok {
-				return
-			}
+		}
+
+		// Sleep for a bit to make the requests more ordered.
+		if ok := pool.WaitForInterval(requestInterval); !ok {
+			return
 		}
 	}
 }
@@ -418,7 +400,6 @@ func (pool *BlockPool) SetPeerRange(
 	peerID p2p.ID,
 	base int64,
 	height int64,
-	updateMaxHeight bool,
 ) {
 	pool.mtx.Lock()
 	defer pool.mtx.Unlock()
@@ -440,7 +421,7 @@ func (pool *BlockPool) SetPeerRange(
 		pool.sortedPeers = append([]*bpPeer{peer}, pool.sortedPeers...)
 	}
 
-	if updateMaxHeight && height > pool.maxPeerHeight {
+	if height > pool.maxPeerHeight {
 		pool.maxPeerHeight = height
 	}
 }

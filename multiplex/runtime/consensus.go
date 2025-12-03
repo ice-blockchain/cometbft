@@ -252,6 +252,25 @@ func (pool *ConsensusPool) Inject(chainID string) error {
 		return err
 	}
 
+	// Mark peers active in BLOCKSYNC reactor given shouldBlockSync=true.
+	privValidator := pool.runtimeComposer.Validator(chainID)
+	stateMachine := pool.runtimeComposer.StateMachine(chainID)
+	privValPubKey, _ := privValidator.GetPubKey()
+
+	// In case of blocksync, enable ChainID *early* (before Execute()).
+	if pool.shouldNetworkBlockSync(stateMachine.Copy(), privValPubKey) {
+		sw := pool.runtimeComposer.cometbftSwitch
+		peerSet := sw.Peers(chainID)
+		for _, peer := range peerSet.Copy() {
+			if peer == nil {
+				continue
+			}
+
+			sw.InitPeerForScope(peer, chainID)
+			sw.AddPeerForScope(peer, chainID)
+		}
+	}
+
 	pool.injectedChainIds[chainID] = struct{}{}
 
 	pool.logger.Debug("ConsensusPool#Inject; runtime successfully injected",

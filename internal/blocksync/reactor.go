@@ -26,10 +26,10 @@ const (
 	// within this much of the system time.
 	// stopSyncingDurationMinutes = 10.
 
-	// ask for best height every 10s.
-	statusUpdateIntervalSeconds = 10
+	// ask for best height every 1s.
+	statusUpdateIntervalSeconds = 1
 	// check if we should switch to consensus reactor.
-	switchToConsensusIntervalSeconds = 1
+	switchToConsensusIntervalSeconds = 5
 )
 
 type consensusReactor interface {
@@ -258,6 +258,7 @@ func (bcR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 		"peer", peer,
 		"bcr_base", bcR.store.Base(),
 		"bcr_height", bcR.store.Height(),
+		"pool", bcR.pool.height,
 	)
 
 	peer.Send(bcR.ChainID(), p2p.Envelope{
@@ -273,9 +274,11 @@ func (bcR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 	// NOTE(midas):
 	//
 	// Add the peer to the pool *as soon as possible*. Note that we assume
-	// that Height will be available on peer just to fasten up poolRoutine.
-	// We set updateMaxHeight=false to avoid using Height for IsCaughtUp().
-	bcR.pool.SetPeerRange(peer.ID(), bcR.store.Base(), bcR.store.Height(), false)
+	// that Height will be available on peer because blockSync flag will
+	// be set only when this is the case, controlled by multiplex.
+	if bcR.blockSync {
+		bcR.pool.SetPeerRange(peer.ID(), bcR.store.Base(), bcR.store.Height())
+	}
 }
 
 // RemovePeer implements Reactor by removing peer from the pool.
@@ -363,8 +366,12 @@ func (bcR *Reactor) Receive(e p2p.Envelope) {
 
 	switch msg := e.Message.(type) {
 	case *bcproto.BlockRequest:
+		// XXX
+		bcR.Logger.Debug("RECEIVED BLOCK REQUEST", "msg", msg)
 		bcR.respondToPeer(msg, e.Src)
 	case *bcproto.BlockResponse:
+		// XXX
+		bcR.Logger.Debug("RECEIVED BLOCK RESPONSE", "msg", msg)
 		go bcR.handlePeerResponse(msg, e.Src)
 	case *bcproto.StatusRequest:
 		// Send peer our state.
@@ -382,11 +389,11 @@ func (bcR *Reactor) Receive(e p2p.Envelope) {
 			"peer", e.Src,
 			"base", msg.Base,
 			"height", msg.Height,
+			"pool_height", bcR.pool.Height(),
 		)
 
 		// Got a peer status. Unverified.
-		// We set updateMaxHeight=true to make sure IsCaughtUp() uses this Height.
-		bcR.pool.SetPeerRange(e.Src.ID(), msg.Base, msg.Height, true) // updateMaxHeight=true
+		bcR.pool.SetPeerRange(e.Src.ID(), msg.Base, msg.Height)
 	case *bcproto.NoBlockResponse:
 		bcR.Logger.Debug("Peer does not have requested block", "peer", e.Src, "height", msg.Height)
 		bcR.pool.RedoRequestFrom(msg.Height, e.Src.ID())
@@ -455,7 +462,7 @@ func (bcR *Reactor) poolRoutine(stateSynced bool) {
 					Message:   &bcproto.BlockRequest{Height: request.Height},
 				})
 				if !queued {
-					bcR.Logger.Debug("Send queue is full, drop block request", "peer", peer.ID(), "height", request.Height)
+					bcR.Logger.Error("Send queue is full, drop block request", "peer", peer.ID(), "height", request.Height)
 				}
 			case err := <-bcR.errorsCh:
 				peer := bcR.Switch.Peers(bcR.ChainID()).Get(err.peerID)

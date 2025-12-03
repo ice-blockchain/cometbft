@@ -589,7 +589,17 @@ func (c *RuntimeComposer) IndexerService(chainID string) *txindex.IndexerService
 
 // StateMachine returns the state machine for chainID.
 func (c *RuntimeComposer) StateMachine(chainID string) sm.State {
-	if !c.resourceMgr.Has(chainID, types.InstanceKeyStateMachine) {
+	if c.resourceMgr.Has(chainID, types.InstanceKeyStateMachine) {
+		return c.resourceMgr.Get(
+			chainID,
+			types.InstanceKeyStateMachine,
+		).(sm.State)
+	}
+
+	// Separation of db creation and starting of DBService to avoid
+	// trying to use the database too early.
+
+	err := func() error {
 		c.mtx.Lock()
 		defer c.mtx.Unlock()
 
@@ -599,19 +609,25 @@ func (c *RuntimeComposer) StateMachine(chainID string) sm.State {
 			c.logger.Error("failed to open databases from composer",
 				"chainId", chainID,
 				"err", err)
-			return sm.State{}
-		}
-		if stateMachine, err := c.loadNetworkStateMachine(chainID); err == nil {
-			return stateMachine
+			return fmt.Errorf("failed to open databases from composer: %w", err)
 		}
 
+		return nil
+	}()
+	if err != nil {
 		return sm.State{}
 	}
 
-	return c.resourceMgr.Get(
-		chainID,
-		types.InstanceKeyStateMachine,
-	).(sm.State)
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+
+	var stateMachine sm.State
+	if stateMachine, err = c.loadNetworkStateMachine(chainID); err != nil {
+		c.logger.Error("failed to load state machine",
+			"chainId", chainID,
+			"err", err)
+	}
+	return stateMachine
 }
 
 // StateStore returns the state store for chainID.
@@ -887,14 +903,20 @@ func (c *RuntimeComposer) loadNetworkStateMachine(
 	chainID string,
 ) (sm.State, error) {
 	stateDatabaseService := c.resourceMgr.Get(chainID, types.ServiceKeyDatabaseState).(*helpers.DBService)
+	blockDatabaseService := c.resourceMgr.Get(chainID, types.ServiceKeyDatabaseBlock).(*helpers.DBService)
 
 	// Ensure that state and blockstore databases are open.
 	if err := helpers.EnsureStartDBService(c.Context(), stateDatabaseService); err != nil {
 		return sm.State{}, fmt.Errorf(
 			"failed to open state database for %s: %w", chainID, err)
 	}
+	if err := helpers.EnsureStartDBService(c.Context(), blockDatabaseService); err != nil {
+		return sm.State{}, fmt.Errorf(
+			"failed to open block database for %s: %w", chainID, err)
+	}
 
 	stateDB := stateDatabaseService.DB()
+	blockDB := blockDatabaseService.DB()
 
 	dbCfg := c.runtimeBaseConf.Storage
 	dbKeyLayoutVersion := dbCfg.ExperimentalKeyLayout
@@ -904,12 +926,28 @@ func (c *RuntimeComposer) loadNetworkStateMachine(
 		DBKeyLayout: dbKeyLayoutVersion,
 	})
 
+	// Configure blockstore
+	dbCompactionMethod := dbCfg.Compact
+	dbCompactionPeriod := dbCfg.CompactionInterval
+
+	// Also, initialize a [bs.BlockStore] (not snapshottable)
+	blockStore := bs.NewBlockStore(
+		blockDB,
+		bs.WithCompaction(dbCompactionMethod, dbCompactionPeriod),
+		bs.WithDBKeyLayout(dbKeyLayoutVersion),
+	)
+
+	c.resourceMgr.Set(chainID, types.InstanceKeyStateStore, stateStore)
+	c.resourceMgr.Set(chainID, types.InstanceKeyBlockStore, blockStore)
+
 	// Try to load state machine from database.
 	stateMachine, err := stateStore.Load()
 	if err != nil {
 		return sm.State{}, fmt.Errorf(
 			"error loading state machine for ChainID %s: %w", chainID, err)
 	}
+
+	c.resourceMgr.Set(chainID, types.InstanceKeyStateMachine, stateMachine) // sm.State
 	return stateMachine, nil
 }
 
