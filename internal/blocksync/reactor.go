@@ -454,6 +454,8 @@ func (bcR *Reactor) poolRoutine(stateSynced bool) {
 				peerSet := bcR.Switch.Peers()
 				peer := peerSet.Get(request.PeerID)
 				if peer == nil {
+					// XXX
+					bcR.Logger.Debug("PEER NOT FOUND in poolRoutine", "size", peerSet.Size())
 					continue
 				}
 				queued := peer.TrySend(bcR.ChainID(), p2p.Envelope{
@@ -552,9 +554,15 @@ FOR_LOOP:
 			// coupling them as it's written here.  TODO uncouple from request
 			// routine.
 
+			// BREAKING(midas):
+			//
+			// We allow second to be nil by saving the *unverified* block.
+			// This permits to block-sync at H-1 and H, in anticipation that
+			// we will participate in consensus of H+1.
+
 			// See if there are any blocks to sync.
 			first, second, extCommit := bcR.pool.PeekTwoBlocks()
-			if first == nil || second == nil {
+			if first == nil && second == nil {
 				// we need to have fetched two consecutive blocks in order to
 				// perform blocksync verification
 				continue FOR_LOOP
@@ -564,7 +572,7 @@ FOR_LOOP:
 				// Panicking because the block pool's height  MUST keep consistent with the state; the block pool is totally under our control
 				panic(fmt.Errorf("peeked first block has unexpected height; expected %d, got %d", state.LastBlockHeight+1, first.Height))
 			}
-			if first.Height+1 != second.Height {
+			if second != nil && first.Height+1 != second.Height {
 				// Panicking because this is an obvious bug in the block pool, which is totally under our control
 				panic(fmt.Errorf("heights of first and second block are not consecutive; expected %d, got %d", state.LastBlockHeight, first.Height))
 			}
@@ -588,18 +596,30 @@ FOR_LOOP:
 			}
 			firstPartSetHeader := firstParts.Header()
 			firstID := types.BlockID{Hash: first.Hash(), PartSetHeader: firstPartSetHeader}
-			// Finally, verify the first block using the second's commit
-			// NOTE: we can probably make this more efficient, but note that calling
-			// first.Hash() doesn't verify the tx contents, so MakePartSet() is
-			// currently necessary.
-			// TODO(sergio): Should we also validate against the extended commit?
-			err = state.Validators.VerifyCommitLight(
-				chainID, firstID, first.Height, second.LastCommit)
 
-			if err == nil {
-				// validate the block before we persist it
-				err = bcR.blockExec.ValidateBlock(state, first)
+			if second != nil {
+				// Finally, verify the first block using the second's commit
+				// NOTE: we can probably make this more efficient, but note that calling
+				// first.Hash() doesn't verify the tx contents, so MakePartSet() is
+				// currently necessary.
+				// TODO(sergio): Should we also validate against the extended commit?
+				if err = state.Validators.VerifyCommitLight(
+					chainID,
+					firstID,
+					first.Height,
+					second.LastCommit,
+				); err != nil {
+					bcR.Logger.Error("failed to verify commits",
+						"height", first.Height,
+						"err", err.Error())
+					break FOR_LOOP
+				}
 			}
+
+			// validate the block before we persist it
+			err = bcR.blockExec.ValidateBlock(state, first)
+
+			// if vote extensions were required at this height, ensure they exist.
 			presentExtCommit := extCommit != nil
 			extensionsEnabled := state.ConsensusParams.Feature.VoteExtensionsEnabled(first.Height)
 			if presentExtCommit != extensionsEnabled {
@@ -609,9 +629,10 @@ FOR_LOOP:
 				)
 			}
 			if err == nil && extensionsEnabled {
-				// if vote extensions were required at this height, ensure they exist.
 				err = extCommit.EnsureExtensions(true)
 			}
+
+			// assess blocks validation, including votes extensions if necessary.
 			if err != nil {
 				bcR.Logger.Error("Invalid block", "height", first.Height, "err", err)
 				peerID := bcR.pool.RemovePeerAndRedoAllPeerRequests(first.Height)
@@ -621,13 +642,17 @@ FOR_LOOP:
 					// still need to clean up the rest.
 					bcR.Switch.StopPeerForError(peer, ErrReactorValidation{Err: err})
 				}
-				peerID2 := bcR.pool.RemovePeerAndRedoAllPeerRequests(second.Height)
-				peer2 := bcR.Switch.Peers(bcR.ChainID()).Get(peerID2)
-				if peer2 != nil && peer2 != peer {
-					// NOTE: we've already removed the peer's request, but we
-					// still need to clean up the rest.
-					bcR.Switch.StopPeerForError(peer2, ErrReactorValidation{Err: err})
+
+				if second != nil {
+					peerID2 := bcR.pool.RemovePeerAndRedoAllPeerRequests(second.Height)
+					peer2 := bcR.Switch.Peers(bcR.ChainID()).Get(peerID2)
+					if peer2 != nil && peer2 != peer {
+						// NOTE: we've already removed the peer's request, but we
+						// still need to clean up the rest.
+						bcR.Switch.StopPeerForError(peer2, ErrReactorValidation{Err: err})
+					}
 				}
+
 				continue FOR_LOOP
 			}
 
@@ -636,12 +661,18 @@ FOR_LOOP:
 			// TODO: batch saves so we dont persist to disk every block
 			if extensionsEnabled {
 				bcR.store.SaveBlockWithExtendedCommit(first, firstParts, extCommit)
-			} else {
+			} else if second != nil {
 				// We use LastCommit here instead of extCommit. extCommit is not
 				// guaranteed to be populated by the peer if extensions are not enabled.
 				// Currently, the peer should provide an extCommit even if the vote extension data are absent
 				// but this may change so using second.LastCommit is safer.
 				bcR.store.SaveBlock(first, firstParts, second.LastCommit)
+			} else {
+				// We permit to save an unverified block at H, without verification
+				// of the next block's (H+1) seen commits (PV,PC). This permits to
+				// block-sync at H-1 and H, in anticipation that we will participate
+				// in consensus of H+1.
+				bcR.store.SaveBlockUnverified(first, firstParts)
 			}
 
 			// TODO: same thing for app - but we would need a way to

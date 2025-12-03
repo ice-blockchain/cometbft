@@ -613,6 +613,40 @@ func (bs *BlockStore) SaveBlock(block *types.Block, blockParts *types.PartSet, s
 	}
 }
 
+// SaveBlockUnverified persists the given block and blockParts to the underlying db.
+// blockParts: Must be parts of the block
+//
+// CAUTION: This method permits to save/apply a block at H without knowledge of a
+// proposal, prevotes or precommits ("seenCommits") for H+1. Use this method with
+// caution because it permits to save blocks without prevailing verifications.
+func (bs *BlockStore) SaveBlockUnverified(block *types.Block, blockParts *types.PartSet) {
+	defer addTimeSample(bs.metrics.BlockStoreAccessDurationSeconds.With("method", "save_block"), time.Now())()
+	if block == nil {
+		panic("BlockStore can only save a non-nil block")
+	}
+
+	batch := bs.db.NewBatch()
+	defer batch.Close()
+
+	// CAUTION: Using nil-seenCommit to permit sync at H-1 and H.
+	if err := bs.saveBlockToBatch(block, blockParts, nil, batch); err != nil {
+		panic(err)
+	}
+
+	bs.mtx.Lock()
+	defer bs.mtx.Unlock()
+	bs.height = block.Height
+	if bs.base == 0 {
+		bs.base = block.Height
+	}
+
+	// Save new BlockStoreState descriptor. This also flushes the database.
+	err := bs.saveStateAndWriteDB(batch, "failed to save block")
+	if err != nil {
+		panic(err)
+	}
+}
+
 // SaveBlockWithExtendedCommit persists the given block, blockParts, and
 // seenExtendedCommit to the underlying db. seenExtendedCommit is stored under
 // two keys in the database: as the seenCommit and as the ExtendedCommit data for the
@@ -684,7 +718,7 @@ func (bs *BlockStore) saveBlockToBatch(
 	if !blockParts.IsComplete() {
 		return errors.New("BlockStore can only save complete block part sets")
 	}
-	if height != seenCommit.Height {
+	if seenCommit != nil && height != seenCommit.Height {
 		return fmt.Errorf("BlockStore cannot save seen commit of a different height (block: %d, commit: %d)", height, seenCommit.Height)
 	}
 
@@ -732,16 +766,18 @@ func (bs *BlockStore) saveBlockToBatch(
 		return err
 	}
 
-	marshallTime = time.Now()
+	if seenCommit != nil {
+		marshallTime = time.Now()
 
-	// Save seen commit (seen +2/3 precommits for block)
-	// NOTE: we can delete this at a later height
-	pbsc := seenCommit.ToProto()
-	seenCommitBytes := mustEncode(pbsc)
+		// Save seen commit (seen +2/3 precommits for block)
+		// NOTE: we can delete this at a later height
+		pbsc := seenCommit.ToProto()
+		seenCommitBytes := mustEncode(pbsc)
 
-	blockMetaMarshallDiff += time.Since(marshallTime).Seconds()
-	if err := batch.Set(bs.dbKeyLayout.CalcSeenCommitKey(height), seenCommitBytes); err != nil {
-		return err
+		blockMetaMarshallDiff += time.Since(marshallTime).Seconds()
+		if err := batch.Set(bs.dbKeyLayout.CalcSeenCommitKey(height), seenCommitBytes); err != nil {
+			return err
+		}
 	}
 
 	bs.metrics.BlockStoreAccessDurationSeconds.With("method", "save_block_to_batch").Observe(time.Since(start).Seconds() - blockMetaMarshallDiff)

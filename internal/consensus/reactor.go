@@ -37,13 +37,6 @@ const (
 	blocksToContributeToBecomeGoodPeer = 10000
 	votesToContributeToBecomeGoodPeer  = 10000
 
-	// defaultAllowStaleStateDuration holds a duration that we shall be waiting
-	// for given a desync between conS.rs and ps.PRS. This happens more often
-	// when using the multiplex because of parallel message processing.
-	//
-	// TODO(midas): move to multiplex.runtime.ConsensusPool + add option helper.
-	defaultAllowStaleStateDuration = 300 * time.Millisecond
-
 	// defaultMaxErrorsBeforeDisconnect holds a maximum number of errors that
 	// may be observed for one peerID before we disconnect from it.
 	//
@@ -231,8 +224,14 @@ func (conR *Reactor) SwitchToConsensus(state sm.State, skipWAL bool) {
 		// We need to lock, as we are not entering consensus state from State's `handleMsg` or `handleTimeout`
 		conR.conS.mtx.Lock()
 		defer conR.conS.mtx.Unlock()
-		// We have no votes, so reconstruct LastCommit from SeenCommit
-		if state.LastBlockHeight > 0 {
+
+		// BREAKING(midas): In case of blocksync of unverified H.
+		//
+		// LastCommit reconstruction from SeenCommit is disabled when entering
+		// from blocksync at height=H; no commits are available in state, thus
+		// no reconstruction shall happen, instead just update to state.
+		if !skipWAL && state.LastBlockHeight > 0 {
+			// We have no votes, so reconstruct LastCommit from SeenCommit
 			conR.conS.reconstructLastCommit(state)
 		}
 
@@ -602,9 +601,6 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 		}
 	}
 
-	// peerCtx is created with conR.InitPeer()
-	peerCtx := conR.peerContexts.Get(string(e.Src.ID())).(*PeerContext)
-
 	switch e.ChannelID {
 	case StateChannel:
 		switch msg := msg.(type) {
@@ -639,14 +635,10 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 				)
 			}
 
-			// ... should apply vote after some time to catch-up.
-			shouldStallApply := !newRound &&
-				ps.PRS.Step > cstypes.RoundStepPropose && // peer is voting
-				ps.PRS.Height > rs.Height // consensus is lagging
-			if shouldStallApply {
-				if ok := conR.sleepOrQuit(peerCtx, defaultAllowStaleStateDuration); !ok {
-					return
-				}
+			// Ensure existing voteBits for H-1 and H.
+			ps.ensureVoteBitArrays(msg.Height, rs.Validators.Size())
+			if msg.Height > 1 {
+				ps.ensureVoteBitArrays(msg.Height-1, rs.LastCommit.Size())
 			}
 			ps.ApplyHasVoteMessage(msg)
 		case *HasProposalBlockPartMessage:
@@ -731,8 +723,6 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 				)
 			}
 
-			// NOTE: we don't stall applying block parts.
-
 			ps.SetHasProposalBlockPart(msg.Height, msg.Round, int(msg.Part.Index))
 			conR.Metrics.BlockParts.With("peer_id", string(ps.peer.ID())).Add(1)
 			conR.conS.peerMsgQueue <- msgInfo{msg, ps.peer.ID(), time.Time{}}
@@ -767,15 +757,6 @@ func (conR *Reactor) Receive(e p2p.Envelope) {
 				)
 			}
 
-			// ... should apply vote after some time to catch-up.
-			shouldStallApply := !newRound &&
-				ps.PRS.Step > cstypes.RoundStepPropose && // peer is voting
-				ps.PRS.Height > rs.Height // consensus is lagging
-			if shouldStallApply {
-				if ok := conR.sleepOrQuit(peerCtx, defaultAllowStaleStateDuration); !ok {
-					return
-				}
-			}
 			height, valSize, lastCommitSize := rs.Height, rs.Validators.Size(), rs.LastCommit.Size()
 			ps.SetHasVoteFromPeer(msg.Vote, height, valSize, lastCommitSize)
 			conR.conS.peerMsgQueue <- msgInfo{msg, ps.peer.ID(), time.Time{}}
@@ -1163,6 +1144,11 @@ OUTER_LOOP:
 		// 	"prsHeight", prs.Height, "prsRound", prs.Round, "prsStep", prs.Step, "v", vote)
 
 		if vote != nil {
+			// Ensure existing voteBits for H-1 and H.
+			ps.ensureVoteBitArrays(vote.Height, rs.Validators.Size())
+			if vote.Height > 1 {
+				ps.ensureVoteBitArrays(vote.Height-1, rs.LastCommit.Size())
+			}
 			if ps.sendVoteSetHasVote(cid, vote) {
 				// Update the stored *PeerState for detached retrieval in routines.
 				conR.peerStates.Set(string(peer.ID()), ps)

@@ -167,6 +167,8 @@ func (pool *BlockPool) makeRequestersRoutine(ctx context.Context) {
 		pool.mtx.Unlock()
 
 		if !maxPeerHeightReached {
+			// XXX
+			pool.Logger.Debug("MAKE BLOCK REQUESTER", "height", nextHeight, "max", pool.maxPeerHeight)
 			pool.makeNextRequester(ctx, nextHeight)
 		}
 
@@ -811,6 +813,8 @@ PICK_PEER_LOOP:
 		bpr.peerID = peer.id
 		bpr.mtx.Unlock()
 
+		// XXX
+		bpr.pool.Logger.Debug("SENDING BLOCK REQUEST", "height", bpr.height, "peerId", peer.id)
 		bpr.pool.sendRequest(bpr.height, peer.id)
 	}
 }

@@ -24,6 +24,7 @@ type BlockStore interface {
 	LoadBlockMeta(height int64) *types.BlockMeta
 	LoadBlock(height int64) (*types.Block, *types.BlockMeta)
 
+	SaveBlockUnverified(block *types.Block, blockParts *types.PartSet)
 	SaveBlock(block *types.Block, blockParts *types.PartSet, seenCommit *types.Commit)
 	SaveBlockWithExtendedCommit(block *types.Block, blockParts *types.PartSet, seenCommit *types.ExtendedCommit)
 
