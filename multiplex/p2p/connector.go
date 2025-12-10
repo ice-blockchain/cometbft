@@ -28,7 +28,8 @@ type PeerConnector struct {
 	pool *ConnectionPool
 
 	// Options
-	logger cmtlog.Logger
+	logger           cmtlog.Logger
+	dialBackInbounds bool
 }
 
 // Ensure that our implementation satisfies interface.
@@ -90,6 +91,13 @@ func ConnectorWithDispatcher(dispatcher cmtp2p.Dispatcher) ConnectorOption {
 		if conn.pool != nil {
 			conn.pool.dispatcher = dispatcher
 		}
+	}
+}
+
+// ConnectorWithDialBack injects a custom packet transporter.
+func ConnectorWithDialBack(b bool) ConnectorOption {
+	return func(conn *PeerConnector) {
+		conn.dialBackInbounds = b
 	}
 }
 
@@ -159,11 +167,10 @@ func (conn *PeerConnector) Dispatcher() cmtp2p.Dispatcher {
 func (conn *PeerConnector) Dial(addr *cmtp2p.NetAddress) (*cmtp2p.PeerImpl, error) {
 	loggerWithSelf := conn.logger.With("self", string(conn.transport.NodeInfo().ID()))
 
-	if conn.pool.HasPeerID(addr.ID) {
+	peerSet := conn.pool.Peers()
+	if p := peerSet.GetOutbound(addr.ID); p != nil && p.IsRunning() {
 		// TODO(midas): remove debug logs
 		loggerWithSelf.Debug("Skipping dial - already dialed", "address", addr)
-
-		p := conn.pool.peers.Get(addr.ID)
 		return p, nil
 	}
 
@@ -257,6 +264,28 @@ func (conn *PeerConnector) Listen() error {
 
 		// TODO(midas): remove debug logs
 		peerLogger.Debug("Added inbound peer", "peer", p)
+
+		// DialBack if we don't have this peer outbound yet.
+		if conn.dialBackInbounds == true {
+			peerSet := conn.pool.Peers()
+			if po := peerSet.GetOutbound(p.ID()); po == nil {
+				// TODO(midas): remove debug logs
+				conn.logger.Debug("DIALING BACK inbound peer", "peer", p)
+
+				cometbftAddr, _ := p.NodeInfo().NetAddress()
+				if _, err := conn.Dial(cometbftAddr); err != nil {
+					conn.logger.Error(
+						"failed to dial back inbound peer",
+						"addr", cometbftAddr.String(),
+						"err", err,
+					)
+					continue
+				}
+
+				// TODO(midas): remove debug logs
+				conn.logger.Debug("DIALED BACK inbound peer", "peer", p)
+			}
+		}
 	}
 
 	return nil

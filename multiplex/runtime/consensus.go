@@ -259,12 +259,15 @@ func (pool *ConsensusPool) Inject(chainID string) error {
 
 	// In case of blocksync, enable ChainID *early* (before Execute()).
 	if pool.shouldNetworkBlockSync(stateMachine.Copy(), privValPubKey) {
-		sw := pool.runtimeComposer.cometbftSwitch
+		sw := pool.cometbftSwitch
 		peerSet := sw.Peers(chainID)
 		for _, peer := range peerSet.Copy() {
 			if peer == nil {
 				continue
 			}
+
+			// XXX
+			pool.logger.Debug("ADDING PEER (blocksync!)", "chainId", chainID, "peer", peer)
 
 			sw.InitPeerForScope(peer, chainID)
 			sw.AddPeerForScope(peer, chainID)
@@ -357,12 +360,12 @@ func (pool *ConsensusPool) Execute(chainID string) error {
 	}
 
 	// Helper function to ensure reactors are reset if necessary before start.
-	reactorStarterFn := func(name string, r p2p.Reactor) {
+	reactorStarterFn := func(name string, r p2p.Reactor, sw *p2p.Switch) {
 		if r.IsStopped() {
 			r.Reset(pool.Context()) // allows re-start
 		}
 
-		r.SetSwitch(pool.cometbftSwitch)
+		r.SetSwitch(sw)
 		if !r.IsRunning() {
 			if err := r.Start(); err != nil && err != service.ErrAlreadyStarted {
 				pool.logger.Error("Error starting reactor",
@@ -372,25 +375,29 @@ func (pool *ConsensusPool) Execute(chainID string) error {
 		}
 	}
 
+	pool.mtx.Lock()
+	sw := pool.cometbftSwitch
+	pool.mtx.Unlock()
+
 	// Start consensus reactors.
-	reactorStarterFn("CONSENSUS", consensusReactor)
-	reactorStarterFn("BLOCKSYNC", blocksyncReactor)
-	reactorStarterFn("MEMPOOL", mempoolReactor)
-	reactorStarterFn("EVIDENCE", evidenceReactor)
+	reactorStarterFn("CONSENSUS", consensusReactor, sw)
+	reactorStarterFn("BLOCKSYNC", blocksyncReactor, sw)
+	reactorStarterFn("MEMPOOL", mempoolReactor, sw)
+	reactorStarterFn("EVIDENCE", evidenceReactor, sw)
 
 	// (3) CAUTION:
 	// Note that for already existing peers, this has no effect, but for
 	// freshly connected peers it enables the reactor channels.
 
 	// Mark peers active in CONSENSUS and BLOCKSYNC reactors.
-	peerSet := pool.cometbftSwitch.Peers(chainID)
+	peerSet := sw.Peers(chainID)
 	for _, peer := range peerSet.Copy() {
 		if peer == nil {
 			continue
 		}
 
-		pool.cometbftSwitch.InitPeerForScope(peer, chainID)
-		pool.cometbftSwitch.AddPeerForScope(peer, chainID)
+		sw.InitPeerForScope(peer, chainID)
+		sw.AddPeerForScope(peer, chainID)
 	}
 
 	pool.logger.Debug("ConsensusPool#Execute; runtime successfully started",

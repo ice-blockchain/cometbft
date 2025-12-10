@@ -273,7 +273,11 @@ func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
 			replRequest := extMsg.GetChainReplicationRequest()
 			reactor.logger.Debug("Received ChainReplicationRequest", "msg", replRequest)
 
-			// (1) Process the chain replication request.
+			// (1) Process the chain replication request, this loads/creates the
+			// GenesisDoc using replRequest.ChainParams, then issues a call to
+			// [Registry#AddRuntime] and [Registry#InitRuntime].
+			// Additionally, if the locally reported block height is smaller than
+			// replRequest.MinHeight, issues a call to [Registry#EnableBlockSync].
 			if err := reactor.handleChainReplicationRequest(e); err != nil {
 				reactor.logger.Error(
 					"failed to process ChainReplicationRequest: error handling replication",
@@ -284,6 +288,8 @@ func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
 			}
 
 			// Makes sure that we will tell peers about block-sync completion.
+			// i.e. setting true here permits to later send a message to peers
+			// with [ChainReplicationComplete] to announce completed sync.
 			reactor.SetAnnounceReplication(replRequest.ChainID, true)
 
 			// (2) IMPORTANT:
@@ -298,16 +304,19 @@ func (reactor *Reactor) Receive(e cmtp2p.Envelope) {
 				cometbftAddr, _ := helpers.NewRelayAddress(relayAddrStr)
 
 				// TODO(midas): remove debug logs.
-				reactor.logger.Debug("Dialing peer for CometBFT",
+				reactor.logger.Debug("handleChainReplicationRequest: Dialing peer for CometBFT",
 					"chainID", replRequest.ChainID,
 					"address", cometbftAddr,
 				)
 
 				// Dial the peer for CometBFT to permit faster consensus building.
-				if _, err := reactor.cometbftPool.Connector().Dial(cometbftAddr.NetAddress()); err != nil {
+				if _, err := reactor.cometbftPool.Connector().Dial(
+					cometbftAddr.NetAddress(),
+				); err != nil {
 					reactor.logger.Error(
 						"failed to process ChainReplicationRequest: error dialing source peer",
 						"chainId", replRequest.ChainID,
+						"address", cometbftAddr,
 						"err", err,
 					)
 				}

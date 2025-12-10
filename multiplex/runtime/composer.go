@@ -268,6 +268,17 @@ func (c *RuntimeComposer) IsComposed(chainID string) bool {
 	return ok
 }
 
+func (c *RuntimeComposer) GetComposedNetworks() []string {
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+
+	nets := make([]string, 0, len(c.composedChainIds))
+	for chainID := range c.composedChainIds {
+		nets = append(nets, chainID)
+	}
+	return nets
+}
+
 // Compose initializes a runtime for chainID.
 func (c *RuntimeComposer) Compose(
 	chainID string,

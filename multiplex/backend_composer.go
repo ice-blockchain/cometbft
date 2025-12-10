@@ -153,6 +153,7 @@ func (b *MultiplexBackend) InitCometBFTSwitch() error {
 		localTransport,
 		b.resourceMgr,
 		cometLogger,
+		p2p.ConnectionPoolWithAutoDialBack(true),
 	)
 
 	b.cometbftSwitch = cmtp2p.NewSwitch(b.Context(),

@@ -153,8 +153,7 @@ func (conR *Reactor) SetRuntimeRegistry(reg mxtypes.IdleManager) {
 // OnStart implements BaseService by subscribing to events, which later will be
 // broadcasted to other peers and starting state if we're not in block sync.
 func (conR *Reactor) OnStart(ctx context.Context) error {
-	conR.SetLogger(conR.Logger.With("chainId", conR.ChainID))
-	conR.conS.SetLogger(conR.Logger.With("chainId", conR.ChainID))
+	conR.conS.SetLogger(conR.Logger)
 
 	if conR.WaitSync() {
 		conR.Logger.Info("Starting reactor in sync mode: consensus protocols will start once sync completes")
@@ -347,15 +346,10 @@ func (conR *Reactor) announceReplicationToPeers(
 	}
 	wg.Wait()
 
-	if conR.runtimeRegistry != nil {
-		// CAUTION: This runtime for ChainID *is not* the one that will be used
-		// to execute cometbft consensus (blocks proposal). Thus we mark this
-		// runtime as completed because another one gets activated for consensus.
-		//
-		// Completes the runtime activated in [multiplex.Reactor#Receive] upon
-		// reception of a ChainReplicationRequest.
-		conR.runtimeRegistry.OnComplete(chainID)
-	}
+	// NOTE(midas): A runtime for ChainID is activated in [multiplex.Reactor#Receive],
+	// upon receiving a ChainReplicationRequest, i.e. when we don't know a ChainID yet
+	// or when our local storage is behind on blocks of ChainID; and we must keep this
+	// active as it will be used to run consensus processes.
 
 	return
 }
@@ -438,6 +432,19 @@ func (conR *Reactor) InitPeer(peer *p2p.PeerImpl) *p2p.PeerImpl {
 	// First request the PRS in case we know this peer ID.
 	prs := conR.GetPeerRoundState(peer)
 
+	// If the peer context expired, calling InitPeer indicates that we should
+	// start a new context for this peer's consensus routines.
+	peerCtx := conR.peerContexts.Get(string(peer.ID()))
+	if peerCtx == nil || peerCtx.(*PeerContext).ctx.Err() != nil {
+		ctx, ctxCancel := context.WithCancel(context.Background())
+		peerCtx = &PeerContext{
+			peer:     peer,
+			ctx:      ctx,
+			cancelFn: ctxCancel,
+		}
+		conR.peerContexts.Set(string(peer.ID()), peerCtx)
+	}
+
 	// If this peer connection has no state, create it now.
 	if !conR.peerStates.Has(string(peer.ID())) {
 		peerState := NewPeerState(peer).SetLogger(conR.Logger)
@@ -452,28 +459,34 @@ func (conR *Reactor) InitPeer(peer *p2p.PeerImpl) *p2p.PeerImpl {
 		)
 
 		conR.peerStates.Set(string(peer.ID()), peerState)
-
-		ctx, ctxCancel := context.WithCancel(context.Background())
-		peerCtx := &PeerContext{
-			peer:     peer,
-			ctx:      ctx,
-			cancelFn: ctxCancel,
-		}
-		conR.peerContexts.Set(string(peer.ID()), peerCtx)
 	}
+
 	return peer
 }
 
 // AddPeer implements Reactor by spawning multiple gossiping goroutines for the
 // peer.
 func (conR *Reactor) AddPeer(peer *p2p.PeerImpl) {
+	peerID := peer.ID()
+
+	// If consensus is not running, we just store the peer as a pending
+	// peer. Later, OnStart calls this method again to activate the peer.
 	if !conR.IsRunning() {
 		// TODO(midas): remove debug logs
 		conR.Logger.Debug("Adding PENDING peer to consensus reactor",
 			"peer", peer,
 		)
 
-		conR.pendingPeers.Store(peer.ID(), peer)
+		conR.pendingPeers.Store(peerID, peer)
+		return
+	}
+
+	// If peer is not running, we won't start consensus routines.
+	if !peer.IsRunning() {
+		conR.Logger.Error("WARNING: Failed to start consensus routines; peer is not running",
+			"peerId", peerID,
+			"peer", peer,
+		)
 		return
 	}
 
@@ -491,11 +504,6 @@ func (conR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 		}
 	}
 
-	if !peer.IsRunning() {
-		peerLogger.Error("WARNING: Failed to start consensus routines")
-		return
-	}
-
 	// TODO(midas): remove debug logs
 	peerLogger.Debug("Starting consensus routines",
 		"wait", conR.WaitSync(),
@@ -503,7 +511,7 @@ func (conR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 	)
 
 	// Begin routines for this peer.
-	peerCtx := conR.peerContexts.Get(string(peer.ID())).(*PeerContext)
+	peerCtx := conR.peerContexts.Get(string(peerID)).(*PeerContext)
 	go conR.gossipDataRoutine(peer, peerState, peerCtx)
 	go conR.gossipVotesRoutine(peer, peerState, peerCtx)
 	go conR.queryMaj23Routine(peer, peerState, peerCtx)
@@ -1050,8 +1058,8 @@ OUTER_LOOP:
 
 		// Update the PeerState entry as it may become stale.
 		ps = conR.GetPeerState(peer)
-		rs := conR.getRoundState()
-		prs := ps.GetRoundState() // under ps.mtx
+		rs := conR.conS.GetRoundState() // under conR.conS.mtx
+		prs := ps.GetRoundState()       // under ps.mtx
 		cid := conR.ChainID
 
 		// --------------------
@@ -1079,6 +1087,10 @@ OUTER_LOOP:
 
 		heightRoundMatch := (rs.Height == prs.Height) && (rs.Round == prs.Round)
 		proposalToSend := rs.Proposal != nil && !prs.Proposal
+
+		// logger.Debug("gossipDataRoutine",
+		// 	"rsHeight", rs.Height, "rsRound", rs.Round, "rsProposal", rs.Proposal != nil,
+		// 	"prsHeight", prs.Height, "prsRound", prs.Round, "prsProposal", prs.Proposal)
 
 		if heightRoundMatch && proposalToSend {
 			ps.SendProposalSetHasProposal(logger, cid, &rs, prs)
@@ -1127,8 +1139,8 @@ OUTER_LOOP:
 
 		// Update the PeerState entry as it may become stale.
 		ps = conR.GetPeerState(peer)
-		rs := conR.getRoundState()
-		prs := ps.GetRoundState() // under ps.mtx
+		rs := conR.conS.GetRoundState() // under conR.conS.mtx
+		prs := ps.GetRoundState()       // under ps.mtx
 		cid := conR.ChainID
 
 		switch sleeping {
@@ -1763,6 +1775,7 @@ func (ps *PeerState) SetHasProposal(proposal *types.Proposal) {
 		"proposalH/R",
 		log.NewLazySprintf("%d/%d", proposal.Height, proposal.Round),
 		"peerHasProposal", ps.PRS.Proposal,
+		"peer", ps.peer,
 	)
 
 	if ps.PRS.Height != proposal.Height || ps.PRS.Round != proposal.Round {
@@ -1813,7 +1826,8 @@ func (ps *PeerState) setHasProposalBlockPart(height int64, round int32, index in
 		log.NewLazySprintf("%d/%d", ps.PRS.Height, ps.PRS.Round),
 		"H/R",
 		log.NewLazySprintf("%d/%d", height, round),
-		"index", index)
+		"index", index,
+		"peer", ps.peer)
 
 	if ps.PRS.Height != height || ps.PRS.Round != round {
 		return
@@ -1851,6 +1865,7 @@ func (ps *PeerState) SendPartSetHasPart(chainID string, part *types.Part, prs *c
 		return true
 	}
 	ps.logger.Debug("Sending block part failed",
+		"peer", ps.peer,
 		"err", ps.peer.GetError())
 	return false
 }
@@ -1865,6 +1880,7 @@ func (ps *PeerState) SendProposalSetHasProposal(
 ) {
 	// Proposal: share the proposal metadata with peer.
 	logger.Debug("Sending proposal",
+		"peer", ps.peer,
 		"height", prs.Height,
 		"round", prs.Round,
 	)
@@ -1882,7 +1898,7 @@ func (ps *PeerState) SendProposalSetHasProposal(
 	// rs.Proposal was validated, so rs.Proposal.POLRound <= rs.Round,
 	// so we definitely have rs.Votes.Prevotes(rs.Proposal.POLRound).
 	if 0 <= rs.Proposal.POLRound {
-		logger.Debug("Sending POL", "height", prs.Height, "round", prs.Round)
+		logger.Debug("Sending POL", "peer", ps.peer, "height", prs.Height, "round", prs.Round)
 		ps.peer.Send(chainID, p2p.Envelope{
 			ChainID:   chainID,
 			ChannelID: DataChannel,

@@ -133,6 +133,13 @@ func ConnectionPoolWithNodeInfo(i *MultiNetworkNodeInfo) ConnectionPoolOption {
 	}
 }
 
+// ConnectionPoolWithAutoDialBack configures the PeerConnector to dial back.
+func ConnectionPoolWithAutoDialBack(b bool) ConnectionPoolOption {
+	return func(pool *ConnectionPool) {
+		pool.connector.dialBackInbounds = true
+	}
+}
+
 // ----------------------------------------------------------------------------
 // ConnectionPool implements [service.Service]
 
@@ -307,7 +314,6 @@ func (pool *ConnectionPool) AddPeer(peer *cmtp2p.PeerImpl) error {
 
 	peerLogger.Info("Adding peer")
 
-	pool.peers.Add(peer)
 	if !peer.IsRunning() {
 		// peer.Start does *not* start a MConnection anymore,
 		// instead the connection is started with startRoutines.
@@ -317,20 +323,49 @@ func (pool *ConnectionPool) AddPeer(peer *cmtp2p.PeerImpl) error {
 		}
 	}
 
-	pool.mtx.Lock()
-	defer pool.mtx.Unlock()
+	// Add to PeerSet and start MConnection if necessary.
+	pool.peers.Add(peer)
+	err := func() error {
+		pool.mtx.Lock()
+		defer pool.mtx.Unlock()
 
-	if !pool.peerConnections.Has(string(peer.ID())) {
-		mconn, err := pool.startRoutines(peer)
-		if err != nil {
-			return fmt.Errorf("failed to AddPeer: %w", err)
+		if !pool.peerConnections.Has(string(peer.ID())) {
+			mconn, err := pool.startRoutines(peer)
+			if err != nil {
+				return fmt.Errorf("failed to AddPeer: %w", err)
+			}
+			pool.peerConnections.Set(string(peer.ID()), mconn)
+
+			// TODO(midas): remove debug logs.
+			peerLogger.Debug("ConnectionPool#AddPeer; connected to peer",
+				"mconn", mconn,
+			)
 		}
-		pool.peerConnections.Set(string(peer.ID()), mconn)
 
-		// TODO(midas): remove debug logs.
-		peerLogger.Debug("ConnectionPool#AddPeer; connected to peer",
-			"mconn", mconn,
-		)
+		return nil
+	}()
+	if err != nil {
+		return err
+	}
+
+	// If we have a one-way connector, or an outbound peer, we don't need
+	// to force-add it to the consensus reactor.
+	if peer.IsOutbound() || !pool.connector.dialBackInbounds {
+		return nil
+	}
+
+	// Force the peer to be added to consensus reactor.
+	chainIds := pool.runtimeMgr.Composer().GetComposedNetworks()
+	for _, chainID := range chainIds {
+		conR := pool.dispatcher.Reactor(chainID, "CONSENSUS")
+		if conR == nil {
+			continue
+		}
+
+		pool.logger.Debug("ADDING PEER (consensus!)", "runtimes", chainIds, "peer", peer)
+		pfr := conR.InitPeer(peer)
+		conR.AddPeer(pfr)
+		pool.logger.Debug("ADDED PEER (consensus!)", "chainId", chainID, "peer", peer)
 	}
 
 	return nil

@@ -256,6 +256,7 @@ func (*Reactor) GetChannels() []*p2p.ChannelDescriptor {
 func (bcR *Reactor) AddPeer(peer *p2p.PeerImpl) {
 	bcR.Logger.Debug("Adding peer to blocksync reactor",
 		"peer", peer,
+		"addr", peer.RemoteAddr().String(),
 		"bcr_base", bcR.store.Base(),
 		"bcr_height", bcR.store.Height(),
 		"pool", bcR.pool.height,

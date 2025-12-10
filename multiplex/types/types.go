@@ -112,6 +112,8 @@ type RuntimeComposer interface {
 
 	// IsComposed returns true given a chainID that has been previously Compose'd.
 	IsComposed(chainID string) bool
+	// GetComposedNetworks returns a slice of ChainID that have been Compose'd.
+	GetComposedNetworks() []string
 
 	// Compose initializes a runtime for chainID.
 	Compose(chainID string, remoteValidatorPubKeys []string, createNetworkGenesis bool) error
