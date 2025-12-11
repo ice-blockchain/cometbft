@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"reflect"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1032,6 +1033,8 @@ func (conR *Reactor) gossipDataRoutine(peer *p2p.PeerImpl, ps *PeerState, peerCt
 	logger := conR.Logger.With("peer", peer)
 	rng := cmtrand.NewStdlibRand()
 
+	defer conR.cancelOnError(peerCtx)
+
 OUTER_LOOP:
 	for conR.Context().Err() == nil && peerCtx.ctx.Err() == nil {
 		// Manage disconnects from self or peer.
@@ -1112,6 +1115,8 @@ func (conR *Reactor) gossipVotesRoutine(peer *p2p.PeerImpl, ps *PeerState, peerC
 
 	// Simple hack to throttle logs upon sleep.
 	sleeping := 0
+
+	defer conR.cancelOnError(peerCtx)
 
 OUTER_LOOP:
 	for conR.Context().Err() == nil && peerCtx.ctx.Err() == nil {
@@ -1196,6 +1201,8 @@ OUTER_LOOP:
 // into play for liveness when there's a signature DDoS attack happening.
 func (conR *Reactor) queryMaj23Routine(peer *p2p.PeerImpl, ps *PeerState, peerCtx *PeerContext) {
 	logger := conR.Logger.With("peer", peer)
+
+	defer conR.cancelOnError(peerCtx)
 
 OUTER_LOOP:
 	for conR.Context().Err() == nil && peerCtx.ctx.Err() == nil {
@@ -1347,6 +1354,8 @@ OUTER_LOOP:
 	}
 }
 
+// sleepOrQuit waits for duration and detects shutdown processes.
+// It returns true if duration passed, otherwise false, indicating a shutdown.
 func (conR *Reactor) sleepOrQuit(
 	peerCtx *PeerContext,
 	duration time.Duration,
@@ -1363,6 +1372,19 @@ func (conR *Reactor) sleepOrQuit(
 
 	case <-conR.Quit():
 		return false
+	}
+}
+
+// cancelOnError catches panics caused by gossip* goroutines, and cancels the
+// PeerContext so that all gossip* goroutines are shutdown for this peer.
+func (conR *Reactor) cancelOnError(peerCtx *PeerContext) {
+	if r := recover(); r != nil {
+		conR.Logger.Debug("WARNING: Consensus recovered from panic; cancelling peer context",
+			"peer", peerCtx.peer,
+			"err", r,
+			"stack", string(debug.Stack()),
+		)
+		peerCtx.Cancel()
 	}
 }
 
